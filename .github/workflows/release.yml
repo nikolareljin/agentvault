@@ -1,0 +1,22 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: nikolareljin/ci-helpers/.github/workflows/go-release.yml@production
+    with:
+      go_version: "1.24"
+      bin_name: agentvault
+      build_targets: "linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64"
+      ldflags: >-
+        -s -w
+        -X github.com/nikolareljin/agentvault/cmd.Version=${{ github.ref_name }}
+        -X github.com/nikolareljin/agentvault/cmd.Commit=${{ github.sha }}
+      generate_release_notes: true

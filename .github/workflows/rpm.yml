@@ -1,0 +1,12 @@
+name: RPM
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+jobs:
+  rpm:
+    uses: nikolareljin/ci-helpers/.github/workflows/rpm-build.yml@production
+    with:
+      prebuild_command: "make build"

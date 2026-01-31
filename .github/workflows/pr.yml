@@ -1,0 +1,25 @@
+name: PR
+
+on:
+  pull_request:
+    branches: [main, "release/*"]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+
+concurrency:
+  group: pr-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    uses: nikolareljin/ci-helpers/.github/workflows/pr-gate.yml@production
+    with:
+      go_version: "1.24"
+      lint_command: 'test -z "$(gofmt -l .)" && go vet ./...'
+      test_command: "go test ./..."
+      build_command: "go build ./..."
+      check_release_tag: true
+      release_branch: ${{ github.head_ref }}

@@ -1,0 +1,27 @@
+# Binary
+agentvault
+agentvault.exe
+
+# Go
+*.test
+*.out
+coverage.out
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+
+# Build artifacts
+dist/
+artifacts/

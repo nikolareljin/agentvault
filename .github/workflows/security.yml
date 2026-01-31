@@ -1,0 +1,24 @@
+name: Security
+
+on:
+  pull_request:
+    branches: [main, "release/*"]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+  workflow_dispatch:
+
+jobs:
+  go-scan:
+    uses: nikolareljin/ci-helpers/.github/workflows/go-scan.yml@production
+    with:
+      go_version: "1.24"
+      gosec_args: "./..."
+
+  gitleaks:
+    uses: nikolareljin/ci-helpers/.github/workflows/gitleaks-scan.yml@production
+    with:
+      scan_path: "."
+      fail_on_findings: false

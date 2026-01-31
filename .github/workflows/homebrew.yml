@@ -1,0 +1,17 @@
+name: Homebrew
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+jobs:
+  brew:
+    uses: nikolareljin/ci-helpers/.github/workflows/homebrew-package.yml@production
+    with:
+      name: agentvault
+      desc: "CLI/TUI tool for managing AI agents, keys, and instructions"
+      homepage: "https://github.com/nikolareljin/agentvault"
+      license: MIT
+      release_repo: "nikolareljin/agentvault"
+      publish: "false"

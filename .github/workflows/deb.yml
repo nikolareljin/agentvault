@@ -1,0 +1,12 @@
+name: Deb
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+jobs:
+  deb:
+    uses: nikolareljin/ci-helpers/.github/workflows/deb-build.yml@production
+    with:
+      prebuild_command: "make build"

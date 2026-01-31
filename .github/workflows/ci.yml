@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    uses: nikolareljin/ci-helpers/.github/workflows/ci.yml@production
+    with:
+      go_version: "1.24"
+      lint_command: 'test -z "$(gofmt -l .)" && go vet ./...'
+      test_command: "go test ./..."
+      build_command: "go build ./..."
