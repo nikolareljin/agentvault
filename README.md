@@ -1,5 +1,7 @@
 # AgentVault
 
+**NOTE:** Under development
+
 A CLI/TUI tool for managing AI agents, their API keys, and instructions.
 
 ## Features
