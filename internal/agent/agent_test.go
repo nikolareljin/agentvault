@@ -39,3 +39,107 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestAllProviders(t *testing.T) {
+	providers := ValidProviders()
+	if len(providers) != 6 {
+		t.Errorf("ValidProviders() len = %d, want 6", len(providers))
+	}
+	for _, p := range providers {
+		a := Agent{Name: "test", Provider: p}
+		if err := a.Validate(); err != nil {
+			t.Errorf("Validate() error for provider %q: %v", p, err)
+		}
+	}
+}
+
+func TestEffectiveSystemPrompt(t *testing.T) {
+	shared := SharedConfig{SystemPrompt: "Be helpful and concise."}
+
+	// agent without own prompt uses shared
+	a1 := Agent{Name: "a1", Provider: ProviderClaude}
+	if got := a1.EffectiveSystemPrompt(shared); got != "Be helpful and concise." {
+		t.Errorf("EffectiveSystemPrompt() = %q, want shared prompt", got)
+	}
+
+	// agent with own prompt overrides shared
+	a2 := Agent{Name: "a2", Provider: ProviderClaude, SystemPrompt: "Custom."}
+	if got := a2.EffectiveSystemPrompt(shared); got != "Custom." {
+		t.Errorf("EffectiveSystemPrompt() = %q, want agent prompt", got)
+	}
+
+	// empty shared, empty agent
+	a3 := Agent{Name: "a3", Provider: ProviderClaude}
+	if got := a3.EffectiveSystemPrompt(SharedConfig{}); got != "" {
+		t.Errorf("EffectiveSystemPrompt() = %q, want empty", got)
+	}
+}
+
+func TestFilenameForInstruction(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"agents", "AGENTS.md"},
+		{"claude", "CLAUDE.md"},
+		{"codex", "codex.md"},
+		{"copilot", ".github/copilot-instructions.md"},
+		{"custom-thing", "custom-thing.md"},
+	}
+	for _, tt := range tests {
+		got := FilenameForInstruction(tt.name)
+		if got != tt.want {
+			t.Errorf("FilenameForInstruction(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestEffectiveMCPServers(t *testing.T) {
+	shared := SharedConfig{
+		MCPServers: []MCPServer{
+			{Name: "filesystem", Command: "npx", Args: []string{"-y", "@anthropic/mcp-server-filesystem"}},
+			{Name: "git", Command: "npx", Args: []string{"-y", "@anthropic/mcp-server-git"}},
+		},
+	}
+
+	// agent with no MCP servers gets all shared
+	a1 := Agent{Name: "a1", Provider: ProviderClaude}
+	servers := a1.EffectiveMCPServers(shared)
+	if len(servers) != 2 {
+		t.Fatalf("EffectiveMCPServers() len = %d, want 2", len(servers))
+	}
+
+	// agent with overlapping MCP server overrides shared
+	a2 := Agent{
+		Name:     "a2",
+		Provider: ProviderClaude,
+		MCPServers: []MCPServer{
+			{Name: "filesystem", Command: "custom-fs", Args: []string{"--custom"}},
+		},
+	}
+	servers = a2.EffectiveMCPServers(shared)
+	if len(servers) != 2 {
+		t.Fatalf("EffectiveMCPServers() len = %d, want 2", len(servers))
+	}
+	// first should be the agent-specific one
+	if servers[0].Command != "custom-fs" {
+		t.Errorf("servers[0].Command = %q, want %q", servers[0].Command, "custom-fs")
+	}
+	// second should be the non-overlapping shared one
+	if servers[1].Name != "git" {
+		t.Errorf("servers[1].Name = %q, want %q", servers[1].Name, "git")
+	}
+
+	// agent with unique MCP server adds to shared
+	a3 := Agent{
+		Name:     "a3",
+		Provider: ProviderClaude,
+		MCPServers: []MCPServer{
+			{Name: "custom-tool", Command: "my-tool"},
+		},
+	}
+	servers = a3.EffectiveMCPServers(shared)
+	if len(servers) != 3 {
+		t.Fatalf("EffectiveMCPServers() len = %d, want 3", len(servers))
+	}
+}
