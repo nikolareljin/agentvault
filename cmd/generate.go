@@ -520,10 +520,10 @@ func runGenerateAll(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Generate MCP config
+	// Generate MCP config to the default location
 	shared := v.SharedConfig()
 	if len(shared.MCPServers) > 0 {
-		if err := runGenerateMCP(cmd, []string{"-"}); err != nil {
+		if err := runGenerateMCP(cmd, nil); err != nil {
 			fmt.Printf("Warning: could not generate MCP config: %v\n", err)
 		} else {
 			generated++
