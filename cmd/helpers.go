@@ -4,10 +4,20 @@ import (
 	"fmt"
 	"os"
 
+	"path/filepath"
+
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"golang.org/x/term"
 )
+
+// resolveVaultPath returns the vault file path, respecting the --config flag.
+func resolveVaultPath() string {
+	if cfgDir, _ := rootCmd.Flags().GetString("config"); cfgDir != "" {
+		return filepath.Join(cfgDir, config.VaultFile)
+	}
+	return config.VaultPath()
+}
 
 // readPassword prompts for a password from the terminal without echo.
 // Uses golang.org/x/term to suppress input display for security.
@@ -23,10 +33,10 @@ func readPassword(prompt string) (string, error) {
 
 // openVault prompts for the master password and unlocks the vault.
 // This is the common entry point for all commands that need vault access.
-// It reads the vault path from config, checks existence, prompts for
-// the password, and returns the unlocked vault ready for operations.
+// It reads the vault path from config (respecting --config flag), checks
+// existence, prompts for the password, and returns the unlocked vault.
 func openVault() (*vault.Vault, error) {
-	vaultPath := config.VaultPath()
+	vaultPath := resolveVaultPath()
 	v := vault.New(vaultPath)
 	if !v.Exists() {
 		return nil, fmt.Errorf("vault not found at %s (run 'agentvault init' first)", vaultPath)

@@ -1,17 +1,27 @@
 // Package tui implements the interactive terminal UI for AgentVault.
 //
-// The TUI uses the Bubble Tea framework with four main tabs:
+// The TUI uses the Bubble Tea framework with six main tabs:
 //  1. Agents:       List/detail view of configured agents
 //  2. Instructions: Stored instruction files (AGENTS.md, CLAUDE.md, etc.)
-//  3. Detected:     Auto-detected AI CLI tools on the system
-//  4. Status:       Vault info, provider configs, and system overview
+//  3. Rules:        Unified rules that apply across all agents
+//  4. Sessions:     Multi-agent work sessions
+//  5. Detected:     Auto-detected AI CLI tools on the system
+//  6. Status:       Vault info, provider configs, and system overview
 //
 // Navigation follows vim-style keybindings (h/j/k/l) with Tab cycling
 // between tabs and / for search/filter in the Agents tab.
+//
+// Interactive actions:
+//   - d: Delete selected agent or rule (with confirmation)
+//   - e: Edit selected instruction in external editor ($EDITOR, nano, vi)
+//   - a: Add detected agent to vault (Detected tab)
 package tui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,6 +43,7 @@ var (
 	helpStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	errorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
 	successStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("82"))
+	warnStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	tabActiveStyle   = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("62")).Foreground(lipgloss.Color("255")).Padding(0, 2)
 	tabInactiveStyle = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("252")).Padding(0, 2)
 	boxStyle         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(1, 2)
@@ -45,9 +56,14 @@ const (
 	viewAgentDetail
 	viewInstructions
 	viewInstructionDetail
+	viewRules
+	viewRuleDetail
+	viewSessions
+	viewSessionDetail
 	viewDetected
 	viewStatus
 	viewHelp
+	viewConfirmDelete
 )
 
 type tab int
@@ -55,9 +71,13 @@ type tab int
 const (
 	tabAgents tab = iota
 	tabInstructions
+	tabRules
+	tabSessions
 	tabDetected
 	tabStatus
 )
+
+const numTabs = 6
 
 // DetectedAgentInfo represents a detected agent for display.
 type DetectedAgentInfo struct {
@@ -68,6 +88,13 @@ type DetectedAgentInfo struct {
 	Status    string
 	InVault   bool
 	ConfigDir string
+}
+
+// editorFinishedMsg is sent when the external editor exits.
+type editorFinishedMsg struct {
+	err     error
+	tmpPath string
+	name    string
 }
 
 // model is the Bubble Tea application state.
@@ -84,9 +111,12 @@ type model struct {
 	// UI navigation state
 	activeTab      tab
 	mode           viewMode
-	cursor         int // Agents tab cursor
-	instCursor     int // Instructions tab cursor
-	detectedCursor int // Detected tab cursor
+	prevMode       viewMode // for returning from confirm/help
+	cursor         int      // Agents tab cursor
+	instCursor     int      // Instructions tab cursor
+	ruleCursor     int      // Rules tab cursor
+	sessionCursor  int      // Sessions tab cursor
+	detectedCursor int      // Detected tab cursor
 
 	// Terminal dimensions (updated on resize)
 	width    int
@@ -97,6 +127,14 @@ type model struct {
 	searchMode     bool
 	searchQuery    string
 	filteredAgents []int // indices into agents slice
+
+	// Delete confirmation state
+	deleteTarget string // name of item to delete
+	deleteType   string // "agent", "rule", "instruction"
+
+	// Editor state
+	editingInst string // name of instruction being edited
+	editTmpPath string // temp file path for editor
 
 	// Temporary status messages (auto-clear after 3 seconds)
 	statusMsg     string
@@ -119,47 +157,59 @@ func initialModel(v *vault.Vault) model {
 		m.filteredAgents[i] = i
 	}
 	m.detected = detectAgentsForTUI()
+	m.markDetectedInVault()
 	return m
 }
 
+func (m *model) markDetectedInVault() {
+	for i, d := range m.detected {
+		m.detected[i].InVault = false
+		for _, a := range m.agents {
+			if a.Name == d.Name || string(a.Provider) == d.Provider {
+				m.detected[i].InVault = true
+				break
+			}
+		}
+	}
+}
+
+func (m *model) refresh() {
+	m.agents = m.vault.List()
+	m.shared = m.vault.SharedConfig()
+	m.instructions = m.vault.ListInstructions()
+	m.detected = detectAgentsForTUI()
+	m.providerCfgs = m.vault.ProviderConfigs()
+	m.markDetectedInVault()
+	m.updateFilteredAgents()
+}
+
 func detectAgentsForTUI() []DetectedAgentInfo {
-	// Simplified detection for TUI display
 	var detected []DetectedAgentInfo
 
-	// Check for Claude
-	if path := findExecutable("claude"); path != "" {
-		version := getVersion("claude", "--version")
-		detected = append(detected, DetectedAgentInfo{
-			Name:     "claude",
-			Provider: "claude",
-			Version:  version,
-			Path:     path,
-			Status:   "installed",
-		})
+	agents := []struct {
+		name     string
+		provider string
+	}{
+		{"claude", "claude"},
+		{"codex", "codex"},
+		{"ollama", "ollama"},
+		{"aider", "aider"},
+		{"meldbot", "meldbot"},
+		{"openclaw", "openclaw"},
+		{"nanoclaw", "nanoclaw"},
 	}
 
-	// Check for Codex
-	if path := findExecutable("codex"); path != "" {
-		version := getVersion("codex", "--version")
-		detected = append(detected, DetectedAgentInfo{
-			Name:     "codex",
-			Provider: "codex",
-			Version:  version,
-			Path:     path,
-			Status:   "installed",
-		})
-	}
-
-	// Check for Ollama
-	if path := findExecutable("ollama"); path != "" {
-		version := getVersion("ollama", "--version")
-		detected = append(detected, DetectedAgentInfo{
-			Name:     "ollama",
-			Provider: "ollama",
-			Version:  version,
-			Path:     path,
-			Status:   "installed",
-		})
+	for _, ag := range agents {
+		if path := findExecutable(ag.name); path != "" {
+			version := getVersion(ag.name, "--version")
+			detected = append(detected, DetectedAgentInfo{
+				Name:     ag.name,
+				Provider: ag.provider,
+				Version:  version,
+				Path:     path,
+				Status:   "installed",
+			})
+		}
 	}
 
 	return detected
@@ -174,10 +224,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case editorFinishedMsg:
+		return m.handleEditorFinished(msg)
+
 	case tea.KeyMsg:
 		// Clear old status messages
 		if time.Since(m.statusTime) > 3*time.Second {
 			m.statusMsg = ""
+		}
+
+		// Handle delete confirmation mode
+		if m.mode == viewConfirmDelete {
+			return m.handleConfirmDelete(msg)
 		}
 
 		// Handle search mode
@@ -187,7 +245,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch msg.String() {
 		case "q", "ctrl+c":
-			if m.mode == viewAgentDetail || m.mode == viewInstructionDetail {
+			if m.mode == viewAgentDetail || m.mode == viewInstructionDetail ||
+				m.mode == viewRuleDetail || m.mode == viewSessionDetail {
 				m.mode = m.getModeForTab()
 				return m, nil
 			}
@@ -199,25 +258,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "esc":
-			if m.mode == viewAgentDetail || m.mode == viewInstructionDetail || m.mode == viewHelp {
+			if m.mode == viewAgentDetail || m.mode == viewInstructionDetail ||
+				m.mode == viewRuleDetail || m.mode == viewSessionDetail ||
+				m.mode == viewHelp {
 				m.mode = m.getModeForTab()
 				return m, nil
 			}
 
-		case "tab", "l":
-			m.activeTab = (m.activeTab + 1) % 4
+		case "tab":
+			m.activeTab = (m.activeTab + 1) % numTabs
 			m.mode = m.getModeForTab()
-			m.cursor = 0
 			return m, nil
 
-		case "shift+tab", "h":
+		case "shift+tab":
 			if m.activeTab == 0 {
-				m.activeTab = 3
+				m.activeTab = tab(numTabs - 1)
 			} else {
 				m.activeTab--
 			}
 			m.mode = m.getModeForTab()
-			m.cursor = 0
 			return m, nil
 
 		case "1":
@@ -229,10 +288,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = viewInstructions
 			return m, nil
 		case "3":
+			m.activeTab = tabRules
+			m.mode = viewRules
+			return m, nil
+		case "4":
+			m.activeTab = tabSessions
+			m.mode = viewSessions
+			return m, nil
+		case "5":
 			m.activeTab = tabDetected
 			m.mode = viewDetected
 			return m, nil
-		case "4":
+		case "6":
 			m.activeTab = tabStatus
 			m.mode = viewStatus
 			return m, nil
@@ -257,14 +324,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			return m.handleEnter(), nil
 
+		case "d":
+			return m.handleDelete()
+
+		case "e":
+			return m.handleEdit()
+
+		case "a":
+			return m.handleAdd()
+
 		case "r":
-			// Refresh
-			m.agents = m.vault.List()
-			m.shared = m.vault.SharedConfig()
-			m.instructions = m.vault.ListInstructions()
-			m.detected = detectAgentsForTUI()
-			m.providerCfgs = m.vault.ProviderConfigs()
-			m.updateFilteredAgents()
+			m.refresh()
 			m.setStatus("Refreshed", false)
 			return m, nil
 		}
@@ -328,6 +398,14 @@ func (m *model) handleNavUp() model {
 		if m.mode == viewInstructions && m.instCursor > 0 {
 			m.instCursor--
 		}
+	case tabRules:
+		if m.mode == viewRules && m.ruleCursor > 0 {
+			m.ruleCursor--
+		}
+	case tabSessions:
+		if m.mode == viewSessions && m.sessionCursor > 0 {
+			m.sessionCursor--
+		}
 	case tabDetected:
 		if m.mode == viewDetected && m.detectedCursor > 0 {
 			m.detectedCursor--
@@ -345,6 +423,15 @@ func (m *model) handleNavDown() model {
 	case tabInstructions:
 		if m.mode == viewInstructions && m.instCursor < len(m.instructions)-1 {
 			m.instCursor++
+		}
+	case tabRules:
+		if m.mode == viewRules && m.ruleCursor < len(m.shared.Rules)-1 {
+			m.ruleCursor++
+		}
+	case tabSessions:
+		sessions := m.vault.Sessions()
+		if m.mode == viewSessions && m.sessionCursor < len(sessions.Sessions)-1 {
+			m.sessionCursor++
 		}
 	case tabDetected:
 		if m.mode == viewDetected && m.detectedCursor < len(m.detected)-1 {
@@ -364,8 +451,220 @@ func (m *model) handleEnter() model {
 		if m.mode == viewInstructions && len(m.instructions) > 0 {
 			m.mode = viewInstructionDetail
 		}
+	case tabRules:
+		if m.mode == viewRules && len(m.shared.Rules) > 0 {
+			m.mode = viewRuleDetail
+		}
+	case tabSessions:
+		sessions := m.vault.Sessions()
+		if m.mode == viewSessions && len(sessions.Sessions) > 0 {
+			m.mode = viewSessionDetail
+		}
 	}
 	return *m
+}
+
+// handleDelete initiates a delete confirmation for the selected item.
+func (m *model) handleDelete() (tea.Model, tea.Cmd) {
+	switch m.activeTab {
+	case tabAgents:
+		if m.mode == viewAgentList && len(m.filteredAgents) > 0 && m.cursor < len(m.filteredAgents) {
+			a := m.agents[m.filteredAgents[m.cursor]]
+			m.deleteTarget = a.Name
+			m.deleteType = "agent"
+			m.prevMode = m.mode
+			m.mode = viewConfirmDelete
+		}
+	case tabInstructions:
+		if m.mode == viewInstructions && len(m.instructions) > 0 && m.instCursor < len(m.instructions) {
+			m.deleteTarget = m.instructions[m.instCursor].Name
+			m.deleteType = "instruction"
+			m.prevMode = m.mode
+			m.mode = viewConfirmDelete
+		}
+	case tabRules:
+		if m.mode == viewRules && len(m.shared.Rules) > 0 && m.ruleCursor < len(m.shared.Rules) {
+			m.deleteTarget = m.shared.Rules[m.ruleCursor].Name
+			m.deleteType = "rule"
+			m.prevMode = m.mode
+			m.mode = viewConfirmDelete
+		}
+	}
+	return m, nil
+}
+
+// handleConfirmDelete processes Y/N on the delete confirmation screen.
+func (m *model) handleConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		var err error
+		switch m.deleteType {
+		case "agent":
+			err = m.vault.Remove(m.deleteTarget)
+		case "instruction":
+			err = m.vault.RemoveInstruction(m.deleteTarget)
+		case "rule":
+			shared := m.vault.SharedConfig()
+			idx := -1
+			for i, r := range shared.Rules {
+				if r.Name == m.deleteTarget {
+					idx = i
+					break
+				}
+			}
+			if idx >= 0 {
+				shared.Rules = append(shared.Rules[:idx], shared.Rules[idx+1:]...)
+				err = m.vault.SetSharedConfig(shared)
+			}
+		}
+		if err != nil {
+			m.setStatus(fmt.Sprintf("Error: %v", err), true)
+		} else {
+			m.setStatus(fmt.Sprintf("Deleted %s %q", m.deleteType, m.deleteTarget), false)
+			m.refresh()
+			// Reset cursors to stay in bounds
+			if m.cursor >= len(m.filteredAgents) && m.cursor > 0 {
+				m.cursor--
+			}
+			if m.instCursor >= len(m.instructions) && m.instCursor > 0 {
+				m.instCursor--
+			}
+			if m.ruleCursor >= len(m.shared.Rules) && m.ruleCursor > 0 {
+				m.ruleCursor--
+			}
+		}
+		m.mode = m.prevMode
+	case "n", "N", "esc":
+		m.mode = m.prevMode
+	}
+	return m, nil
+}
+
+// handleEdit opens the selected instruction in an external editor.
+func (m *model) handleEdit() (tea.Model, tea.Cmd) {
+	if m.activeTab != tabInstructions || m.mode != viewInstructions {
+		return m, nil
+	}
+	if len(m.instructions) == 0 || m.instCursor >= len(m.instructions) {
+		return m, nil
+	}
+
+	inst := m.instructions[m.instCursor]
+	editor := findEditorPath()
+	if editor == "" {
+		m.setStatus("No editor found (set $EDITOR, or install nano/vi)", true)
+		return m, nil
+	}
+
+	// Write to temp file
+	tmpFile, err := os.CreateTemp("", "agentvault-*.md")
+	if err != nil {
+		m.setStatus(fmt.Sprintf("Error: %v", err), true)
+		return m, nil
+	}
+	if _, err := tmpFile.WriteString(inst.Content); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		m.setStatus(fmt.Sprintf("Error: %v", err), true)
+		return m, nil
+	}
+	tmpFile.Close()
+
+	m.editingInst = inst.Name
+	m.editTmpPath = tmpFile.Name()
+
+	// Launch editor via tea.ExecProcess
+	c := exec.Command(editor, tmpFile.Name())
+	return m, tea.ExecProcess(c, func(err error) tea.Msg {
+		return editorFinishedMsg{err: err, tmpPath: tmpFile.Name(), name: inst.Name}
+	})
+}
+
+// handleEditorFinished processes the result after the editor closes.
+func (m *model) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd) {
+	defer os.Remove(msg.tmpPath)
+
+	if msg.err != nil {
+		m.setStatus(fmt.Sprintf("Editor error: %v", msg.err), true)
+		return m, nil
+	}
+
+	edited, err := os.ReadFile(msg.tmpPath)
+	if err != nil {
+		m.setStatus(fmt.Sprintf("Read error: %v", err), true)
+		return m, nil
+	}
+
+	inst, ok := m.vault.GetInstruction(msg.name)
+	if !ok {
+		m.setStatus(fmt.Sprintf("Instruction %q not found", msg.name), true)
+		return m, nil
+	}
+
+	newContent := string(edited)
+	if newContent == inst.Content {
+		m.setStatus("No changes", false)
+		return m, nil
+	}
+
+	inst.Content = newContent
+	inst.UpdatedAt = time.Now()
+	if err := m.vault.SetInstruction(inst); err != nil {
+		m.setStatus(fmt.Sprintf("Save error: %v", err), true)
+		return m, nil
+	}
+
+	m.refresh()
+	m.setStatus(fmt.Sprintf("Updated %q (%d bytes)", msg.name, len(newContent)), false)
+	return m, nil
+}
+
+// handleAdd adds a detected agent to the vault (Detected tab).
+func (m *model) handleAdd() (tea.Model, tea.Cmd) {
+	if m.activeTab != tabDetected || m.mode != viewDetected {
+		return m, nil
+	}
+	if len(m.detected) == 0 || m.detectedCursor >= len(m.detected) {
+		return m, nil
+	}
+
+	d := m.detected[m.detectedCursor]
+	if d.InVault {
+		m.setStatus(fmt.Sprintf("%s is already in vault", d.Name), false)
+		return m, nil
+	}
+
+	newAgent := agent.Agent{
+		Name:      d.Name,
+		Provider:  agent.Provider(d.Provider),
+		Tags:      []string{"auto-detected"},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := m.vault.Add(newAgent); err != nil {
+		m.setStatus(fmt.Sprintf("Error: %v", err), true)
+		return m, nil
+	}
+
+	m.refresh()
+	m.setStatus(fmt.Sprintf("Added %s to vault", d.Name), false)
+	return m, nil
+}
+
+// findEditorPath returns the path to a suitable text editor.
+func findEditorPath() string {
+	if editor := os.Getenv("EDITOR"); editor != "" {
+		if path, err := exec.LookPath(editor); err == nil {
+			return path
+		}
+	}
+	for _, name := range []string{"nano", "vi", "vim"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
+		}
+	}
+	return ""
 }
 
 func (m *model) getModeForTab() viewMode {
@@ -374,6 +673,10 @@ func (m *model) getModeForTab() viewMode {
 		return viewAgentList
 	case tabInstructions:
 		return viewInstructions
+	case tabRules:
+		return viewRules
+	case tabSessions:
+		return viewSessions
 	case tabDetected:
 		return viewDetected
 	case tabStatus:
@@ -387,6 +690,10 @@ func (m *model) setStatus(msg string, isError bool) {
 	m.statusIsError = isError
 	m.statusTime = time.Now()
 }
+
+// ──────────────────────────────────────────────────────────────────
+// View rendering
+// ──────────────────────────────────────────────────────────────────
 
 func (m model) View() string {
 	if m.quitting {
@@ -409,12 +716,22 @@ func (m model) View() string {
 		b.WriteString(m.renderInstructions())
 	case viewInstructionDetail:
 		b.WriteString(m.renderInstructionDetail())
+	case viewRules:
+		b.WriteString(m.renderRules())
+	case viewRuleDetail:
+		b.WriteString(m.renderRuleDetail())
+	case viewSessions:
+		b.WriteString(m.renderSessions())
+	case viewSessionDetail:
+		b.WriteString(m.renderSessionDetail())
 	case viewDetected:
 		b.WriteString(m.renderDetected())
 	case viewStatus:
 		b.WriteString(m.renderStatus())
 	case viewHelp:
 		b.WriteString(m.renderHelp())
+	case viewConfirmDelete:
+		b.WriteString(m.renderConfirmDelete())
 	}
 
 	// Status bar
@@ -437,7 +754,7 @@ func (m model) View() string {
 func (m model) renderHeader() string {
 	title := titleStyle.Render("AgentVault")
 
-	tabs := []string{"Agents", "Instructions", "Detected", "Status"}
+	tabs := []string{"Agents", "Instructions", "Rules", "Sessions", "Detected", "Status"}
 	var tabBar strings.Builder
 	for i, t := range tabs {
 		if tab(i) == m.activeTab {
@@ -448,7 +765,7 @@ func (m model) renderHeader() string {
 		tabBar.WriteString(" ")
 	}
 
-	return fmt.Sprintf("%s    %s", title, tabBar.String())
+	return fmt.Sprintf("%s  %s", title, tabBar.String())
 }
 
 func (m model) renderAgentList() string {
@@ -458,7 +775,7 @@ func (m model) renderAgentList() string {
 	if m.searchMode {
 		b.WriteString(subtitleStyle.Render("Search: "))
 		b.WriteString(m.searchQuery)
-		b.WriteString("█")
+		b.WriteString("_")
 		b.WriteString("\n\n")
 	} else if m.searchQuery != "" {
 		b.WriteString(dimStyle.Render(fmt.Sprintf("Filter: %s", m.searchQuery)))
@@ -469,17 +786,17 @@ func (m model) renderAgentList() string {
 		if m.searchQuery != "" {
 			b.WriteString(dimStyle.Render("  No agents match the filter."))
 		} else {
-			b.WriteString(dimStyle.Render("  No agents configured. Use 'agentvault add' to get started."))
+			b.WriteString(dimStyle.Render("  No agents configured. Use 'agentvault add' or detect tab."))
 		}
 		b.WriteString("\n")
 		return b.String()
 	}
 
 	// Column headers
-	header := fmt.Sprintf("  %-20s  %-10s  %-20s  %s", "NAME", "PROVIDER", "MODEL", "TAGS")
+	header := fmt.Sprintf("  %-20s  %-10s  %-20s  %-12s  %s", "NAME", "PROVIDER", "MODEL", "ROLE", "TAGS")
 	b.WriteString(dimStyle.Render(header))
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  " + strings.Repeat("─", 70)))
+	b.WriteString(dimStyle.Render("  " + strings.Repeat("─", 80)))
 	b.WriteString("\n")
 
 	for i, idx := range m.filteredAgents {
@@ -497,7 +814,12 @@ func (m model) renderAgentList() string {
 				tags = tags[:12] + "..."
 			}
 		}
-		line := fmt.Sprintf("%s%-20s  %-10s  %-20s  %s", cursor, truncate(a.Name, 20), a.Provider, truncate(a.Model, 20), tags)
+		role := a.Role
+		if role == "" {
+			role = "-"
+		}
+		line := fmt.Sprintf("%s%-20s  %-10s  %-20s  %-12s  %s",
+			cursor, truncate(a.Name, 20), a.Provider, truncate(a.Model, 20), truncate(role, 12), tags)
 		b.WriteString(style.Render(line))
 		b.WriteString("\n")
 	}
@@ -549,6 +871,7 @@ func (m model) renderAgentDetail() string {
 	}
 
 	field("Base URL", a.BaseURL)
+	field("Role", a.Role)
 
 	effectivePrompt := a.EffectiveSystemPrompt(m.shared)
 	if effectivePrompt != "" {
@@ -569,6 +892,10 @@ func (m model) renderAgentDetail() string {
 		field("Tags", "")
 	}
 
+	if len(a.DisabledRules) > 0 {
+		field("Disabled Rules", strings.Join(a.DisabledRules, ", "))
+	}
+
 	// MCP servers
 	mcpServers := a.EffectiveMCPServers(m.shared)
 	if len(mcpServers) > 0 {
@@ -585,7 +912,7 @@ func (m model) renderAgentDetail() string {
 			if isShared {
 				origin = dimStyle.Render(" (shared)")
 			}
-			b.WriteString(fmt.Sprintf("    • %s: %s %s%s\n", s.Name, s.Command, strings.Join(s.Args, " "), origin))
+			b.WriteString(fmt.Sprintf("    - %s: %s %s%s\n", s.Name, s.Command, strings.Join(s.Args, " "), origin))
 		}
 	}
 
@@ -666,6 +993,208 @@ func (m model) renderInstructionDetail() string {
 	return b.String()
 }
 
+func (m model) renderRules() string {
+	var b strings.Builder
+
+	rules := m.shared.Rules
+	if len(rules) == 0 {
+		b.WriteString(dimStyle.Render("  No rules configured."))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Use 'agentvault rules init' to add default rules."))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Sort by priority for display
+	sorted := make([]agent.UnifiedRule, len(rules))
+	copy(sorted, rules)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Priority < sorted[j].Priority
+	})
+
+	header := fmt.Sprintf("  %-25s  %-10s  %-8s  %-8s  %s", "NAME", "CATEGORY", "PRIORITY", "STATUS", "DESCRIPTION")
+	b.WriteString(dimStyle.Render(header))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  " + strings.Repeat("─", 85)))
+	b.WriteString("\n")
+
+	for i, r := range sorted {
+		cursor := "  "
+		style := normalStyle
+		if i == m.ruleCursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+
+		status := successStyle.Render("ON ")
+		if !r.Enabled {
+			status = dimStyle.Render("OFF")
+		}
+
+		line := fmt.Sprintf("%s%-25s  %-10s  %-8d  %s  %s",
+			cursor, truncate(r.Name, 25), truncate(r.Category, 10), r.Priority, status, truncate(r.Description, 30))
+		b.WriteString(style.Render(line))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func (m model) renderRuleDetail() string {
+	rules := m.shared.Rules
+	if m.ruleCursor >= len(rules) {
+		return ""
+	}
+
+	// Sort to match display order
+	sorted := make([]agent.UnifiedRule, len(rules))
+	copy(sorted, rules)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Priority < sorted[j].Priority
+	})
+	r := sorted[m.ruleCursor]
+
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render(fmt.Sprintf("Rule: %s", r.Name)))
+	b.WriteString("\n\n")
+
+	field := func(label, value string) {
+		if value == "" {
+			value = dimStyle.Render("(not set)")
+		}
+		b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render(fmt.Sprintf("%-14s", label+":")), value))
+	}
+
+	field("Category", r.Category)
+	field("Priority", fmt.Sprintf("%d", r.Priority))
+	if r.Enabled {
+		field("Status", successStyle.Render("Enabled"))
+	} else {
+		field("Status", warnStyle.Render("Disabled"))
+	}
+	field("Description", r.Description)
+
+	b.WriteString(fmt.Sprintf("\n  %s\n", labelStyle.Render("Content:")))
+	for _, line := range strings.Split(r.Content, "\n") {
+		b.WriteString(fmt.Sprintf("    %s\n", line))
+	}
+
+	if !r.CreatedAt.IsZero() {
+		b.WriteString(fmt.Sprintf("\n  %s  %s\n", dimStyle.Render("Created:"), r.CreatedAt.Format("2006-01-02 15:04")))
+	}
+	if !r.UpdatedAt.IsZero() {
+		b.WriteString(fmt.Sprintf("  %s  %s\n", dimStyle.Render("Updated:"), r.UpdatedAt.Format("2006-01-02 15:04")))
+	}
+
+	return b.String()
+}
+
+func (m model) renderSessions() string {
+	var b strings.Builder
+
+	sessions := m.vault.Sessions()
+	if len(sessions.Sessions) == 0 {
+		b.WriteString(dimStyle.Render("  No sessions configured."))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Use 'agentvault session create' to create one."))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	header := fmt.Sprintf("  %-20s  %-12s  %-10s  %-30s  %s", "NAME", "STATUS", "AGENTS", "PROJECT", "ROLE")
+	b.WriteString(dimStyle.Render(header))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  " + strings.Repeat("─", 85)))
+	b.WriteString("\n")
+
+	for i, s := range sessions.Sessions {
+		cursor := "  "
+		style := normalStyle
+		if i == m.sessionCursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+
+		active := ""
+		if s.ID == sessions.ActiveSession {
+			active = " *"
+		}
+
+		projectDir := s.ProjectDir
+		if len(projectDir) > 28 {
+			projectDir = "..." + projectDir[len(projectDir)-25:]
+		}
+
+		role := s.ActiveRole
+		if role == "" {
+			role = "-"
+		}
+
+		line := fmt.Sprintf("%s%-20s  %-12s  %-10d  %-30s  %s%s",
+			cursor, truncate(s.Name, 20), s.Status, len(s.Agents), projectDir, role, active)
+		b.WriteString(style.Render(line))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  * = active session"))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+func (m model) renderSessionDetail() string {
+	sessions := m.vault.Sessions()
+	if m.sessionCursor >= len(sessions.Sessions) {
+		return ""
+	}
+	s := sessions.Sessions[m.sessionCursor]
+
+	var b strings.Builder
+
+	b.WriteString(titleStyle.Render(fmt.Sprintf("Session: %s", s.Name)))
+	b.WriteString("\n\n")
+
+	field := func(label, value string) {
+		if value == "" {
+			value = dimStyle.Render("(not set)")
+		}
+		b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render(fmt.Sprintf("%-14s", label+":")), value))
+	}
+
+	field("ID", s.ID)
+	field("Status", string(s.Status))
+	field("Project", s.ProjectDir)
+	field("Role", s.ActiveRole)
+
+	b.WriteString(fmt.Sprintf("\n  %s\n", labelStyle.Render("Agents:")))
+	for _, a := range s.Agents {
+		status := dimStyle.Render("○")
+		if a.Enabled {
+			status = successStyle.Render("●")
+		}
+		role := ""
+		if a.Role != "" {
+			role = fmt.Sprintf(" [%s]", a.Role)
+		}
+		task := ""
+		if a.Task != "" {
+			task = fmt.Sprintf(" - %s", a.Task)
+		}
+		b.WriteString(fmt.Sprintf("    %s %s%s%s\n", status, a.Name, role, task))
+	}
+
+	if !s.CreatedAt.IsZero() {
+		b.WriteString(fmt.Sprintf("\n  %s  %s\n", dimStyle.Render("Created:"), s.CreatedAt.Format("2006-01-02 15:04")))
+	}
+	if !s.UpdatedAt.IsZero() {
+		b.WriteString(fmt.Sprintf("  %s  %s\n", dimStyle.Render("Updated:"), s.UpdatedAt.Format("2006-01-02 15:04")))
+	}
+
+	return b.String()
+}
+
 func (m model) renderDetected() string {
 	var b strings.Builder
 
@@ -701,7 +1230,7 @@ func (m model) renderDetected() string {
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render("  ● = in vault    ○ = not in vault"))
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  Use 'agentvault detect add' to add detected agents to vault."))
+	b.WriteString(dimStyle.Render("  Press 'a' to add selected agent to vault."))
 	b.WriteString("\n")
 
 	return b.String()
@@ -719,7 +1248,12 @@ func (m model) renderStatus() string {
 	b.WriteString(fmt.Sprintf("    Path:         %s\n", m.vault.Path()))
 	b.WriteString(fmt.Sprintf("    Agents:       %d\n", len(m.agents)))
 	b.WriteString(fmt.Sprintf("    Instructions: %d\n", len(m.instructions)))
+	b.WriteString(fmt.Sprintf("    Rules:        %d\n", len(m.shared.Rules)))
+	b.WriteString(fmt.Sprintf("    Roles:        %d\n", len(m.shared.Roles)))
 	b.WriteString(fmt.Sprintf("    MCP Servers:  %d (shared)\n", len(m.shared.MCPServers)))
+
+	sessions := m.vault.Sessions()
+	b.WriteString(fmt.Sprintf("    Sessions:     %d\n", len(sessions.Sessions)))
 
 	// Provider configs
 	b.WriteString("\n")
@@ -752,7 +1286,7 @@ func (m model) renderStatus() string {
 	b.WriteString(labelStyle.Render("  Detected Agents:"))
 	b.WriteString("\n")
 	for _, d := range m.detected {
-		status := successStyle.Render("✓")
+		status := successStyle.Render("v")
 		vaultNote := ""
 		if !d.InVault {
 			vaultNote = dimStyle.Render(" (not in vault)")
@@ -764,6 +1298,21 @@ func (m model) renderStatus() string {
 		b.WriteString("\n")
 	}
 
+	return b.String()
+}
+
+func (m model) renderConfirmDelete() string {
+	var b strings.Builder
+	b.WriteString(warnStyle.Render(fmt.Sprintf("  Delete %s %q?", m.deleteType, m.deleteTarget)))
+	b.WriteString("\n\n")
+	b.WriteString("  Press ")
+	b.WriteString(selectedStyle.Render("y"))
+	b.WriteString(" to confirm, ")
+	b.WriteString(selectedStyle.Render("n"))
+	b.WriteString(" or ")
+	b.WriteString(selectedStyle.Render("esc"))
+	b.WriteString(" to cancel.")
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -780,10 +1329,10 @@ func (m model) renderHelp() string {
 		{
 			title: "Navigation",
 			keys: [][]string{
-				{"Tab / l", "Next tab"},
-				{"Shift+Tab / h", "Previous tab"},
-				{"1-4", "Jump to tab"},
-				{"j/k or ↓/↑", "Move cursor"},
+				{"Tab", "Next tab"},
+				{"Shift+Tab", "Previous tab"},
+				{"1-6", "Jump to tab"},
+				{"j/k or Up/Down", "Move cursor"},
 				{"Enter", "View details"},
 				{"Esc", "Back / Close"},
 				{"q", "Quit"},
@@ -793,7 +1342,26 @@ func (m model) renderHelp() string {
 			title: "Agents Tab",
 			keys: [][]string{
 				{"/", "Search/filter agents"},
-				{"Enter", "View agent details"},
+				{"d", "Delete selected agent"},
+			},
+		},
+		{
+			title: "Instructions Tab",
+			keys: [][]string{
+				{"e", "Edit in external editor"},
+				{"d", "Delete selected instruction"},
+			},
+		},
+		{
+			title: "Rules Tab",
+			keys: [][]string{
+				{"d", "Delete selected rule"},
+			},
+		},
+		{
+			title: "Detected Tab",
+			keys: [][]string{
+				{"a", "Add agent to vault"},
 			},
 		},
 		{
@@ -820,15 +1388,28 @@ func (m model) renderHelp() string {
 func (m model) renderHelpBar() string {
 	var help string
 	switch m.mode {
-	case viewAgentDetail, viewInstructionDetail:
+	case viewAgentDetail, viewInstructionDetail, viewRuleDetail, viewSessionDetail:
 		help = "esc: back  q: quit"
 	case viewHelp:
 		help = "esc: back  q: quit"
+	case viewConfirmDelete:
+		help = "y: confirm  n/esc: cancel"
 	default:
 		if m.searchMode {
 			help = "enter: apply filter  esc: cancel"
 		} else {
-			help = "tab: switch tabs  /: search  ?: help  q: quit"
+			switch m.activeTab {
+			case tabAgents:
+				help = "tab: tabs  /: search  d: delete  enter: detail  ?: help  q: quit"
+			case tabInstructions:
+				help = "tab: tabs  e: edit  d: delete  enter: detail  ?: help  q: quit"
+			case tabRules:
+				help = "tab: tabs  d: delete  enter: detail  ?: help  q: quit"
+			case tabDetected:
+				help = "tab: tabs  a: add to vault  ?: help  q: quit"
+			default:
+				help = "tab: switch tabs  ?: help  q: quit"
+			}
 		}
 	}
 	return helpStyle.Render("  " + help)
@@ -838,21 +1419,10 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
+	if max <= 3 {
+		return s[:max]
+	}
 	return s[:max-3] + "..."
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // Run starts the TUI application with an unlocked vault.

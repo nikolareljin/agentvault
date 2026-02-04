@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -13,7 +12,7 @@ var initCmd = &cobra.Command{
 	Short: "Initialize a new AgentVault in the default config directory",
 	Long:  `Creates ~/.config/agentvault/ with an empty encrypted vault file.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		vaultPath := config.VaultPath()
+		vaultPath := resolveVaultPath()
 		v := vault.New(vaultPath)
 		if v.Exists() {
 			return fmt.Errorf("vault already exists at %s", vaultPath)
