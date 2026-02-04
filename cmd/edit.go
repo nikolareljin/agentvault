@@ -59,6 +59,20 @@ Example:
 			}
 			a.Tags = tags
 		}
+		if cmd.Flags().Changed("role") {
+			a.Role, _ = cmd.Flags().GetString("role")
+		}
+		if cmd.Flags().Changed("disable-rules") {
+			rulesStr, _ := cmd.Flags().GetString("disable-rules")
+			var rules []string
+			for _, r := range strings.Split(rulesStr, ",") {
+				r = strings.TrimSpace(r)
+				if r != "" {
+					rules = append(rules, r)
+				}
+			}
+			a.DisabledRules = rules
+		}
 
 		if err := a.Validate(); err != nil {
 			return err
@@ -81,4 +95,6 @@ func init() {
 	editCmd.Flags().String("system-prompt", "", "system prompt")
 	editCmd.Flags().String("task-desc", "", "task description")
 	editCmd.Flags().String("tags", "", "comma-separated tags")
+	editCmd.Flags().String("role", "", "role to apply (e.g., lead-engineer)")
+	editCmd.Flags().String("disable-rules", "", "comma-separated rules to disable for this agent")
 }
