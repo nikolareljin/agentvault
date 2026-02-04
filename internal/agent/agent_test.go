@@ -42,8 +42,8 @@ func TestValidate(t *testing.T) {
 
 func TestAllProviders(t *testing.T) {
 	providers := ValidProviders()
-	if len(providers) != 6 {
-		t.Errorf("ValidProviders() len = %d, want 6", len(providers))
+	if len(providers) != 10 {
+		t.Errorf("ValidProviders() len = %d, want 10", len(providers))
 	}
 	for _, p := range providers {
 		a := Agent{Name: "test", Provider: p}

@@ -1,3 +1,17 @@
+// Package vault implements the encrypted agent store.
+//
+// The vault file format is: [16-byte salt][AES-256-GCM encrypted JSON].
+// The JSON payload contains all agents, shared config, provider configs,
+// and sessions. The file is stored with mode 0600 for security.
+//
+// Workflow:
+//  1. Init() creates a new vault with a master password
+//  2. Unlock() decrypts an existing vault
+//  3. CRUD operations modify in-memory state
+//  4. Save() re-encrypts and persists to disk
+//
+// The vault supports a legacy format (plain agent array) for backward
+// compatibility with older versions.
 package vault
 
 import (
@@ -12,18 +26,23 @@ import (
 )
 
 // vaultData is the JSON structure persisted inside the encrypted file.
+// All fields are serialized together as a single encrypted blob.
 type vaultData struct {
-	Agents []agent.Agent      `json:"agents"`
-	Shared agent.SharedConfig `json:"shared"`
+	Agents          []agent.Agent        `json:"agents"`
+	Shared          agent.SharedConfig   `json:"shared"`
+	ProviderConfigs agent.ProviderConfig `json:"provider_configs,omitempty"`
+	Sessions        agent.SessionConfig  `json:"sessions,omitempty"`
 }
 
 // Vault represents the encrypted agent store.
 type Vault struct {
-	path   string
-	agents []agent.Agent
-	shared agent.SharedConfig
-	key    []byte // derived key, set after Init or Unlock
-	salt   []byte // persisted salt
+	path            string
+	agents          []agent.Agent
+	shared          agent.SharedConfig
+	providerConfigs agent.ProviderConfig
+	sessions        agent.SessionConfig
+	key             []byte // derived key, set after Init or Unlock
+	salt            []byte // persisted salt
 }
 
 // New creates a Vault instance at the given path.
@@ -63,6 +82,8 @@ func (v *Vault) Init(masterPassword string) error {
 	v.key = key
 	v.agents = []agent.Agent{}
 	v.shared = agent.SharedConfig{}
+	v.providerConfigs = agent.ProviderConfig{}
+	v.sessions = agent.SessionConfig{}
 	return v.write()
 }
 
@@ -99,6 +120,8 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.key = key
 	v.agents = vd.Agents
 	v.shared = vd.Shared
+	v.providerConfigs = vd.ProviderConfigs
+	v.sessions = vd.Sessions
 	return nil
 }
 
@@ -110,6 +133,87 @@ func (v *Vault) SharedConfig() agent.SharedConfig {
 // SetSharedConfig updates the shared configuration and persists.
 func (v *Vault) SetSharedConfig(sc agent.SharedConfig) error {
 	v.shared = sc
+	return v.Save()
+}
+
+// ProviderConfigs returns the vault's provider-specific configurations.
+func (v *Vault) ProviderConfigs() agent.ProviderConfig {
+	return v.providerConfigs
+}
+
+// SetProviderConfigs updates the provider configurations and persists.
+func (v *Vault) SetProviderConfigs(pc agent.ProviderConfig) error {
+	v.providerConfigs = pc
+	return v.Save()
+}
+
+// SetClaudeConfig updates Claude-specific configuration.
+func (v *Vault) SetClaudeConfig(cc *agent.ClaudeConfig) error {
+	v.providerConfigs.Claude = cc
+	return v.Save()
+}
+
+// SetCodexConfig updates Codex-specific configuration.
+func (v *Vault) SetCodexConfig(cc *agent.CodexConfig) error {
+	v.providerConfigs.Codex = cc
+	return v.Save()
+}
+
+// SetOllamaConfig updates Ollama-specific configuration.
+func (v *Vault) SetOllamaConfig(oc *agent.OllamaConfig) error {
+	v.providerConfigs.Ollama = oc
+	return v.Save()
+}
+
+// Sessions returns the vault's session configuration.
+func (v *Vault) Sessions() agent.SessionConfig {
+	return v.sessions
+}
+
+// SetSessions updates the session configuration and persists.
+func (v *Vault) SetSessions(sc agent.SessionConfig) error {
+	v.sessions = sc
+	return v.Save()
+}
+
+// GetSession returns a session by ID.
+func (v *Vault) GetSession(id string) (agent.Session, bool) {
+	return v.sessions.GetSession(id)
+}
+
+// GetSessionByName returns a session by name.
+func (v *Vault) GetSessionByName(name string) (agent.Session, bool) {
+	return v.sessions.GetSessionByName(name)
+}
+
+// AddSession adds a new session to the vault.
+func (v *Vault) AddSession(s agent.Session) error {
+	if _, exists := v.sessions.GetSession(s.ID); exists {
+		return fmt.Errorf("session %q already exists", s.ID)
+	}
+	v.sessions.AddSession(s)
+	return v.Save()
+}
+
+// UpdateSession updates an existing session.
+func (v *Vault) UpdateSession(s agent.Session) error {
+	if !v.sessions.UpdateSession(s) {
+		return fmt.Errorf("session %q not found", s.ID)
+	}
+	return v.Save()
+}
+
+// RemoveSession removes a session by ID.
+func (v *Vault) RemoveSession(id string) error {
+	if !v.sessions.RemoveSession(id) {
+		return fmt.Errorf("session %q not found", id)
+	}
+	return v.Save()
+}
+
+// SetActiveSession sets the currently active session.
+func (v *Vault) SetActiveSession(id string) error {
+	v.sessions.ActiveSession = id
 	return v.Save()
 }
 
@@ -219,12 +323,15 @@ func (v *Vault) ListInstructions() []agent.InstructionFile {
 
 // ExportData returns the vault contents as JSON (for export to a file).
 func (v *Vault) ExportData() ([]byte, error) {
-	vd := vaultData{Agents: v.agents, Shared: v.shared}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions}
 	return json.MarshalIndent(vd, "", "  ")
 }
 
 // ImportData merges agents and shared config from JSON into this vault.
-// Agents with duplicate names are skipped.
+// Agents with duplicate names are skipped. Shared config fields (system prompt,
+// MCP servers, instructions, provider configs, sessions) are merged using a
+// "don't overwrite existing" strategy -- the vault's current values take
+// precedence over imported values to prevent accidental data loss.
 func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err error) {
 	var vd vaultData
 	if err := json.Unmarshal(data, &vd); err != nil {
@@ -263,12 +370,40 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 			v.shared.Instructions = append(v.shared.Instructions, inst)
 		}
 	}
+	// merge provider configs (don't overwrite existing)
+	if v.providerConfigs.Claude == nil && vd.ProviderConfigs.Claude != nil {
+		v.providerConfigs.Claude = vd.ProviderConfigs.Claude
+	}
+	if v.providerConfigs.Codex == nil && vd.ProviderConfigs.Codex != nil {
+		v.providerConfigs.Codex = vd.ProviderConfigs.Codex
+	}
+	if v.providerConfigs.Ollama == nil && vd.ProviderConfigs.Ollama != nil {
+		v.providerConfigs.Ollama = vd.ProviderConfigs.Ollama
+	}
+	// merge sessions (don't overwrite existing by ID)
+	seenSessions := make(map[string]struct{})
+	for _, s := range v.sessions.Sessions {
+		seenSessions[s.ID] = struct{}{}
+	}
+	for _, s := range vd.Sessions.Sessions {
+		if _, ok := seenSessions[s.ID]; !ok {
+			v.sessions.Sessions = append(v.sessions.Sessions, s)
+		}
+	}
+	// merge session config
+	if len(v.sessions.DefaultAgents) == 0 && len(vd.Sessions.DefaultAgents) > 0 {
+		v.sessions.DefaultAgents = vd.Sessions.DefaultAgents
+	}
+	if v.sessions.ParallelLimit == 0 && vd.Sessions.ParallelLimit > 0 {
+		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
+	}
 	return imported, skipped, v.Save()
 }
 
-// write encrypts agents and writes the vault file.
+// write encrypts the entire vault state and writes it atomically to disk.
+// The output format is: [salt bytes][nonce + AES-256-GCM ciphertext].
 func (v *Vault) write() error {
-	vd := vaultData{Agents: v.agents, Shared: v.shared}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions}
 	plaintext, err := json.Marshal(vd)
 	if err != nil {
 		return fmt.Errorf("encoding vault: %w", err)

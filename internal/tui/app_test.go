@@ -89,8 +89,8 @@ func TestEnterDetailView(t *testing.T) {
 	m := initialModel(v)
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m2 := newModel.(model)
-	if m2.mode != viewDetail {
-		t.Errorf("after enter: mode = %d, want viewDetail", m2.mode)
+	if m2.mode != viewAgentDetail {
+		t.Errorf("after enter: mode = %d, want viewAgentDetail", m2.mode)
 	}
 	view := m2.View()
 	if !strings.Contains(view, "Agent: claude-main") {
@@ -104,11 +104,11 @@ func TestEnterDetailView(t *testing.T) {
 func TestEscBackToList(t *testing.T) {
 	v := testVault(t)
 	m := initialModel(v)
-	m.mode = viewDetail
+	m.mode = viewAgentDetail
 	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m2 := newModel.(model)
-	if m2.mode != viewList {
-		t.Errorf("after esc: mode = %d, want viewList", m2.mode)
+	if m2.mode != viewAgentList {
+		t.Errorf("after esc: mode = %d, want viewAgentList", m2.mode)
 	}
 }
 

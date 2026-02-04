@@ -10,6 +10,7 @@ import (
 )
 
 // readPassword prompts for a password from the terminal without echo.
+// Uses golang.org/x/term to suppress input display for security.
 func readPassword(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, prompt)
 	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -21,6 +22,9 @@ func readPassword(prompt string) (string, error) {
 }
 
 // openVault prompts for the master password and unlocks the vault.
+// This is the common entry point for all commands that need vault access.
+// It reads the vault path from config, checks existence, prompts for
+// the password, and returns the unlocked vault ready for operations.
 func openVault() (*vault.Vault, error) {
 	vaultPath := config.VaultPath()
 	v := vault.New(vaultPath)
