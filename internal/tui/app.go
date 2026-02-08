@@ -1,12 +1,13 @@
 // Package tui implements the interactive terminal UI for AgentVault.
 //
-// The TUI uses the Bubble Tea framework with six main tabs:
+// The TUI uses the Bubble Tea framework with seven main tabs:
 //  1. Agents:       List/detail view of configured agents
 //  2. Instructions: Stored instruction files (AGENTS.md, CLAUDE.md, etc.)
 //  3. Rules:        Unified rules that apply across all agents
 //  4. Sessions:     Multi-agent work sessions
 //  5. Detected:     Auto-detected AI CLI tools on the system
-//  6. Status:       Vault info, provider configs, and system overview
+//  6. Commands:     Run any AgentVault CLI command from inside the TUI
+//  7. Status:       Vault info, provider configs, and system overview
 //
 // Navigation follows vim-style keybindings (h/j/k/l) with Tab cycling
 // between tabs and / for search/filter in the Agents tab.
@@ -15,6 +16,7 @@
 //   - d: Delete selected agent or rule (with confirmation)
 //   - e: Edit selected instruction in external editor ($EDITOR, nano, vi)
 //   - a: Add detected agent to vault (Detected tab)
+//   - :: Run any CLI command (all CLI features available in TUI)
 package tui
 
 import (
@@ -24,6 +26,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -61,6 +64,7 @@ const (
 	viewSessions
 	viewSessionDetail
 	viewDetected
+	viewCommands
 	viewStatus
 	viewHelp
 	viewConfirmDelete
@@ -74,10 +78,11 @@ const (
 	tabRules
 	tabSessions
 	tabDetected
+	tabCommands
 	tabStatus
 )
 
-const numTabs = 6
+const numTabs = 7
 
 // DetectedAgentInfo represents a detected agent for display.
 type DetectedAgentInfo struct {
@@ -95,6 +100,12 @@ type editorFinishedMsg struct {
 	err     error
 	tmpPath string
 	name    string
+}
+
+// cliCommandFinishedMsg is sent after a CLI command exits.
+type cliCommandFinishedMsg struct {
+	command string
+	err     error
 }
 
 // model is the Bubble Tea application state.
@@ -127,6 +138,12 @@ type model struct {
 	searchMode     bool
 	searchQuery    string
 	filteredAgents []int // indices into agents slice
+
+	// CLI command mode (activated with ':')
+	commandMode    bool
+	commandQuery   string
+	lastCommand    string
+	commandRunning bool
 
 	// Delete confirmation state
 	deleteTarget string // name of item to delete
@@ -227,6 +244,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorFinishedMsg:
 		return m.handleEditorFinished(msg)
 
+	case cliCommandFinishedMsg:
+		m.commandRunning = false
+		m.commandMode = false
+		m.lastCommand = msg.command
+		if msg.err != nil {
+			m.setStatus(fmt.Sprintf("Command failed: %v", msg.err), true)
+		} else {
+			m.setStatus("Command completed", false)
+		}
+		m.refresh()
+		return m, nil
+
 	case tea.KeyMsg:
 		// Clear old status messages
 		if time.Since(m.statusTime) > 3*time.Second {
@@ -241,6 +270,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle search mode
 		if m.searchMode {
 			return m.handleSearchInput(msg)
+		}
+
+		// Handle command mode
+		if m.commandMode {
+			return m.handleCommandInput(msg)
 		}
 
 		switch msg.String() {
@@ -300,6 +334,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = viewDetected
 			return m, nil
 		case "6":
+			m.activeTab = tabCommands
+			m.mode = viewCommands
+			return m, nil
+		case "7":
 			m.activeTab = tabStatus
 			m.mode = viewStatus
 			return m, nil
@@ -313,6 +351,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchMode = true
 				m.searchQuery = ""
 			}
+			return m, nil
+
+		case ":", ";":
+			m.commandMode = true
+			m.commandQuery = ""
 			return m, nil
 
 		case "up", "k":
@@ -363,6 +406,115 @@ func (m *model) handleSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.commandMode = false
+		m.commandQuery = ""
+		return m, nil
+	case "backspace":
+		if len(m.commandQuery) > 0 {
+			m.commandQuery = m.commandQuery[:len(m.commandQuery)-1]
+		}
+		return m, nil
+	case "enter":
+		query := strings.TrimSpace(m.commandQuery)
+		if query == "" {
+			m.commandMode = false
+			return m, nil
+		}
+
+		parts, err := parseCommandLine(query)
+		if err != nil {
+			m.setStatus(fmt.Sprintf("Parse error: %v", err), true)
+			m.commandMode = false
+			return m, nil
+		}
+		if len(parts) == 0 {
+			m.commandMode = false
+			return m, nil
+		}
+		if parts[0] == "agentvault" {
+			parts = parts[1:]
+		}
+		if len(parts) == 0 {
+			m.setStatus("Provide a command, e.g. ':list' or ':rules init'", true)
+			m.commandMode = false
+			return m, nil
+		}
+		if parts[0] == "tui" || parts[0] == "--tui" || parts[0] == "-t" {
+			m.setStatus("TUI launch command is not supported from inside TUI", true)
+			m.commandMode = false
+			return m, nil
+		}
+
+		exePath, err := os.Executable()
+		if err != nil {
+			m.setStatus(fmt.Sprintf("Unable to locate agentvault binary: %v", err), true)
+			m.commandMode = false
+			return m, nil
+		}
+
+		m.commandRunning = true
+		cmd := exec.Command(exePath, parts...)
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return cliCommandFinishedMsg{
+				command: "agentvault " + strings.Join(parts, " "),
+				err:     err,
+			}
+		})
+	default:
+		if len(msg.String()) == 1 {
+			m.commandQuery += msg.String()
+		}
+		return m, nil
+	}
+}
+
+func parseCommandLine(input string) ([]string, error) {
+	var (
+		args     []string
+		current  strings.Builder
+		inSingle bool
+		inDouble bool
+		escaped  bool
+	)
+
+	flushCurrent := func() {
+		if current.Len() > 0 {
+			args = append(args, current.String())
+			current.Reset()
+		}
+	}
+
+	for _, r := range input {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			escaped = false
+		case r == '\\' && !inSingle:
+			escaped = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case unicode.IsSpace(r) && !inSingle && !inDouble:
+			flushCurrent()
+		default:
+			current.WriteRune(r)
+		}
+	}
+
+	if escaped {
+		return nil, fmt.Errorf("unfinished escape")
+	}
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unclosed quote")
+	}
+	flushCurrent()
+	return args, nil
 }
 
 func (m *model) updateFilteredAgents() {
@@ -679,6 +831,8 @@ func (m *model) getModeForTab() viewMode {
 		return viewSessions
 	case tabDetected:
 		return viewDetected
+	case tabCommands:
+		return viewCommands
 	case tabStatus:
 		return viewStatus
 	}
@@ -726,6 +880,8 @@ func (m model) View() string {
 		b.WriteString(m.renderSessionDetail())
 	case viewDetected:
 		b.WriteString(m.renderDetected())
+	case viewCommands:
+		b.WriteString(m.renderCommands())
 	case viewStatus:
 		b.WriteString(m.renderStatus())
 	case viewHelp:
@@ -754,7 +910,7 @@ func (m model) View() string {
 func (m model) renderHeader() string {
 	title := titleStyle.Render("AgentVault")
 
-	tabs := []string{"Agents", "Instructions", "Rules", "Sessions", "Detected", "Status"}
+	tabs := []string{"Agents", "Instructions", "Rules", "Sessions", "Detected", "Commands", "Status"}
 	var tabBar strings.Builder
 	for i, t := range tabs {
 		if tab(i) == m.activeTab {
@@ -1236,6 +1392,57 @@ func (m model) renderDetected() string {
 	return b.String()
 }
 
+func (m model) renderCommands() string {
+	var b strings.Builder
+
+	b.WriteString(subtitleStyle.Render("CLI Command Bridge"))
+	b.WriteString("\n\n")
+	b.WriteString("  Run any CLI command directly from TUI.\n")
+	b.WriteString("  This provides full CLI parity inside TUI, including interactive commands.\n\n")
+
+	b.WriteString(labelStyle.Render("  Quick examples:"))
+	b.WriteString("\n")
+	examples := []string{
+		"list",
+		"add my-agent --provider codex --model gpt-5",
+		"edit my-agent --role lead-engineer",
+		"rules init",
+		"rules add no-todos --content \"No TODO comments\"",
+		"roles list",
+		"session create my-project --dir .",
+		"session start my-project --dry-run",
+		"instructions pull .",
+		"setup pull",
+		"generate all",
+		"export backup.enc",
+	}
+	for _, ex := range examples {
+		b.WriteString(fmt.Sprintf("    :%s\n", ex))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(labelStyle.Render("  How to use:"))
+	b.WriteString("\n")
+	b.WriteString("    1. Press ':' from any tab\n")
+	b.WriteString("    2. Type an agentvault command without the binary name\n")
+	b.WriteString("    3. Press Enter to run\n")
+	b.WriteString("    4. Press 'r' to refresh views if needed\n")
+
+	if m.lastCommand != "" {
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Last command: " + m.lastCommand))
+		b.WriteString("\n")
+	}
+
+	if m.commandRunning {
+		b.WriteString("\n")
+		b.WriteString(warnStyle.Render("  Running command..."))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
 func (m model) renderStatus() string {
 	var b strings.Builder
 
@@ -1331,7 +1538,7 @@ func (m model) renderHelp() string {
 			keys: [][]string{
 				{"Tab", "Next tab"},
 				{"Shift+Tab", "Previous tab"},
-				{"1-6", "Jump to tab"},
+				{"1-7", "Jump to tab"},
 				{"j/k or Up/Down", "Move cursor"},
 				{"Enter", "View details"},
 				{"Esc", "Back / Close"},
@@ -1367,6 +1574,7 @@ func (m model) renderHelp() string {
 		{
 			title: "General",
 			keys: [][]string{
+				{":", "Run any CLI command"},
 				{"r", "Refresh data"},
 				{"?", "Show this help"},
 			},
@@ -1397,20 +1605,27 @@ func (m model) renderHelpBar() string {
 	default:
 		if m.searchMode {
 			help = "enter: apply filter  esc: cancel"
+		} else if m.commandMode {
+			help = "enter: run command  esc: cancel"
 		} else {
 			switch m.activeTab {
 			case tabAgents:
-				help = "tab: tabs  /: search  d: delete  enter: detail  ?: help  q: quit"
+				help = "tab: tabs  /: search  d: delete  : run cmd  enter: detail  ?: help  q: quit"
 			case tabInstructions:
-				help = "tab: tabs  e: edit  d: delete  enter: detail  ?: help  q: quit"
+				help = "tab: tabs  e: edit  d: delete  : run cmd  enter: detail  ?: help  q: quit"
 			case tabRules:
-				help = "tab: tabs  d: delete  enter: detail  ?: help  q: quit"
+				help = "tab: tabs  d: delete  : run cmd  enter: detail  ?: help  q: quit"
 			case tabDetected:
-				help = "tab: tabs  a: add to vault  ?: help  q: quit"
+				help = "tab: tabs  a: add to vault  : run cmd  ?: help  q: quit"
+			case tabCommands:
+				help = "tab: tabs  : run cmd  r: refresh  ?: help  q: quit"
 			default:
-				help = "tab: switch tabs  ?: help  q: quit"
+				help = "tab: switch tabs  : run cmd  ?: help  q: quit"
 			}
 		}
+	}
+	if m.commandMode {
+		help += "\n  command> " + m.commandQuery + "_"
 	}
 	return helpStyle.Render("  " + help)
 }
@@ -1449,7 +1664,7 @@ type placeholderModel struct{}
 func (placeholderModel) Init() tea.Cmd { return nil }
 func (placeholderModel) View() string {
 	return titleStyle.Render("AgentVault") + "\n\n" +
-		"  Run 'agentvault init' first, then 'agentvault tui' to use the TUI.\n\n" +
+		"  Run 'agentvault init' first, then 'agentvault --tui' to use the TUI.\n\n" +
 		helpStyle.Render("  q: quit") + "\n"
 }
 func (p placeholderModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

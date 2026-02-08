@@ -18,11 +18,12 @@
 //	├── setup                  Full configuration export/import
 //	│   ├── export/import/show/apply/pull
 //	├── instructions           Manage stored instruction files
-//	├── tui                    Launch interactive terminal UI
+//	├── --tui, -t              Launch interactive terminal UI
 //	└── version                Show version info
 package cmd
 
 import (
+	"github.com/nikolareljin/agentvault/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +53,7 @@ Get started:
   agentvault init              # Create vault
   agentvault detect add        # Auto-detect and add agents
   agentvault rules init        # Set up default rules
-  agentvault tui               # Launch interactive UI`,
+  agentvault --tui             # Launch interactive UI`,
 }
 
 // Execute runs the root command. Called from main().
@@ -62,4 +63,16 @@ func Execute() error {
 
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
+	rootCmd.Flags().BoolP("tui", "t", false, "launch interactive terminal UI")
+	rootCmd.RunE = func(cmd *cobra.Command, args []string) error {
+		launchTUI, _ := cmd.Flags().GetBool("tui")
+		if launchTUI {
+			v, err := openVault()
+			if err != nil {
+				return tui.Run()
+			}
+			return tui.RunWithVault(v)
+		}
+		return cmd.Help()
+	}
 }
