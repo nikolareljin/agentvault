@@ -35,7 +35,7 @@ agentvault session create my-project --dir /path/to/project
 agentvault session start my-project
 
 # 6. Launch TUI to manage everything
-agentvault tui
+agentvault --tui
 ```
 
 ## Installation
@@ -63,7 +63,7 @@ brew install nikolareljin/tap/agentvault
 | `init` | Initialize encrypted vault |
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
-| `tui` | Launch interactive terminal UI |
+| `--tui`, `-t` | Launch interactive terminal UI |
 
 ### Agent Management
 | Command | Description |
@@ -214,15 +214,16 @@ agentvault instructions push /path/to/project
 |-----|--------|
 | `Tab` / `l` | Next tab |
 | `Shift+Tab` / `h` | Previous tab |
-| `1-4` | Jump to tab |
+| `1-7` | Jump to tab |
 | `j`/`k` | Navigate list |
 | `Enter` | View details |
 | `/` | Search (Agents tab) |
+| `:` | Run any CLI command |
 | `r` | Refresh |
 | `?` | Help |
 | `q` | Quit |
 
-**Tabs**: Agents, Instructions, Detected, Status
+**Tabs**: Agents, Instructions, Rules, Sessions, Detected, Commands, Status
 
 ## Supported Agents
 

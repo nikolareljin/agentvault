@@ -261,15 +261,16 @@ rm ~/.config/agentvault/vault.enc
 
 ```bash
 # Launch TUI
-./agentvault tui
+./agentvault --tui
 
 # Test navigation:
-# - Press Tab to cycle through tabs (Agents, Instructions, Detected, Status)
-# - Press 1-4 to jump to specific tabs
+# - Press Tab to cycle through tabs (Agents, Instructions, Rules, Sessions, Detected, Commands, Status)
+# - Press 1-7 to jump to specific tabs
 # - Press j/k or arrow keys to navigate lists
 # - Press Enter to view details
 # - Press Esc to go back
 # - Press / to search (on Agents tab)
+# - Press : to run any CLI command from TUI
 # - Press r to refresh
 # - Press ? to show help
 # - Press q to quit
@@ -277,8 +278,11 @@ rm ~/.config/agentvault/vault.enc
 # Verify each tab shows correct content:
 # Tab 1 (Agents): List of configured agents
 # Tab 2 (Instructions): List of stored instruction files
-# Tab 3 (Detected): Installed CLI agents with vault status
-# Tab 4 (Status): Vault path, counts, provider config status
+# Tab 3 (Rules): Unified rules list/details
+# Tab 4 (Sessions): Session list/details
+# Tab 5 (Detected): Installed CLI agents with vault status
+# Tab 6 (Commands): CLI parity bridge (run any command)
+# Tab 7 (Status): Vault path, counts, provider config status
 ```
 
 ### 9. Export/Import (Legacy Commands)
@@ -338,7 +342,7 @@ done
 time ./agentvault list --json > /dev/null
 
 # Time TUI startup
-time ./agentvault tui &
+time ./agentvault --tui &
 # Press q immediately
 ```
 

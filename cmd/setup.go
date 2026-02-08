@@ -722,7 +722,7 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 
 	guide.PostSetup = []string{
 		"Verify agents work: agentvault detect",
-		"View configuration: agentvault tui",
+		"View configuration: agentvault --tui",
 		"Test an agent: agentvault run <agent-name>",
 	}
 
