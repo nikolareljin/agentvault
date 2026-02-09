@@ -25,3 +25,6 @@ Thumbs.db
 # Build artifacts
 dist/
 artifacts/
+
+# Ignore go gz file
+go[1-9]*.*.gz
