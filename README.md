@@ -63,6 +63,7 @@ brew install nikolareljin/tap/agentvault
 | `init` | Initialize encrypted vault |
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
+| `prompt <name>` | Route prompts through AgentVault gateway with usage logging |
 | `status` | Show token usage and quota status (JSON for orchestration) |
 | `--tui`, `-t` | Launch interactive terminal UI |
 
@@ -131,6 +132,27 @@ AGENTVAULT_PASSWORD=... agentvault status --json
 # Skip vault data and only report provider usage
 agentvault status --no-vault --json
 ```
+
+## Prompt Gateway
+
+Send prompts through AgentVault instead of calling agent CLIs directly:
+
+```bash
+# direct prompt through configured agent
+agentvault prompt my-codex --text "review this implementation"
+
+# optimize prompt shape for local Ollama models
+agentvault prompt my-ollama --text "build auth middleware"
+
+# optimize for codex/copilot-style coding flows
+agentvault prompt my-codex --text "refactor this endpoint" --optimize-profile codex
+agentvault prompt my-copilot --text "write tests for this function" --optimize-profile copilot
+
+# JSON output for orchestration systems
+agentvault prompt my-ollama --text "summarize this design" --json
+```
+
+Prompt runs are stored in `~/.config/agentvault/prompt-history.jsonl` by default.
 
 ## Unified Rules
 
