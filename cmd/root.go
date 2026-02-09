@@ -18,6 +18,7 @@
 //	├── setup                  Full configuration export/import
 //	│   ├── export/import/show/apply/pull
 //	├── instructions           Manage stored instruction files
+//	├── status                 Show token usage and quota status
 //	├── --tui, -t              Launch interactive terminal UI
 //	└── version                Show version info
 package cmd

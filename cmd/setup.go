@@ -6,26 +6,30 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
+	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/spf13/cobra"
 )
 
 // SetupBundle represents a complete portable agent configuration bundle.
 // This is the primary mechanism for replicating an entire agent setup
 // across machines. It captures everything needed to recreate the environment:
-// agents, rules, roles, instructions, provider configs, and an installation guide.
+// agents, sessions, rules, roles, instructions, provider configs, and an installation guide.
 type SetupBundle struct {
 	Version         string               `json:"version"`
 	CreatedAt       time.Time            `json:"created_at"`
 	SourceMachine   string               `json:"source_machine"`
 	SourceOS        string               `json:"source_os"`
 	Agents          []agent.Agent        `json:"agents"`
+	Sessions        agent.SessionConfig  `json:"sessions,omitempty"`
 	SharedConfig    agent.SharedConfig   `json:"shared_config"`
 	ProviderConfigs agent.ProviderConfig `json:"provider_configs"`
+	StatusSnapshot  *statuspkg.Report    `json:"status_snapshot,omitempty"`
 	DetectedAgents  []DetectedAgent      `json:"detected_agents,omitempty"`
 	InstallGuide    InstallGuide         `json:"install_guide"`
 }
@@ -72,16 +76,20 @@ var setupExportCmd = &cobra.Command{
 
 The bundle includes:
   - All agents (names, providers, models, API keys if --include-keys)
+  - Session definitions for multi-agent orchestration across machines
   - Instruction files stored in vault
+  - Shared rules and roles
   - Claude settings (plugins, keybindings)
   - Codex settings (trusted projects, rules)
   - Ollama configuration
+  - Optional status snapshot for orchestration-aware scheduling
   - Installation guide for the target machine
 
 Examples:
   agentvault setup export my-setup.json           # Export to JSON
   agentvault setup export my-setup.bundle         # Export encrypted
   agentvault setup export setup.json --include-keys  # Include API keys
+  agentvault setup export setup.json --include-status # Include token/quota snapshot
   agentvault setup export setup.json --detect     # Include detected agent info`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSetupExport,
@@ -155,6 +163,7 @@ func init() {
 
 	setupExportCmd.Flags().Bool("include-keys", false, "include API keys in export (use with caution)")
 	setupExportCmd.Flags().Bool("detect", false, "include detected agent information")
+	setupExportCmd.Flags().Bool("include-status", false, "include provider token/quota status snapshot in bundle")
 	setupExportCmd.Flags().Bool("encrypted", false, "encrypt the bundle (prompted for password)")
 	setupExportCmd.Flags().Bool("plain", false, "force plaintext JSON output")
 
@@ -177,6 +186,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 
 	includeKeys, _ := cmd.Flags().GetBool("include-keys")
 	detect, _ := cmd.Flags().GetBool("detect")
+	includeStatus, _ := cmd.Flags().GetBool("include-status")
 	encrypted, _ := cmd.Flags().GetBool("encrypted")
 	plain, _ := cmd.Flags().GetBool("plain")
 
@@ -193,6 +203,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		SourceMachine:   hostname,
 		SourceOS:        runtime.GOOS + "/" + runtime.GOARCH,
 		Agents:          v.List(),
+		Sessions:        v.Sessions(),
 		SharedConfig:    v.SharedConfig(),
 		ProviderConfigs: v.ProviderConfigs(),
 	}
@@ -207,6 +218,13 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	// Detect installed agents if requested
 	if detect {
 		bundle.DetectedAgents = detectAllAgents()
+	}
+	if includeStatus {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			report := statuspkg.BuildReport(v, home)
+			bundle.StatusSnapshot = &report
+		}
 	}
 
 	// Generate installation guide
@@ -254,9 +272,13 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Setup bundle exported to %s\n", outputFile)
 	fmt.Printf("  Agents: %d\n", len(bundle.Agents))
+	fmt.Printf("  Sessions: %d\n", len(bundle.Sessions.Sessions))
 	fmt.Printf("  Instructions: %d\n", len(bundle.SharedConfig.Instructions))
 	if includeKeys {
 		fmt.Println("  Warning: API keys are included!")
+	}
+	if includeStatus {
+		fmt.Println("  Includes status snapshot: yes")
 	}
 	if encrypted {
 		fmt.Println("  Encrypted: yes")
@@ -340,53 +362,162 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 
 	// Import shared config
 	sc := v.SharedConfig()
-	if bundle.SharedConfig.SystemPrompt != "" && sc.SystemPrompt == "" {
+	if bundle.SharedConfig.SystemPrompt != "" && (sc.SystemPrompt == "" || merge) {
 		sc.SystemPrompt = bundle.SharedConfig.SystemPrompt
 		fmt.Println("  Imported: shared system prompt")
 	}
 
 	// Merge MCP servers
-	seenMCP := make(map[string]struct{})
-	for _, s := range sc.MCPServers {
-		seenMCP[s.Name] = struct{}{}
+	mcpIndex := make(map[string]int)
+	for i, s := range sc.MCPServers {
+		mcpIndex[s.Name] = i
 	}
 	for _, s := range bundle.SharedConfig.MCPServers {
-		if _, ok := seenMCP[s.Name]; !ok {
+		if idx, ok := mcpIndex[s.Name]; !ok {
 			sc.MCPServers = append(sc.MCPServers, s)
+			mcpIndex[s.Name] = len(sc.MCPServers) - 1
 			fmt.Printf("  Imported: MCP server %s\n", s.Name)
+		} else if merge {
+			sc.MCPServers[idx] = s
+			fmt.Printf("  Updated: MCP server %s\n", s.Name)
 		}
 	}
 
 	// Merge instructions
-	seenInst := make(map[string]struct{})
-	for _, inst := range sc.Instructions {
-		seenInst[inst.Name] = struct{}{}
+	instIndex := make(map[string]int)
+	for i, inst := range sc.Instructions {
+		instIndex[inst.Name] = i
 	}
 	for _, inst := range bundle.SharedConfig.Instructions {
-		if _, ok := seenInst[inst.Name]; !ok {
+		if idx, ok := instIndex[inst.Name]; !ok {
 			sc.Instructions = append(sc.Instructions, inst)
+			instIndex[inst.Name] = len(sc.Instructions) - 1
 			fmt.Printf("  Imported: instruction %s\n", inst.Name)
+		} else if merge {
+			sc.Instructions[idx] = inst
+			fmt.Printf("  Updated: instruction %s\n", inst.Name)
 		}
 	}
-	v.SetSharedConfig(sc)
+
+	// Merge rules
+	ruleIndex := make(map[string]int)
+	for i, r := range sc.Rules {
+		ruleIndex[r.Name] = i
+	}
+	for _, r := range bundle.SharedConfig.Rules {
+		if idx, ok := ruleIndex[r.Name]; !ok {
+			sc.Rules = append(sc.Rules, r)
+			ruleIndex[r.Name] = len(sc.Rules) - 1
+			fmt.Printf("  Imported: rule %s\n", r.Name)
+		} else if merge {
+			sc.Rules[idx] = r
+			fmt.Printf("  Updated: rule %s\n", r.Name)
+		}
+	}
+	sort.Slice(sc.Rules, func(i, j int) bool {
+		return sc.Rules[i].Priority < sc.Rules[j].Priority
+	})
+
+	// Merge roles
+	roleIndex := make(map[string]int)
+	for i, r := range sc.Roles {
+		roleIndex[r.Name] = i
+	}
+	for _, r := range bundle.SharedConfig.Roles {
+		if idx, ok := roleIndex[r.Name]; !ok {
+			sc.Roles = append(sc.Roles, r)
+			roleIndex[r.Name] = len(sc.Roles) - 1
+			fmt.Printf("  Imported: role %s\n", r.Name)
+		} else if merge {
+			sc.Roles[idx] = r
+			fmt.Printf("  Updated: role %s\n", r.Name)
+		}
+	}
+
+	if err := v.SetSharedConfig(sc); err != nil {
+		return fmt.Errorf("updating shared config: %w", err)
+	}
 
 	// Import provider configs
 	pc := v.ProviderConfigs()
-	if bundle.ProviderConfigs.Claude != nil && pc.Claude == nil {
+	if bundle.ProviderConfigs.Claude != nil && (pc.Claude == nil || merge) {
 		pc.Claude = bundle.ProviderConfigs.Claude
 		fmt.Println("  Imported: Claude config")
 	}
-	if bundle.ProviderConfigs.Codex != nil && pc.Codex == nil {
+	if bundle.ProviderConfigs.Codex != nil && (pc.Codex == nil || merge) {
 		pc.Codex = bundle.ProviderConfigs.Codex
 		fmt.Println("  Imported: Codex config")
 	}
-	if bundle.ProviderConfigs.Ollama != nil && pc.Ollama == nil {
+	if bundle.ProviderConfigs.Ollama != nil && (pc.Ollama == nil || merge) {
 		pc.Ollama = bundle.ProviderConfigs.Ollama
 		fmt.Println("  Imported: Ollama config")
 	}
-	v.SetProviderConfigs(pc)
+	if err := v.SetProviderConfigs(pc); err != nil {
+		return fmt.Errorf("updating provider configs: %w", err)
+	}
+
+	// Import sessions
+	targetSessions := v.Sessions()
+	sessionByName := make(map[string]int)
+	sessionIDs := make(map[string]struct{})
+	for i, s := range targetSessions.Sessions {
+		sessionByName[s.Name] = i
+		sessionIDs[s.ID] = struct{}{}
+	}
+	sessionAdded, sessionUpdated, sessionSkipped := 0, 0, 0
+	for _, s := range bundle.Sessions.Sessions {
+		// Session process info is machine-local and should not be imported.
+		s.Status = agent.SessionStatusIdle
+		s.UpdatedAt = time.Now()
+		for i := range s.Agents {
+			s.Agents[i].PID = 0
+		}
+
+		if idx, ok := sessionByName[s.Name]; ok {
+			if merge {
+				s.ID = targetSessions.Sessions[idx].ID
+				targetSessions.Sessions[idx] = s
+				fmt.Printf("  Updated: session %s\n", s.Name)
+				sessionUpdated++
+			} else {
+				fmt.Printf("  Skipped: session %s (exists)\n", s.Name)
+				sessionSkipped++
+			}
+			continue
+		}
+
+		if s.ID == "" {
+			s.ID = agent.GenerateSessionID()
+		}
+		for {
+			if _, exists := sessionIDs[s.ID]; !exists {
+				break
+			}
+			s.ID = fmt.Sprintf("%s-%d", agent.GenerateSessionID(), time.Now().UnixNano()%1000)
+		}
+		targetSessions.Sessions = append(targetSessions.Sessions, s)
+		sessionByName[s.Name] = len(targetSessions.Sessions) - 1
+		sessionIDs[s.ID] = struct{}{}
+		fmt.Printf("  Added: session %s\n", s.Name)
+		sessionAdded++
+	}
+	if targetSessions.ActiveSession == "" && bundle.Sessions.ActiveSession != "" {
+		targetSessions.ActiveSession = bundle.Sessions.ActiveSession
+	}
+	if targetSessions.ParallelLimit == 0 && bundle.Sessions.ParallelLimit > 0 {
+		targetSessions.ParallelLimit = bundle.Sessions.ParallelLimit
+	}
+	if len(targetSessions.DefaultAgents) == 0 && len(bundle.Sessions.DefaultAgents) > 0 {
+		targetSessions.DefaultAgents = append([]string(nil), bundle.Sessions.DefaultAgents...)
+	}
+	if err := v.SetSessions(targetSessions); err != nil {
+		return fmt.Errorf("updating sessions: %w", err)
+	}
 
 	fmt.Printf("\nSummary: %d added, %d updated, %d skipped\n", added, updated, skipped)
+	if sessionAdded+sessionUpdated+sessionSkipped > 0 {
+		fmt.Printf("Sessions: %d added, %d updated, %d skipped\n", sessionAdded, sessionUpdated, sessionSkipped)
+	}
 
 	// Apply provider configs to system if requested
 	if applyConfigs {
@@ -497,6 +628,14 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  • %s v%s (%s)\n", a.Name, a.Version, a.Status)
 			}
 		}
+	}
+	fmt.Printf("\nSessions (%d):\n", len(bundle.Sessions.Sessions))
+	for _, s := range bundle.Sessions.Sessions {
+		fmt.Printf("  • %s (%d agents, %s)\n", s.Name, len(s.Agents), s.ProjectDir)
+	}
+	if bundle.StatusSnapshot != nil {
+		fmt.Printf("\nStatus Snapshot: %s\n", bundle.StatusSnapshot.GeneratedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("  Providers: %d\n", len(bundle.StatusSnapshot.Providers))
 	}
 
 	return nil
