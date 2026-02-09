@@ -20,7 +20,13 @@
 package tui
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"sort"
@@ -108,6 +114,29 @@ type cliCommandFinishedMsg struct {
 	err     error
 }
 
+type gatewayStage int
+
+const (
+	gatewayOff gatewayStage = iota
+	gatewaySelectAgent
+	gatewayInputPrompt
+	gatewayPreview
+	gatewayRunning
+	gatewayResult
+)
+
+type gatewayUsage struct {
+	InputTokens  int64
+	OutputTokens int64
+	TotalTokens  int64
+}
+
+type gatewayFinishedMsg struct {
+	response string
+	usage    gatewayUsage
+	err      error
+}
+
 // model is the Bubble Tea application state.
 // It holds all data loaded from the vault plus UI state (cursor, tabs, search).
 type model struct {
@@ -144,6 +173,18 @@ type model struct {
 	commandQuery   string
 	lastCommand    string
 	commandRunning bool
+
+	// Prompt gateway mode (Commands tab, activated with 'g')
+	gatewayStage       gatewayStage
+	gatewayAgentCursor int
+	gatewayPrompt      string
+	gatewayEffective   string
+	gatewayProfile     string
+	gatewayOptimized   bool
+	gatewayRunning     bool
+	gatewayResponse    string
+	gatewayErr         string
+	gatewayUsage       gatewayUsage
 
 	// Delete confirmation state
 	deleteTarget string // name of item to delete
@@ -256,6 +297,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m, nil
 
+	case gatewayFinishedMsg:
+		m.gatewayRunning = false
+		m.gatewayStage = gatewayResult
+		if msg.err != nil {
+			m.gatewayErr = msg.err.Error()
+			m.gatewayResponse = ""
+			m.gatewayUsage = gatewayUsage{}
+			m.setStatus("Gateway execution failed", true)
+		} else {
+			m.gatewayErr = ""
+			m.gatewayResponse = msg.response
+			m.gatewayUsage = msg.usage
+			m.setStatus("Gateway execution completed", false)
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		// Clear old status messages
 		if time.Since(m.statusTime) > 3*time.Second {
@@ -275,6 +332,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Handle command mode
 		if m.commandMode {
 			return m.handleCommandInput(msg)
+		}
+		if m.activeTab == tabCommands && m.gatewayStage != gatewayOff {
+			return m.handleGatewayInput(msg)
 		}
 
 		switch msg.String() {
@@ -357,6 +417,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandMode = true
 			m.commandQuery = ""
 			return m, nil
+
+		case "g":
+			if m.activeTab == tabCommands {
+				m.gatewayStage = gatewaySelectAgent
+				m.gatewayAgentCursor = 0
+				m.gatewayPrompt = ""
+				m.gatewayEffective = ""
+				m.gatewayProfile = ""
+				m.gatewayOptimized = false
+				m.gatewayResponse = ""
+				m.gatewayErr = ""
+				m.gatewayUsage = gatewayUsage{}
+				return m, nil
+			}
 
 		case "up", "k":
 			return m.handleNavUp(), nil
@@ -515,6 +589,112 @@ func parseCommandLine(input string) ([]string, error) {
 	}
 	flushCurrent()
 	return args, nil
+}
+
+func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch m.gatewayStage {
+	case gatewaySelectAgent:
+		switch msg.String() {
+		case "esc":
+			m.gatewayStage = gatewayOff
+			return m, nil
+		case "up", "k":
+			if m.gatewayAgentCursor > 0 {
+				m.gatewayAgentCursor--
+			}
+			return m, nil
+		case "down", "j":
+			if m.gatewayAgentCursor < len(m.agents)-1 {
+				m.gatewayAgentCursor++
+			}
+			return m, nil
+		case "enter":
+			if len(m.agents) == 0 {
+				m.setStatus("No agents configured in vault", true)
+				return m, nil
+			}
+			m.gatewayStage = gatewayInputPrompt
+			if strings.TrimSpace(m.gatewayPrompt) == "" {
+				m.gatewayPrompt = ""
+			}
+			return m, nil
+		}
+	case gatewayInputPrompt:
+		switch msg.String() {
+		case "esc":
+			m.gatewayStage = gatewaySelectAgent
+			return m, nil
+		case "backspace":
+			if len(m.gatewayPrompt) > 0 {
+				m.gatewayPrompt = m.gatewayPrompt[:len(m.gatewayPrompt)-1]
+			}
+			return m, nil
+		case "enter":
+			if strings.TrimSpace(m.gatewayPrompt) == "" {
+				m.setStatus("Prompt cannot be empty", true)
+				return m, nil
+			}
+			if len(m.agents) == 0 || m.gatewayAgentCursor >= len(m.agents) {
+				m.setStatus("Selected agent is unavailable", true)
+				return m, nil
+			}
+			a := m.agents[m.gatewayAgentCursor]
+			effective, profile := optimizePromptForGateway(m.gatewayPrompt, a, m.shared)
+			m.gatewayEffective = effective
+			m.gatewayProfile = profile
+			m.gatewayOptimized = true
+			m.gatewayStage = gatewayPreview
+			return m, nil
+		default:
+			if len(msg.String()) == 1 {
+				m.gatewayPrompt += msg.String()
+			}
+			return m, nil
+		}
+	case gatewayPreview:
+		switch msg.String() {
+		case "esc":
+			m.gatewayStage = gatewayInputPrompt
+			return m, nil
+		case "n", "N":
+			m.gatewayStage = gatewayInputPrompt
+			return m, nil
+		case "y", "Y", "enter":
+			if len(m.agents) == 0 || m.gatewayAgentCursor >= len(m.agents) {
+				m.setStatus("Selected agent is unavailable", true)
+				return m, nil
+			}
+			m.gatewayRunning = true
+			m.gatewayResponse = ""
+			m.gatewayErr = ""
+			m.gatewayUsage = gatewayUsage{}
+			m.gatewayStage = gatewayRunning
+			a := m.agents[m.gatewayAgentCursor]
+			return m, runGatewayPromptCmd(a, m.gatewayEffective, 5*time.Minute)
+		}
+	case gatewayRunning:
+		if msg.String() == "esc" {
+			m.setStatus("Execution is in progress; wait for completion", true)
+			return m, nil
+		}
+	case gatewayResult:
+		switch msg.String() {
+		case "esc":
+			m.gatewayStage = gatewayOff
+			return m, nil
+		case "s", "S":
+			m.gatewayStage = gatewaySelectAgent
+			m.gatewayResponse = ""
+			m.gatewayErr = ""
+			return m, nil
+		case "e", "E":
+			m.gatewayStage = gatewayInputPrompt
+			m.gatewayResponse = ""
+			m.gatewayErr = ""
+			return m, nil
+		}
+	}
+	return m, nil
 }
 
 func (m *model) updateFilteredAgents() {
@@ -1393,6 +1573,10 @@ func (m model) renderDetected() string {
 }
 
 func (m model) renderCommands() string {
+	if m.gatewayStage != gatewayOff {
+		return m.renderGatewayFlow()
+	}
+
 	var b strings.Builder
 
 	b.WriteString(subtitleStyle.Render("CLI Command Bridge"))
@@ -1427,6 +1611,7 @@ func (m model) renderCommands() string {
 	b.WriteString("    2. Type an agentvault command without the binary name\n")
 	b.WriteString("    3. Press Enter to run\n")
 	b.WriteString("    4. Press 'r' to refresh views if needed\n")
+	b.WriteString("    5. Press 'g' to open Prompt Gateway flow\n")
 
 	if m.lastCommand != "" {
 		b.WriteString("\n")
@@ -1437,6 +1622,87 @@ func (m model) renderCommands() string {
 	if m.commandRunning {
 		b.WriteString("\n")
 		b.WriteString(warnStyle.Render("  Running command..."))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func (m model) renderGatewayFlow() string {
+	var b strings.Builder
+	b.WriteString(subtitleStyle.Render("Prompt Gateway"))
+	b.WriteString("\n\n")
+
+	if len(m.agents) == 0 {
+		b.WriteString(dimStyle.Render("  No configured agents. Add one in the Agents tab first."))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	switch m.gatewayStage {
+	case gatewaySelectAgent:
+		b.WriteString(labelStyle.Render("  Step 1: Select agent"))
+		b.WriteString("\n\n")
+		for i, a := range m.agents {
+			cursor := "  "
+			style := normalStyle
+			if i == m.gatewayAgentCursor {
+				cursor = "> "
+				style = selectedStyle
+			}
+			line := fmt.Sprintf("%s%-20s  %-10s  %s", cursor, truncate(a.Name, 20), a.Provider, truncate(a.Model, 30))
+			b.WriteString(style.Render(line))
+			b.WriteString("\n")
+		}
+	case gatewayInputPrompt:
+		a := m.agents[m.gatewayAgentCursor]
+		b.WriteString(labelStyle.Render("  Step 2: Enter prompt"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  Agent: %s (%s)", a.Name, a.Provider)))
+		b.WriteString("\n\n")
+		b.WriteString("  ")
+		b.WriteString(m.gatewayPrompt)
+		b.WriteString("_\n")
+	case gatewayPreview:
+		a := m.agents[m.gatewayAgentCursor]
+		b.WriteString(labelStyle.Render("  Step 3: Review rewritten prompt"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  Agent: %s (%s), profile: %s", a.Name, a.Provider, m.gatewayProfile)))
+		b.WriteString("\n\n")
+		for _, line := range strings.Split(m.gatewayEffective, "\n") {
+			b.WriteString("  ")
+			b.WriteString(truncate(line, 110))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Confirm with y/enter, or n to edit prompt."))
+		b.WriteString("\n")
+	case gatewayRunning:
+		b.WriteString(warnStyle.Render("  Step 4: Running prompt..."))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Waiting for agent response."))
+		b.WriteString("\n")
+	case gatewayResult:
+		b.WriteString(labelStyle.Render("  Step 5: Response"))
+		b.WriteString("\n\n")
+		if m.gatewayErr != "" {
+			b.WriteString(errorStyle.Render("  Error: " + m.gatewayErr))
+			b.WriteString("\n")
+		} else {
+			for _, line := range strings.Split(m.gatewayResponse, "\n") {
+				b.WriteString("  ")
+				b.WriteString(truncate(line, 120))
+				b.WriteString("\n")
+			}
+			if m.gatewayUsage.TotalTokens > 0 || m.gatewayUsage.InputTokens > 0 || m.gatewayUsage.OutputTokens > 0 {
+				b.WriteString("\n")
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  Tokens: input=%d output=%d total=%d",
+					m.gatewayUsage.InputTokens, m.gatewayUsage.OutputTokens, m.gatewayUsage.TotalTokens)))
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Press 's' to switch agent, 'e' to edit prompt, or esc to exit gateway."))
 		b.WriteString("\n")
 	}
 
@@ -1575,6 +1841,7 @@ func (m model) renderHelp() string {
 			title: "General",
 			keys: [][]string{
 				{":", "Run any CLI command"},
+				{"g", "Prompt gateway (Commands tab)"},
 				{"r", "Refresh data"},
 				{"?", "Show this help"},
 			},
@@ -1618,7 +1885,22 @@ func (m model) renderHelpBar() string {
 			case tabDetected:
 				help = "tab: tabs  a: add to vault  : run cmd  ?: help  q: quit"
 			case tabCommands:
-				help = "tab: tabs  : run cmd  r: refresh  ?: help  q: quit"
+				if m.gatewayStage != gatewayOff {
+					switch m.gatewayStage {
+					case gatewaySelectAgent:
+						help = "j/k: select agent  enter: next  esc: close gateway"
+					case gatewayInputPrompt:
+						help = "type: prompt  enter: rewrite  backspace: edit  esc: back"
+					case gatewayPreview:
+						help = "y/enter: run  n: edit  esc: back"
+					case gatewayRunning:
+						help = "running..."
+					case gatewayResult:
+						help = "s: switch agent  e: edit prompt  esc: close gateway"
+					}
+				} else {
+					help = "tab: tabs  g: gateway  : run cmd  r: refresh  ?: help  q: quit"
+				}
 			default:
 				help = "tab: switch tabs  : run cmd  ?: help  q: quit"
 			}
@@ -1628,6 +1910,337 @@ func (m model) renderHelpBar() string {
 		help += "\n  command> " + m.commandQuery + "_"
 	}
 	return helpStyle.Render("  " + help)
+}
+
+func runGatewayPromptCmd(a agent.Agent, prompt string, timeout time.Duration) tea.Cmd {
+	return func() tea.Msg {
+		resp, usage, err := executeGatewayPrompt(a, prompt, timeout)
+		return gatewayFinishedMsg{
+			response: resp,
+			usage:    usage,
+			err:      err,
+		}
+	}
+}
+
+func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+	switch a.Provider {
+	case agent.ProviderOllama:
+		return executeGatewayOllama(a, prompt, timeout)
+	case agent.ProviderCodex:
+		return executeGatewayCodex(a, prompt, timeout)
+	case agent.ProviderClaude:
+		return executeGatewayClaude(a, prompt, timeout)
+	default:
+		return "", gatewayUsage{}, fmt.Errorf("provider %q is not supported in TUI gateway yet", a.Provider)
+	}
+}
+
+func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+	if strings.TrimSpace(a.Model) == "" {
+		return "", gatewayUsage{}, errors.New("ollama agent requires a model")
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+
+	payload := map[string]any{
+		"model":  a.Model,
+		"prompt": prompt,
+		"stream": false,
+	}
+	body, _ := json.Marshal(payload)
+
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/generate", bytes.NewReader(body))
+	if err != nil {
+		return "", gatewayUsage{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", gatewayUsage{}, fmt.Errorf("calling ollama: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		return "", gatewayUsage{}, fmt.Errorf("ollama error %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	var out struct {
+		Response        string `json:"response"`
+		PromptEvalCount int64  `json:"prompt_eval_count"`
+		EvalCount       int64  `json:"eval_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", gatewayUsage{}, fmt.Errorf("decoding ollama response: %w", err)
+	}
+	return strings.TrimSpace(out.Response), gatewayUsage{
+		InputTokens:  out.PromptEvalCount,
+		OutputTokens: out.EvalCount,
+		TotalTokens:  out.PromptEvalCount + out.EvalCount,
+	}, nil
+}
+
+func executeGatewayCodex(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+	if _, err := exec.LookPath("codex"); err != nil {
+		return "", gatewayUsage{}, errors.New("codex binary not found in PATH")
+	}
+	tmp, err := os.CreateTemp("", "agentvault-tui-codex-*.txt")
+	if err != nil {
+		return "", gatewayUsage{}, err
+	}
+	_ = tmp.Close()
+	defer os.Remove(tmp.Name())
+
+	args := []string{"exec", "--json", "--output-last-message", tmp.Name()}
+	if strings.TrimSpace(a.Model) != "" {
+		args = append(args, "--model", a.Model)
+	}
+	args = append(args, prompt)
+
+	cmd := exec.Command("codex", args...)
+	cmd.Env = os.Environ()
+	if strings.TrimSpace(a.APIKey) != "" {
+		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+a.APIKey)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := runCommandWithTimeout(cmd, timeout); err != nil {
+		return "", gatewayUsage{}, fmt.Errorf("codex failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+
+	usage := parseGatewayCodexUsage(stdout.String())
+	respBytes, _ := os.ReadFile(tmp.Name())
+	response := strings.TrimSpace(string(respBytes))
+	if response == "" {
+		response = strings.TrimSpace(stdout.String())
+	}
+	return response, usage, nil
+}
+
+func executeGatewayClaude(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return "", gatewayUsage{}, errors.New("claude binary not found in PATH")
+	}
+
+	args := []string{"-p", "--output-format", "json"}
+	if strings.TrimSpace(a.Model) != "" {
+		args = append(args, "--model", a.Model)
+	}
+	args = append(args, prompt)
+
+	cmd := exec.Command("claude", args...)
+	cmd.Env = os.Environ()
+	if strings.TrimSpace(a.APIKey) != "" {
+		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+a.APIKey)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := runCommandWithTimeout(cmd, timeout); err != nil {
+		return "", gatewayUsage{}, fmt.Errorf("claude failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+
+	raw := strings.TrimSpace(stdout.String())
+	if raw == "" {
+		return "", gatewayUsage{}, errors.New("claude returned empty output")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return raw, gatewayUsage{}, nil
+	}
+	response := extractGatewayString(decoded, []string{"result", "response", "output", "content", "text"})
+	if response == "" {
+		response = raw
+	}
+	input := extractGatewayInt64(decoded, []string{"input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens"})
+	output := extractGatewayInt64(decoded, []string{"output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens"})
+	total := extractGatewayInt64(decoded, []string{"total_tokens", "usage.total_tokens"})
+	if total == 0 && (input > 0 || output > 0) {
+		total = input + output
+	}
+	return strings.TrimSpace(response), gatewayUsage{
+		InputTokens:  input,
+		OutputTokens: output,
+		TotalTokens:  total,
+	}, nil
+}
+
+func runCommandWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {
+	if timeout <= 0 {
+		return cmd.Run()
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return fmt.Errorf("timed out after %s", timeout)
+	}
+}
+
+func parseGatewayCodexUsage(raw string) gatewayUsage {
+	usage := gatewayUsage{}
+	type evt struct {
+		Payload struct {
+			Type string `json:"type"`
+			Info struct {
+				TotalTokenUsage struct {
+					InputTokens  int64 `json:"input_tokens"`
+					OutputTokens int64 `json:"output_tokens"`
+					TotalTokens  int64 `json:"total_tokens"`
+				} `json:"total_token_usage"`
+			} `json:"info"`
+		} `json:"payload"`
+	}
+	s := bufio.NewScanner(strings.NewReader(raw))
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" {
+			continue
+		}
+		var e evt
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			continue
+		}
+		if e.Payload.Type != "token_count" {
+			continue
+		}
+		usage = gatewayUsage{
+			InputTokens:  e.Payload.Info.TotalTokenUsage.InputTokens,
+			OutputTokens: e.Payload.Info.TotalTokenUsage.OutputTokens,
+			TotalTokens:  e.Payload.Info.TotalTokenUsage.TotalTokens,
+		}
+	}
+	return usage
+}
+
+func optimizePromptForGateway(original string, a agent.Agent, shared agent.SharedConfig) (string, string) {
+	prompt := strings.TrimSpace(original)
+	if prompt == "" {
+		return original, "none"
+	}
+	profile := "generic"
+	switch a.Provider {
+	case agent.ProviderOllama:
+		profile = "ollama"
+	case agent.ProviderCodex, agent.ProviderAider, agent.ProviderMeldbot, agent.ProviderOpenclaw, agent.ProviderNanoclaw:
+		profile = "codex"
+	case agent.ProviderClaude:
+		profile = "claude"
+	default:
+		name := strings.ToLower(a.Name + " " + a.Model)
+		if strings.Contains(name, "copilot") {
+			profile = "copilot"
+		}
+	}
+
+	var rules []string
+	for _, r := range shared.Rules {
+		if r.Enabled {
+			rules = append(rules, "- "+r.Content)
+		}
+	}
+	role := a.Role
+	if role == "" {
+		role = "software engineer"
+	}
+
+	var b strings.Builder
+	switch profile {
+	case "ollama":
+		b.WriteString("You are an expert assistant. Keep responses concise and implementation-focused.\n\n")
+	case "codex", "copilot":
+		b.WriteString("You are a senior coding agent. Prioritize correctness, minimal diffs, and runnable outputs.\n\n")
+	case "claude":
+		b.WriteString("You are a careful engineering assistant. Explain assumptions briefly and provide precise changes.\n\n")
+	default:
+		b.WriteString("You are an expert assistant. Respond with concise, actionable output.\n\n")
+	}
+	b.WriteString("## Task\n")
+	b.WriteString(prompt)
+	b.WriteString("\n\n## Context\n")
+	b.WriteString("- Intended role: ")
+	b.WriteString(role)
+	b.WriteString("\n")
+	if a.Model != "" {
+		b.WriteString("- Model: ")
+		b.WriteString(a.Model)
+		b.WriteString("\n")
+	}
+	if len(rules) > 0 {
+		b.WriteString("\n## Constraints\n")
+		for i, r := range rules {
+			if i >= 8 {
+				break
+			}
+			b.WriteString(r)
+			b.WriteString("\n")
+		}
+	}
+	b.WriteString("\n## Output format\n")
+	b.WriteString("1. Short answer first.\n")
+	b.WriteString("2. Concrete steps/changes next.\n")
+	b.WriteString("3. Call out assumptions and risks.\n")
+	return b.String(), profile
+}
+
+func extractGatewayString(data map[string]any, paths []string) string {
+	for _, p := range paths {
+		if v, ok := lookupGatewayPath(data, p); ok {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func extractGatewayInt64(data map[string]any, paths []string) int64 {
+	for _, p := range paths {
+		if v, ok := lookupGatewayPath(data, p); ok {
+			switch n := v.(type) {
+			case float64:
+				return int64(n)
+			case int64:
+				return n
+			case int:
+				return int64(n)
+			case json.Number:
+				i, _ := n.Int64()
+				return i
+			}
+		}
+	}
+	return 0
+}
+
+func lookupGatewayPath(data map[string]any, path string) (any, bool) {
+	parts := strings.Split(path, ".")
+	var cur any = data
+	for _, p := range parts {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		v, ok := m[p]
+		if !ok {
+			return nil, false
+		}
+		cur = v
+	}
+	return cur, true
 }
 
 func truncate(s string, max int) string {
