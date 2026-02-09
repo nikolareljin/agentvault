@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // findExecutable checks if a command exists and returns its path.
@@ -16,7 +18,9 @@ func findExecutable(name string) string {
 
 // getVersion runs a command with a version flag and returns the output.
 func getVersion(cmd, flag string) string {
-	out, err := exec.Command(cmd, flag).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, cmd, flag).Output()
 	if err != nil {
 		return "unknown"
 	}

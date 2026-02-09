@@ -63,6 +63,7 @@ brew install nikolareljin/tap/agentvault
 | `init` | Initialize encrypted vault |
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
+| `status` | Show token usage and quota status (JSON for orchestration) |
 | `--tui`, `-t` | Launch interactive terminal UI |
 
 ### Agent Management
@@ -115,6 +116,21 @@ brew install nikolareljin/tap/agentvault
 | `setup export <file>` | Export complete configuration |
 | `setup import <file>` | Import configuration |
 | `setup pull` | Pull provider configs from system |
+
+## Provider Usage Status
+
+AgentVault exposes provider usage and quota metadata for orchestration:
+
+```bash
+# JSON output for other apps/agents
+agentvault status --json
+
+# Non-interactive unlock for automation
+AGENTVAULT_PASSWORD=... agentvault status --json
+
+# Skip vault data and only report provider usage
+agentvault status --no-vault --json
+```
 
 ## Unified Rules
 
@@ -261,6 +277,9 @@ agentvault instructions push /path/to/project
 # On source machine: export everything
 agentvault setup export my-setup.bundle --include-keys
 
+# Optional: include provider usage/quota snapshot for orchestration
+agentvault setup export my-setup.bundle --include-status
+
 # Includes:
 # - All agents and configurations
 # - Unified rules
@@ -268,6 +287,7 @@ agentvault setup export my-setup.bundle --include-keys
 # - Sessions
 # - Provider configs (Claude plugins, Codex rules, etc.)
 # - Instructions
+# - Optional status snapshot (token/quota usage metadata)
 
 # On target machine: import
 agentvault init
