@@ -2,6 +2,8 @@
 
 A CLI/TUI tool for managing AI agents, their configurations, unified rules, and multi-agent sessions across machines.
 
+Detailed command and TUI references: `docs/README.md`.
+
 ## Features
 
 - **Multi-Agent Management**: Claude, Codex, Meldbot, Openclaw, Nanoclaw, Ollama, Gemini, OpenAI, Aider, and custom providers
