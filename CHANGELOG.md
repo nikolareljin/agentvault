@@ -4,6 +4,13 @@
 
 ### Added
 
+#### HTTP API Server
+- `serve` command to start a lightweight HTTP server exposing the vault over a REST API
+- Endpoints: `GET /health`, `GET /api/v1/status`, `GET /api/v1/agents`, `GET /api/v1/agents/{name}`
+- Password via `AGENTVAULT_PASSWORD` env var; optional API key auth via `AGENTVAULT_SERVE_KEY`
+- API keys are never exposed in any response
+- Designed for integration with ForgeMind and other tools at `http://localhost:9000`
+
 #### Agent Detection
 - `detect` command to scan system for installed AI agents (Claude Code, Codex CLI, Ollama, Aider)
 - `detect add` subcommand to auto-add detected agents to vault

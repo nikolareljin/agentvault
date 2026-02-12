@@ -19,6 +19,7 @@
 //	│   ├── export/import/show/apply/pull
 //	├── instructions           Manage stored instruction files
 //	├── prompt                 Gateway prompt execution with usage tracking
+//	├── serve                  Start HTTP API server for vault integration
 //	├── status                 Show token usage and quota status
 //	├── --tui, -t              Launch interactive terminal UI
 //	└── version                Show version info
