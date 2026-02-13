@@ -3,7 +3,7 @@
 ## Daily workflow through TUI gateway
 
 ```bash
-agentvault --tui
+agentvault -t
 ```
 
 Then:

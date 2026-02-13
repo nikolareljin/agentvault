@@ -56,7 +56,7 @@ Get started:
   agentvault init              # Create vault
   agentvault detect add        # Auto-detect and add agents
   agentvault rules init        # Set up default rules
-  agentvault --tui             # Launch interactive UI`,
+  agentvault -t                # Launch interactive UI`,
 }
 
 // Execute runs the root command. Called from main().

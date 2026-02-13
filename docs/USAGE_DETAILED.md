@@ -537,7 +537,7 @@ Search mode (Agents tab):
 ## 5.1 Daily startup
 
 ```bash
-agentvault --tui
+agentvault -t
 ```
 
 Use Commands tab + `g` for prompt gateway workflow.

@@ -37,7 +37,7 @@ agentvault session create my-project --dir /path/to/project
 agentvault session start my-project
 
 # 6. Launch TUI to manage everything
-agentvault --tui
+agentvault -t
 ```
 
 ## Installation
