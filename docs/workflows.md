@@ -1,5 +1,7 @@
 # AgentVault Workflows
 
+Related docs: [Docs Index](./README.md) | [CLI Reference](./cli-reference.md) | [TUI Reference](./tui-reference.md) | [Detailed Usage](./USAGE_DETAILED.md)
+
 ## Daily workflow through TUI gateway
 
 ```bash
