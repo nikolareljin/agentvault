@@ -28,3 +28,5 @@ artifacts/
 
 # Ignore go gz file
 go[1-9]*.*.gz
+
+/ignore/
