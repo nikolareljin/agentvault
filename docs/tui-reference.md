@@ -1,5 +1,7 @@
 # AgentVault TUI Reference
 
+Related docs: [Docs Index](./README.md) | [CLI Reference](./cli-reference.md) | [Workflows](./workflows.md) | [Detailed Usage](./USAGE_DETAILED.md)
+
 Launch TUI:
 
 ```bash

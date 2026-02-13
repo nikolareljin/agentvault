@@ -2,6 +2,8 @@
 
 This file lists all CLI commands and flags.
 
+Related docs: [Docs Index](./README.md) | [TUI Reference](./tui-reference.md) | [Workflows](./workflows.md) | [Detailed Usage](./USAGE_DETAILED.md)
+
 ## Global usage
 
 ```bash

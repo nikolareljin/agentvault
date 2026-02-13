@@ -2,6 +2,8 @@
 
 This document is a full CLI + TUI reference for AgentVault, including command parameters, flags, and tab actions.
 
+Related docs: [Docs Index](./README.md) | [CLI Reference](./cli-reference.md) | [TUI Reference](./tui-reference.md) | [Workflows](./workflows.md)
+
 ## 1. Global CLI Usage
 
 ```bash
