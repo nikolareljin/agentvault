@@ -58,6 +58,14 @@ Keys:
 - `e`: edit selected instruction in external editor
 - `d`: delete selected instruction
 
+Auto behavior:
+- detects local instruction files from current project and session project dirs:
+  - `AGENTS.md`
+  - `CLAUDE.md`
+  - `codex.md`
+  - `.github/copilot-instructions.md`
+- current project files are auto-synced into vault instructions
+
 Editor selection order:
 1. `$EDITOR`
 2. `nano`
@@ -83,6 +91,10 @@ Views:
 Keys:
 - `Enter`: open selected session detail
 
+Live monitoring:
+- provider usage/quotas are refreshed periodically
+- running sessions display per-agent provider token/quota snapshots
+
 ## Tab 5: Detected
 
 View:
@@ -90,12 +102,25 @@ View:
 
 Keys:
 - `a`: add selected detected agent to vault
+- `Enter`: open selected detected agent detail
+- `c`: connect selected detected agent to Prompt Gateway
+
+Auto behavior:
+- detected installed agents are automatically added to vault
 
 ## Tab 6: Commands
 
 This tab has 2 operating modes.
 
-### A) CLI command bridge
+### A) Quick command menu (default)
+
+Keys:
+- `j/k`: select command
+- `Enter`: run selected command
+
+Use this for common actions without typing.
+
+### B) CLI command bridge
 
 Keys:
 - `:` or `;`: command entry mode

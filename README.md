@@ -23,10 +23,10 @@ Detailed command and TUI references: `docs/README.md`.
 # 1. Initialize vault with master password
 agentvault init
 
-# 2. Detect and add installed agents
-agentvault detect add
+# 2. Launch TUI (detected installed agents are auto-added)
+agentvault -t
 
-# 3. Initialize default rules and roles
+# 3. Initialize default rules and roles (one time)
 agentvault rules init
 agentvault roles init
 
@@ -39,6 +39,22 @@ agentvault session start my-project
 # 6. Launch TUI to manage everything
 agentvault -t
 ```
+
+## TUI First-Time Flow (Simplified)
+
+1. Open `agentvault -t`.
+2. Go to `Detected` tab:
+   - installed agents are auto-added to vault
+   - press `Enter` for details
+   - press `c` to connect the selected agent directly to Prompt Gateway
+3. Go to `Instructions` tab:
+   - AgentVault auto-detects project instruction files (`AGENTS.md`, `CLAUDE.md`, `codex.md`, `.github/copilot-instructions.md`)
+   - current-project files are auto-synced into vault instructions
+4. Go to `Sessions` tab:
+   - live provider token/quota usage is refreshed continuously for running sessions
+5. Go to `Commands` tab:
+   - use the built-in command menu (`j/k` + `Enter`) for common actions
+   - use `:` only for advanced/custom commands
 
 ## Installation
 

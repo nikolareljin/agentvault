@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -37,6 +38,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/nikolareljin/agentvault/internal/agent"
+	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/vault"
 )
 
@@ -70,6 +72,7 @@ const (
 	viewSessions
 	viewSessionDetail
 	viewDetected
+	viewDetectedDetail
 	viewCommands
 	viewStatus
 	viewHelp
@@ -99,6 +102,24 @@ type DetectedAgentInfo struct {
 	Status    string
 	InVault   bool
 	ConfigDir string
+}
+
+type detectedInstructionInfo struct {
+	Name     string
+	Filename string
+	Path     string
+	Updated  time.Time
+	Size     int
+}
+
+type quickCommand struct {
+	Label   string
+	Command string
+}
+
+type statusRefreshMsg struct {
+	report statuspkg.Report
+	err    error
 }
 
 // editorFinishedMsg is sent when the external editor exits.
@@ -147,6 +168,8 @@ type model struct {
 	instructions []agent.InstructionFile
 	detected     []DetectedAgentInfo
 	providerCfgs agent.ProviderConfig
+	statusReport *statuspkg.Report
+	statusErr    string
 
 	// UI navigation state
 	activeTab      tab
@@ -173,6 +196,8 @@ type model struct {
 	commandQuery   string
 	lastCommand    string
 	commandRunning bool
+	commandCursor  int
+	quickCommands  []quickCommand
 
 	// Prompt gateway mode (Commands tab, activated with 'g')
 	gatewayStage       gatewayStage
@@ -198,9 +223,12 @@ type model struct {
 	statusMsg     string
 	statusIsError bool
 	statusTime    time.Time
+	cwd           string
+	localInst     []detectedInstructionInfo
 }
 
 func initialModel(v *vault.Vault) model {
+	cwd, _ := os.Getwd()
 	m := model{
 		vault:        v,
 		agents:       v.List(),
@@ -209,6 +237,17 @@ func initialModel(v *vault.Vault) model {
 		providerCfgs: v.ProviderConfigs(),
 		activeTab:    tabAgents,
 		mode:         viewAgentList,
+		cwd:          cwd,
+		quickCommands: []quickCommand{
+			{Label: "List agents", Command: "list"},
+			{Label: "Auto-detect and add agents", Command: "detect add"},
+			{Label: "Initialize default rules", Command: "rules init"},
+			{Label: "Initialize default roles", Command: "roles init"},
+			{Label: "Pull instructions from current project", Command: "instructions pull ."},
+			{Label: "List sessions", Command: "session list"},
+			{Label: "Provider status (JSON)", Command: "status --json"},
+			{Label: "Create session in current dir", Command: "session create current --dir ."},
+		},
 	}
 	m.filteredAgents = make([]int, len(m.agents))
 	for i := range m.agents {
@@ -216,6 +255,8 @@ func initialModel(v *vault.Vault) model {
 	}
 	m.detected = detectAgentsForTUI()
 	m.markDetectedInVault()
+	m.autoAddDetectedAgents()
+	m.refreshLocalInstructions()
 	return m
 }
 
@@ -238,7 +279,88 @@ func (m *model) refresh() {
 	m.detected = detectAgentsForTUI()
 	m.providerCfgs = m.vault.ProviderConfigs()
 	m.markDetectedInVault()
+	m.autoAddDetectedAgents()
+	m.refreshLocalInstructions()
 	m.updateFilteredAgents()
+}
+
+func (m *model) autoAddDetectedAgents() {
+	for _, d := range m.detected {
+		if d.InVault {
+			continue
+		}
+		newAgent := agent.Agent{
+			Name:      d.Name,
+			Provider:  agent.Provider(d.Provider),
+			Tags:      []string{"auto-detected"},
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := m.vault.Add(newAgent); err != nil {
+			continue
+		}
+	}
+	// Re-sync in-memory lists after auto-add.
+	m.agents = m.vault.List()
+	m.markDetectedInVault()
+}
+
+func (m *model) refreshLocalInstructions() {
+	var local []detectedInstructionInfo
+	seen := map[string]bool{}
+	reverse := map[string]string{}
+	for name, filename := range agent.WellKnownInstructions {
+		reverse[filepath.Clean(filename)] = name
+	}
+
+	roots := []string{m.cwd}
+	sessions := m.vault.Sessions()
+	for _, s := range sessions.Sessions {
+		if s.ProjectDir != "" {
+			roots = append(roots, s.ProjectDir)
+		}
+	}
+
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if root == "" || seen[root] {
+			continue
+		}
+		seen[root] = true
+
+		for relPath, name := range reverse {
+			fullPath := filepath.Join(root, relPath)
+			info, err := os.Stat(fullPath)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			data, err := os.ReadFile(fullPath)
+			if err != nil {
+				continue
+			}
+			local = append(local, detectedInstructionInfo{
+				Name:     name,
+				Filename: relPath,
+				Path:     fullPath,
+				Updated:  info.ModTime(),
+				Size:     len(data),
+			})
+
+			// Current working directory is canonical source for auto-sync.
+			if root == m.cwd {
+				inst := agent.InstructionFile{
+					Name:      name,
+					Filename:  relPath,
+					Content:   string(data),
+					UpdatedAt: info.ModTime(),
+				}
+				_ = m.vault.SetInstruction(inst)
+			}
+		}
+	}
+
+	m.localInst = local
+	m.instructions = m.vault.ListInstructions()
 }
 
 func detectAgentsForTUI() []DetectedAgentInfo {
@@ -255,6 +377,10 @@ func detectAgentsForTUI() []DetectedAgentInfo {
 		{"meldbot", "meldbot"},
 		{"openclaw", "openclaw"},
 		{"nanoclaw", "nanoclaw"},
+		{"gemini", "gemini"},
+		{"openai", "openai"},
+		{"copilot", "custom"},
+		{"github-copilot-cli", "custom"},
 	}
 
 	for _, ag := range agents {
@@ -273,7 +399,9 @@ func detectAgentsForTUI() []DetectedAgentInfo {
 	return detected
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd {
+	return tea.Batch(statusRefreshCmd(m.vault), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -284,6 +412,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case editorFinishedMsg:
 		return m.handleEditorFinished(msg)
+
+	case statusRefreshMsg:
+		if msg.err != nil {
+			m.statusErr = msg.err.Error()
+		} else {
+			report := msg.report
+			m.statusReport = &report
+			m.statusErr = ""
+		}
+		return m, nil
 
 	case cliCommandFinishedMsg:
 		m.commandRunning = false
@@ -340,7 +478,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			if m.mode == viewAgentDetail || m.mode == viewInstructionDetail ||
-				m.mode == viewRuleDetail || m.mode == viewSessionDetail {
+				m.mode == viewRuleDetail || m.mode == viewSessionDetail || m.mode == viewDetectedDetail {
 				m.mode = m.getModeForTab()
 				return m, nil
 			}
@@ -353,7 +491,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "esc":
 			if m.mode == viewAgentDetail || m.mode == viewInstructionDetail ||
-				m.mode == viewRuleDetail || m.mode == viewSessionDetail ||
+				m.mode == viewRuleDetail || m.mode == viewSessionDetail || m.mode == viewDetectedDetail ||
 				m.mode == viewHelp {
 				m.mode = m.getModeForTab()
 				return m, nil
@@ -439,7 +577,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleNavDown(), nil
 
 		case "enter":
-			return m.handleEnter(), nil
+			updated, cmd := m.handleEnter()
+			return updated, cmd
 
 		case "d":
 			return m.handleDelete()
@@ -450,11 +589,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			return m.handleAdd()
 
+		case "c":
+			return m.handleConnectDetected()
+
 		case "r":
 			m.refresh()
 			m.setStatus("Refreshed", false)
-			return m, nil
+			return m, statusRefreshCmd(m.vault)
 		}
+	case time.Time:
+		return m, tea.Batch(statusRefreshCmd(m.vault), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
 	}
 	return m, nil
 }
@@ -742,6 +886,10 @@ func (m *model) handleNavUp() model {
 		if m.mode == viewDetected && m.detectedCursor > 0 {
 			m.detectedCursor--
 		}
+	case tabCommands:
+		if m.mode == viewCommands && m.commandCursor > 0 {
+			m.commandCursor--
+		}
 	}
 	return *m
 }
@@ -769,11 +917,15 @@ func (m *model) handleNavDown() model {
 		if m.mode == viewDetected && m.detectedCursor < len(m.detected)-1 {
 			m.detectedCursor++
 		}
+	case tabCommands:
+		if m.mode == viewCommands && m.commandCursor < len(m.quickCommands)-1 {
+			m.commandCursor++
+		}
 	}
 	return *m
 }
 
-func (m *model) handleEnter() model {
+func (m *model) handleEnter() (model, tea.Cmd) {
 	switch m.activeTab {
 	case tabAgents:
 		if m.mode == viewAgentList && len(m.filteredAgents) > 0 {
@@ -792,8 +944,37 @@ func (m *model) handleEnter() model {
 		if m.mode == viewSessions && len(sessions.Sessions) > 0 {
 			m.mode = viewSessionDetail
 		}
+	case tabDetected:
+		if m.mode == viewDetected && len(m.detected) > 0 {
+			m.mode = viewDetectedDetail
+		}
+	case tabCommands:
+		if m.mode == viewCommands && len(m.quickCommands) > 0 && m.commandCursor < len(m.quickCommands) {
+			qc := m.quickCommands[m.commandCursor]
+			parts, err := parseCommandLine(qc.Command)
+			if err != nil {
+				m.setStatus(fmt.Sprintf("Parse error: %v", err), true)
+				return *m, nil
+			}
+			if len(parts) == 0 {
+				return *m, nil
+			}
+			exePath, err := os.Executable()
+			if err != nil {
+				m.setStatus(fmt.Sprintf("Unable to locate agentvault binary: %v", err), true)
+				return *m, nil
+			}
+			m.commandRunning = true
+			c := exec.Command(exePath, parts...)
+			return *m, tea.ExecProcess(c, func(err error) tea.Msg {
+				return cliCommandFinishedMsg{
+					command: "agentvault " + strings.Join(parts, " "),
+					err:     err,
+				}
+			})
+		}
 	}
-	return *m
+	return *m, nil
 }
 
 // handleDelete initiates a delete confirmation for the selected item.
@@ -953,7 +1134,7 @@ func (m *model) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd)
 
 // handleAdd adds a detected agent to the vault (Detected tab).
 func (m *model) handleAdd() (tea.Model, tea.Cmd) {
-	if m.activeTab != tabDetected || m.mode != viewDetected {
+	if m.activeTab != tabDetected || (m.mode != viewDetected && m.mode != viewDetectedDetail) {
 		return m, nil
 	}
 	if len(m.detected) == 0 || m.detectedCursor >= len(m.detected) {
@@ -981,6 +1162,45 @@ func (m *model) handleAdd() (tea.Model, tea.Cmd) {
 
 	m.refresh()
 	m.setStatus(fmt.Sprintf("Added %s to vault", d.Name), false)
+	return m, nil
+}
+
+func (m *model) handleConnectDetected() (tea.Model, tea.Cmd) {
+	if m.activeTab != tabDetected {
+		return m, nil
+	}
+	if len(m.detected) == 0 || m.detectedCursor >= len(m.detected) {
+		return m, nil
+	}
+	d := m.detected[m.detectedCursor]
+	if !d.InVault {
+		_, _ = m.handleAdd()
+		m.refresh()
+	}
+
+	target := d.Name
+	idx := -1
+	for i, a := range m.agents {
+		if a.Name == target {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		m.setStatus(fmt.Sprintf("Could not resolve detected agent %s in vault", d.Name), true)
+		return m, nil
+	}
+
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewaySelectAgent
+	m.gatewayAgentCursor = idx
+	m.gatewayPrompt = ""
+	m.gatewayEffective = ""
+	m.gatewayResponse = ""
+	m.gatewayErr = ""
+	m.gatewayUsage = gatewayUsage{}
+	m.setStatus(fmt.Sprintf("Connected to %s", d.Name), false)
 	return m, nil
 }
 
@@ -1060,6 +1280,8 @@ func (m model) View() string {
 		b.WriteString(m.renderSessionDetail())
 	case viewDetected:
 		b.WriteString(m.renderDetected())
+	case viewDetectedDetail:
+		b.WriteString(m.renderDetectedDetail())
 	case viewCommands:
 		b.WriteString(m.renderCommands())
 	case viewStatus:
@@ -1265,6 +1487,9 @@ func (m model) renderAgentDetail() string {
 func (m model) renderInstructions() string {
 	var b strings.Builder
 
+	b.WriteString(dimStyle.Render("  Auto-source: current project + session project dirs (AGENTS.md / CLAUDE.md / codex.md / .github/copilot-instructions.md)"))
+	b.WriteString("\n\n")
+
 	if len(m.instructions) == 0 {
 		b.WriteString(dimStyle.Render("  No instruction files stored."))
 		b.WriteString("\n")
@@ -1331,6 +1556,8 @@ func (m model) renderInstructionDetail() string {
 
 func (m model) renderRules() string {
 	var b strings.Builder
+	b.WriteString(dimStyle.Render("  Rules are unified in vault; local instruction files are auto-imported into Instructions."))
+	b.WriteString("\n\n")
 
 	rules := m.shared.Rules
 	if len(rules) == 0 {
@@ -1477,6 +1704,52 @@ func (m model) renderSessions() string {
 	b.WriteString(dimStyle.Render("  * = active session"))
 	b.WriteString("\n")
 
+	if m.statusReport != nil && len(sessions.Sessions) > 0 {
+		b.WriteString("\n")
+		b.WriteString(labelStyle.Render("  Live provider usage (running sessions):"))
+		b.WriteString("\n")
+
+		agentProvider := map[string]string{}
+		for _, a := range m.agents {
+			agentProvider[a.Name] = string(a.Provider)
+		}
+
+		runningFound := false
+		for _, s := range sessions.Sessions {
+			if s.Status != agent.SessionStatusRunning {
+				continue
+			}
+			runningFound = true
+			b.WriteString(fmt.Sprintf("    %s\n", subtitleStyle.Render(s.Name)))
+			for _, sa := range s.Agents {
+				if !sa.Enabled {
+					continue
+				}
+				providerKey := agentProvider[sa.Name]
+				ps, ok := m.statusReport.Providers[providerKey]
+				if !ok {
+					b.WriteString(fmt.Sprintf("      - %s: provider status unavailable\n", sa.Name))
+					continue
+				}
+				line := fmt.Sprintf("      - %s (%s)", sa.Name, providerKey)
+				if ps.Tokens != nil {
+					line += fmt.Sprintf(" tokens[in:%d out:%d total:%d]",
+						ps.Tokens.InputTokens, ps.Tokens.OutputTokens, ps.Tokens.TotalTokens)
+				}
+				if ps.Quota != nil && ps.Quota.Primary != nil {
+					line += fmt.Sprintf(" quota[used:%.1f%% rem:%.1f%%]",
+						ps.Quota.Primary.UsedPercent, ps.Quota.Primary.RemainingPercent)
+				}
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+		}
+		if !runningFound {
+			b.WriteString(dimStyle.Render("    No running sessions."))
+			b.WriteString("\n")
+		}
+	}
+
 	return b.String()
 }
 
@@ -1566,9 +1839,57 @@ func (m model) renderDetected() string {
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render("  ● = in vault    ○ = not in vault"))
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  Press 'a' to add selected agent to vault."))
+	b.WriteString(dimStyle.Render("  Press 'a' to add, 'enter' for details, 'c' to connect to prompt gateway."))
 	b.WriteString("\n")
 
+	return b.String()
+}
+
+func (m model) renderDetectedDetail() string {
+	if len(m.detected) == 0 || m.detectedCursor >= len(m.detected) {
+		return dimStyle.Render("No detected agent selected.")
+	}
+	d := m.detected[m.detectedCursor]
+
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(fmt.Sprintf("Detected Agent: %s", d.Name)))
+	b.WriteString("\n\n")
+	b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render("Provider:"), d.Provider))
+	b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render("Version:"), d.Version))
+	b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render("Path:"), d.Path))
+	if d.ConfigDir != "" {
+		b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render("Config Dir:"), d.ConfigDir))
+	}
+	status := "not in vault"
+	if d.InVault {
+		status = "in vault"
+	}
+	b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render("Vault Status:"), status))
+
+	if m.statusReport != nil {
+		if ps, ok := m.statusReport.Providers[d.Provider]; ok {
+			b.WriteString("\n")
+			b.WriteString(labelStyle.Render("  Usage:"))
+			b.WriteString("\n")
+			if ps.Tokens != nil {
+				b.WriteString(fmt.Sprintf("    Tokens: input=%d output=%d total=%d\n",
+					ps.Tokens.InputTokens, ps.Tokens.OutputTokens, ps.Tokens.TotalTokens))
+			}
+			if ps.Quota != nil && ps.Quota.Primary != nil {
+				b.WriteString(fmt.Sprintf("    Primary quota: used=%.1f%% remaining=%.1f%%\n",
+					ps.Quota.Primary.UsedPercent, ps.Quota.Primary.RemainingPercent))
+			}
+			if ps.Error != "" {
+				b.WriteString(fmt.Sprintf("    Note: %s\n", ps.Error))
+			}
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  c: connect to this agent in Prompt Gateway"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  a: add to vault  esc: back"))
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -1579,39 +1900,31 @@ func (m model) renderCommands() string {
 
 	var b strings.Builder
 
-	b.WriteString(subtitleStyle.Render("CLI Command Bridge"))
+	b.WriteString(subtitleStyle.Render("Prompt + Command Center"))
 	b.WriteString("\n\n")
-	b.WriteString("  Run any CLI command directly from TUI.\n")
-	b.WriteString("  This provides full CLI parity inside TUI, including interactive commands.\n\n")
+	b.WriteString("  Select a command and press Enter. No need to type every command.\n")
+	b.WriteString("  Use ':' only for advanced/custom commands.\n\n")
 
-	b.WriteString(labelStyle.Render("  Quick examples:"))
+	b.WriteString(labelStyle.Render("  Quick command menu:"))
 	b.WriteString("\n")
-	examples := []string{
-		"list",
-		"add my-agent --provider codex --model gpt-5",
-		"edit my-agent --role lead-engineer",
-		"rules init",
-		"rules add no-todos --content \"No TODO comments\"",
-		"roles list",
-		"session create my-project --dir .",
-		"session start my-project --dry-run",
-		"instructions pull .",
-		"setup pull",
-		"generate all",
-		"export backup.enc",
+	for i, qc := range m.quickCommands {
+		cursor := "  "
+		style := normalStyle
+		if i == m.commandCursor {
+			cursor = "> "
+			style = selectedStyle
+		}
+		line := fmt.Sprintf("%s%-40s  :%s", cursor, truncate(qc.Label, 40), qc.Command)
+		b.WriteString(style.Render(line))
+		b.WriteString("\n")
 	}
-	for _, ex := range examples {
-		b.WriteString(fmt.Sprintf("    :%s\n", ex))
-	}
-
 	b.WriteString("\n")
 	b.WriteString(labelStyle.Render("  How to use:"))
 	b.WriteString("\n")
-	b.WriteString("    1. Press ':' from any tab\n")
-	b.WriteString("    2. Type an agentvault command without the binary name\n")
-	b.WriteString("    3. Press Enter to run\n")
-	b.WriteString("    4. Press 'r' to refresh views if needed\n")
-	b.WriteString("    5. Press 'g' to open Prompt Gateway flow\n")
+	b.WriteString("    1. Use j/k to select an action and Enter to run\n")
+	b.WriteString("    2. Press 'g' to open prompt gateway\n")
+	b.WriteString("    3. Press ':' only when you need a custom command\n")
+	b.WriteString("    4. Press 'r' to refresh data and usage\n")
 
 	if m.lastCommand != "" {
 		b.WriteString("\n")
@@ -1714,6 +2027,10 @@ func (m model) renderStatus() string {
 
 	b.WriteString(subtitleStyle.Render("System Status"))
 	b.WriteString("\n\n")
+	if m.statusErr != "" {
+		b.WriteString(errorStyle.Render("  Live usage error: " + m.statusErr))
+		b.WriteString("\n\n")
+	}
 
 	// Vault info
 	b.WriteString(labelStyle.Render("  Vault:"))
@@ -1769,6 +2086,15 @@ func (m model) renderStatus() string {
 	if len(m.detected) == 0 {
 		b.WriteString(dimStyle.Render("    No agents detected"))
 		b.WriteString("\n")
+	}
+
+	if len(m.localInst) > 0 {
+		b.WriteString("\n")
+		b.WriteString(labelStyle.Render("  Local Instruction Files (auto-detected):"))
+		b.WriteString("\n")
+		for _, li := range m.localInst {
+			b.WriteString(fmt.Sprintf("    - %s -> %s\n", li.Name, li.Path))
+		}
 	}
 
 	return b.String()
@@ -1835,12 +2161,14 @@ func (m model) renderHelp() string {
 			title: "Detected Tab",
 			keys: [][]string{
 				{"a", "Add agent to vault"},
+				{"c", "Connect selected agent to Prompt Gateway"},
+				{"enter", "Open detected agent details"},
 			},
 		},
 		{
 			title: "General",
 			keys: [][]string{
-				{":", "Run any CLI command"},
+				{":", "Run custom CLI command"},
 				{"g", "Prompt gateway (Commands tab)"},
 				{"r", "Refresh data"},
 				{"?", "Show this help"},
@@ -1883,7 +2211,11 @@ func (m model) renderHelpBar() string {
 			case tabRules:
 				help = "tab: tabs  d: delete  : run cmd  enter: detail  ?: help  q: quit"
 			case tabDetected:
-				help = "tab: tabs  a: add to vault  : run cmd  ?: help  q: quit"
+				if m.mode == viewDetectedDetail {
+					help = "c: connect  a: add  esc: back  q: quit"
+				} else {
+					help = "tab: tabs  enter: details  c: connect  a: add  : run cmd  ?: help  q: quit"
+				}
 			case tabCommands:
 				if m.gatewayStage != gatewayOff {
 					switch m.gatewayStage {
@@ -1899,7 +2231,7 @@ func (m model) renderHelpBar() string {
 						help = "s: switch agent  e: edit prompt  esc: close gateway"
 					}
 				} else {
-					help = "tab: tabs  g: gateway  : run cmd  r: refresh  ?: help  q: quit"
+					help = "tab: tabs  j/k: select action  enter: run  g: gateway  : custom cmd  r: refresh  ?: help  q: quit"
 				}
 			default:
 				help = "tab: switch tabs  : run cmd  ?: help  q: quit"
@@ -1983,6 +2315,17 @@ func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (
 		OutputTokens: out.EvalCount,
 		TotalTokens:  out.PromptEvalCount + out.EvalCount,
 	}, nil
+}
+
+func statusRefreshCmd(v *vault.Vault) tea.Cmd {
+	return func() tea.Msg {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return statusRefreshMsg{err: err}
+		}
+		report := statuspkg.BuildReport(v, homeDir)
+		return statusRefreshMsg{report: report}
+	}
 }
 
 func executeGatewayCodex(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
