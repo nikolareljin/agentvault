@@ -200,6 +200,9 @@ func detectAllAgents() []DetectedAgent {
 	agents = append(agents, detectMeldbot())
 	agents = append(agents, detectOpenclaw())
 	agents = append(agents, detectNanoclaw())
+	agents = append(agents, detectGemini())
+	agents = append(agents, detectOpenAI())
+	agents = append(agents, detectCopilotCLI())
 	return agents
 }
 
@@ -528,6 +531,91 @@ func detectNanoclaw() DetectedAgent {
 		a.Status = "configured"
 	}
 
+	return a
+}
+
+func detectGemini() DetectedAgent {
+	a := DetectedAgent{
+		Name:     "gemini",
+		Provider: agent.ProviderGemini,
+		Status:   "not_found",
+		Settings: make(map[string]any),
+	}
+
+	path, err := exec.LookPath("gemini")
+	if err != nil {
+		return a
+	}
+	a.Path = path
+	a.Status = "found"
+	if out, err := exec.Command("gemini", "--version").Output(); err == nil {
+		a.Version = strings.TrimSpace(string(out))
+	}
+	home, _ := os.UserHomeDir()
+	configDir := filepath.Join(home, ".gemini")
+	if _, err := os.Stat(configDir); err == nil {
+		a.ConfigDir = configDir
+		a.Status = "configured"
+	}
+	return a
+}
+
+func detectOpenAI() DetectedAgent {
+	a := DetectedAgent{
+		Name:     "openai",
+		Provider: agent.ProviderOpenAI,
+		Status:   "not_found",
+		Settings: make(map[string]any),
+	}
+
+	path, err := exec.LookPath("openai")
+	if err != nil {
+		return a
+	}
+	a.Path = path
+	a.Status = "found"
+	if out, err := exec.Command("openai", "--version").Output(); err == nil {
+		a.Version = strings.TrimSpace(string(out))
+	}
+	home, _ := os.UserHomeDir()
+	configDir := filepath.Join(home, ".openai")
+	if _, err := os.Stat(configDir); err == nil {
+		a.ConfigDir = configDir
+		a.Status = "configured"
+	}
+	return a
+}
+
+func detectCopilotCLI() DetectedAgent {
+	a := DetectedAgent{
+		Name:     "copilot",
+		Provider: agent.ProviderCustom,
+		Status:   "not_found",
+		Settings: make(map[string]any),
+	}
+
+	var path string
+	var err error
+	for _, candidate := range []string{"copilot", "github-copilot-cli"} {
+		path, err = exec.LookPath(candidate)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return a
+	}
+	a.Path = path
+	a.Status = "found"
+	if out, err := exec.Command(path, "--version").Output(); err == nil {
+		a.Version = strings.TrimSpace(string(out))
+	}
+	home, _ := os.UserHomeDir()
+	configDir := filepath.Join(home, ".config", "github-copilot")
+	if _, err := os.Stat(configDir); err == nil {
+		a.ConfigDir = configDir
+		a.Status = "configured"
+	}
 	return a
 }
 
