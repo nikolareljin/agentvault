@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -68,7 +69,7 @@ Example:
 					if got == "" {
 						got = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 					}
-					if got != apiKey {
+					if subtle.ConstantTimeCompare([]byte(got), []byte(apiKey)) != 1 {
 						writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 						return
 					}
