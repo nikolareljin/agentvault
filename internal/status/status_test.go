@@ -51,10 +51,16 @@ func TestCollectCodexStatusNoSessions(t *testing.T) {
 
 func TestBuildWindowQuotaBounds(t *testing.T) {
 	q := buildWindowQuota(120, 60, 100)
+	if q.UsedPercent != 100 {
+		t.Fatalf("used = %.1f, want 100", q.UsedPercent)
+	}
 	if q.RemainingPercent != 0 {
 		t.Fatalf("remaining = %.1f, want 0", q.RemainingPercent)
 	}
 	q2 := buildWindowQuota(-10, 60, 100)
+	if q2.UsedPercent != 0 {
+		t.Fatalf("used = %.1f, want 0", q2.UsedPercent)
+	}
 	if q2.RemainingPercent != 100 {
 		t.Fatalf("remaining = %.1f, want 100", q2.RemainingPercent)
 	}

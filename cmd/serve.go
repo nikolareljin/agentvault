@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -52,6 +53,9 @@ Example:
 		}
 
 		apiKey := os.Getenv("AGENTVAULT_SERVE_KEY")
+		if !isLoopbackHost(host) && apiKey == "" {
+			return fmt.Errorf("AGENTVAULT_SERVE_KEY is required when serving on non-loopback host %q", host)
+		}
 		mux := http.NewServeMux()
 
 		writeJSON := func(w http.ResponseWriter, code int, payload any) {
@@ -184,6 +188,16 @@ Example:
 		}
 		return server.ListenAndServe()
 	},
+}
+
+func isLoopbackHost(host string) bool {
+	h := strings.TrimSpace(host)
+	if h == "" || strings.EqualFold(h, "localhost") {
+		return true
+	}
+	h = strings.Trim(h, "[]")
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 func init() {
