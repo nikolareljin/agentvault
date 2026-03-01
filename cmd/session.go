@@ -241,7 +241,9 @@ var sessionStopCmd = &cobra.Command{
 			if a.PID > 0 {
 				process, err := os.FindProcess(a.PID)
 				if err == nil {
-					process.Signal(os.Interrupt)
+					if err := process.Signal(os.Interrupt); err != nil {
+						fmt.Fprintf(os.Stderr, "warning: failed to stop agent %q (pid %d): %v\n", a.Name, a.PID, err)
+					}
 					stopped++
 				}
 				session.Agents[i].PID = 0
@@ -250,7 +252,9 @@ var sessionStopCmd = &cobra.Command{
 
 		session.Status = agent.SessionStatusIdle
 		session.UpdatedAt = time.Now()
-		v.UpdateSession(session)
+		if err := v.UpdateSession(session); err != nil {
+			return err
+		}
 
 		fmt.Printf("Stopped %d agent(s) in session %q.\n", stopped, session.Name)
 		return nil
@@ -385,7 +389,9 @@ var sessionImportCmd = &cobra.Command{
 			if _, exists := v.Get(a.Name); !exists {
 				a.CreatedAt = time.Now()
 				a.UpdatedAt = time.Now()
-				v.Add(a)
+				if err := v.Add(a); err != nil {
+					return fmt.Errorf("importing agent %q: %w", a.Name, err)
+				}
 				fmt.Printf("  Imported agent: %s\n", a.Name)
 			}
 		}
@@ -418,7 +424,9 @@ var sessionImportCmd = &cobra.Command{
 				fmt.Printf("  Imported role: %s\n", r.Name)
 			}
 		}
-		v.SetSharedConfig(shared)
+		if err := v.SetSharedConfig(shared); err != nil {
+			return fmt.Errorf("saving shared config: %w", err)
+		}
 
 		// Import session
 		importData.Session.CreatedAt = time.Now()
@@ -499,7 +507,9 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 	// Update session status
 	session.Status = agent.SessionStatusRunning
 	session.UpdatedAt = time.Now()
-	v.UpdateSession(session)
+	if err := v.UpdateSession(session); err != nil {
+		return err
+	}
 
 	if sequential {
 		for _, sa := range agentsToStart {

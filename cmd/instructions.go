@@ -185,10 +185,14 @@ Examples:
 		defer os.Remove(tmpPath)
 
 		if _, err := tmpFile.WriteString(inst.Content); err != nil {
-			tmpFile.Close()
+			if closeErr := tmpFile.Close(); closeErr != nil {
+				return fmt.Errorf("closing temp file after write failure: %w", closeErr)
+			}
 			return fmt.Errorf("writing temp file: %w", err)
 		}
-		tmpFile.Close()
+		if err := tmpFile.Close(); err != nil {
+			return fmt.Errorf("closing temp file: %w", err)
+		}
 
 		// Find an editor
 		editor := findEditor()
