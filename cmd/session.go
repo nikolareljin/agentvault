@@ -210,7 +210,7 @@ var sessionStartCmd = &cobra.Command{
 
 Each agent is started in the session's project directory.
 By default, agents run in parallel.
-Use --sequential to run agents one at a time.
+Use --sequential to start agents in sequence.
 
 Examples:
   agentvault session start my-project
@@ -534,14 +534,27 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 			session.Status = agent.SessionStatusIdle
 		}
 	} else {
-		// Parallel start
+		// Parallel start with optional concurrency cap from session config.
+		parallelLimit := v.Sessions().ParallelLimit
+		if parallelLimit < 0 {
+			parallelLimit = 0
+		}
+
 		var wg sync.WaitGroup
 		var mu sync.Mutex
+		var sem chan struct{}
+		if parallelLimit > 0 {
+			sem = make(chan struct{}, parallelLimit)
+		}
 		started := 0
 		for _, sa := range agentsToStart {
 			wg.Add(1)
 			go func(sa agent.SessionAgent) {
 				defer wg.Done()
+				if sem != nil {
+					sem <- struct{}{}
+					defer func() { <-sem }()
+				}
 				pid, err := startAgent(v, session, sa, shared)
 				if err != nil {
 					fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
@@ -657,7 +670,7 @@ func init() {
 	sessionCreateCmd.Flags().String("agents", "", "comma-separated agent names")
 	sessionCreateCmd.Flags().String("role", "", "default role for all agents")
 
-	sessionStartCmd.Flags().Bool("sequential", false, "run agents sequentially instead of parallel")
+	sessionStartCmd.Flags().Bool("sequential", false, "start agents sequentially instead of parallel")
 	sessionStartCmd.Flags().String("agent", "", "start only a specific agent")
 	sessionStartCmd.Flags().Bool("dry-run", false, "show what would be started without starting")
 	sessionExportCmd.Flags().Bool("include-keys", false, "include API keys in exported agent entries")

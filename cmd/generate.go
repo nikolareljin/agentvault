@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -307,13 +309,13 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			prefix := envPrefixForAgent(a)
 			output.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", a.Name, a.Provider))
 			if a.Model != "" {
-				output.WriteString(fmt.Sprintf("export %s_MODEL=\"%s\"\n", prefix, a.Model))
+				output.WriteString(fmt.Sprintf("export %s_MODEL=%s\n", prefix, shellQuotedValue(a.Model)))
 			}
 			if !noKeys && a.APIKey != "" {
-				output.WriteString(fmt.Sprintf("export %s_API_KEY=\"%s\"\n", prefix, a.APIKey))
+				output.WriteString(fmt.Sprintf("export %s_API_KEY=%s\n", prefix, shellQuotedValue(a.APIKey)))
 			}
 			if a.BaseURL != "" {
-				output.WriteString(fmt.Sprintf("export %s_BASE_URL=\"%s\"\n", prefix, a.BaseURL))
+				output.WriteString(fmt.Sprintf("export %s_BASE_URL=%s\n", prefix, shellQuotedValue(a.BaseURL)))
 			}
 			output.WriteString("\n")
 		}
@@ -343,13 +345,13 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			output.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", a.Name, a.Provider))
 			prefix := envPrefixForAgent(a)
 			if a.Model != "" {
-				output.WriteString(fmt.Sprintf("%s_MODEL=%s\n", prefix, a.Model))
+				output.WriteString(fmt.Sprintf("%s_MODEL=%s\n", prefix, dotenvQuotedValue(a.Model)))
 			}
 			if !noKeys && a.APIKey != "" {
-				output.WriteString(fmt.Sprintf("%s_API_KEY=%s\n", prefix, a.APIKey))
+				output.WriteString(fmt.Sprintf("%s_API_KEY=%s\n", prefix, dotenvQuotedValue(a.APIKey)))
 			}
 			if a.BaseURL != "" {
-				output.WriteString(fmt.Sprintf("%s_BASE_URL=%s\n", prefix, a.BaseURL))
+				output.WriteString(fmt.Sprintf("%s_BASE_URL=%s\n", prefix, dotenvQuotedValue(a.BaseURL)))
 			}
 			output.WriteString("\n")
 		}
@@ -450,6 +452,16 @@ func envPrefixForAgent(a agent.Agent) string {
 	return provider + "_" + cleanName
 }
 
+func shellQuotedValue(value string) string {
+	// strconv.Quote escapes embedded quotes, newlines, backslashes and control chars.
+	return strconv.Quote(value)
+}
+
+func dotenvQuotedValue(value string) string {
+	// Use quoted output so spaces/#/= and multiline values remain parseable in dotenv.
+	return strconv.Quote(value)
+}
+
 func runGenerateMCP(cmd *cobra.Command, args []string) error {
 	v, err := openVault()
 	if err != nil {
@@ -459,19 +471,24 @@ func runGenerateMCP(cmd *cobra.Command, args []string) error {
 	agentFilter, _ := cmd.Flags().GetString("agent")
 	sharedOnly, _ := cmd.Flags().GetBool("shared-only")
 
-	// Collect all MCP servers
+	outputFile := ""
+	if len(args) > 0 {
+		outputFile = args[0]
+	}
+	return generateMCPConfig(v, outputFile, agentFilter, sharedOnly)
+}
+
+func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sharedOnly bool) error {
+	// Collect all MCP servers.
 	servers := make(map[string]agent.MCPServer)
 
-	// Add shared servers first
 	shared := v.SharedConfig()
 	for _, s := range shared.MCPServers {
 		servers[s.Name] = s
 	}
 
-	// Add agent-specific servers (override shared)
 	if !sharedOnly {
-		agents := v.List()
-		for _, a := range agents {
+		for _, a := range v.List() {
 			if agentFilter != "" && a.Name != agentFilter {
 				continue
 			}
@@ -486,7 +503,6 @@ func runGenerateMCP(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Build claude_desktop_config.json format
 	type MCPServerConfig struct {
 		Command string            `json:"command"`
 		Args    []string          `json:"args,omitempty"`
@@ -512,13 +528,8 @@ func runGenerateMCP(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("encoding MCP config: %w", err)
 	}
 
-	// Determine output location
-	outputFile := ""
-	if len(args) > 0 {
-		outputFile = args[0]
-	} else {
+	if outputFile == "" {
 		home, _ := os.UserHomeDir()
-		// Default to Claude Desktop config location
 		outputFile = filepath.Join(home, ".config", "claude", "claude_desktop_config.json")
 	}
 
@@ -527,11 +538,9 @@ func runGenerateMCP(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(outputFile), 0700); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
 	}
-
 	if err := os.WriteFile(outputFile, data, 0600); err != nil {
 		return fmt.Errorf("writing %s: %w", outputFile, err)
 	}
@@ -558,10 +567,8 @@ func runGenerateAll(cmd *cobra.Command, args []string) error {
 		if err := agent.SaveClaudeConfig(pc.Claude); err != nil {
 			fmt.Printf("Warning: could not generate Claude config: %v\n", err)
 		} else {
-			home, _ := os.UserHomeDir()
 			fmt.Printf("  Generated: ~/.claude/ config\n")
 			generated++
-			_ = home
 		}
 	}
 
@@ -585,13 +592,13 @@ func runGenerateAll(cmd *cobra.Command, args []string) error {
 			prefix := envPrefixForAgent(a)
 			envContent.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", a.Name, a.Provider))
 			if a.Model != "" {
-				envContent.WriteString(fmt.Sprintf("%s_MODEL=%s\n", prefix, a.Model))
+				envContent.WriteString(fmt.Sprintf("%s_MODEL=%s\n", prefix, dotenvQuotedValue(a.Model)))
 			}
 			if a.APIKey != "" {
-				envContent.WriteString(fmt.Sprintf("%s_API_KEY=%s\n", prefix, a.APIKey))
+				envContent.WriteString(fmt.Sprintf("%s_API_KEY=%s\n", prefix, dotenvQuotedValue(a.APIKey)))
 			}
 			if a.BaseURL != "" {
-				envContent.WriteString(fmt.Sprintf("%s_BASE_URL=%s\n", prefix, a.BaseURL))
+				envContent.WriteString(fmt.Sprintf("%s_BASE_URL=%s\n", prefix, dotenvQuotedValue(a.BaseURL)))
 			}
 			envContent.WriteString("\n")
 		}
@@ -606,7 +613,7 @@ func runGenerateAll(cmd *cobra.Command, args []string) error {
 	// Generate MCP config to the default location
 	shared := v.SharedConfig()
 	if len(shared.MCPServers) > 0 {
-		if err := runGenerateMCP(cmd, nil); err != nil {
+		if err := generateMCPConfig(v, "", "", false); err != nil {
 			fmt.Printf("Warning: could not generate MCP config: %v\n", err)
 		} else {
 			generated++

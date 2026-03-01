@@ -121,7 +121,7 @@ func BuildReport(v *vault.Vault, homeDir string) Report {
 		providerCfgCount++
 	}
 
-	agents := v.List()
+	agents := append([]agent.Agent(nil), v.List()...)
 	report.Vault = &VaultSummary{
 		Path:          v.Path(),
 		Agents:        len(agents),

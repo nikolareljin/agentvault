@@ -84,6 +84,10 @@ Example:
 
 		// GET /health
 		mux.HandleFunc("/health", auth(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status": "ok",
 				"time":   time.Now().UTC().Format(time.RFC3339),
@@ -192,7 +196,10 @@ Example:
 
 func isLoopbackHost(host string) bool {
 	h := strings.TrimSpace(host)
-	if h == "" || strings.EqualFold(h, "localhost") {
+	if h == "" {
+		return false
+	}
+	if strings.EqualFold(h, "localhost") {
 		return true
 	}
 	h = strings.Trim(h, "[]")
