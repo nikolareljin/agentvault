@@ -24,14 +24,20 @@ MELDBOT.md, etc.) with unified rules, ensuring all agents follow the same guidel
 The sync command:
   1. Reads unified rules from the vault
   2. Generates appropriate instruction files for each agent type
-  3. Writes files to the target directory (or vault)
+  3. Writes files to the target directory, the vault, or previews changes
+
+Subcommands:
+  sync to [directory]   # Write instruction files into a project directory
+  sync vault            # Update vault's stored instruction files
+  sync preview          # Show what would be generated without writing files
 
 Examples:
-  agentvault sync .              # Sync to current directory
-  agentvault sync /path/to/proj  # Sync to specific project
-  agentvault sync --vault        # Update vault's stored instructions
-  agentvault sync . --agents     # Only generate AGENTS.md (shared)
-  agentvault sync . --provider claude  # Only generate CLAUDE.md`,
+  agentvault sync to .                      # Sync to current directory
+  agentvault sync to /path/to/proj          # Sync to specific project
+  agentvault sync vault                     # Update vault's stored instructions
+  agentvault sync to . --agents-only        # Only generate AGENTS.md (shared)
+  agentvault sync to . --provider claude    # Only generate CLAUDE.md
+  agentvault sync preview --provider claude # Preview CLAUDE.md output only`,
 }
 
 var syncToCmd = &cobra.Command{
@@ -294,6 +300,27 @@ func generateAgentsMD(shared agent.SharedConfig, includeRoles bool) string {
 		}
 	}
 
+	// Include any custom/unknown categories not listed in the default order.
+	var extraCategories []string
+	for cat := range categories {
+		if !containsString(categoryOrder, cat) {
+			extraCategories = append(extraCategories, cat)
+		}
+	}
+	sort.Strings(extraCategories)
+	for _, cat := range extraCategories {
+		catRules := categories[cat]
+		if len(catRules) == 0 {
+			continue
+		}
+
+		sb.WriteString(fmt.Sprintf("## %s\n\n", titleCase(cat)))
+		for _, r := range catRules {
+			sb.WriteString(fmt.Sprintf("### %s\n", r.Description))
+			sb.WriteString(fmt.Sprintf("%s\n\n", r.Content))
+		}
+	}
+
 	// Add roles section if requested
 	if includeRoles && len(shared.Roles) > 0 {
 		sb.WriteString("## Available Roles\n\n")
@@ -392,6 +419,15 @@ func titleCase(s string) string {
 	r := []rune(s)
 	r[0] = unicode.ToUpper(r[0])
 	return string(r)
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 // writeIfAllowed writes content to path, refusing to overwrite existing files

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
@@ -380,6 +381,8 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	if v.providerConfigs.Ollama == nil && vd.ProviderConfigs.Ollama != nil {
 		v.providerConfigs.Ollama = vd.ProviderConfigs.Ollama
 	}
+	// Capture whether session config was empty before merge mutations.
+	wasSessionConfigUnset := isSessionConfigUnset(v.sessions)
 	// merge sessions (don't overwrite existing by ID)
 	seenSessions := make(map[string]struct{})
 	for _, s := range v.sessions.Sessions {
@@ -397,7 +400,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	}
 	// Only import parallel limit when current session config is otherwise empty.
 	// This avoids overwriting an intentional existing 0 (unlimited) setting.
-	if isSessionConfigUnset(v.sessions) && vd.Sessions.ParallelLimit > 0 {
+	if wasSessionConfigUnset && vd.Sessions.ParallelLimit > 0 {
 		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
 	}
 	return imported, skipped, v.Save()
@@ -452,9 +455,26 @@ func (v *Vault) write() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing temp vault file: %w", err)
 	}
-	if err := os.Rename(tmpPath, v.path); err != nil {
+	if err := replaceFile(tmpPath, v.path); err != nil {
 		return fmt.Errorf("replacing vault file: %w", err)
 	}
 	cleanup = false
 	return nil
+}
+
+func replaceFile(source, target string) error {
+	err := os.Rename(source, target)
+	if err == nil {
+		return nil
+	}
+
+	// Windows rename cannot overwrite an existing file, unlike POSIX.
+	if runtime.GOOS == "windows" {
+		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return os.Rename(source, target)
+	}
+
+	return err
 }

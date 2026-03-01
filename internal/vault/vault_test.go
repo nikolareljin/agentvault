@@ -440,6 +440,34 @@ func TestImportDataImportsParallelLimitForEmptySessionConfig(t *testing.T) {
 	}
 }
 
+func TestImportDataImportsParallelLimitWhenDefaultAgentsAlsoProvided(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {
+			"default_agents": ["claude"],
+			"parallel_limit": 3
+		}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	sessions := v.Sessions()
+	if got := sessions.ParallelLimit; got != 3 {
+		t.Fatalf("ParallelLimit = %d, want 3", got)
+	}
+	if len(sessions.DefaultAgents) != 1 || sessions.DefaultAgents[0] != "claude" {
+		t.Fatalf("DefaultAgents = %v, want [claude]", sessions.DefaultAgents)
+	}
+}
+
 func TestExistsReturnsFalse(t *testing.T) {
 	v := New("/tmp/nonexistent-vault-" + t.Name() + ".enc")
 	if v.Exists() {

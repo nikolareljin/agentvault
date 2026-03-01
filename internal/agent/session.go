@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"time"
 )
 
@@ -104,7 +107,13 @@ func (sc *SessionConfig) RemoveSession(id string) bool {
 
 // GenerateSessionID creates a unique session ID.
 func GenerateSessionID() string {
-	return time.Now().Format("20060102-150405")
+	now := time.Now().UTC()
+	var suffix [2]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		// Fallback keeps IDs unique enough even if crypto/rand is unavailable.
+		return fmt.Sprintf("%d", now.UnixNano())
+	}
+	return fmt.Sprintf("%d-%s", now.UnixNano(), hex.EncodeToString(suffix[:]))
 }
 
 // NewSession creates a new session with defaults.
