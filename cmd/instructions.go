@@ -195,7 +195,7 @@ var instEditCmd = &cobra.Command{
 	Use:   "edit [name]",
 	Short: "Edit an instruction file in an external editor",
 	Long: `Open a stored instruction file in your preferred editor for editing.
-The editor is chosen in order: $EDITOR, nano, vi.
+The editor is chosen in order: $EDITOR, nano, vi, vim.
 
 After saving and closing the editor, the updated content is stored in the vault.
 
