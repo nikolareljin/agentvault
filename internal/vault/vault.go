@@ -33,8 +33,8 @@ import (
 type vaultData struct {
 	Agents          []agent.Agent        `json:"agents"`
 	Shared          agent.SharedConfig   `json:"shared"`
-	ProviderConfigs agent.ProviderConfig `json:"provider_configs,omitempty"`
-	Sessions        agent.SessionConfig  `json:"sessions,omitempty"`
+	ProviderConfigs agent.ProviderConfig `json:"provider_configs"`
+	Sessions        agent.SessionConfig  `json:"sessions"`
 }
 
 // Vault represents the encrypted agent store.
