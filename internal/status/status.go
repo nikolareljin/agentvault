@@ -227,6 +227,11 @@ type codexSessionEvent struct {
 
 func collectCodexStatus(homeDir string) ProviderStatus {
 	status := ProviderStatus{Provider: string(agent.ProviderCodex)}
+	if strings.TrimSpace(homeDir) == "" {
+		status.Available = false
+		status.Error = "home directory is not available"
+		return status
+	}
 
 	latestFile, err := findNewestJSONL(filepath.Join(homeDir, ".codex", "sessions"))
 	if err != nil {
