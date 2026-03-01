@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -252,7 +253,6 @@ func detectClaude() DetectedAgent {
 		if data, err := os.ReadFile(settingsPath); err == nil {
 			var settings map[string]any
 			if json.Unmarshal(data, &settings) == nil {
-				a.Settings["settings"] = settings
 				if plugins, ok := settings["enabledPlugins"].(map[string]any); ok {
 					enabledPlugins := []string{}
 					for name, enabled := range plugins {
@@ -260,13 +260,66 @@ func detectClaude() DetectedAgent {
 							enabledPlugins = append(enabledPlugins, name)
 						}
 					}
+					sort.Strings(enabledPlugins)
 					a.Settings["plugins"] = enabledPlugins
+				}
+				if safeSettings := redactSensitiveMap(settings); len(safeSettings) > 0 {
+					a.Settings["settings_safe"] = safeSettings
 				}
 			}
 		}
 	}
 
 	return a
+}
+
+func redactSensitiveMap(in map[string]any) map[string]any {
+	out := make(map[string]any)
+	for k, v := range in {
+		if isSensitiveKey(k) {
+			continue
+		}
+		switch tv := v.(type) {
+		case map[string]any:
+			nested := redactSensitiveMap(tv)
+			if len(nested) > 0 {
+				out[k] = nested
+			}
+		case []any:
+			out[k] = redactSensitiveSlice(tv)
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func redactSensitiveSlice(in []any) []any {
+	out := make([]any, 0, len(in))
+	for _, v := range in {
+		switch tv := v.(type) {
+		case map[string]any:
+			nested := redactSensitiveMap(tv)
+			if len(nested) > 0 {
+				out = append(out, nested)
+			}
+		case []any:
+			out = append(out, redactSensitiveSlice(tv))
+		default:
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func isSensitiveKey(key string) bool {
+	k := strings.ToLower(key)
+	return strings.Contains(k, "key") ||
+		strings.Contains(k, "token") ||
+		strings.Contains(k, "secret") ||
+		strings.Contains(k, "password") ||
+		strings.Contains(k, "credential") ||
+		strings.Contains(k, "auth")
 }
 
 func detectCodex() DetectedAgent {

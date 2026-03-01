@@ -325,6 +325,12 @@ func collectCodexStatus(homeDir string) ProviderStatus {
 }
 
 func buildWindowQuota(used float64, windowMinutes int, resetsAt int64) *WindowQuota {
+	if used < 0 {
+		used = 0
+	}
+	if used > 100 {
+		used = 100
+	}
 	remaining := 100.0 - used
 	if remaining < 0 {
 		remaining = 0
