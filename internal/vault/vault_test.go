@@ -362,6 +362,84 @@ func TestImportDataDoesNotOverwriteExistingSharedPrompt(t *testing.T) {
 	}
 }
 
+func TestImportDataDeduplicatesImportedSessionIDs(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {
+			"sessions": [
+				{"id":"sess-1","name":"A","project_dir":"/tmp/a","agents":[],"status":"idle"},
+				{"id":"sess-1","name":"B","project_dir":"/tmp/b","agents":[],"status":"idle"}
+			]
+		}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	sessions := v.Sessions().Sessions
+	if len(sessions) != 1 {
+		t.Fatalf("sessions len = %d, want 1", len(sessions))
+	}
+	if sessions[0].ID != "sess-1" {
+		t.Fatalf("session ID = %q, want sess-1", sessions[0].ID)
+	}
+}
+
+func TestImportDataDoesNotOverwriteUnlimitedParallelLimit(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSessions(agent.SessionConfig{
+		DefaultAgents: []string{"claude"},
+		ParallelLimit: 0, // meaningful: unlimited
+	}); err != nil {
+		t.Fatalf("SetSessions() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {"parallel_limit": 4}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	if got := v.Sessions().ParallelLimit; got != 0 {
+		t.Fatalf("ParallelLimit = %d, want 0", got)
+	}
+}
+
+func TestImportDataImportsParallelLimitForEmptySessionConfig(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {"parallel_limit": 4}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	if got := v.Sessions().ParallelLimit; got != 4 {
+		t.Fatalf("ParallelLimit = %d, want 4", got)
+	}
+}
+
 func TestExistsReturnsFalse(t *testing.T) {
 	v := New("/tmp/nonexistent-vault-" + t.Name() + ".enc")
 	if v.Exists() {
