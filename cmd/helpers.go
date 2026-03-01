@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"syscall"
 
 	"path/filepath"
 
@@ -24,7 +25,7 @@ func resolveVaultPath() string {
 // Uses golang.org/x/term to suppress input display for security.
 func readPassword(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, prompt)
-	pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	pw, err := term.ReadPassword(syscall.Stdin)
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", fmt.Errorf("reading password: %w", err)
