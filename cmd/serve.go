@@ -172,7 +172,15 @@ Example:
 
 		addr := fmt.Sprintf(":%d", port)
 		log.Printf("AgentVault API listening on %s (vault: %s, auth: %v)", addr, vaultPath, apiKey != "")
-		return http.ListenAndServe(addr, mux)
+		server := &http.Server{
+			Addr:              addr,
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      30 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		return server.ListenAndServe()
 	},
 }
 
