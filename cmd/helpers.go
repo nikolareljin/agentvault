@@ -24,25 +24,12 @@ func resolveVaultPath() string {
 // Uses golang.org/x/term to suppress input display for security.
 func readPassword(prompt string) (string, error) {
 	fmt.Fprint(os.Stderr, prompt)
-	fd, err := fdAsInt(os.Stdin.Fd())
-	if err != nil {
-		fmt.Fprintln(os.Stderr)
-		return "", err
-	}
-	pw, err := term.ReadPassword(fd)
+	pw, err := term.ReadPassword(stdinFD())
 	fmt.Fprintln(os.Stderr)
 	if err != nil {
 		return "", fmt.Errorf("reading password: %w", err)
 	}
 	return string(pw), nil
-}
-
-func fdAsInt(fd uintptr) (int, error) {
-	maxInt := ^uint(0) >> 1
-	if fd > uintptr(maxInt) {
-		return 0, fmt.Errorf("file descriptor out of range")
-	}
-	return int(fd), nil
 }
 
 // openVault prompts for the master password and unlocks the vault.
