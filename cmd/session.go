@@ -42,7 +42,6 @@ var sessionListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		sessions := v.Sessions()
 
@@ -318,6 +317,7 @@ var sessionExportCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		includeKeys, _ := cmd.Flags().GetBool("include-keys")
 
 		session, ok := v.GetSessionByName(args[0])
 		if !ok {
@@ -340,6 +340,9 @@ var sessionExportCmd = &cobra.Command{
 		// Get agent configs
 		for _, sa := range session.Agents {
 			if a, ok := v.Get(sa.Name); ok {
+				if !includeKeys {
+					a.APIKey = ""
+				}
 				exportData.Agents = append(exportData.Agents, a)
 			}
 		}
@@ -349,7 +352,7 @@ var sessionExportCmd = &cobra.Command{
 			return fmt.Errorf("encoding session: %w", err)
 		}
 
-		if err := os.WriteFile(args[1], data, 0644); err != nil {
+		if err := os.WriteFile(args[1], data, 0600); err != nil {
 			return fmt.Errorf("writing file: %w", err)
 		}
 
@@ -657,4 +660,5 @@ func init() {
 	sessionStartCmd.Flags().Bool("sequential", false, "run agents sequentially instead of parallel")
 	sessionStartCmd.Flags().String("agent", "", "start only a specific agent")
 	sessionStartCmd.Flags().Bool("dry-run", false, "show what would be started without starting")
+	sessionExportCmd.Flags().Bool("include-keys", false, "include API keys in exported agent entries")
 }
