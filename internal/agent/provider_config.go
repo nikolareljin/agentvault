@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -79,9 +80,21 @@ func LoadClaudeConfig() (*ClaudeConfig, error) {
 					}
 				}
 			}
+			if model, ok := settings["defaultModel"].(string); ok {
+				config.DefaultModel = model
+			}
+			if autoApprove, ok := anyToStringSlice(settings["autoApprove"]); ok {
+				config.AutoApprove = autoApprove
+			}
+			if mcpServers, ok := settings["mcpServers"].(map[string]any); ok {
+				config.MCPServers = make(map[string]any, len(mcpServers))
+				for name, server := range mcpServers {
+					config.MCPServers[name] = server
+				}
+			}
 			// Store all other settings
 			for k, v := range settings {
-				if k != "enabledPlugins" {
+				if k != "enabledPlugins" && k != "defaultModel" && k != "autoApprove" && k != "mcpServers" {
 					config.CustomSettings[k] = v
 				}
 			}
@@ -111,11 +124,20 @@ func SaveClaudeConfig(config *ClaudeConfig) error {
 
 	// Build settings.json
 	settings := make(map[string]any)
+	for k, v := range config.CustomSettings {
+		settings[k] = v
+	}
 	if len(config.EnabledPlugins) > 0 {
 		settings["enabledPlugins"] = config.EnabledPlugins
 	}
-	for k, v := range config.CustomSettings {
-		settings[k] = v
+	if config.DefaultModel != "" {
+		settings["defaultModel"] = config.DefaultModel
+	}
+	if len(config.AutoApprove) > 0 {
+		settings["autoApprove"] = config.AutoApprove
+	}
+	if len(config.MCPServers) > 0 {
+		settings["mcpServers"] = config.MCPServers
 	}
 
 	data, err := json.MarshalIndent(settings, "", "  ")
@@ -135,6 +157,11 @@ func SaveClaudeConfig(config *ClaudeConfig) error {
 		}
 		keybindingsPath := filepath.Join(claudeDir, "keybindings.json")
 		if err := os.WriteFile(keybindingsPath, data, 0600); err != nil {
+			return err
+		}
+	} else {
+		keybindingsPath := filepath.Join(claudeDir, "keybindings.json")
+		if err := os.Remove(keybindingsPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -214,7 +241,13 @@ func SaveCodexConfig(config *CodexConfig) error {
 
 	// Build config.toml (write even when empty so overwrite/clear is possible).
 	var sb strings.Builder
-	for path, level := range config.TrustedProjects {
+	paths := make([]string, 0, len(config.TrustedProjects))
+	for path := range config.TrustedProjects {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		level := config.TrustedProjects[path]
 		sb.WriteString(fmt.Sprintf("[projects.%q]\n", path))
 		sb.WriteString(fmt.Sprintf("trust_level = %q\n\n", level))
 	}
@@ -223,17 +256,37 @@ func SaveCodexConfig(config *CodexConfig) error {
 		return err
 	}
 
-	// Write rules
-	if len(config.Rules) > 0 {
-		rulesDir := filepath.Join(codexDir, "rules")
-		if err := os.MkdirAll(rulesDir, 0700); err != nil {
-			return err
-		}
-		for name, content := range config.Rules {
-			rulePath := filepath.Join(rulesDir, name+".md")
-			if err := os.WriteFile(rulePath, []byte(content), 0600); err != nil {
+	// Write rules and remove stale entries to support overwrite semantics.
+	rulesDir := filepath.Join(codexDir, "rules")
+	if err := os.MkdirAll(rulesDir, 0700); err != nil {
+		return err
+	}
+	if entries, err := os.ReadDir(rulesDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), ".md")
+			if _, keep := config.Rules[name]; keep {
+				continue
+			}
+			if err := os.Remove(filepath.Join(rulesDir, e.Name())); err != nil {
 				return err
 			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	ruleNames := make([]string, 0, len(config.Rules))
+	for name := range config.Rules {
+		ruleNames = append(ruleNames, name)
+	}
+	sort.Strings(ruleNames)
+	for _, name := range ruleNames {
+		rulePath := filepath.Join(rulesDir, name+".md")
+		if err := os.WriteFile(rulePath, []byte(config.Rules[name]), 0600); err != nil {
+			return err
 		}
 	}
 
@@ -253,4 +306,26 @@ func LoadOllamaConfig() (*OllamaConfig, error) {
 	}
 
 	return config, nil
+}
+
+func anyToStringSlice(v any) ([]string, bool) {
+	if v == nil {
+		return nil, false
+	}
+	if values, ok := v.([]string); ok {
+		return append([]string(nil), values...), true
+	}
+	values, ok := v.([]any)
+	if !ok {
+		return nil, false
+	}
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		s, ok := raw.(string)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, s)
+	}
+	return out, true
 }

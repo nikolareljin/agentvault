@@ -33,13 +33,12 @@ func findEditorCommand() []string {
 }
 
 // splitCommandLine parses a command string with simple shell-like quoting.
-// It supports single/double quotes and backslash escapes.
+// It intentionally does not treat backslashes as escapes so Windows paths are preserved.
 func splitCommandLine(s string) []string {
 	var out []string
 	var current strings.Builder
 	inSingle := false
 	inDouble := false
-	escaped := false
 
 	flush := func() {
 		if current.Len() > 0 {
@@ -50,11 +49,6 @@ func splitCommandLine(s string) []string {
 
 	for _, r := range s {
 		switch {
-		case escaped:
-			current.WriteRune(r)
-			escaped = false
-		case r == '\\' && !inSingle:
-			escaped = true
 		case r == '\'' && !inDouble:
 			inSingle = !inSingle
 		case r == '"' && !inSingle:
