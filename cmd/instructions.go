@@ -253,13 +253,13 @@ var instRemoveCmd = &cobra.Command{
 // knownFilenameToName maps filenames on disk to instruction names for pull.
 // This should stay in sync with agent.WellKnownInstructions (the reverse map).
 var knownFilenameToName = map[string]string{
-	"AGENTS.md":    "agents",
-	"CLAUDE.md":    "claude",
-	"codex.md":     "codex",
-	"MELDBOT.md":   "meldbot",
-	"OPENCLAW.md":  "openclaw",
-	"NANOCLAW.md":  "nanoclaw",
-	".cursorrules": "cursor",
+	"AGENTS.md":      "agents",
+	"CLAUDE.md":      "claude",
+	"codex.md":       "codex",
+	"MELDBOT.md":     "meldbot",
+	"OPENCLAW.md":    "openclaw",
+	"NANOCLAW.md":    "nanoclaw",
+	".cursorrules":   "cursor",
 	".windsurfrules": "windsurf",
 }
 
