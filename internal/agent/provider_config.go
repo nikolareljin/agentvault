@@ -118,15 +118,13 @@ func SaveClaudeConfig(config *ClaudeConfig) error {
 		settings[k] = v
 	}
 
-	if len(settings) > 0 {
-		data, err := json.MarshalIndent(settings, "", "  ")
-		if err != nil {
-			return err
-		}
-		settingsPath := filepath.Join(claudeDir, "settings.json")
-		if err := os.WriteFile(settingsPath, data, 0600); err != nil {
-			return err
-		}
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	settingsPath := filepath.Join(claudeDir, "settings.json")
+	if err := os.WriteFile(settingsPath, data, 0600); err != nil {
+		return err
 	}
 
 	// Write keybindings.json if present
@@ -214,17 +212,15 @@ func SaveCodexConfig(config *CodexConfig) error {
 		return err
 	}
 
-	// Build config.toml
-	if len(config.TrustedProjects) > 0 {
-		var sb strings.Builder
-		for path, level := range config.TrustedProjects {
-			sb.WriteString(fmt.Sprintf("[projects.%q]\n", path))
-			sb.WriteString(fmt.Sprintf("trust_level = %q\n\n", level))
-		}
-		configPath := filepath.Join(codexDir, "config.toml")
-		if err := os.WriteFile(configPath, []byte(sb.String()), 0600); err != nil {
-			return err
-		}
+	// Build config.toml (write even when empty so overwrite/clear is possible).
+	var sb strings.Builder
+	for path, level := range config.TrustedProjects {
+		sb.WriteString(fmt.Sprintf("[projects.%q]\n", path))
+		sb.WriteString(fmt.Sprintf("trust_level = %q\n\n", level))
+	}
+	configPath := filepath.Join(codexDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(sb.String()), 0600); err != nil {
+		return err
 	}
 
 	// Write rules
