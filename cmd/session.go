@@ -210,7 +210,7 @@ var sessionStartCmd = &cobra.Command{
 	Long: `Start all enabled agents in a session.
 
 Each agent is started in the session's project directory.
-Use --parallel to run agents concurrently (default).
+By default, agents run in parallel.
 Use --sequential to run agents one at a time.
 
 Examples:
@@ -512,24 +512,58 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 	}
 
 	if sequential {
+		started := 0
 		for _, sa := range agentsToStart {
-			if err := startAgent(v, session, sa, shared); err != nil {
+			pid, err := startAgent(v, session, sa, shared)
+			if err != nil {
 				fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
+				continue
 			}
+			for i := range session.Agents {
+				if session.Agents[i].Name == sa.Name {
+					session.Agents[i].PID = pid
+					break
+				}
+			}
+			started++
+		}
+		if started == 0 {
+			session.Status = agent.SessionStatusIdle
 		}
 	} else {
 		// Parallel start
 		var wg sync.WaitGroup
+		var mu sync.Mutex
+		started := 0
 		for _, sa := range agentsToStart {
 			wg.Add(1)
 			go func(sa agent.SessionAgent) {
 				defer wg.Done()
-				if err := startAgent(v, session, sa, shared); err != nil {
+				pid, err := startAgent(v, session, sa, shared)
+				if err != nil {
 					fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
+					return
 				}
+				mu.Lock()
+				for i := range session.Agents {
+					if session.Agents[i].Name == sa.Name {
+						session.Agents[i].PID = pid
+						break
+					}
+				}
+				started++
+				mu.Unlock()
 			}(sa)
 		}
 		wg.Wait()
+		if started == 0 {
+			session.Status = agent.SessionStatusIdle
+		}
+	}
+
+	session.UpdatedAt = time.Now()
+	if err := v.UpdateSession(session); err != nil {
+		return err
 	}
 
 	fmt.Println("\nAll agents started.")
@@ -540,10 +574,12 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 // It resolves the provider to a CLI command name, verifies the command
 // exists in PATH, then starts it in the session's project directory.
 // The process PID is reported for later stop/status tracking.
-func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, shared agent.SharedConfig) error {
+func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, shared agent.SharedConfig) (int, error) {
+	_ = shared // reserved for provider-specific startup behavior
+
 	a, ok := v.Get(sa.Name)
 	if !ok {
-		return fmt.Errorf("agent %q not found", sa.Name)
+		return 0, fmt.Errorf("agent %q not found", sa.Name)
 	}
 
 	// Determine the command to run based on provider
@@ -570,12 +606,12 @@ func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, sh
 		cmdPath = "nanoclaw"
 		cmdArgs = []string{}
 	default:
-		return fmt.Errorf("unsupported provider %s for auto-start", a.Provider)
+		return 0, fmt.Errorf("unsupported provider %s for auto-start", a.Provider)
 	}
 
 	// Check if command exists
 	if _, err := exec.LookPath(cmdPath); err != nil {
-		return fmt.Errorf("%s not found in PATH", cmdPath)
+		return 0, fmt.Errorf("%s not found in PATH", cmdPath)
 	}
 
 	fmt.Printf("  Starting %s (%s) in %s...\n", sa.Name, a.Provider, session.ProjectDir)
@@ -593,11 +629,11 @@ func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, sh
 	cmd.Env = append(cmd.Env, fmt.Sprintf("AGENTVAULT_AGENT=%s", sa.Name))
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting %s: %w", cmdPath, err)
+		return 0, fmt.Errorf("starting %s: %w", cmdPath, err)
 	}
 
 	fmt.Printf("  Started %s (PID: %d)\n", sa.Name, cmd.Process.Pid)
-	return nil
+	return cmd.Process.Pid, nil
 }
 
 func init() {

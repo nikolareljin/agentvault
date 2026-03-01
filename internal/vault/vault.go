@@ -15,9 +15,11 @@
 package vault
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -440,7 +442,7 @@ func (v *Vault) write() error {
 		}
 	}()
 
-	if _, err := tmp.Write(data); err != nil {
+	if _, err := io.Copy(tmp, bytes.NewReader(data)); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("writing temp vault file: %w", err)
 	}
@@ -470,10 +472,19 @@ func replaceFile(source, target string) error {
 
 	// Windows rename cannot overwrite an existing file, unlike POSIX.
 	if runtime.GOOS == "windows" {
-		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		backup := target + ".bak"
+		_ = os.Remove(backup)
+		if err := os.Rename(target, backup); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		return os.Rename(source, target)
+		if err := os.Rename(source, target); err != nil {
+			if restoreErr := os.Rename(backup, target); restoreErr != nil && !os.IsNotExist(restoreErr) {
+				return fmt.Errorf("renaming replacement failed: %v; restoring original failed: %v", err, restoreErr)
+			}
+			return err
+		}
+		_ = os.Remove(backup)
+		return nil
 	}
 
 	return err

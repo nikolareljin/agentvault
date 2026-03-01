@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -64,12 +65,15 @@ func runDetect(cmd *cobra.Command, args []string) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	verbose, _ := cmd.Flags().GetBool("verbose")
 
-	// Check which agents are already in vault
-	v, err := openVault()
-	if err == nil {
-		for i := range agents {
-			if _, found := v.Get(agents[i].Name); found {
-				agents[i].InVault = true
+	// Avoid interactive password prompts for plain "detect".
+	// Only check vault membership when password is provided via env.
+	if password := os.Getenv("AGENTVAULT_PASSWORD"); password != "" {
+		v := vault.New(resolveVaultPath())
+		if v.Exists() && v.Unlock(password) == nil {
+			for i := range agents {
+				if _, found := v.Get(agents[i].Name); found {
+					agents[i].InVault = true
+				}
 			}
 		}
 	}
