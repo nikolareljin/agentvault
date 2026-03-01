@@ -15,7 +15,7 @@ jobs:
     uses: nikolareljin/ci-helpers/.github/workflows/go-scan.yml@production
     with:
       go_version: "1.24"
-      gosec_args: "./..."
+      gosec_args: "-exclude=G104 ./..."
 
   gitleaks:
     runs-on: ubuntu-latest

@@ -214,7 +214,9 @@ func runGenerateCodex(cmd *cobra.Command, args []string) error {
 		}
 		pc.Codex.TrustedProjects[absPath] = "trusted"
 		// Save back to vault
-		v.SetCodexConfig(pc.Codex)
+		if err := v.SetCodexConfig(pc.Codex); err != nil {
+			return fmt.Errorf("saving codex config: %w", err)
+		}
 	}
 
 	home, _ := os.UserHomeDir()
