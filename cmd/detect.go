@@ -309,21 +309,31 @@ func detectCodex() DetectedAgent {
 		// Read config.toml (simple parsing)
 		configPath := filepath.Join(configDir, "config.toml")
 		if data, err := os.ReadFile(configPath); err == nil {
-			// Parse trusted projects
+			// Parse trusted projects; only include sections explicitly marked as trusted.
 			lines := strings.Split(string(data), "\n")
 			trustedProjects := []string{}
-			for _, line := range lines {
-				if strings.Contains(line, "trust_level") && strings.Contains(line, "trusted") {
-					// Extract project path from previous line
-					continue
-				}
+			currentProjectPath := ""
+			currentProjectTrusted := false
+			for _, rawLine := range lines {
+				line := strings.TrimSpace(rawLine)
 				if strings.HasPrefix(line, "[projects.") {
-					// Extract path from [projects."/path/here"]
 					start := strings.Index(line, `"`)
 					end := strings.LastIndex(line, `"`)
 					if start != -1 && end > start {
-						trustedProjects = append(trustedProjects, line[start+1:end])
+						currentProjectPath = line[start+1 : end]
+						currentProjectTrusted = false
+					} else {
+						currentProjectPath = ""
+						currentProjectTrusted = false
 					}
+					continue
+				}
+				if currentProjectPath != "" &&
+					strings.Contains(line, "trust_level") &&
+					strings.Contains(line, "trusted") &&
+					!currentProjectTrusted {
+					trustedProjects = append(trustedProjects, currentProjectPath)
+					currentProjectTrusted = true
 				}
 			}
 			if len(trustedProjects) > 0 {

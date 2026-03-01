@@ -448,11 +448,11 @@ func runGenerateMCP(cmd *cobra.Command, args []string) error {
 	}
 
 	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outputFile), 0700); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
 	}
 
-	if err := os.WriteFile(outputFile, data, 0644); err != nil {
+	if err := os.WriteFile(outputFile, data, 0600); err != nil {
 		return fmt.Errorf("writing %s: %w", outputFile, err)
 	}
 
