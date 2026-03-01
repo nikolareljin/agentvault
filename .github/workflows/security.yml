@@ -18,7 +18,15 @@ jobs:
       gosec_args: "./..."
 
   gitleaks:
-    uses: nikolareljin/ci-helpers/.github/workflows/gitleaks-scan.yml@production
-    with:
-      scan_path: "."
-      fail_on_findings: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Required for pull_request commit-range scans used by gitleaks-action.
+          fetch-depth: 0
+
+      - name: Gitleaks scan
+        uses: ./.github/actions/gitleaks-scan
+        with:
+          scan_path: "."
+          fail_on_findings: false
