@@ -1,6 +1,6 @@
 // Package vault implements the encrypted agent store.
 //
-// The vault file format is: [16-byte salt][AES-256-GCM encrypted JSON].
+// The vault file format is: [16-byte salt][nonce + AES-256-GCM ciphertext].
 // The JSON payload contains all agents, shared config, provider configs,
 // and sessions. The file is stored with mode 0600 for security.
 //

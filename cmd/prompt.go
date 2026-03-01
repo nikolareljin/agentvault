@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -310,7 +311,14 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	}
 	args = append(args, prompt)
 
-	cmd := exec.Command("codex", args...)
+	runCtx := context.Background()
+	cancel := func() {}
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(context.Background(), timeout)
+	}
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, "codex", args...)
 	cmd.Env = os.Environ()
 	if strings.TrimSpace(a.APIKey) != "" {
 		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+a.APIKey)
@@ -319,22 +327,11 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if timeout > 0 {
-		done := make(chan error, 1)
-		go func() { done <- cmd.Run() }()
-		select {
-		case err := <-done:
-			if err != nil {
-				return promptResult{}, fmt.Errorf("codex exec failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
-			}
-		case <-time.After(timeout):
-			_ = cmd.Process.Kill()
+	if err := cmd.Run(); err != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return promptResult{}, fmt.Errorf("codex exec timed out after %s", timeout)
 		}
-	} else {
-		if err := cmd.Run(); err != nil {
-			return promptResult{}, fmt.Errorf("codex exec failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
-		}
+		return promptResult{}, fmt.Errorf("codex exec failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 
 	usage := parseCodexUsage(stdout.String())
@@ -365,6 +362,8 @@ func parseCodexUsage(raw string) PromptTokenUsage {
 	}
 
 	s := bufio.NewScanner(strings.NewReader(raw))
+	// Token-count JSON events may exceed Scanner's default 64K token limit.
+	s.Buffer(make([]byte, 64*1024), 2*1024*1024)
 	for s.Scan() {
 		line := strings.TrimSpace(s.Text())
 		if line == "" {
@@ -385,6 +384,9 @@ func parseCodexUsage(raw string) PromptTokenUsage {
 			TotalTokens:           e.Payload.Info.TotalTokenUsage.TotalTokens,
 		}
 	}
+	if err := s.Err(); err != nil {
+		return usage
+	}
 	return usage
 }
 
@@ -399,7 +401,14 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	}
 	args = append(args, prompt)
 
-	cmd := exec.Command("claude", args...)
+	runCtx := context.Background()
+	cancel := func() {}
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(context.Background(), timeout)
+	}
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, "claude", args...)
 	cmd.Env = os.Environ()
 	if strings.TrimSpace(a.APIKey) != "" {
 		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+a.APIKey)
@@ -409,22 +418,11 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if timeout > 0 {
-		done := make(chan error, 1)
-		go func() { done <- cmd.Run() }()
-		select {
-		case err := <-done:
-			if err != nil {
-				return promptResult{}, fmt.Errorf("claude failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
-			}
-		case <-time.After(timeout):
-			_ = cmd.Process.Kill()
+	if err := cmd.Run(); err != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return promptResult{}, fmt.Errorf("claude timed out after %s", timeout)
 		}
-	} else {
-		if err := cmd.Run(); err != nil {
-			return promptResult{}, fmt.Errorf("claude failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
-		}
+		return promptResult{}, fmt.Errorf("claude failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 
 	raw := strings.TrimSpace(stdout.String())

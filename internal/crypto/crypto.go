@@ -2,7 +2,7 @@
 //
 // Security design:
 //   - Key derivation: Argon2id (memory-hard, resistant to GPU/ASIC attacks)
-//   - Encryption: AES-256-GCM (authenticated encryption with associated data)
+//   - Encryption: AES-256-GCM authenticated encryption
 //   - Random nonces: crypto/rand for all nonce/salt generation
 //
 // The Argon2id parameters (64MB memory, 4 threads) balance security against

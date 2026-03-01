@@ -17,7 +17,7 @@ import (
 // It supports $EDITOR values with flags (e.g. "code --wait").
 func findEditorCommand() []string {
 	if editor := os.Getenv("EDITOR"); editor != "" {
-		parts := strings.Fields(editor)
+		parts := splitCommandLine(editor)
 		if len(parts) > 0 {
 			if path, err := exec.LookPath(parts[0]); err == nil {
 				return append([]string{path}, parts[1:]...)
@@ -30,6 +30,43 @@ func findEditorCommand() []string {
 		}
 	}
 	return nil
+}
+
+// splitCommandLine parses a command string with simple shell-like quoting.
+// It supports single/double quotes and backslash escapes.
+func splitCommandLine(s string) []string {
+	var out []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	flush := func() {
+		if current.Len() > 0 {
+			out = append(out, current.String())
+			current.Reset()
+		}
+	}
+
+	for _, r := range s {
+		switch {
+		case escaped:
+			current.WriteRune(r)
+			escaped = false
+		case r == '\\' && !inSingle:
+			escaped = true
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case (r == ' ' || r == '\t') && !inSingle && !inDouble:
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	flush()
+	return out
 }
 
 var instructionsCmd = &cobra.Command{
