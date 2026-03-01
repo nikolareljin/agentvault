@@ -30,9 +30,10 @@ Endpoints:
   GET /api/v1/agents/{name}    Get agent by name
 
 Example:
-  AGENTVAULT_PASSWORD=mysecret agentvault serve --port 9000`,
+  AGENTVAULT_PASSWORD=mysecret agentvault serve --host 127.0.0.1 --port 9000`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		port, _ := cmd.Flags().GetInt("port")
+		host, _ := cmd.Flags().GetString("host")
 
 		vaultPath := resolveVaultPath()
 		v := vault.New(vaultPath)
@@ -170,7 +171,7 @@ Example:
 			})
 		}))
 
-		addr := fmt.Sprintf(":%d", port)
+		addr := fmt.Sprintf("%s:%d", host, port)
 		log.Printf("AgentVault API listening on %s (vault: %s, auth: %v)", addr, vaultPath, apiKey != "")
 		server := &http.Server{
 			Addr:              addr,
@@ -186,5 +187,6 @@ Example:
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
+	serveCmd.Flags().String("host", "127.0.0.1", "host interface to listen on")
 	serveCmd.Flags().Int("port", 9000, "port to listen on")
 }

@@ -14,6 +14,7 @@ package agent
 
 import (
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -311,7 +312,12 @@ func (a *Agent) BuildEffectivePrompt(shared SharedConfig) string {
 	}
 
 	var ruleTexts []string
-	for _, rule := range shared.Rules {
+	rules := make([]UnifiedRule, len(shared.Rules))
+	copy(rules, shared.Rules)
+	sort.SliceStable(rules, func(i, j int) bool {
+		return rules[i].Priority < rules[j].Priority
+	})
+	for _, rule := range rules {
 		if rule.Enabled && !disabledSet[rule.Name] {
 			ruleTexts = append(ruleTexts, "- "+rule.Content)
 		}

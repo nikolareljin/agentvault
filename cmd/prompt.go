@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -483,14 +484,32 @@ func optimizePromptForAgent(original string, a agent.Agent, shared agent.SharedC
 
 	profile := chooseOptimizationProfile(a, requestedProfile)
 	roleTitle := a.Role
+	if role, ok := agent.GetRole(shared.Roles, a.Role); ok && strings.TrimSpace(role.Title) != "" {
+		roleTitle = role.Title
+	}
 	if roleTitle == "" {
 		roleTitle = "software engineer"
 	}
-	rules := []string{}
+	disabledSet := make(map[string]struct{}, len(a.DisabledRules))
+	for _, name := range a.DisabledRules {
+		disabledSet[name] = struct{}{}
+	}
+	enabledRules := make([]agent.UnifiedRule, 0, len(shared.Rules))
 	for _, r := range shared.Rules {
-		if r.Enabled {
-			rules = append(rules, "- "+r.Content)
+		if !r.Enabled {
+			continue
 		}
+		if _, disabled := disabledSet[r.Name]; disabled {
+			continue
+		}
+		enabledRules = append(enabledRules, r)
+	}
+	sort.SliceStable(enabledRules, func(i, j int) bool {
+		return enabledRules[i].Priority < enabledRules[j].Priority
+	})
+	rules := []string{}
+	for _, r := range enabledRules {
+		rules = append(rules, "- "+r.Content)
 	}
 
 	var b strings.Builder

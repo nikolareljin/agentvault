@@ -230,12 +230,12 @@ func SaveCodexConfig(config *CodexConfig) error {
 	// Write rules
 	if len(config.Rules) > 0 {
 		rulesDir := filepath.Join(codexDir, "rules")
-		if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		if err := os.MkdirAll(rulesDir, 0700); err != nil {
 			return err
 		}
 		for name, content := range config.Rules {
 			rulePath := filepath.Join(rulesDir, name+".md")
-			if err := os.WriteFile(rulePath, []byte(content), 0644); err != nil {
+			if err := os.WriteFile(rulePath, []byte(content), 0600); err != nil {
 				return err
 			}
 		}
