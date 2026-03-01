@@ -20,7 +20,7 @@ func findExecutable(name string) string {
 func getVersion(cmd, flag string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, cmd, flag).Output()
+	out, err := exec.CommandContext(ctx, cmd, flag).CombinedOutput()
 	if err != nil {
 		return "unknown"
 	}

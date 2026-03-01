@@ -168,6 +168,30 @@ func runGenerateClaude(cmd *cobra.Command, args []string) error {
 				finalConfig.EnabledPlugins[name] = enabled
 			}
 		}
+		// Merge keybindings
+		for key, action := range existingConfig.Keybindings {
+			if _, ok := finalConfig.Keybindings[key]; !ok {
+				if finalConfig.Keybindings == nil {
+					finalConfig.Keybindings = make(map[string]string)
+				}
+				finalConfig.Keybindings[key] = action
+			}
+		}
+		// Merge dedicated Claude fields to keep --merge non-destructive.
+		if finalConfig.DefaultModel == "" {
+			finalConfig.DefaultModel = existingConfig.DefaultModel
+		}
+		if len(finalConfig.AutoApprove) == 0 && len(existingConfig.AutoApprove) > 0 {
+			finalConfig.AutoApprove = append([]string(nil), existingConfig.AutoApprove...)
+		}
+		for name, cfg := range existingConfig.MCPServers {
+			if _, ok := finalConfig.MCPServers[name]; !ok {
+				if finalConfig.MCPServers == nil {
+					finalConfig.MCPServers = make(map[string]any)
+				}
+				finalConfig.MCPServers[name] = cfg
+			}
+		}
 		// Merge custom settings
 		for k, v := range existingConfig.CustomSettings {
 			if _, ok := finalConfig.CustomSettings[k]; !ok {
@@ -202,6 +226,11 @@ func runGenerateCodex(cmd *cobra.Command, args []string) error {
 
 	pc := v.ProviderConfigs()
 	if pc.Codex == nil {
+		if addProject == "" {
+			fmt.Println("No Codex configuration stored in vault.")
+			fmt.Println("Use 'agentvault setup pull --codex' to import your current config first, or pass --project to add one trusted project.")
+			return nil
+		}
 		pc.Codex = &agent.CodexConfig{
 			TrustedProjects: make(map[string]string),
 			Rules:           make(map[string]string),
