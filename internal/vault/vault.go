@@ -388,16 +388,26 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	for _, s := range vd.Sessions.Sessions {
 		if _, ok := seenSessions[s.ID]; !ok {
 			v.sessions.Sessions = append(v.sessions.Sessions, s)
+			seenSessions[s.ID] = struct{}{}
 		}
 	}
 	// merge session config
 	if len(v.sessions.DefaultAgents) == 0 && len(vd.Sessions.DefaultAgents) > 0 {
 		v.sessions.DefaultAgents = vd.Sessions.DefaultAgents
 	}
-	if v.sessions.ParallelLimit == 0 && vd.Sessions.ParallelLimit > 0 {
+	// Only import parallel limit when current session config is otherwise empty.
+	// This avoids overwriting an intentional existing 0 (unlimited) setting.
+	if isSessionConfigUnset(v.sessions) && vd.Sessions.ParallelLimit > 0 {
 		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
 	}
 	return imported, skipped, v.Save()
+}
+
+func isSessionConfigUnset(sc agent.SessionConfig) bool {
+	return len(sc.Sessions) == 0 &&
+		sc.ActiveSession == "" &&
+		len(sc.DefaultAgents) == 0 &&
+		sc.ParallelLimit == 0
 }
 
 // write encrypts the entire vault state and writes it atomically to disk.
@@ -413,8 +423,38 @@ func (v *Vault) write() error {
 		return err
 	}
 	data := append(v.salt, ciphertext...)
-	if err := os.WriteFile(v.path, data, 0600); err != nil {
-		return fmt.Errorf("writing vault: %w", err)
+	dir := filepath.Dir(v.path)
+	tmp, err := os.CreateTemp(dir, ".agentvault-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp vault file: %w", err)
 	}
+
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing temp vault file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("syncing temp vault file: %w", err)
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("setting temp vault permissions: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temp vault file: %w", err)
+	}
+	if err := os.Rename(tmpPath, v.path); err != nil {
+		return fmt.Errorf("replacing vault file: %w", err)
+	}
+	cleanup = false
 	return nil
 }

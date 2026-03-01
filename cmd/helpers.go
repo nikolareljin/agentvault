@@ -14,7 +14,8 @@ import (
 
 // resolveVaultPath returns the vault file path, respecting the --config flag.
 func resolveVaultPath() string {
-	if cfgDir, _ := rootCmd.Flags().GetString("config"); cfgDir != "" {
+	cfgDir, err := rootCmd.PersistentFlags().GetString("config")
+	if err == nil && cfgDir != "" {
 		return filepath.Join(cfgDir, config.VaultFile)
 	}
 	return config.VaultPath()
