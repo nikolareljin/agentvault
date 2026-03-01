@@ -504,8 +504,9 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 	if targetSessions.ActiveSession == "" && bundle.Sessions.ActiveSession != "" {
 		targetSessions.ActiveSession = bundle.Sessions.ActiveSession
 	}
-	if targetSessions.ParallelLimit == 0 && bundle.Sessions.ParallelLimit > 0 {
+	if !targetSessions.ParallelLimitSet && (bundle.Sessions.ParallelLimitSet || bundle.Sessions.ParallelLimit > 0) {
 		targetSessions.ParallelLimit = bundle.Sessions.ParallelLimit
+		targetSessions.ParallelLimitSet = true
 	}
 	if len(targetSessions.DefaultAgents) == 0 && len(bundle.Sessions.DefaultAgents) > 0 {
 		targetSessions.DefaultAgents = append([]string(nil), bundle.Sessions.DefaultAgents...)

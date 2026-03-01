@@ -438,6 +438,9 @@ func TestImportDataImportsParallelLimitForEmptySessionConfig(t *testing.T) {
 	if got := v.Sessions().ParallelLimit; got != 4 {
 		t.Fatalf("ParallelLimit = %d, want 4", got)
 	}
+	if !v.Sessions().ParallelLimitSet {
+		t.Fatal("ParallelLimitSet = false, want true")
+	}
 }
 
 func TestImportDataImportsParallelLimitWhenDefaultAgentsAlsoProvided(t *testing.T) {
@@ -463,8 +466,42 @@ func TestImportDataImportsParallelLimitWhenDefaultAgentsAlsoProvided(t *testing.
 	if got := sessions.ParallelLimit; got != 3 {
 		t.Fatalf("ParallelLimit = %d, want 3", got)
 	}
+	if !sessions.ParallelLimitSet {
+		t.Fatal("ParallelLimitSet = false, want true")
+	}
 	if len(sessions.DefaultAgents) != 1 || sessions.DefaultAgents[0] != "claude" {
 		t.Fatalf("DefaultAgents = %v, want [claude]", sessions.DefaultAgents)
+	}
+}
+
+func TestImportDataDoesNotOverwriteExplicitUnlimitedParallelLimit(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSessions(agent.SessionConfig{
+		ParallelLimit:    0,
+		ParallelLimitSet: true,
+	}); err != nil {
+		t.Fatalf("SetSessions() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {"parallel_limit": 4}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	sessions := v.Sessions()
+	if got := sessions.ParallelLimit; got != 0 {
+		t.Fatalf("ParallelLimit = %d, want 0", got)
+	}
+	if !sessions.ParallelLimitSet {
+		t.Fatal("ParallelLimitSet = false, want true")
 	}
 }
 
