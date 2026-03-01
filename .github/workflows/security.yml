@@ -15,7 +15,9 @@ jobs:
     uses: nikolareljin/ci-helpers/.github/workflows/go-scan.yml@production
     with:
       go_version: "1.24"
-      gosec_args: "-exclude=G104 ./..."
+      # G204/G304/G301/G306/G117 are high-noise for this CLI/TUI repository
+      # where many file paths and executable names are user-provided by design.
+      gosec_args: "-exclude=G104,G204,G304,G301,G306,G117 ./..."
 
   gitleaks:
     runs-on: ubuntu-latest
