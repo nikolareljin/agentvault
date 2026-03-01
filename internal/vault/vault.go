@@ -125,6 +125,11 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
 	v.sessions = vd.Sessions
+	if v.sessions.ParallelLimit != 0 {
+		v.sessions.ParallelLimitSet = true
+	} else if sessionParallelLimitDefined(plaintext) {
+		v.sessions.ParallelLimitSet = true
+	}
 	return nil
 }
 
@@ -175,6 +180,9 @@ func (v *Vault) Sessions() agent.SessionConfig {
 
 // SetSessions updates the session configuration and persists.
 func (v *Vault) SetSessions(sc agent.SessionConfig) error {
+	if sc.ParallelLimit != 0 {
+		sc.ParallelLimitSet = true
+	}
 	v.sessions = sc
 	return v.Save()
 }
@@ -340,6 +348,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	if err := json.Unmarshal(data, &vd); err != nil {
 		return 0, nil, fmt.Errorf("decoding import data: %w", err)
 	}
+	importedParallelLimitDefined := sessionParallelLimitDefined(data) || vd.Sessions.ParallelLimitSet || vd.Sessions.ParallelLimit != 0
 	for _, a := range vd.Agents {
 		_, exists := v.Get(a.Name)
 		if exists {
@@ -402,8 +411,9 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	}
 	// Only import parallel limit when current session config is otherwise empty.
 	// This avoids overwriting an intentional existing 0 (unlimited) setting.
-	if wasSessionConfigUnset && vd.Sessions.ParallelLimit > 0 {
+	if wasSessionConfigUnset && importedParallelLimitDefined {
 		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
+		v.sessions.ParallelLimitSet = true
 	}
 	return imported, skipped, v.Save()
 }
@@ -412,7 +422,25 @@ func isSessionConfigUnset(sc agent.SessionConfig) bool {
 	return len(sc.Sessions) == 0 &&
 		sc.ActiveSession == "" &&
 		len(sc.DefaultAgents) == 0 &&
-		sc.ParallelLimit == 0
+		!sc.ParallelLimitSet
+}
+
+func sessionParallelLimitDefined(data []byte) bool {
+	var envelope struct {
+		Sessions json.RawMessage `json:"sessions"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return false
+	}
+	if len(envelope.Sessions) == 0 {
+		return false
+	}
+	var sessions map[string]json.RawMessage
+	if err := json.Unmarshal(envelope.Sessions, &sessions); err != nil {
+		return false
+	}
+	_, ok := sessions["parallel_limit"]
+	return ok
 }
 
 // write encrypts the entire vault state and writes it atomically to disk.

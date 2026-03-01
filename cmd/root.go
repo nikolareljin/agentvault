@@ -66,7 +66,7 @@ func Execute() error {
 
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
-	rootCmd.Flags().BoolP("tui", "t", false, "launch interactive terminal UI")
+	rootCmd.PersistentFlags().BoolP("tui", "t", false, "launch interactive terminal UI")
 	rootCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		launchTUI, _ := cmd.Flags().GetBool("tui")
 		if launchTUI {

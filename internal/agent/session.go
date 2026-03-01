@@ -56,6 +56,9 @@ type SessionConfig struct {
 	ActiveSession string    `json:"active_session,omitempty"` // Currently active session ID
 	DefaultAgents []string  `json:"default_agents,omitempty"` // Default agents for new sessions
 	ParallelLimit int       `json:"parallel_limit,omitempty"` // Max concurrent agents (0 = unlimited)
+	// ParallelLimitSet tracks whether parallel_limit was explicitly configured,
+	// allowing import/merge logic to distinguish unset from explicit 0 (unlimited).
+	ParallelLimitSet bool `json:"parallel_limit_set,omitempty"`
 }
 
 // GetSession returns a session by ID.
