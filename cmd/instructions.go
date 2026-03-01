@@ -13,20 +13,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// findEditor returns the path to a suitable text editor.
-// Checks $EDITOR first, then falls back to nano and vi.
-func findEditor() string {
+// findEditorCommand returns the editor command and args.
+// It supports $EDITOR values with flags (e.g. "code --wait").
+func findEditorCommand() []string {
 	if editor := os.Getenv("EDITOR"); editor != "" {
-		if path, err := exec.LookPath(editor); err == nil {
-			return path
+		parts := strings.Fields(editor)
+		if len(parts) > 0 {
+			if path, err := exec.LookPath(parts[0]); err == nil {
+				return append([]string{path}, parts[1:]...)
+			}
 		}
 	}
 	for _, name := range []string{"nano", "vi", "vim"} {
 		if path, err := exec.LookPath(name); err == nil {
-			return path
+			return []string{path}
 		}
 	}
-	return ""
+	return nil
 }
 
 var instructionsCmd = &cobra.Command{
@@ -195,13 +198,14 @@ Examples:
 		}
 
 		// Find an editor
-		editor := findEditor()
-		if editor == "" {
+		editor := findEditorCommand()
+		if len(editor) == 0 {
 			return fmt.Errorf("no editor found (set $EDITOR, or install nano or vi)")
 		}
 
 		// Open editor
-		editorCmd := exec.Command(editor, tmpPath)
+		editorArgs := append(append([]string{}, editor[1:]...), tmpPath)
+		editorCmd := exec.Command(editor[0], editorArgs...)
 		editorCmd.Stdin = os.Stdin
 		editorCmd.Stdout = os.Stdout
 		editorCmd.Stderr = os.Stderr

@@ -9,7 +9,13 @@ import (
 
 func TestOptimizePromptForOllama(t *testing.T) {
 	a := agent.Agent{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.1", Role: "lead-engineer"}
-	shared := agent.SharedConfig{Rules: []agent.UnifiedRule{{Content: "Keep changes minimal", Enabled: true}}}
+	shared := agent.SharedConfig{
+		Roles: []agent.Role{{Name: "lead-engineer", Title: "Lead Engineer"}},
+		Rules: []agent.UnifiedRule{
+			{Name: "keep-minimal", Content: "Keep changes minimal", Priority: 50, Enabled: true},
+			{Name: "do-tests", Content: "Add tests", Priority: 10, Enabled: true},
+		},
+	}
 
 	out, profile := optimizePromptForAgent("Build a parser for CSV", a, shared, "auto")
 	if profile != "ollama" {
@@ -22,6 +28,34 @@ func TestOptimizePromptForOllama(t *testing.T) {
 		t.Fatalf("optimized prompt missing original content")
 	}
 	if !strings.Contains(out, "Keep changes minimal") {
+		t.Fatalf("optimized prompt missing enabled rule")
+	}
+	if !strings.Contains(out, "Lead Engineer") {
+		t.Fatalf("optimized prompt missing role title")
+	}
+	if strings.Index(out, "Add tests") > strings.Index(out, "Keep changes minimal") {
+		t.Fatalf("rules are not sorted by priority in optimized prompt")
+	}
+}
+
+func TestOptimizePromptSkipsAgentDisabledRules(t *testing.T) {
+	a := agent.Agent{
+		Name:          "local",
+		Provider:      agent.ProviderOllama,
+		DisabledRules: []string{"skip-this"},
+	}
+	shared := agent.SharedConfig{
+		Rules: []agent.UnifiedRule{
+			{Name: "skip-this", Content: "Should not appear", Priority: 1, Enabled: true},
+			{Name: "keep-this", Content: "Keep this rule", Priority: 2, Enabled: true},
+		},
+	}
+
+	out, _ := optimizePromptForAgent("Build a parser for CSV", a, shared, "auto")
+	if strings.Contains(out, "Should not appear") {
+		t.Fatalf("optimized prompt contains disabled rule: %q", out)
+	}
+	if !strings.Contains(out, "Keep this rule") {
 		t.Fatalf("optimized prompt missing enabled rule")
 	}
 }

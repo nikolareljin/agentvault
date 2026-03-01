@@ -40,7 +40,7 @@ Detects:
   - Aider (aider)
   - OpenAI CLI tools
 
-Use --add to automatically add detected agents to the vault.`,
+Use 'agentvault detect add' to automatically add detected agents to the vault.`,
 	RunE: runDetect,
 }
 
