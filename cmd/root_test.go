@@ -1,6 +1,9 @@
 package cmd
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestParseTUIInvocation_DefaultNoArgs(t *testing.T) {
 	launch, target, err := parseTUIInvocation(nil)
@@ -72,6 +75,16 @@ func TestParseTUIInvocation_InvalidTarget(t *testing.T) {
 	}
 }
 
+func TestParseTUIInvocation_LastBareTUIFlagClearsEarlierAssignedTarget(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"--tui=commands", "detect", "-t"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(--tui=commands detect -t) error = %v", err)
+	}
+	if !launch || target != "detected" {
+		t.Fatalf("launch,target = %v,%q want true,detected", launch, target)
+	}
+}
+
 func TestApplyEarlyPersistentFlags_ConfigWithSeparateValue(t *testing.T) {
 	t.Cleanup(func() {
 		_ = rootCmd.PersistentFlags().Set("config", "")
@@ -102,5 +115,28 @@ func TestApplyEarlyPersistentFlags_ConfigMissingValue(t *testing.T) {
 	err := applyEarlyPersistentFlags([]string{"--config", "--tui"})
 	if err == nil {
 		t.Fatalf("expected missing config value error")
+	}
+}
+
+func TestContainsHelpFlag(t *testing.T) {
+	if !containsHelpFlag([]string{"--help"}) {
+		t.Fatalf("expected containsHelpFlag to detect --help")
+	}
+	if !containsHelpFlag([]string{"list", "-h"}) {
+		t.Fatalf("expected containsHelpFlag to detect -h")
+	}
+	if containsHelpFlag([]string{"list"}) {
+		t.Fatalf("did not expect containsHelpFlag to detect help")
+	}
+}
+
+func TestExecute_HelpBypassesTUILaunch(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"agentvault", "--tui", "--help"}
+
+	err := Execute()
+	if err != nil {
+		t.Fatalf("Execute() with --help returned error: %v", err)
 	}
 }
