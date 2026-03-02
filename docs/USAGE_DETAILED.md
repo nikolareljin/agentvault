@@ -415,8 +415,10 @@ Flags:
 Launch:
 
 ```bash
+agentvault
+# optional explicit flag:
 agentvault --tui
-# or
+# or short:
 agentvault -t
 ```
 
@@ -539,7 +541,7 @@ Search mode (Agents tab):
 ## 5.1 Daily startup
 
 ```bash
-agentvault -t
+agentvault
 ```
 
 Use Commands tab + `g` for prompt gateway workflow.
