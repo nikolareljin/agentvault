@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -153,7 +154,14 @@ func runGenerateClaude(cmd *cobra.Command, args []string) error {
 	// Load existing config if merging
 	var existingConfig *agent.ClaudeConfig
 	if merge {
-		existingConfig, _ = agent.LoadClaudeConfig()
+		cfg, loadErr := agent.LoadClaudeConfig()
+		if loadErr != nil {
+			if !errors.Is(loadErr, os.ErrNotExist) {
+				return fmt.Errorf("loading existing Claude config for merge: %w", loadErr)
+			}
+		} else {
+			existingConfig = cfg
+		}
 	}
 
 	// Merge configurations
@@ -267,7 +275,14 @@ func runGenerateCodex(cmd *cobra.Command, args []string) error {
 	// Load existing config if merging
 	var existingConfig *agent.CodexConfig
 	if merge {
-		existingConfig, _ = agent.LoadCodexConfig()
+		cfg, loadErr := agent.LoadCodexConfig()
+		if loadErr != nil {
+			if !errors.Is(loadErr, os.ErrNotExist) {
+				return fmt.Errorf("loading existing Codex config for merge: %w", loadErr)
+			}
+		} else {
+			existingConfig = cfg
+		}
 	}
 
 	// Merge configurations
