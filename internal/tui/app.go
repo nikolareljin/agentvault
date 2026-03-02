@@ -262,13 +262,7 @@ func initialModel(v *vault.Vault) model {
 
 func (m *model) markDetectedInVault() {
 	for i, d := range m.detected {
-		m.detected[i].InVault = false
-		for _, a := range m.agents {
-			if a.Name == d.Name || string(a.Provider) == d.Provider {
-				m.detected[i].InVault = true
-				break
-			}
-		}
+		m.detected[i].InVault = m.vaultHasAgentNamed(d.Name)
 	}
 }
 
@@ -285,10 +279,28 @@ func (m *model) refresh() {
 }
 
 func (m *model) autoAddDetectedAgents() {
+	seenByPath := make(map[string]struct{}, len(m.detected))
+	seenByName := make(map[string]struct{}, len(m.detected))
 	for _, d := range m.detected {
-		if d.InVault {
+		nameKey := strings.ToLower(strings.TrimSpace(d.Name))
+		if nameKey == "" {
 			continue
 		}
+		pathKey := strings.TrimSpace(d.Path)
+		if pathKey != "" {
+			if _, ok := seenByPath[pathKey]; ok {
+				continue
+			}
+			seenByPath[pathKey] = struct{}{}
+		}
+		if _, ok := seenByName[nameKey]; ok {
+			continue
+		}
+		seenByName[nameKey] = struct{}{}
+		if m.vaultHasAgentNamed(d.Name) {
+			continue
+		}
+
 		newAgent := agent.Agent{
 			Name:      d.Name,
 			Provider:  agent.Provider(d.Provider),
@@ -303,6 +315,19 @@ func (m *model) autoAddDetectedAgents() {
 	// Re-sync in-memory lists after auto-add.
 	m.agents = m.vault.List()
 	m.markDetectedInVault()
+}
+
+func (m *model) vaultHasAgentNamed(name string) bool {
+	needle := strings.TrimSpace(name)
+	if needle == "" {
+		return false
+	}
+	for _, a := range m.vault.List() {
+		if strings.EqualFold(a.Name, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *model) refreshLocalInstructions() {

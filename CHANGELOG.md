@@ -46,8 +46,8 @@
 - `--no-keys` flag to exclude API keys from .env files
 
 #### Enhanced TUI
-- Multi-tab interface: Agents, Instructions, Detected, Status
-- Tab navigation with Tab/Shift+Tab, h/l, and number keys (1-4)
+- Multi-tab interface: Agents, Instructions, Rules, Sessions, Detected, Commands, Status
+- Tab navigation with Tab/Shift+Tab and number keys (1-7)
 - Search/filter functionality on Agents tab (press `/`)
 - Instructions tab showing stored instruction files with preview
 - Detected tab showing installed CLI agents and vault status
