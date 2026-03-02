@@ -56,129 +56,7 @@ Example:
 		if !isLoopbackHost(host) && apiKey == "" {
 			return fmt.Errorf("AGENTVAULT_SERVE_KEY is required when serving on non-loopback host %q", host)
 		}
-		mux := http.NewServeMux()
-
-		writeJSON := func(w http.ResponseWriter, code int, payload any) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(code)
-			enc := json.NewEncoder(w)
-			enc.SetIndent("", "  ")
-			_ = enc.Encode(payload)
-		}
-
-		auth := func(next http.HandlerFunc) http.HandlerFunc {
-			return func(w http.ResponseWriter, r *http.Request) {
-				if apiKey != "" {
-					got := r.Header.Get("x-api-key")
-					if got == "" {
-						got = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-					}
-					if subtle.ConstantTimeCompare([]byte(got), []byte(apiKey)) != 1 {
-						writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-						return
-					}
-				}
-				next(w, r)
-			}
-		}
-
-		// GET /health
-		mux.HandleFunc("/health", auth(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{
-				"status": "ok",
-				"time":   time.Now().UTC().Format(time.RFC3339),
-			})
-		}))
-
-		// GET /api/v1/status
-		mux.HandleFunc("/api/v1/status", auth(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-				return
-			}
-			agents := v.List()
-			shared := v.SharedConfig()
-			writeJSON(w, http.StatusOK, map[string]any{
-				"status":        "ok",
-				"agent_count":   len(agents),
-				"rule_count":    len(shared.Rules),
-				"role_count":    len(shared.Roles),
-				"vault_path":    vaultPath,
-				"auth_required": apiKey != "",
-			})
-		}))
-
-		// GET /api/v1/agents
-		mux.HandleFunc("/api/v1/agents", auth(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-				return
-			}
-			agents := v.List()
-			type agentSummary struct {
-				Name     string   `json:"name"`
-				Provider string   `json:"provider"`
-				Model    string   `json:"model"`
-				BaseURL  string   `json:"base_url,omitempty"`
-				Tags     []string `json:"tags,omitempty"`
-				Role     string   `json:"role,omitempty"`
-			}
-			out := make([]agentSummary, 0, len(agents))
-			for _, a := range agents {
-				out = append(out, agentSummary{
-					Name:     a.Name,
-					Provider: string(a.Provider),
-					Model:    a.Model,
-					BaseURL:  a.BaseURL,
-					Tags:     a.Tags,
-					Role:     a.Role,
-				})
-			}
-			writeJSON(w, http.StatusOK, out)
-		}))
-
-		// GET /api/v1/agents/{name}
-		mux.HandleFunc("/api/v1/agents/", auth(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodGet {
-				writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-				return
-			}
-			name := strings.TrimPrefix(r.URL.Path, "/api/v1/agents/")
-			if name == "" {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name required"})
-				return
-			}
-			a, ok := v.Get(name)
-			if !ok {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
-				return
-			}
-			shared := v.SharedConfig()
-			type agentDetail struct {
-				Name         string   `json:"name"`
-				Provider     string   `json:"provider"`
-				Model        string   `json:"model"`
-				BaseURL      string   `json:"base_url,omitempty"`
-				SystemPrompt string   `json:"system_prompt,omitempty"`
-				TaskDesc     string   `json:"task_description,omitempty"`
-				Tags         []string `json:"tags,omitempty"`
-				Role         string   `json:"role,omitempty"`
-			}
-			writeJSON(w, http.StatusOK, agentDetail{
-				Name:         a.Name,
-				Provider:     string(a.Provider),
-				Model:        a.Model,
-				BaseURL:      a.BaseURL,
-				SystemPrompt: a.BuildEffectivePrompt(shared),
-				TaskDesc:     a.TaskDesc,
-				Tags:         a.Tags,
-				Role:         a.Role,
-			})
-		}))
+		mux := newServeMux(v, vaultPath, apiKey)
 
 		addr := fmt.Sprintf("%s:%d", host, port)
 		log.Printf("AgentVault API listening on %s (vault: %s, auth: %v)", addr, vaultPath, apiKey != "")
@@ -192,6 +70,134 @@ Example:
 		}
 		return server.ListenAndServe()
 	},
+}
+
+func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
+	mux := http.NewServeMux()
+
+	writeJSON := func(w http.ResponseWriter, code int, payload any) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(payload)
+	}
+
+	auth := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if apiKey != "" {
+				got := r.Header.Get("x-api-key")
+				if got == "" {
+					got = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+				}
+				if subtle.ConstantTimeCompare([]byte(got), []byte(apiKey)) != 1 {
+					writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+					return
+				}
+			}
+			next(w, r)
+		}
+	}
+
+	// GET /health
+	mux.HandleFunc("/health", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"time":   time.Now().UTC().Format(time.RFC3339),
+		})
+	}))
+
+	// GET /api/v1/status
+	mux.HandleFunc("/api/v1/status", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		agents := v.List()
+		shared := v.SharedConfig()
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":        "ok",
+			"agent_count":   len(agents),
+			"rule_count":    len(shared.Rules),
+			"role_count":    len(shared.Roles),
+			"vault_path":    vaultPath,
+			"auth_required": apiKey != "",
+		})
+	}))
+
+	// GET /api/v1/agents
+	mux.HandleFunc("/api/v1/agents", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		agents := v.List()
+		type agentSummary struct {
+			Name     string   `json:"name"`
+			Provider string   `json:"provider"`
+			Model    string   `json:"model"`
+			BaseURL  string   `json:"base_url,omitempty"`
+			Tags     []string `json:"tags,omitempty"`
+			Role     string   `json:"role,omitempty"`
+		}
+		out := make([]agentSummary, 0, len(agents))
+		for _, a := range agents {
+			out = append(out, agentSummary{
+				Name:     a.Name,
+				Provider: string(a.Provider),
+				Model:    a.Model,
+				BaseURL:  a.BaseURL,
+				Tags:     a.Tags,
+				Role:     a.Role,
+			})
+		}
+		writeJSON(w, http.StatusOK, out)
+	}))
+
+	// GET /api/v1/agents/{name}
+	mux.HandleFunc("/api/v1/agents/", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/api/v1/agents/")
+		if name == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent name required"})
+			return
+		}
+		a, ok := v.Get(name)
+		if !ok {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+			return
+		}
+		shared := v.SharedConfig()
+		type agentDetail struct {
+			Name         string   `json:"name"`
+			Provider     string   `json:"provider"`
+			Model        string   `json:"model"`
+			BaseURL      string   `json:"base_url,omitempty"`
+			SystemPrompt string   `json:"system_prompt,omitempty"`
+			TaskDesc     string   `json:"task_description,omitempty"`
+			Tags         []string `json:"tags,omitempty"`
+			Role         string   `json:"role,omitempty"`
+		}
+		writeJSON(w, http.StatusOK, agentDetail{
+			Name:         a.Name,
+			Provider:     string(a.Provider),
+			Model:        a.Model,
+			BaseURL:      a.BaseURL,
+			SystemPrompt: a.BuildEffectivePrompt(shared),
+			TaskDesc:     a.TaskDesc,
+			Tags:         a.Tags,
+			Role:         a.Role,
+		})
+	}))
+
+	return mux
 }
 
 func isLoopbackHost(host string) bool {

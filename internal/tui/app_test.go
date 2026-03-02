@@ -141,3 +141,58 @@ func TestTruncate(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkDetectedInVaultUsesNameNotProvider(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.detected = []DetectedAgentInfo{
+		{Name: "different-name", Provider: string(agent.ProviderClaude)},
+		{Name: "claude-main", Provider: "custom"},
+	}
+
+	m.markDetectedInVault()
+
+	if m.detected[0].InVault {
+		t.Fatalf("expected provider-only match to remain out of vault")
+	}
+	if !m.detected[1].InVault {
+		t.Fatalf("expected exact name match to be in vault")
+	}
+}
+
+func TestAutoAddDetectedAgentsSkipsDuplicatePathAndExistingName(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.detected = []DetectedAgentInfo{
+		{Name: "copilot", Provider: "custom", Path: "/usr/bin/copilot"},
+		{Name: "github-copilot-cli", Provider: "custom", Path: "/usr/bin/copilot"},
+		{Name: "claude-main", Provider: "claude", Path: "/usr/bin/claude"},
+	}
+
+	m.autoAddDetectedAgents()
+
+	var (
+		copilotCount      int
+		githubCopilotSeen bool
+		claudeMainCount   int
+	)
+	for _, a := range m.vault.List() {
+		switch a.Name {
+		case "copilot":
+			copilotCount++
+		case "github-copilot-cli":
+			githubCopilotSeen = true
+		case "claude-main":
+			claudeMainCount++
+		}
+	}
+	if copilotCount != 1 {
+		t.Fatalf("copilotCount = %d, want 1", copilotCount)
+	}
+	if githubCopilotSeen {
+		t.Fatalf("github-copilot-cli should be skipped as duplicate path")
+	}
+	if claudeMainCount != 1 {
+		t.Fatalf("claude-main count = %d, want 1 (existing agent must not be duplicated)", claudeMainCount)
+	}
+}
