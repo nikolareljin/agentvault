@@ -495,9 +495,20 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 	if dryRun {
 		fmt.Println("DRY RUN - would start:")
 		for _, sa := range agentsToStart {
-			a, _ := v.Get(sa.Name)
+			a, ok := v.Get(sa.Name)
+			if !ok {
+				fmt.Printf("  %s (missing)\n", sa.Name)
+				continue
+			}
+			role := sessionAgentRole(sa, session.ActiveRole)
+			if role != "" {
+				a.Role = role
+			}
 			prompt := a.BuildEffectivePrompt(shared)
 			fmt.Printf("  %s (%s)\n", sa.Name, a.Provider)
+			if role != "" {
+				fmt.Printf("    Role: %s\n", role)
+			}
 			if len(prompt) > 100 {
 				fmt.Printf("    Prompt: %s...\n", prompt[:100])
 			} else {
@@ -517,7 +528,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 	if sequential {
 		started := 0
 		for _, sa := range agentsToStart {
-			pid, err := startAgent(v, session, sa, shared)
+			pid, err := startAgent(v, session, sa, shared, true)
 			if err != nil {
 				fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
 				continue
@@ -555,7 +566,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 					sem <- struct{}{}
 					defer func() { <-sem }()
 				}
-				pid, err := startAgent(v, session, sa, shared)
+				pid, err := startAgent(v, session, sa, shared, false)
 				if err != nil {
 					fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
 					return
@@ -590,7 +601,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 // It resolves the provider to a CLI command name, verifies the command
 // exists in PATH, then starts it in the session's project directory.
 // The process PID is reported for later stop/status tracking.
-func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, shared agent.SharedConfig) (int, error) {
+func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, shared agent.SharedConfig, attachStdin bool) (int, error) {
 	_ = shared // reserved for provider-specific startup behavior
 
 	a, ok := v.Get(sa.Name)
@@ -637,12 +648,17 @@ func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, sh
 	cmd.Dir = session.ProjectDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
+	if attachStdin {
+		cmd.Stdin = os.Stdin
+	}
 
 	// Set environment variables
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, fmt.Sprintf("AGENTVAULT_SESSION=%s", session.ID))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("AGENTVAULT_AGENT=%s", sa.Name))
+	if role := sessionAgentRole(sa, session.ActiveRole); role != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("AGENTVAULT_ROLE=%s", role))
+	}
 
 	if err := cmd.Start(); err != nil {
 		return 0, fmt.Errorf("starting %s: %w", cmdPath, err)
@@ -650,6 +666,13 @@ func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, sh
 
 	fmt.Printf("  Started %s (PID: %d)\n", sa.Name, cmd.Process.Pid)
 	return cmd.Process.Pid, nil
+}
+
+func sessionAgentRole(sa agent.SessionAgent, sessionDefaultRole string) string {
+	if strings.TrimSpace(sa.Role) != "" {
+		return strings.TrimSpace(sa.Role)
+	}
+	return strings.TrimSpace(sessionDefaultRole)
 }
 
 func init() {
