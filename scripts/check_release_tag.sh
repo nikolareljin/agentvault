@@ -90,7 +90,11 @@ if ! git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 if $fetch_tags; then
-  if ! git -C "$repo_dir" fetch --tags --prune --force >/dev/null 2>&1; then
+  fetch_args=(--tags --prune --force)
+  if git -C "$repo_dir" fetch -h 2>&1 | grep -q -- "--prune-tags"; then
+    fetch_args+=(--prune-tags)
+  fi
+  if ! git -C "$repo_dir" fetch "${fetch_args[@]}" >/dev/null 2>&1; then
     log_error "Failed to fetch tags from repository at '$repo_dir'"
     exit 1
   fi
