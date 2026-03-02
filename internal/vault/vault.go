@@ -119,7 +119,8 @@ func (v *Vault) Unlock(masterPassword string) error {
 		}
 		vd = vaultData{Agents: agents}
 	}
-	v.salt = salt
+	// Copy the salt out of the file buffer to avoid retaining/aliasing the entire encrypted blob.
+	v.salt = append([]byte(nil), salt...)
 	v.key = key
 	v.agents = vd.Agents
 	v.shared = vd.Shared
@@ -460,7 +461,9 @@ func (v *Vault) write() error {
 	if err != nil {
 		return err
 	}
-	data := append(v.salt, ciphertext...)
+	data := make([]byte, len(v.salt)+len(ciphertext))
+	copy(data, v.salt)
+	copy(data[len(v.salt):], ciphertext)
 	dir := filepath.Dir(v.path)
 	tmp, err := os.CreateTemp(dir, ".agentvault-*.tmp")
 	if err != nil {
