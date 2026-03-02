@@ -60,6 +60,16 @@ func TestParseTUIInvocation_InlineShorthandRules(t *testing.T) {
 	}
 }
 
+func TestParseTUIInvocation_InlineShorthandAgents(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"-tagents"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(-tagents) error = %v", err)
+	}
+	if !launch || target != "agents" {
+		t.Fatalf("launch,target = %v,%q want true,agents", launch, target)
+	}
+}
+
 func TestParseTUIInvocation_InferTargetFromCommand(t *testing.T) {
 	launch, target, err := parseTUIInvocation([]string{"detect", "add", "-t"})
 	if err != nil {
@@ -114,6 +124,16 @@ func TestParseTUIInvocation_LastBareTUIFlagClearsEarlierAssignedTarget(t *testin
 	}
 	if !launch || target != "detected" {
 		t.Fatalf("launch,target = %v,%q want true,detected", launch, target)
+	}
+}
+
+func TestParseTUIInvocation_ExplicitEmptyAssignmentDoesNotConsumeNextToken(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"--tui=", "commands"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(--tui= commands) error = %v", err)
+	}
+	if !launch || target != "commands" {
+		t.Fatalf("launch,target = %v,%q want true,commands", launch, target)
 	}
 }
 

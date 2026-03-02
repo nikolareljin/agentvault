@@ -42,6 +42,53 @@ var (
 	Date    = "unknown"
 )
 
+var tuiTargetAliases = map[string]string{
+	"":             "agents",
+	"default":      "agents",
+	"home":         "agents",
+	"agent":        "agents",
+	"agents":       "agents",
+	"add":          "agents",
+	"list":         "agents",
+	"edit":         "agents",
+	"remove":       "agents",
+	"run":          "agents",
+	"init":         "agents",
+	"unlock":       "agents",
+	"inst":         "instructions",
+	"instruction":  "instructions",
+	"instructions": "instructions",
+	"rule":         "rules",
+	"rules":        "rules",
+	"sess":         "sessions",
+	"session":      "sessions",
+	"sessions":     "sessions",
+	"workspace":    "sessions",
+	"workspaces":   "sessions",
+	"detect":       "detected",
+	"detected":     "detected",
+	"command":      "commands",
+	"commands":     "commands",
+	"prompt":       "commands",
+	"sync":         "commands",
+	"generate":     "commands",
+	"status":       "status",
+	"config":       "status",
+	"setup":        "status",
+	"serve":        "status",
+	"version":      "status",
+}
+
+var canonicalTUITargets = []string{
+	"agents",
+	"instructions",
+	"rules",
+	"sessions",
+	"detected",
+	"commands",
+	"status",
+}
+
 var rootCmd = &cobra.Command{
 	Use:   "agentvault",
 	Short: "Manage AI agents, keys, and instructions",
@@ -149,20 +196,25 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 
 	tuiFlagIdx := -1
 	tuiFlagValue := ""
+	consumeNextAsTarget := false
 	for i, arg := range args {
 		switch {
 		case arg == "--tui" || arg == "-t":
 			tuiFlagIdx = i
 			tuiFlagValue = ""
+			consumeNextAsTarget = true
 		case strings.HasPrefix(arg, "--tui="):
 			tuiFlagIdx = i
 			tuiFlagValue = strings.TrimSpace(strings.TrimPrefix(arg, "--tui="))
+			consumeNextAsTarget = false
 		case strings.HasPrefix(arg, "-t="):
 			tuiFlagIdx = i
 			tuiFlagValue = strings.TrimSpace(strings.TrimPrefix(arg, "-t="))
+			consumeNextAsTarget = false
 		case strings.HasPrefix(arg, "-t") && len(arg) > 2 && arg[2] != '=':
 			tuiFlagIdx = i
 			tuiFlagValue = strings.TrimSpace(arg[2:])
+			consumeNextAsTarget = false
 		default:
 			continue
 		}
@@ -171,13 +223,13 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 		return false, "", nil
 	}
 
-	if tuiFlagValue == "" && tuiFlagIdx+1 < len(args) && !strings.HasPrefix(args[tuiFlagIdx+1], "-") {
+	if consumeNextAsTarget && tuiFlagValue == "" && tuiFlagIdx+1 < len(args) && !strings.HasPrefix(args[tuiFlagIdx+1], "-") {
 		tuiFlagValue = strings.TrimSpace(args[tuiFlagIdx+1])
 	}
 	if tuiFlagValue != "" {
 		target, ok := normalizeTUITarget(tuiFlagValue)
 		if !ok {
-			return false, "", fmt.Errorf("invalid --tui target %q (valid: agents, instructions, rules, sessions, detected, commands, status)", tuiFlagValue)
+			return false, "", fmt.Errorf("invalid --tui target %q (valid: %s)", tuiFlagValue, strings.Join(canonicalTUITargets, ", "))
 		}
 		return true, target, nil
 	}
@@ -215,29 +267,13 @@ func firstCommandToken(args []string) (string, bool) {
 }
 
 func normalizeTUITarget(raw string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "default", "home", "agent", "agents", "add", "list", "edit", "remove", "run", "init", "unlock":
-		return "agents", true
-	case "inst", "instruction", "instructions":
-		return "instructions", true
-	case "rule", "rules":
-		return "rules", true
-	case "sess", "session", "sessions", "workspace", "workspaces":
-		return "sessions", true
-	case "detect", "detected":
-		return "detected", true
-	case "command", "commands", "prompt", "sync", "generate":
-		return "commands", true
-	case "status", "config", "setup", "serve", "version":
-		return "status", true
-	default:
-		return "", false
-	}
+	target, ok := tuiTargetAliases[strings.ToLower(strings.TrimSpace(raw))]
+	return target, ok
 }
 
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
-	rootCmd.PersistentFlags().StringP("tui", "t", "", "launch interactive terminal UI; optional target: agents|instructions|rules|sessions|detected|commands|status")
+	rootCmd.PersistentFlags().StringP("tui", "t", "", fmt.Sprintf("launch interactive terminal UI; optional target: %s", strings.Join(canonicalTUITargets, "|")))
 	if tuiFlag := rootCmd.PersistentFlags().Lookup("tui"); tuiFlag != nil {
 		tuiFlag.NoOptDefVal = "agents"
 	}
