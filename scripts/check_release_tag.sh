@@ -91,7 +91,7 @@ fi
 
 if $fetch_tags; then
   fetch_args=(--tags --prune --force)
-  if git -C "$repo_dir" fetch -h 2>&1 | grep -q -- "--prune-tags"; then
+  if grep -q -- "--prune-tags" < <(git -C "$repo_dir" fetch -h 2>&1); then
     fetch_args+=(--prune-tags)
   fi
   if ! git -C "$repo_dir" fetch "${fetch_args[@]}" >/dev/null 2>&1; then
