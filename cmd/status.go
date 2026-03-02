@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
@@ -66,7 +67,13 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("Providers:")
-	for name, p := range report.Providers {
+	providerNames := make([]string, 0, len(report.Providers))
+	for name := range report.Providers {
+		providerNames = append(providerNames, name)
+	}
+	sort.Strings(providerNames)
+	for _, name := range providerNames {
+		p := report.Providers[name]
 		status := "unavailable"
 		if p.Available {
 			status = "ok"
