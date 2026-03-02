@@ -15,6 +15,7 @@ package agent
 import (
 	"errors"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -346,14 +347,7 @@ func (a *Agent) BuildEffectivePrompt(shared SharedConfig) string {
 }
 
 func joinStrings(strs []string, sep string) string {
-	if len(strs) == 0 {
-		return ""
-	}
-	result := strs[0]
-	for i := 1; i < len(strs); i++ {
-		result += sep + strs[i]
-	}
-	return result
+	return strings.Join(strs, sep)
 }
 
 // Validate checks that required fields are populated.

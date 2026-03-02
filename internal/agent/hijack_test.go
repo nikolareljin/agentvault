@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCheckHijacking_Clean(t *testing.T) {
 	clean := `# Agent Instructions
@@ -118,10 +121,10 @@ func TestFormatWarnings_NonEmpty(t *testing.T) {
 	if result == "" {
 		t.Error("FormatWarnings() returned empty for non-empty warnings")
 	}
-	if !contains(result, "HIGH") {
+	if !strings.Contains(result, "HIGH") {
 		t.Error("FormatWarnings() output missing severity label")
 	}
-	if !contains(result, "Line 5") {
+	if !strings.Contains(result, "Line 5") {
 		t.Error("FormatWarnings() output missing line number")
 	}
 }
@@ -142,17 +145,4 @@ func TestHasHighSeverity(t *testing.T) {
 	if !HasHighSeverity(withHigh) {
 		t.Error("HasHighSeverity() = false, want true")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && containsHelper(s, substr)
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
