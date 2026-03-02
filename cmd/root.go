@@ -135,6 +135,9 @@ func Execute() error {
 
 func containsHelpFlag(args []string) bool {
 	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
 		if arg == "-h" || arg == "--help" {
 			return true
 		}

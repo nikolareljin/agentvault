@@ -223,6 +223,15 @@ func TestContainsHelpFlag(t *testing.T) {
 	if containsHelpFlag([]string{"list"}) {
 		t.Fatalf("did not expect containsHelpFlag to detect help")
 	}
+	if containsHelpFlag([]string{"detect", "--", "--help"}) {
+		t.Fatalf("did not expect containsHelpFlag to detect help after --")
+	}
+}
+
+func TestContainsHelpFlag_StopsAtDoubleDash(t *testing.T) {
+	if containsHelpFlag([]string{"detect", "--", "--help"}) {
+		t.Fatalf("did not expect help detection for --help after --")
+	}
 }
 
 func TestExecute_HelpBypassesTUILaunch(t *testing.T) {
