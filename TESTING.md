@@ -135,9 +135,9 @@ ls -la ~/.config/agentvault/vault.enc
 
 ```bash
 # Create test instruction files
+mkdir -p /tmp/test-project
 echo "# Test AGENTS.md" > /tmp/test-project/AGENTS.md
 echo "# Test CLAUDE.md" > /tmp/test-project/CLAUDE.md
-mkdir -p /tmp/test-project
 
 # Pull instructions from directory
 ./agentvault instructions pull /tmp/test-project
