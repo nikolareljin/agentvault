@@ -289,8 +289,9 @@ var instRemoveCmd = &cobra.Command{
 	},
 }
 
-// knownFilenameToName maps filenames on disk to instruction names for pull.
-// This should stay in sync with agent.WellKnownInstructions (the reverse map).
+// knownFilenameToName maps auto-discovered top-level filenames to instruction names for pull.
+// It is intentionally partial: entries handled via dedicated path logic (for example
+// .github/copilot-instructions.md) are not listed here.
 var knownFilenameToName = map[string]string{
 	"AGENTS.md":      "agents",
 	"CLAUDE.md":      "claude",

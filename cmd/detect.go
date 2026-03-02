@@ -153,34 +153,37 @@ func runDetectAdd(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		newAgent := agent.Agent{
-			Name:      detected.Name,
-			Provider:  detected.Provider,
-			Tags:      []string{"auto-detected"},
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
-		}
-
-		// Apply detected settings
-		if model, ok := detected.Settings["model"].(string); ok {
-			newAgent.Model = model
-		}
-		if baseURL, ok := detected.Settings["base_url"].(string); ok {
-			newAgent.BaseURL = baseURL
-		}
-
 		if exists {
-			// Preserve existing API key and other user settings
-			newAgent.APIKey = existing.APIKey
-			newAgent.SystemPrompt = existing.SystemPrompt
-			newAgent.TaskDesc = existing.TaskDesc
-			newAgent.Tags = mergeUniqueTags(existing.Tags, newAgent.Tags)
+			// In --force mode update only detected fields and preserve existing user settings.
+			newAgent := existing
+			newAgent.Provider = detected.Provider
+			newAgent.UpdatedAt = time.Now()
+			newAgent.Tags = mergeUniqueTags(existing.Tags, []string{"auto-detected"})
+			if model, ok := detected.Settings["model"].(string); ok && model != "" {
+				newAgent.Model = model
+			}
+			if baseURL, ok := detected.Settings["base_url"].(string); ok && baseURL != "" {
+				newAgent.BaseURL = baseURL
+			}
 			if err := v.Update(newAgent); err != nil {
 				return fmt.Errorf("updating agent %s: %w", newAgent.Name, err)
 			}
 			fmt.Printf("  Updated %s (%s)\n", newAgent.Name, newAgent.Provider)
 			updated++
 		} else {
+			newAgent := agent.Agent{
+				Name:      detected.Name,
+				Provider:  detected.Provider,
+				Tags:      []string{"auto-detected"},
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+			if model, ok := detected.Settings["model"].(string); ok {
+				newAgent.Model = model
+			}
+			if baseURL, ok := detected.Settings["base_url"].(string); ok {
+				newAgent.BaseURL = baseURL
+			}
 			if err := v.Add(newAgent); err != nil {
 				return fmt.Errorf("adding agent %s: %w", newAgent.Name, err)
 			}
