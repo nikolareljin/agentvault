@@ -2,26 +2,72 @@ package cmd
 
 import "testing"
 
-func TestShouldLaunchTUI_DefaultNoArgs(t *testing.T) {
-	if !shouldLaunchTUI(false, false, nil) {
-		t.Fatalf("shouldLaunchTUI(false, false, nil) = false, want true")
+func TestParseTUIInvocation_DefaultNoArgs(t *testing.T) {
+	launch, target, err := parseTUIInvocation(nil)
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(nil) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+	if target != "agents" {
+		t.Fatalf("target = %q, want agents", target)
 	}
 }
 
-func TestShouldLaunchTUI_WithExplicitFlag(t *testing.T) {
-	if !shouldLaunchTUI(true, true, []string{"ignored"}) {
-		t.Fatalf("shouldLaunchTUI(true, true, args) = false, want true")
+func TestParseTUIInvocation_NoTUIFlagWithCommand(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"list"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(list) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false (target=%q)", target)
 	}
 }
 
-func TestShouldLaunchTUI_WithArgsAndNoFlag(t *testing.T) {
-	if shouldLaunchTUI(false, false, []string{"list"}) {
-		t.Fatalf("shouldLaunchTUI(false, false, args) = true, want false")
+func TestParseTUIInvocation_FlagOnly(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"-t"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(-t) error = %v", err)
+	}
+	if !launch || target != "agents" {
+		t.Fatalf("launch,target = %v,%q want true,agents", launch, target)
 	}
 }
 
-func TestShouldLaunchTUI_ExplicitFalseDisablesDefault(t *testing.T) {
-	if shouldLaunchTUI(true, false, nil) {
-		t.Fatalf("shouldLaunchTUI(true, false, nil) = true, want false")
+func TestParseTUIInvocation_ExplicitTarget(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"--tui", "commands"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(--tui commands) error = %v", err)
+	}
+	if !launch || target != "commands" {
+		t.Fatalf("launch,target = %v,%q want true,commands", launch, target)
+	}
+}
+
+func TestParseTUIInvocation_InferTargetFromCommand(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"detect", "add", "-t"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(detect add -t) error = %v", err)
+	}
+	if !launch || target != "detected" {
+		t.Fatalf("launch,target = %v,%q want true,detected", launch, target)
+	}
+}
+
+func TestParseTUIInvocation_InferTargetWithConfigFlag(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"--config", "/tmp/agentvault", "detect", "add", "-t"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(--config ... detect add -t) error = %v", err)
+	}
+	if !launch || target != "detected" {
+		t.Fatalf("launch,target = %v,%q want true,detected", launch, target)
+	}
+}
+
+func TestParseTUIInvocation_InvalidTarget(t *testing.T) {
+	_, _, err := parseTUIInvocation([]string{"--tui", "invalid-target"})
+	if err == nil {
+		t.Fatalf("expected invalid target error")
 	}
 }

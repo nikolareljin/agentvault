@@ -64,6 +64,7 @@
 
 ### Changed
 - `agentvault` with no command now launches the interactive TUI by default, while explicit CLI commands/subcommands continue to behave the same.
+- `-t` / `--tui` now accepts an optional target tab (`agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`) and supports command-based target inference (example: `agentvault detect add -t` opens Detected tab).
 - TUI view modes renamed for clarity (viewAgentList, viewAgentDetail, etc.)
 - Export/import now includes provider configurations
 - Improved error messages and user feedback

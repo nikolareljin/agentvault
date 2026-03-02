@@ -26,6 +26,10 @@
 package cmd
 
 import (
+	"fmt"
+	"os"
+	"strings"
+
 	"github.com/nikolareljin/agentvault/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -61,28 +65,118 @@ Get started:
 
 // Execute runs the root command. Called from main().
 func Execute() error {
+	if launch, target, err := parseTUIInvocation(os.Args[1:]); err != nil {
+		return err
+	} else if launch {
+		return launchTUI(target)
+	}
 	return rootCmd.Execute()
 }
 
-func shouldLaunchTUI(flagProvided bool, launchTUI bool, args []string) bool {
-	if flagProvided {
-		return launchTUI
+func launchTUI(target string) error {
+	v, err := openVault()
+	if err != nil {
+		return tui.RunWithTarget(target)
 	}
-	return len(args) == 0
+	return tui.RunWithVaultTarget(v, target)
+}
+
+func parseTUIInvocation(args []string) (bool, string, error) {
+	if len(args) == 0 {
+		return true, "agents", nil
+	}
+
+	tuiFlagIdx := -1
+	tuiFlagValue := ""
+	for i, arg := range args {
+		switch {
+		case arg == "--tui" || arg == "-t":
+			tuiFlagIdx = i
+		case strings.HasPrefix(arg, "--tui="):
+			tuiFlagIdx = i
+			tuiFlagValue = strings.TrimSpace(strings.TrimPrefix(arg, "--tui="))
+		case strings.HasPrefix(arg, "-t="):
+			tuiFlagIdx = i
+			tuiFlagValue = strings.TrimSpace(strings.TrimPrefix(arg, "-t="))
+		default:
+			continue
+		}
+	}
+	if tuiFlagIdx == -1 {
+		return false, "", nil
+	}
+
+	if tuiFlagValue == "" && tuiFlagIdx+1 < len(args) && !strings.HasPrefix(args[tuiFlagIdx+1], "-") {
+		tuiFlagValue = strings.TrimSpace(args[tuiFlagIdx+1])
+	}
+	if tuiFlagValue != "" {
+		target, ok := normalizeTUITarget(tuiFlagValue)
+		if !ok {
+			return false, "", fmt.Errorf("invalid --tui target %q (valid: agents, instructions, rules, sessions, detected, commands, status)", tuiFlagValue)
+		}
+		return true, target, nil
+	}
+
+	command, hasCommand := firstCommandToken(args, tuiFlagIdx)
+	if hasCommand {
+		if target, ok := normalizeTUITarget(command); ok {
+			return true, target, nil
+		}
+	}
+	return true, "agents", nil
+}
+
+func firstCommandToken(args []string, tuiFlagIdx int) (string, bool) {
+	skipNext := false
+	for i, arg := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			if arg == "--config" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				skipNext = true
+			}
+			if (arg == "--tui" || arg == "-t") && i == tuiFlagIdx && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				skipNext = true
+			}
+			continue
+		}
+		return arg, true
+	}
+	return "", false
+}
+
+func normalizeTUITarget(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "default", "home", "agent", "agents", "add", "list", "edit", "remove", "run", "init", "unlock":
+		return "agents", true
+	case "instruction", "instructions":
+		return "instructions", true
+	case "rule", "rules":
+		return "rules", true
+	case "session", "sessions":
+		return "sessions", true
+	case "detect", "detected":
+		return "detected", true
+	case "command", "commands", "prompt", "sync", "generate":
+		return "commands", true
+	case "status", "config", "setup", "serve", "version":
+		return "status", true
+	default:
+		return "", false
+	}
 }
 
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
-	rootCmd.PersistentFlags().BoolP("tui", "t", false, "launch interactive terminal UI (default when no command is provided)")
+	rootCmd.PersistentFlags().StringP("tui", "t", "", "launch interactive terminal UI; optional target: agents|instructions|rules|sessions|detected|commands|status")
+	if tuiFlag := rootCmd.PersistentFlags().Lookup("tui"); tuiFlag != nil {
+		tuiFlag.NoOptDefVal = "agents"
+	}
 	rootCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		launchTUI, _ := cmd.Flags().GetBool("tui")
-		flagProvided := cmd.Flags().Changed("tui")
-		if shouldLaunchTUI(flagProvided, launchTUI, args) {
-			v, err := openVault()
-			if err != nil {
-				return tui.Run()
-			}
-			return tui.RunWithVault(v)
+		if len(args) == 0 {
+			return launchTUI("agents")
 		}
 		return cmd.Help()
 	}
