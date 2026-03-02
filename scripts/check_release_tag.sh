@@ -75,7 +75,10 @@ fi
 version="${BASH_REMATCH[1]}"
 
 if $fetch_tags; then
-  git -C "$repo_dir" fetch --tags --prune --force >/dev/null 2>&1 || true
+  if ! git -C "$repo_dir" fetch --tags --prune --force >/dev/null 2>&1; then
+    log_error "Failed to fetch tags from repository at '$repo_dir'"
+    exit 1
+  fi
 fi
 
 if git -C "$repo_dir" show-ref --tags -q "refs/tags/$version"; then
