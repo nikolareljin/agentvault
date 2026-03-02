@@ -409,6 +409,11 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	if len(v.sessions.DefaultAgents) == 0 && len(vd.Sessions.DefaultAgents) > 0 {
 		v.sessions.DefaultAgents = vd.Sessions.DefaultAgents
 	}
+	if v.sessions.ActiveSession == "" && vd.Sessions.ActiveSession != "" {
+		if _, ok := seenSessions[vd.Sessions.ActiveSession]; ok {
+			v.sessions.ActiveSession = vd.Sessions.ActiveSession
+		}
+	}
 	// Only import parallel limit when current session config is otherwise empty.
 	// This avoids overwriting an intentional existing 0 (unlimited) setting.
 	if wasSessionConfigUnset && importedParallelLimitDefined {

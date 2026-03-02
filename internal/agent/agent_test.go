@@ -174,3 +174,30 @@ func TestBuildEffectivePromptSortsRulesByPriorityAndRespectsDisabledRules(t *tes
 		t.Fatalf("disabled rule should not appear in prompt: %q", prompt)
 	}
 }
+
+func TestBuildEffectivePromptPrioritizesRoleRules(t *testing.T) {
+	a := Agent{
+		Name:     "test",
+		Provider: ProviderClaude,
+		Role:     "lead",
+	}
+	shared := SharedConfig{
+		Roles: []Role{
+			{Name: "lead", Prompt: "Lead role prompt", Rules: []string{"late"}},
+		},
+		Rules: []UnifiedRule{
+			{Name: "early", Content: "Early rule", Priority: 10, Enabled: true},
+			{Name: "late", Content: "Late rule", Priority: 50, Enabled: true},
+		},
+	}
+
+	prompt := a.BuildEffectivePrompt(shared)
+	earlyIdx := strings.Index(prompt, "Early rule")
+	lateIdx := strings.Index(prompt, "Late rule")
+	if earlyIdx == -1 || lateIdx == -1 {
+		t.Fatalf("expected both rules in prompt, got: %q", prompt)
+	}
+	if lateIdx > earlyIdx {
+		t.Fatalf("role rule should be prioritized ahead of non-role rules, got: %q", prompt)
+	}
+}

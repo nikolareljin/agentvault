@@ -109,15 +109,7 @@ func runSyncTo(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate provider-specific files
-	providers := []agent.Provider{
-		agent.ProviderClaude,
-		agent.ProviderCodex,
-		agent.ProviderMeldbot,
-		agent.ProviderOpenclaw,
-		agent.ProviderNanoclaw,
-	}
-
-	for _, p := range providers {
+	for _, p := range syncProviders() {
 		if providerFilter != "" && string(p) != providerFilter {
 			continue
 		}
@@ -177,15 +169,7 @@ func runSyncVault(cmd *cobra.Command, args []string) error {
 	updated++
 
 	// Generate provider-specific files
-	providers := []agent.Provider{
-		agent.ProviderClaude,
-		agent.ProviderCodex,
-		agent.ProviderMeldbot,
-		agent.ProviderOpenclaw,
-		agent.ProviderNanoclaw,
-	}
-
-	for _, p := range providers {
+	for _, p := range syncProviders() {
 		content := generateProviderMD(p, shared, includeRoles)
 		name := string(p)
 		filename := agent.WellKnownInstructions[name]
@@ -232,15 +216,7 @@ func runSyncPreview(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
-	providers := []agent.Provider{
-		agent.ProviderClaude,
-		agent.ProviderCodex,
-		agent.ProviderMeldbot,
-		agent.ProviderOpenclaw,
-		agent.ProviderNanoclaw,
-	}
-
-	for _, p := range providers {
+	for _, p := range syncProviders() {
 		if providerFilter != "" && string(p) != providerFilter {
 			continue
 		}
@@ -428,6 +404,17 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func syncProviders() []agent.Provider {
+	providers := make([]agent.Provider, 0, len(agent.ProviderInstructionMap))
+	for provider := range agent.ProviderInstructionMap {
+		providers = append(providers, provider)
+	}
+	sort.Slice(providers, func(i, j int) bool {
+		return string(providers[i]) < string(providers[j])
+	})
+	return providers
 }
 
 // writeIfAllowed writes content to path, refusing to overwrite existing files
