@@ -160,6 +160,9 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 		case strings.HasPrefix(arg, "-t="):
 			tuiFlagIdx = i
 			tuiFlagValue = strings.TrimSpace(strings.TrimPrefix(arg, "-t="))
+		case strings.HasPrefix(arg, "-t") && len(arg) > 2 && arg[2] != '=':
+			tuiFlagIdx = i
+			tuiFlagValue = strings.TrimSpace(arg[2:])
 		default:
 			continue
 		}
@@ -215,11 +218,11 @@ func normalizeTUITarget(raw string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", "default", "home", "agent", "agents", "add", "list", "edit", "remove", "run", "init", "unlock":
 		return "agents", true
-	case "instruction", "instructions":
+	case "inst", "instruction", "instructions":
 		return "instructions", true
 	case "rule", "rules":
 		return "rules", true
-	case "session", "sessions":
+	case "sess", "session", "sessions", "workspace", "workspaces":
 		return "sessions", true
 	case "detect", "detected":
 		return "detected", true

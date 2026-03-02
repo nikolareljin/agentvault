@@ -50,6 +50,16 @@ func TestParseTUIInvocation_ExplicitTarget(t *testing.T) {
 	}
 }
 
+func TestParseTUIInvocation_InlineShorthandRules(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"-trules"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(-trules) error = %v", err)
+	}
+	if !launch || target != "rules" {
+		t.Fatalf("launch,target = %v,%q want true,rules", launch, target)
+	}
+}
+
 func TestParseTUIInvocation_InferTargetFromCommand(t *testing.T) {
 	launch, target, err := parseTUIInvocation([]string{"detect", "add", "-t"})
 	if err != nil {
@@ -67,6 +77,26 @@ func TestParseTUIInvocation_InferTargetWithConfigFlag(t *testing.T) {
 	}
 	if !launch || target != "detected" {
 		t.Fatalf("launch,target = %v,%q want true,detected", launch, target)
+	}
+}
+
+func TestParseTUIInvocation_InferTargetFromInstAlias(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"inst", "list", "-t"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(inst list -t) error = %v", err)
+	}
+	if !launch || target != "instructions" {
+		t.Fatalf("launch,target = %v,%q want true,instructions", launch, target)
+	}
+}
+
+func TestParseTUIInvocation_InferTargetFromSessAlias(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"sess", "list", "-t"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(sess list -t) error = %v", err)
+	}
+	if !launch || target != "sessions" {
+		t.Fatalf("launch,target = %v,%q want true,sessions", launch, target)
 	}
 }
 
