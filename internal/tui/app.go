@@ -260,6 +260,32 @@ func initialModel(v *vault.Vault) model {
 	return m
 }
 
+func applyStartTarget(m *model, target string) {
+	switch strings.ToLower(strings.TrimSpace(target)) {
+	case "", "agents":
+		m.activeTab = tabAgents
+		m.mode = viewAgentList
+	case "instructions":
+		m.activeTab = tabInstructions
+		m.mode = viewInstructions
+	case "rules":
+		m.activeTab = tabRules
+		m.mode = viewRules
+	case "sessions":
+		m.activeTab = tabSessions
+		m.mode = viewSessions
+	case "detected":
+		m.activeTab = tabDetected
+		m.mode = viewDetected
+	case "commands":
+		m.activeTab = tabCommands
+		m.mode = viewCommands
+	case "status":
+		m.activeTab = tabStatus
+		m.mode = viewStatus
+	}
+}
+
 func (m *model) markDetectedInVault() {
 	for i, d := range m.detected {
 		m.detected[i].InVault = m.vaultHasAgentNamed(d.Name)
@@ -2623,14 +2649,26 @@ func truncate(s string, max int) string {
 
 // Run starts the TUI application with an unlocked vault.
 func Run() error {
-	return RunWithVault(nil)
+	return RunWithTarget("")
+}
+
+// RunWithTarget starts the TUI and opens the requested target tab.
+func RunWithTarget(target string) error {
+	return RunWithVaultTarget(nil, target)
 }
 
 // RunWithVault starts the TUI with a pre-unlocked vault.
 func RunWithVault(v *vault.Vault) error {
+	return RunWithVaultTarget(v, "")
+}
+
+// RunWithVaultTarget starts the TUI with a pre-unlocked vault and target tab.
+func RunWithVaultTarget(v *vault.Vault, target string) error {
 	var m tea.Model
 	if v != nil {
-		m = initialModel(v)
+		start := initialModel(v)
+		applyStartTarget(&start, target)
+		m = start
 	} else {
 		m = placeholderModel{}
 	}
