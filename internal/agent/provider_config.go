@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -196,7 +197,12 @@ func LoadCodexConfig() (*CodexConfig, error) {
 				start := strings.Index(line, `"`)
 				end := strings.LastIndex(line, `"`)
 				if start != -1 && end > start {
-					currentProject = line[start+1 : end]
+					rawPath := line[start : end+1]
+					if unquoted, err := strconv.Unquote(rawPath); err == nil {
+						currentProject = unquoted
+					} else {
+						currentProject = line[start+1 : end]
+					}
 				}
 			} else if strings.Contains(line, "trust_level") && currentProject != "" {
 				// Extract trust level
