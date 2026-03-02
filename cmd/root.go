@@ -56,7 +56,7 @@ Get started:
   agentvault init              # Create vault
   agentvault detect add        # Auto-detect and add agents
   agentvault rules init        # Set up default rules
-  agentvault -t                # Launch interactive UI`,
+  agentvault                   # Launch interactive UI (default)`,
 }
 
 // Execute runs the root command. Called from main().
@@ -64,12 +64,16 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
+func shouldLaunchTUI(launchTUI bool, args []string) bool {
+	return launchTUI || len(args) == 0
+}
+
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
-	rootCmd.PersistentFlags().BoolP("tui", "t", false, "launch interactive terminal UI")
+	rootCmd.PersistentFlags().BoolP("tui", "t", false, "launch interactive terminal UI (default when no command is provided)")
 	rootCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		launchTUI, _ := cmd.Flags().GetBool("tui")
-		if launchTUI {
+		if shouldLaunchTUI(launchTUI, args) {
 			v, err := openVault()
 			if err != nil {
 				return tui.Run()

@@ -5,7 +5,7 @@ Related docs: [Docs Index](./README.md) | [CLI Reference](./cli-reference.md) | 
 ## Daily workflow through TUI gateway
 
 ```bash
-agentvault -t
+agentvault
 ```
 
 Then:
