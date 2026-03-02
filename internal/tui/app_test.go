@@ -199,6 +199,7 @@ func TestAutoAddDetectedAgentsSkipsDuplicatePathAndExistingName(t *testing.T) {
 
 func TestApplyStartTarget(t *testing.T) {
 	v := testVault(t)
+	base := initialModel(v)
 	cases := []struct {
 		target string
 		tab    tab
@@ -214,7 +215,7 @@ func TestApplyStartTarget(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		m := initialModel(v)
+		m := base
 		applyStartTarget(&m, tc.target)
 		if m.activeTab != tc.tab {
 			t.Fatalf("target %q activeTab = %v, want %v", tc.target, m.activeTab, tc.tab)
