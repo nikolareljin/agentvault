@@ -77,7 +77,7 @@ if [[ -z "$branch" ]]; then
   exit 2
 fi
 
-if [[ ! "$branch" =~ ^release/v?([0-9]+\.[0-9]+\.[0-9]+(-rc\.?[0-9]+)?)$ ]]; then
+if [[ ! "$branch" =~ ^release/v?([0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?)$ ]]; then
   log_info "Skipping: '$branch' is not a release branch"
   exit 0
 fi
