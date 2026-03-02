@@ -100,7 +100,7 @@ if $fetch_tags; then
   fi
 fi
 
-if git -C "$repo_dir" show-ref --tags -q "refs/tags/$version"; then
+if git -C "$repo_dir" show-ref --verify --quiet "refs/tags/$version"; then
   log_error "Tag $version already exists for release branch $branch"
   exit 1
 fi
