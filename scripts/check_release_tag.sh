@@ -31,11 +31,21 @@ print_version=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --branch)
-      branch="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        log_error "Missing value for --branch"
+        usage
+        exit 2
+      fi
+      branch="$2"
       shift 2
       ;;
     --repo)
-      repo_dir="${2:-}"
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        log_error "Missing value for --repo"
+        usage
+        exit 2
+      fi
+      repo_dir="$2"
       shift 2
       ;;
     --fetch-tags)
@@ -73,6 +83,11 @@ if [[ ! "$branch" =~ ^release/v?([0-9]+\.[0-9]+\.[0-9]+(-rc\.?[0-9]+)?)$ ]]; the
 fi
 
 version="${BASH_REMATCH[1]}"
+
+if ! git -C "$repo_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  log_error "Repository path '$repo_dir' is not a valid git worktree"
+  exit 1
+fi
 
 if $fetch_tags; then
   if ! git -C "$repo_dir" fetch --tags --prune --force >/dev/null 2>&1; then
