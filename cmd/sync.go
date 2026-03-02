@@ -115,9 +115,9 @@ func runSyncTo(cmd *cobra.Command, args []string) error {
 		}
 
 		content := generateProviderMD(p, shared, includeRoles)
-		filename := agent.WellKnownInstructions[string(p)]
-		if filename == "" {
-			filename = strings.ToUpper(string(p)) + ".md"
+		_, filename, ok := providerSyncTarget(p)
+		if !ok {
+			continue
 		}
 
 		path := filepath.Join(dir, filename)
@@ -171,10 +171,9 @@ func runSyncVault(cmd *cobra.Command, args []string) error {
 	// Generate provider-specific files
 	for _, p := range syncProviders() {
 		content := generateProviderMD(p, shared, includeRoles)
-		name := string(p)
-		filename := agent.WellKnownInstructions[name]
-		if filename == "" {
-			filename = strings.ToUpper(name) + ".md"
+		name, filename, ok := providerSyncTarget(p)
+		if !ok {
+			continue
 		}
 
 		inst := agent.InstructionFile{
@@ -220,9 +219,9 @@ func runSyncPreview(cmd *cobra.Command, args []string) error {
 		if providerFilter != "" && string(p) != providerFilter {
 			continue
 		}
-		filename := agent.WellKnownInstructions[string(p)]
-		if filename == "" {
-			filename = strings.ToUpper(string(p)) + ".md"
+		_, filename, ok := providerSyncTarget(p)
+		if !ok {
+			continue
 		}
 		fmt.Printf("=== %s ===\n\n", filename)
 		fmt.Println(generateProviderMD(p, shared, true))
@@ -409,12 +408,35 @@ func containsString(values []string, target string) bool {
 func syncProviders() []agent.Provider {
 	providers := make([]agent.Provider, 0, len(agent.ProviderInstructionMap))
 	for provider := range agent.ProviderInstructionMap {
+		if _, _, ok := providerSyncTarget(provider); !ok {
+			continue
+		}
 		providers = append(providers, provider)
 	}
 	sort.Slice(providers, func(i, j int) bool {
 		return string(providers[i]) < string(providers[j])
 	})
 	return providers
+}
+
+func providerSyncTarget(provider agent.Provider) (name string, filename string, ok bool) {
+	instructions, exists := agent.ProviderInstructionMap[provider]
+	if !exists {
+		return "", "", false
+	}
+	for _, inst := range instructions {
+		if inst == "agents" {
+			continue
+		}
+		candidate := agent.FilenameForInstruction(inst)
+		ext := strings.ToLower(filepath.Ext(candidate))
+		// Sync generates Markdown content, so skip non-Markdown targets.
+		if ext != ".md" && ext != ".markdown" {
+			continue
+		}
+		return inst, candidate, true
+	}
+	return "", "", false
 }
 
 // writeIfAllowed writes content to path, refusing to overwrite existing files
