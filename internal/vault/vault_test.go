@@ -362,6 +362,62 @@ func TestImportDataDoesNotOverwriteExistingSharedPrompt(t *testing.T) {
 	}
 }
 
+func TestImportDataMergesSharedRulesAndRolesWithoutOverwrite(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		Rules: []agent.UnifiedRule{
+			{Name: "existing-rule", Content: "existing", Enabled: true},
+		},
+		Roles: []agent.Role{
+			{Name: "existing-role", Title: "Existing Role", Prompt: "existing-role-prompt"},
+		},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {
+			"rules": [
+				{"name":"existing-rule","content":"imported-overwrite-attempt","enabled":true},
+				{"name":"new-rule","content":"new-rule-content","enabled":true}
+			],
+			"roles": [
+				{"name":"existing-role","title":"Imported Existing Role","prompt":"imported-overwrite-attempt"},
+				{"name":"new-role","title":"New Role","prompt":"new-role-prompt"}
+			]
+		}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.Rules) != 2 {
+		t.Fatalf("rules len = %d, want 2", len(shared.Rules))
+	}
+	if shared.Rules[0].Name != "existing-rule" || shared.Rules[0].Content != "existing" {
+		t.Fatalf("existing rule was overwritten: %#v", shared.Rules[0])
+	}
+	if shared.Rules[1].Name != "new-rule" {
+		t.Fatalf("second rule name = %q, want new-rule", shared.Rules[1].Name)
+	}
+
+	if len(shared.Roles) != 2 {
+		t.Fatalf("roles len = %d, want 2", len(shared.Roles))
+	}
+	if shared.Roles[0].Name != "existing-role" || shared.Roles[0].Prompt != "existing-role-prompt" {
+		t.Fatalf("existing role was overwritten: %#v", shared.Roles[0])
+	}
+	if shared.Roles[1].Name != "new-role" {
+		t.Fatalf("second role name = %q, want new-role", shared.Roles[1].Name)
+	}
+}
+
 func TestImportDataDeduplicatesImportedSessionIDs(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)

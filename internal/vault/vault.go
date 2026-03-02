@@ -339,10 +339,11 @@ func (v *Vault) ExportData() ([]byte, error) {
 	return json.MarshalIndent(vd, "", "  ")
 }
 
-// ImportData merges agents and shared config from JSON into this vault.
+// ImportData merges agents plus shared/provider/session config from JSON into this vault.
 // Agents with duplicate names are skipped. Shared config fields (system prompt,
-// MCP servers, instructions, provider configs, sessions) are merged using a
-// "don't overwrite existing" strategy -- the vault's current values take
+// MCP servers, instructions, rules, and roles) are merged using a
+// "don't overwrite existing" strategy. Provider configs and sessions are merged
+// with the same non-destructive behavior, so existing vault values take
 // precedence over imported values to prevent accidental data loss.
 func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err error) {
 	var vd vaultData
@@ -382,6 +383,30 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		if _, ok := seenInst[inst.Name]; !ok {
 			v.shared.Instructions = append(v.shared.Instructions, inst)
 		}
+	}
+	// merge shared rules (don't overwrite existing by name)
+	seenRules := make(map[string]struct{})
+	for _, r := range v.shared.Rules {
+		seenRules[r.Name] = struct{}{}
+	}
+	for _, r := range vd.Shared.Rules {
+		if _, ok := seenRules[r.Name]; ok {
+			continue
+		}
+		v.shared.Rules = append(v.shared.Rules, r)
+		seenRules[r.Name] = struct{}{}
+	}
+	// merge shared roles (don't overwrite existing by name)
+	seenRoles := make(map[string]struct{})
+	for _, r := range v.shared.Roles {
+		seenRoles[r.Name] = struct{}{}
+	}
+	for _, r := range vd.Shared.Roles {
+		if _, ok := seenRoles[r.Name]; ok {
+			continue
+		}
+		v.shared.Roles = append(v.shared.Roles, r)
+		seenRoles[r.Name] = struct{}{}
 	}
 	// merge provider configs (don't overwrite existing)
 	if v.providerConfigs.Claude == nil && vd.ProviderConfigs.Claude != nil {
