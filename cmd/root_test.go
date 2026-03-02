@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -85,6 +87,16 @@ func TestParseTUIInvocation_LastBareTUIFlagClearsEarlierAssignedTarget(t *testin
 	}
 }
 
+func TestParseTUIInvocation_EarlierBareTUIValueIsNotCommandToken(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"--tui", "commands", "detect", "-t"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(--tui commands detect -t) error = %v", err)
+	}
+	if !launch || target != "detected" {
+		t.Fatalf("launch,target = %v,%q want true,detected", launch, target)
+	}
+}
+
 func TestApplyEarlyPersistentFlags_ConfigWithSeparateValue(t *testing.T) {
 	t.Cleanup(func() {
 		_ = rootCmd.PersistentFlags().Set("config", "")
@@ -139,4 +151,57 @@ func TestExecute_HelpBypassesTUILaunch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() with --help returned error: %v", err)
 	}
+}
+
+func TestExecute_DoesNotReuseStaleSetArgsAfterHelp(t *testing.T) {
+	origArgs := os.Args
+	origOut := rootCmd.OutOrStdout()
+	origErr := rootCmd.ErrOrStderr()
+	t.Cleanup(func() {
+		os.Args = origArgs
+		rootCmd.SetOut(origOut)
+		rootCmd.SetErr(origErr)
+	})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	os.Args = []string{"agentvault", "--tui", "--help"}
+	if err := Execute(); err != nil {
+		t.Fatalf("Execute() with help returned error: %v", err)
+	}
+
+	os.Args = []string{"agentvault", "__definitely_invalid_command__"}
+	err := Execute()
+	if err == nil {
+		t.Fatalf("expected invalid command error after help invocation")
+	}
+	if !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("expected unknown command error, got: %v", err)
+	}
+}
+
+func TestIsVaultNotFoundError(t *testing.T) {
+	if !isVaultNotFoundError(os.ErrNotExist) {
+		t.Fatalf("os.ErrNotExist should be treated as vault-not-found fallback")
+	}
+	if !isVaultNotFoundError(assertErr("vault not found at /tmp/vault.enc")) {
+		t.Fatalf("vault not found message should be treated as fallback")
+	}
+	if isVaultNotFoundError(assertErr("invalid password")) {
+		t.Fatalf("non not-found errors must not fallback")
+	}
+}
+
+func assertErr(msg string) error {
+	return &testErr{msg: msg}
+}
+
+type testErr struct {
+	msg string
+}
+
+func (e *testErr) Error() string {
+	return e.msg
 }
