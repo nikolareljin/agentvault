@@ -5,6 +5,8 @@ Related docs: [Docs Index](./README.md) | [CLI Reference](./cli-reference.md) | 
 Launch TUI:
 
 ```bash
+agentvault
+# or
 agentvault --tui
 # or
 agentvault -t
