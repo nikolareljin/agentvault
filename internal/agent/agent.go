@@ -287,11 +287,17 @@ func GetRule(rules []UnifiedRule, name string) (UnifiedRule, bool) {
 // allowing per-agent customization where needed.
 func (a *Agent) BuildEffectivePrompt(shared SharedConfig) string {
 	var parts []string
+	roleRulePriority := make(map[string]int)
 
 	// 1. Add role prompt if specified
 	if a.Role != "" {
 		if role, ok := GetRole(shared.Roles, a.Role); ok {
 			parts = append(parts, role.Prompt)
+			for idx, name := range role.Rules {
+				if _, seen := roleRulePriority[name]; !seen {
+					roleRulePriority[name] = idx
+				}
+			}
 		}
 	}
 
@@ -315,6 +321,15 @@ func (a *Agent) BuildEffectivePrompt(shared SharedConfig) string {
 	rules := make([]UnifiedRule, len(shared.Rules))
 	copy(rules, shared.Rules)
 	sort.SliceStable(rules, func(i, j int) bool {
+		iRole, iInRole := roleRulePriority[rules[i].Name]
+		jRole, jInRole := roleRulePriority[rules[j].Name]
+		// Role-specific rules are surfaced first in the order defined by the role.
+		if iInRole && jInRole {
+			return iRole < jRole
+		}
+		if iInRole != jInRole {
+			return iInRole
+		}
 		return rules[i].Priority < rules[j].Priority
 	})
 	for _, rule := range rules {

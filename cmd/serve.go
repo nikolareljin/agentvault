@@ -173,7 +173,7 @@ Example:
 				Provider:     string(a.Provider),
 				Model:        a.Model,
 				BaseURL:      a.BaseURL,
-				SystemPrompt: a.EffectiveSystemPrompt(shared),
+				SystemPrompt: a.BuildEffectivePrompt(shared),
 				TaskDesc:     a.TaskDesc,
 				Tags:         a.Tags,
 				Role:         a.Role,
