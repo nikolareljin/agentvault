@@ -7,13 +7,13 @@ Related docs: [Docs Index](./README.md) | [CLI Reference](./cli-reference.md) | 
 ## 1. Global CLI Usage
 
 ```bash
-agentvault [global flags] <command> [subcommand] [args] [flags]
+agentvault [global flags] [command] [subcommand] [args] [flags]
 ```
 
 ### Global flags
 
 - `--config <dir>`: Use custom config directory instead of default `~/.config/agentvault`.
-- `-t, --tui`: Launch interactive TUI.
+- `-t, --tui`: Launch interactive TUI (also the default when no command is provided).
 
 ## 2. Top-Level Commands
 
@@ -415,8 +415,10 @@ Flags:
 Launch:
 
 ```bash
+agentvault
+# optional explicit flag:
 agentvault --tui
-# or
+# or short:
 agentvault -t
 ```
 
@@ -539,7 +541,7 @@ Search mode (Agents tab):
 ## 5.1 Daily startup
 
 ```bash
-agentvault -t
+agentvault
 ```
 
 Use Commands tab + `g` for prompt gateway workflow.
