@@ -283,6 +283,10 @@ func applyStartTarget(m *model, target string) {
 	case "status":
 		m.activeTab = tabStatus
 		m.mode = viewStatus
+	default:
+		// Fallback to deterministic default for unknown/unsupported targets.
+		m.activeTab = tabAgents
+		m.mode = viewAgentList
 	}
 }
 
@@ -2647,12 +2651,14 @@ func truncate(s string, max int) string {
 	return s[:max-3] + "..."
 }
 
-// Run starts the TUI application with an unlocked vault.
+// Run starts the TUI application.
+// If no unlocked vault is available, the placeholder screen is shown.
 func Run() error {
 	return RunWithTarget("")
 }
 
-// RunWithTarget starts the TUI and opens the requested target tab.
+// RunWithTarget starts the TUI and attempts to open the requested target tab.
+// If no unlocked vault is available, the placeholder screen is shown.
 func RunWithTarget(target string) error {
 	return RunWithVaultTarget(nil, target)
 }

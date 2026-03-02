@@ -65,15 +65,32 @@ Get started:
 
 // Execute runs the root command. Called from main().
 func Execute() error {
-	if err := applyEarlyPersistentFlags(os.Args[1:]); err != nil {
+	args := os.Args[1:]
+	if err := applyEarlyPersistentFlags(args); err != nil {
 		return err
 	}
-	if launch, target, err := parseTUIInvocation(os.Args[1:]); err != nil {
+
+	// Preserve Cobra help semantics even when TUI interception is enabled.
+	if containsHelpFlag(args) {
+		rootCmd.SetArgs(args)
+		return rootCmd.Execute()
+	}
+
+	if launch, target, err := parseTUIInvocation(args); err != nil {
 		return err
 	} else if launch {
 		return launchTUI(target)
 	}
 	return rootCmd.Execute()
+}
+
+func containsHelpFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
 }
 
 func applyEarlyPersistentFlags(args []string) error {
@@ -120,6 +137,7 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 		switch {
 		case arg == "--tui" || arg == "-t":
 			tuiFlagIdx = i
+			tuiFlagValue = ""
 		case strings.HasPrefix(arg, "--tui="):
 			tuiFlagIdx = i
 			tuiFlagValue = strings.TrimSpace(strings.TrimPrefix(arg, "--tui="))
