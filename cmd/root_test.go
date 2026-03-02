@@ -71,3 +71,36 @@ func TestParseTUIInvocation_InvalidTarget(t *testing.T) {
 		t.Fatalf("expected invalid target error")
 	}
 }
+
+func TestApplyEarlyPersistentFlags_ConfigWithSeparateValue(t *testing.T) {
+	t.Cleanup(func() {
+		_ = rootCmd.PersistentFlags().Set("config", "")
+	})
+	if err := applyEarlyPersistentFlags([]string{"--config", "/tmp/custom"}); err != nil {
+		t.Fatalf("applyEarlyPersistentFlags(--config /tmp/custom) error = %v", err)
+	}
+	got, _ := rootCmd.PersistentFlags().GetString("config")
+	if got != "/tmp/custom" {
+		t.Fatalf("config flag = %q, want /tmp/custom", got)
+	}
+}
+
+func TestApplyEarlyPersistentFlags_ConfigWithEqualsValue(t *testing.T) {
+	t.Cleanup(func() {
+		_ = rootCmd.PersistentFlags().Set("config", "")
+	})
+	if err := applyEarlyPersistentFlags([]string{"--config=/tmp/alt"}); err != nil {
+		t.Fatalf("applyEarlyPersistentFlags(--config=/tmp/alt) error = %v", err)
+	}
+	got, _ := rootCmd.PersistentFlags().GetString("config")
+	if got != "/tmp/alt" {
+		t.Fatalf("config flag = %q, want /tmp/alt", got)
+	}
+}
+
+func TestApplyEarlyPersistentFlags_ConfigMissingValue(t *testing.T) {
+	err := applyEarlyPersistentFlags([]string{"--config", "--tui"})
+	if err == nil {
+		t.Fatalf("expected missing config value error")
+	}
+}

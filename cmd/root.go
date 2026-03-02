@@ -65,12 +65,40 @@ Get started:
 
 // Execute runs the root command. Called from main().
 func Execute() error {
+	if err := applyEarlyPersistentFlags(os.Args[1:]); err != nil {
+		return err
+	}
 	if launch, target, err := parseTUIInvocation(os.Args[1:]); err != nil {
 		return err
 	} else if launch {
 		return launchTUI(target)
 	}
 	return rootCmd.Execute()
+}
+
+func applyEarlyPersistentFlags(args []string) error {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--config":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return fmt.Errorf("flag needs an argument: --config")
+			}
+			if err := rootCmd.PersistentFlags().Set("config", args[i+1]); err != nil {
+				return err
+			}
+			i++
+		case strings.HasPrefix(arg, "--config="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, "--config="))
+			if value == "" {
+				return fmt.Errorf("flag needs an argument: --config")
+			}
+			if err := rootCmd.PersistentFlags().Set("config", value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func launchTUI(target string) error {
