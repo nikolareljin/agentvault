@@ -21,5 +21,7 @@ jobs:
       lint_command: 'test -z "$(gofmt -l .)" && go vet ./...'
       test_command: "go test ./..."
       build_command: "go build ./..."
-      check_release_tag: true
+      # Release tag validation is handled by .github/workflows/release-tag-gate.yml.
+      # Keeping this disabled avoids a missing local-action path in ci-helpers pr-gate.
+      check_release_tag: false
       release_branch: ${{ github.head_ref }}

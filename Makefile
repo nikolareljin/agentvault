@@ -28,7 +28,18 @@ clean:
 	rm -f $(APP_NAME)
 
 install: build
-	cp $(APP_NAME) $(GOPATH)/bin/$(APP_NAME)
+	@target_bin="$$(go env GOBIN)"; \
+	if [ -z "$$target_bin" ]; then \
+		gopath_bin="$$(go env GOPATH)/bin"; \
+		if echo ":$$PATH:" | grep -q ":$$gopath_bin:"; then \
+			target_bin="$$gopath_bin"; \
+		else \
+			target_bin="$$HOME/.local/bin"; \
+		fi; \
+	fi; \
+	mkdir -p "$$target_bin"; \
+	cp $(APP_NAME) "$$target_bin/$(APP_NAME)"; \
+	echo "Installed $(APP_NAME) to $$target_bin/$(APP_NAME)"
 
 run: build
 	./$(APP_NAME)

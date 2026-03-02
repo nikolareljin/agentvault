@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidate(t *testing.T) {
 	tests := []struct {
@@ -42,8 +45,8 @@ func TestValidate(t *testing.T) {
 
 func TestAllProviders(t *testing.T) {
 	providers := ValidProviders()
-	if len(providers) != 6 {
-		t.Errorf("ValidProviders() len = %d, want 6", len(providers))
+	if len(providers) != 10 {
+		t.Errorf("ValidProviders() len = %d, want 10", len(providers))
 	}
 	for _, p := range providers {
 		a := Agent{Name: "test", Provider: p}
@@ -141,5 +144,60 @@ func TestEffectiveMCPServers(t *testing.T) {
 	servers = a3.EffectiveMCPServers(shared)
 	if len(servers) != 3 {
 		t.Fatalf("EffectiveMCPServers() len = %d, want 3", len(servers))
+	}
+}
+
+func TestBuildEffectivePromptSortsRulesByPriorityAndRespectsDisabledRules(t *testing.T) {
+	a := Agent{
+		Name:          "test",
+		Provider:      ProviderClaude,
+		DisabledRules: []string{"skip-me"},
+	}
+	shared := SharedConfig{
+		Rules: []UnifiedRule{
+			{Name: "late", Content: "Late rule", Priority: 50, Enabled: true},
+			{Name: "early", Content: "Early rule", Priority: 10, Enabled: true},
+			{Name: "skip-me", Content: "Should not appear", Priority: 1, Enabled: true},
+		},
+	}
+
+	prompt := a.BuildEffectivePrompt(shared)
+	earlyIdx := strings.Index(prompt, "Early rule")
+	lateIdx := strings.Index(prompt, "Late rule")
+	if earlyIdx == -1 || lateIdx == -1 {
+		t.Fatalf("expected both rules in prompt, got: %q", prompt)
+	}
+	if earlyIdx > lateIdx {
+		t.Fatalf("rules not sorted by priority in prompt: %q", prompt)
+	}
+	if strings.Contains(prompt, "Should not appear") {
+		t.Fatalf("disabled rule should not appear in prompt: %q", prompt)
+	}
+}
+
+func TestBuildEffectivePromptPrioritizesRoleRules(t *testing.T) {
+	a := Agent{
+		Name:     "test",
+		Provider: ProviderClaude,
+		Role:     "lead",
+	}
+	shared := SharedConfig{
+		Roles: []Role{
+			{Name: "lead", Prompt: "Lead role prompt", Rules: []string{"late"}},
+		},
+		Rules: []UnifiedRule{
+			{Name: "early", Content: "Early rule", Priority: 10, Enabled: true},
+			{Name: "late", Content: "Late rule", Priority: 50, Enabled: true},
+		},
+	}
+
+	prompt := a.BuildEffectivePrompt(shared)
+	earlyIdx := strings.Index(prompt, "Early rule")
+	lateIdx := strings.Index(prompt, "Late rule")
+	if earlyIdx == -1 || lateIdx == -1 {
+		t.Fatalf("expected both rules in prompt, got: %q", prompt)
+	}
+	if lateIdx > earlyIdx {
+		t.Fatalf("role rule should be prioritized ahead of non-role rules, got: %q", prompt)
 	}
 }
