@@ -145,6 +145,9 @@ func containsHelpFlag(args []string) bool {
 func applyEarlyPersistentFlags(args []string) error {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "--" {
+			break
+		}
 		switch {
 		case arg == "--config":
 			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
@@ -198,6 +201,9 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 	tuiFlagValue := ""
 	consumeNextAsTarget := false
 	for i, arg := range args {
+		if arg == "--" {
+			break
+		}
 		switch {
 		case arg == "--tui" || arg == "-t":
 			tuiFlagIdx = i
@@ -245,10 +251,18 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 
 func firstCommandToken(args []string) (string, bool) {
 	skipNext := false
+	afterDoubleDash := false
 	for i, arg := range args {
 		if skipNext {
 			skipNext = false
 			continue
+		}
+		if arg == "--" {
+			afterDoubleDash = true
+			continue
+		}
+		if afterDoubleDash {
+			return arg, true
 		}
 		if strings.HasPrefix(arg, "-") {
 			if arg == "--config" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {

@@ -137,6 +137,39 @@ func TestParseTUIInvocation_ExplicitEmptyAssignmentDoesNotConsumeNextToken(t *te
 	}
 }
 
+func TestParseTUIInvocation_IgnoresTUIFlagsAfterDoubleDash(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"detect", "--", "-t", "rules"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(detect -- -t rules) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false (target=%q)", target)
+	}
+}
+
+func TestApplyEarlyPersistentFlags_StopsAtDoubleDash(t *testing.T) {
+	t.Cleanup(func() {
+		_ = rootCmd.PersistentFlags().Set("config", "")
+	})
+	if err := applyEarlyPersistentFlags([]string{"detect", "--", "--config"}); err != nil {
+		t.Fatalf("applyEarlyPersistentFlags should ignore --config after --, got error: %v", err)
+	}
+	got, _ := rootCmd.PersistentFlags().GetString("config")
+	if got != "" {
+		t.Fatalf("config flag = %q, want empty", got)
+	}
+}
+
+func TestFirstCommandToken_UsesPositionalAfterDoubleDash(t *testing.T) {
+	token, ok := firstCommandToken([]string{"--config", "/tmp/custom", "--", "-t"})
+	if !ok {
+		t.Fatalf("expected token after --")
+	}
+	if token != "-t" {
+		t.Fatalf("token = %q, want -t", token)
+	}
+}
+
 func TestParseTUIInvocation_EarlierBareTUIValueIsNotCommandToken(t *testing.T) {
 	launch, target, err := parseTUIInvocation([]string{"--tui", "commands", "detect", "-t"})
 	if err != nil {
