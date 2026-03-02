@@ -240,7 +240,19 @@ func SaveCodexConfig(config *CodexConfig) error {
 	}
 
 	// Build config.toml (write even when empty so overwrite/clear is possible).
+	existingConfig := ""
+	configPath := filepath.Join(codexDir, "config.toml")
+	if data, err := os.ReadFile(configPath); err == nil {
+		existingConfig = string(data)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	var sb strings.Builder
+	sb.WriteString(stripCodexProjectSections(existingConfig))
+	if sb.Len() > 0 && !strings.HasSuffix(sb.String(), "\n") {
+		sb.WriteString("\n")
+	}
 	paths := make([]string, 0, len(config.TrustedProjects))
 	for path := range config.TrustedProjects {
 		paths = append(paths, path)
@@ -251,7 +263,6 @@ func SaveCodexConfig(config *CodexConfig) error {
 		sb.WriteString(fmt.Sprintf("[projects.%q]\n", path))
 		sb.WriteString(fmt.Sprintf("trust_level = %q\n\n", level))
 	}
-	configPath := filepath.Join(codexDir, "config.toml")
 	if err := os.WriteFile(configPath, []byte(sb.String()), 0600); err != nil {
 		return err
 	}
@@ -328,4 +339,29 @@ func anyToStringSlice(v any) ([]string, bool) {
 		out = append(out, s)
 	}
 	return out, true
+}
+
+func stripCodexProjectSections(content string) string {
+	if content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	skipProjectSection := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			if strings.HasPrefix(trimmed, `[projects."`) {
+				skipProjectSection = true
+				continue
+			}
+			skipProjectSection = false
+		}
+		if skipProjectSection {
+			continue
+		}
+		out = append(out, line)
+	}
+	kept := strings.Join(out, "\n")
+	return strings.TrimRight(kept, "\n")
 }
