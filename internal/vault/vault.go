@@ -180,9 +180,9 @@ func (v *Vault) Sessions() agent.SessionConfig {
 
 // SetSessions updates the session configuration and persists.
 func (v *Vault) SetSessions(sc agent.SessionConfig) error {
-	if sc.ParallelLimit != 0 {
-		sc.ParallelLimitSet = true
-	}
+	// Treat SetSessions as an explicit session-config write, including a
+	// deliberate unlimited parallel limit (0).
+	sc.ParallelLimitSet = true
 	v.sessions = sc
 	return v.Save()
 }
