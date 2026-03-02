@@ -362,6 +362,205 @@ func TestImportDataDoesNotOverwriteExistingSharedPrompt(t *testing.T) {
 	}
 }
 
+func TestImportDataMergesSharedRulesAndRolesWithoutOverwrite(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		Rules: []agent.UnifiedRule{
+			{Name: "existing-rule", Content: "existing", Enabled: true},
+		},
+		Roles: []agent.Role{
+			{Name: "existing-role", Title: "Existing Role", Prompt: "existing-role-prompt"},
+		},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {
+			"rules": [
+				{"name":"existing-rule","content":"imported-overwrite-attempt","enabled":true},
+				{"name":"new-rule","content":"new-rule-content","enabled":true}
+			],
+			"roles": [
+				{"name":"existing-role","title":"Imported Existing Role","prompt":"imported-overwrite-attempt"},
+				{"name":"new-role","title":"New Role","prompt":"new-role-prompt"}
+			]
+		}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.Rules) != 2 {
+		t.Fatalf("rules len = %d, want 2", len(shared.Rules))
+	}
+	if shared.Rules[0].Name != "existing-rule" || shared.Rules[0].Content != "existing" {
+		t.Fatalf("existing rule was overwritten: %#v", shared.Rules[0])
+	}
+	if shared.Rules[1].Name != "new-rule" {
+		t.Fatalf("second rule name = %q, want new-rule", shared.Rules[1].Name)
+	}
+
+	if len(shared.Roles) != 2 {
+		t.Fatalf("roles len = %d, want 2", len(shared.Roles))
+	}
+	if shared.Roles[0].Name != "existing-role" || shared.Roles[0].Prompt != "existing-role-prompt" {
+		t.Fatalf("existing role was overwritten: %#v", shared.Roles[0])
+	}
+	if shared.Roles[1].Name != "new-role" {
+		t.Fatalf("second role name = %q, want new-role", shared.Roles[1].Name)
+	}
+}
+
+func TestImportDataDeduplicatesImportedSessionIDs(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {
+			"sessions": [
+				{"id":"sess-1","name":"A","project_dir":"/tmp/a","agents":[],"status":"idle"},
+				{"id":"sess-1","name":"B","project_dir":"/tmp/b","agents":[],"status":"idle"}
+			]
+		}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	sessions := v.Sessions().Sessions
+	if len(sessions) != 1 {
+		t.Fatalf("sessions len = %d, want 1", len(sessions))
+	}
+	if sessions[0].ID != "sess-1" {
+		t.Fatalf("session ID = %q, want sess-1", sessions[0].ID)
+	}
+}
+
+func TestImportDataDoesNotOverwriteUnlimitedParallelLimit(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSessions(agent.SessionConfig{
+		DefaultAgents: []string{"claude"},
+		ParallelLimit: 0, // meaningful: unlimited
+	}); err != nil {
+		t.Fatalf("SetSessions() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {"parallel_limit": 4}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	if got := v.Sessions().ParallelLimit; got != 0 {
+		t.Fatalf("ParallelLimit = %d, want 0", got)
+	}
+}
+
+func TestImportDataImportsParallelLimitForEmptySessionConfig(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {"parallel_limit": 4}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	if got := v.Sessions().ParallelLimit; got != 4 {
+		t.Fatalf("ParallelLimit = %d, want 4", got)
+	}
+	if !v.Sessions().ParallelLimitSet {
+		t.Fatal("ParallelLimitSet = false, want true")
+	}
+}
+
+func TestImportDataImportsParallelLimitWhenDefaultAgentsAlsoProvided(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {
+			"default_agents": ["claude"],
+			"parallel_limit": 3
+		}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	sessions := v.Sessions()
+	if got := sessions.ParallelLimit; got != 3 {
+		t.Fatalf("ParallelLimit = %d, want 3", got)
+	}
+	if !sessions.ParallelLimitSet {
+		t.Fatal("ParallelLimitSet = false, want true")
+	}
+	if len(sessions.DefaultAgents) != 1 || sessions.DefaultAgents[0] != "claude" {
+		t.Fatalf("DefaultAgents = %v, want [claude]", sessions.DefaultAgents)
+	}
+}
+
+func TestImportDataDoesNotOverwriteExplicitUnlimitedParallelLimit(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSessions(agent.SessionConfig{
+		ParallelLimit:    0,
+		ParallelLimitSet: true,
+	}); err != nil {
+		t.Fatalf("SetSessions() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {},
+		"sessions": {"parallel_limit": 4}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	sessions := v.Sessions()
+	if got := sessions.ParallelLimit; got != 0 {
+		t.Fatalf("ParallelLimit = %d, want 0", got)
+	}
+	if !sessions.ParallelLimitSet {
+		t.Fatal("ParallelLimitSet = false, want true")
+	}
+}
+
 func TestExistsReturnsFalse(t *testing.T) {
 	v := New("/tmp/nonexistent-vault-" + t.Name() + ".enc")
 	if v.Exists() {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,6 +12,56 @@ import (
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
+
+// findEditorCommand returns the editor command and args.
+// It supports $EDITOR values with flags (e.g. "code --wait").
+func findEditorCommand() []string {
+	if editor := os.Getenv("EDITOR"); editor != "" {
+		parts := splitCommandLine(editor)
+		if len(parts) > 0 {
+			if path, err := exec.LookPath(parts[0]); err == nil {
+				return append([]string{path}, parts[1:]...)
+			}
+		}
+	}
+	for _, name := range []string{"nano", "vi", "vim"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return []string{path}
+		}
+	}
+	return nil
+}
+
+// splitCommandLine parses a command string with simple shell-like quoting.
+// It intentionally does not treat backslashes as escapes so Windows paths are preserved.
+func splitCommandLine(s string) []string {
+	var out []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+
+	flush := func() {
+		if current.Len() > 0 {
+			out = append(out, current.String())
+			current.Reset()
+		}
+	}
+
+	for _, r := range s {
+		switch {
+		case r == '\'' && !inDouble:
+			inSingle = !inSingle
+		case r == '"' && !inSingle:
+			inDouble = !inDouble
+		case (r == ' ' || r == '\t') && !inSingle && !inDouble:
+			flush()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	flush()
+	return out
+}
 
 var instructionsCmd = &cobra.Command{
 	Use:     "instructions",
@@ -115,6 +166,11 @@ Examples:
 			filename = agent.FilenameForInstruction(name)
 		}
 
+		// Scan for prompt hijacking
+		if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
+			fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+		}
+
 		inst := agent.InstructionFile{
 			Name:      name,
 			Filename:  filename,
@@ -125,6 +181,93 @@ Examples:
 			return err
 		}
 		fmt.Printf("Instruction %q stored (%d bytes, target: %s).\n", name, len(content), filename)
+		return nil
+	},
+}
+
+var instEditCmd = &cobra.Command{
+	Use:   "edit [name]",
+	Short: "Edit an instruction file in an external editor",
+	Long: `Open a stored instruction file in your preferred editor for editing.
+The editor is chosen in order: $EDITOR, nano, vi, vim.
+
+After saving and closing the editor, the updated content is stored in the vault.
+
+Examples:
+  agentvault instructions edit agents
+  agentvault instructions edit claude
+  EDITOR=vim agentvault instructions edit codex`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		v, err := openVault()
+		if err != nil {
+			return err
+		}
+
+		name := args[0]
+		inst, ok := v.GetInstruction(name)
+		if !ok {
+			return fmt.Errorf("instruction %q not found", name)
+		}
+
+		// Write content to a temp file
+		tmpFile, err := os.CreateTemp("", "agentvault-*.md")
+		if err != nil {
+			return fmt.Errorf("creating temp file: %w", err)
+		}
+		tmpPath := tmpFile.Name()
+		defer os.Remove(tmpPath)
+
+		if _, err := tmpFile.WriteString(inst.Content); err != nil {
+			if closeErr := tmpFile.Close(); closeErr != nil {
+				return fmt.Errorf("closing temp file after write failure: %w", closeErr)
+			}
+			return fmt.Errorf("writing temp file: %w", err)
+		}
+		if err := tmpFile.Close(); err != nil {
+			return fmt.Errorf("closing temp file: %w", err)
+		}
+
+		// Find an editor
+		editor := findEditorCommand()
+		if len(editor) == 0 {
+			return fmt.Errorf("no editor found (set $EDITOR, or install nano or vi)")
+		}
+
+		// Open editor
+		editorArgs := append(append([]string{}, editor[1:]...), tmpPath)
+		editorCmd := exec.Command(editor[0], editorArgs...)
+		editorCmd.Stdin = os.Stdin
+		editorCmd.Stdout = os.Stdout
+		editorCmd.Stderr = os.Stderr
+
+		if err := editorCmd.Run(); err != nil {
+			return fmt.Errorf("editor exited with error: %w", err)
+		}
+
+		// Read back the edited content
+		edited, err := os.ReadFile(tmpPath)
+		if err != nil {
+			return fmt.Errorf("reading edited file: %w", err)
+		}
+
+		newContent := string(edited)
+		if newContent == inst.Content {
+			fmt.Println("No changes made.")
+			return nil
+		}
+
+		// Scan for prompt hijacking
+		if warnings := agent.CheckHijacking(newContent); len(warnings) > 0 {
+			fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+		}
+
+		inst.Content = newContent
+		inst.UpdatedAt = time.Now()
+		if err := v.SetInstruction(inst); err != nil {
+			return err
+		}
+		fmt.Printf("Instruction %q updated (%d bytes).\n", name, len(newContent))
 		return nil
 	},
 }
@@ -146,11 +289,18 @@ var instRemoveCmd = &cobra.Command{
 	},
 }
 
-// knownFilenameToName maps filenames on disk to instruction names for pull.
+// knownFilenameToName maps auto-discovered top-level filenames to instruction names for pull.
+// It is intentionally partial: entries handled via dedicated path logic (for example
+// .github/copilot-instructions.md) are not listed here.
 var knownFilenameToName = map[string]string{
-	"AGENTS.md": "agents",
-	"CLAUDE.md": "claude",
-	"codex.md":  "codex",
+	"AGENTS.md":      "agents",
+	"CLAUDE.md":      "claude",
+	"codex.md":       "codex",
+	"MELDBOT.md":     "meldbot",
+	"OPENCLAW.md":    "openclaw",
+	"NANOCLAW.md":    "nanoclaw",
+	".cursorrules":   "cursor",
+	".windsurfrules": "windsurf",
 }
 
 var instPullCmd = &cobra.Command{
@@ -195,10 +345,15 @@ Examples:
 			if err != nil {
 				continue // file doesn't exist, skip
 			}
+			content := string(data)
+			if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
+				fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, filename)
+				fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+			}
 			inst := agent.InstructionFile{
 				Name:      name,
 				Filename:  filename,
-				Content:   string(data),
+				Content:   content,
 				UpdatedAt: time.Now(),
 			}
 			if err := v.SetInstruction(inst); err != nil {
@@ -207,19 +362,50 @@ Examples:
 			fmt.Printf("  Pulled %s -> %q (%d bytes)\n", filename, name, len(data))
 			pulled++
 		}
-		// also check .github/copilot-instructions.md
-		copilotPath := filepath.Join(dir, ".github", "copilot-instructions.md")
-		if data, err := os.ReadFile(copilotPath); err == nil {
+		// also check files in subdirectories
+		subdirFiles := map[string]string{
+			filepath.Join(".github", "copilot-instructions.md"): "copilot",
+		}
+		for relPath, name := range subdirFiles {
+			fullPath := filepath.Join(dir, relPath)
+			if data, err := os.ReadFile(fullPath); err == nil {
+				content := string(data)
+				if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
+					fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, relPath)
+					fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+				}
+				inst := agent.InstructionFile{
+					Name:      name,
+					Filename:  relPath,
+					Content:   content,
+					UpdatedAt: time.Now(),
+				}
+				if err := v.SetInstruction(inst); err != nil {
+					return err
+				}
+				fmt.Printf("  Pulled %s -> %q (%d bytes)\n", relPath, name, len(data))
+				pulled++
+			}
+		}
+
+		// also check .aider.conf.yml
+		aiderPath := filepath.Join(dir, ".aider.conf.yml")
+		if data, err := os.ReadFile(aiderPath); err == nil {
+			content := string(data)
+			if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
+				fmt.Fprintf(os.Stderr, "  [aider] .aider.conf.yml\n")
+				fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+			}
 			inst := agent.InstructionFile{
-				Name:      "copilot",
-				Filename:  ".github/copilot-instructions.md",
-				Content:   string(data),
+				Name:      "aider",
+				Filename:  ".aider.conf.yml",
+				Content:   content,
 				UpdatedAt: time.Now(),
 			}
 			if err := v.SetInstruction(inst); err != nil {
 				return err
 			}
-			fmt.Printf("  Pulled .github/copilot-instructions.md -> %q (%d bytes)\n", "copilot", len(data))
+			fmt.Printf("  Pulled .aider.conf.yml -> %q (%d bytes)\n", "aider", len(data))
 			pulled++
 		}
 
@@ -238,10 +424,18 @@ func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", p, err)
 	}
+	content := string(data)
+
+	// Scan for prompt hijacking
+	if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
+		fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, filename)
+		fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+	}
+
 	inst := agent.InstructionFile{
 		Name:      name,
 		Filename:  filename,
-		Content:   string(data),
+		Content:   content,
 		UpdatedAt: time.Now(),
 	}
 	if err := v.SetInstruction(inst); err != nil {
@@ -375,15 +569,74 @@ Examples:
 	},
 }
 
+var instScanCmd = &cobra.Command{
+	Use:   "scan [name]",
+	Short: "Scan instruction files for prompt hijacking patterns",
+	Long: `Scan stored instruction files for patterns that could be used to
+override or subvert agent behavior (prompt injection/hijacking).
+
+Without arguments, scans all stored instructions. Provide a name to scan
+a specific instruction.
+
+Examples:
+  agentvault instructions scan
+  agentvault instructions scan agents`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		v, err := openVault()
+		if err != nil {
+			return err
+		}
+
+		var toScan []agent.InstructionFile
+		if len(args) > 0 {
+			inst, ok := v.GetInstruction(args[0])
+			if !ok {
+				return fmt.Errorf("instruction %q not found", args[0])
+			}
+			toScan = append(toScan, inst)
+		} else {
+			toScan = v.ListInstructions()
+		}
+
+		if len(toScan) == 0 {
+			fmt.Println("No instruction files stored.")
+			return nil
+		}
+
+		totalWarnings := 0
+		for _, inst := range toScan {
+			warnings := agent.CheckHijacking(inst.Content)
+			if len(warnings) > 0 {
+				fmt.Printf("--- %s (%s) ---\n", inst.Name, inst.Filename)
+				fmt.Print(agent.FormatWarnings(warnings))
+				fmt.Println()
+				totalWarnings += len(warnings)
+			} else {
+				fmt.Printf("  %-12s  %s  (clean)\n", inst.Name, inst.Filename)
+			}
+		}
+
+		if totalWarnings == 0 {
+			fmt.Println("\nAll instruction files passed hijacking scan.")
+		} else {
+			fmt.Printf("\n%d total warning(s) across %d file(s).\n", totalWarnings, len(toScan))
+		}
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(instructionsCmd)
 	instructionsCmd.AddCommand(instListCmd)
 	instructionsCmd.AddCommand(instShowCmd)
 	instructionsCmd.AddCommand(instSetCmd)
+	instructionsCmd.AddCommand(instEditCmd)
 	instructionsCmd.AddCommand(instRemoveCmd)
 	instructionsCmd.AddCommand(instPullCmd)
 	instructionsCmd.AddCommand(instPushCmd)
 	instructionsCmd.AddCommand(instDiffCmd)
+	instructionsCmd.AddCommand(instScanCmd)
 
 	instSetCmd.Flags().String("file", "", "read content from a file")
 	instSetCmd.Flags().String("content", "", "set content inline")

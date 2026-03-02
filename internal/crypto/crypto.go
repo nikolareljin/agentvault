@@ -1,3 +1,12 @@
+// Package crypto provides authenticated encryption for the AgentVault.
+//
+// Security design:
+//   - Key derivation: Argon2id (memory-hard, resistant to GPU/ASIC attacks)
+//   - Encryption: AES-256-GCM authenticated encryption
+//   - Random nonces: crypto/rand for all nonce/salt generation
+//
+// The Argon2id parameters (64MB memory, 4 threads) balance security against
+// brute-force attacks with reasonable performance on modern hardware.
 package crypto
 
 import (
@@ -11,7 +20,8 @@ import (
 )
 
 const (
-	// Argon2id parameters.
+	// Argon2id parameters -- tuned for a balance of security and usability.
+	// 64MB memory makes brute-force attacks expensive on GPUs.
 	argonTime    = 1
 	argonMemory  = 64 * 1024 // 64 MB
 	argonThreads = 4
