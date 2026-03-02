@@ -26,6 +26,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -81,6 +82,7 @@ func Execute() error {
 	} else if launch {
 		return launchTUI(target)
 	}
+	rootCmd.SetArgs(args)
 	return rootCmd.Execute()
 }
 
@@ -121,9 +123,23 @@ func applyEarlyPersistentFlags(args []string) error {
 func launchTUI(target string) error {
 	v, err := openVault()
 	if err != nil {
+		if !isVaultNotFoundError(err) {
+			return err
+		}
+		// Fall back to placeholder TUI only when the vault does not exist yet.
 		return tui.RunWithTarget(target)
 	}
 	return tui.RunWithVaultTarget(v, target)
+}
+
+func isVaultNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "vault not found")
 }
 
 func parseTUIInvocation(args []string) (bool, string, error) {
@@ -163,7 +179,7 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 		return true, target, nil
 	}
 
-	command, hasCommand := firstCommandToken(args, tuiFlagIdx)
+	command, hasCommand := firstCommandToken(args)
 	if hasCommand {
 		if target, ok := normalizeTUITarget(command); ok {
 			return true, target, nil
@@ -172,7 +188,7 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 	return true, "agents", nil
 }
 
-func firstCommandToken(args []string, tuiFlagIdx int) (string, bool) {
+func firstCommandToken(args []string) (string, bool) {
 	skipNext := false
 	for i, arg := range args {
 		if skipNext {
@@ -183,7 +199,9 @@ func firstCommandToken(args []string, tuiFlagIdx int) (string, bool) {
 			if arg == "--config" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				skipNext = true
 			}
-			if (arg == "--tui" || arg == "-t") && i == tuiFlagIdx && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			// Skip consumed values for any bare --tui/-t occurrence so command inference
+			// always starts from the first real command token.
+			if (arg == "--tui" || arg == "-t") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				skipNext = true
 			}
 			continue
