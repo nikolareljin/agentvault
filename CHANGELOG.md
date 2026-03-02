@@ -63,6 +63,7 @@
 - Backward-compatible vault format
 
 ### Changed
+- `agentvault` with no command now launches the interactive TUI by default, while explicit CLI commands/subcommands continue to behave the same.
 - TUI view modes renamed for clarity (viewAgentList, viewAgentDetail, etc.)
 - Export/import now includes provider configurations
 - Improved error messages and user feedback

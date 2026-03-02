@@ -23,8 +23,8 @@ Detailed command and TUI references: `docs/README.md`.
 # 1. Initialize vault with master password
 agentvault init
 
-# 2. Launch TUI (detected installed agents are auto-added)
-agentvault -t
+# 2. Launch TUI (default when no command is provided)
+agentvault
 
 # 3. Initialize default rules and roles (one time)
 agentvault rules init
@@ -37,12 +37,12 @@ agentvault session create my-project --dir /path/to/project
 agentvault session start my-project
 
 # 6. Launch TUI to manage everything
-agentvault -t
+agentvault
 ```
 
 ## TUI First-Time Flow (Simplified)
 
-1. Open `agentvault -t`.
+1. Open `agentvault`.
 2. Go to `Detected` tab:
    - installed agents are auto-added to vault
    - press `Enter` for details
@@ -83,7 +83,7 @@ brew install nikolareljin/tap/agentvault
 | `detect add` | Auto-add detected agents |
 | `prompt <name>` | Route prompts through AgentVault gateway with usage logging |
 | `status` | Show token usage and quota status (JSON for orchestration) |
-| `--tui`, `-t` | Launch interactive terminal UI |
+| `--tui`, `-t` | Launch interactive terminal UI (same as default `agentvault`) |
 
 ### Agent Management
 | Command | Description |

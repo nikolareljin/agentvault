@@ -7,13 +7,13 @@ Related docs: [Docs Index](./README.md) | [TUI Reference](./tui-reference.md) | 
 ## Global usage
 
 ```bash
-agentvault [global flags] <command> [subcommand] [args] [flags]
+agentvault [global flags] [command] [subcommand] [args] [flags]
 ```
 
 ## Global flags
 
 - `--config <dir>`: custom config dir, default `~/.config/agentvault`
-- `-t, --tui`: launch TUI
+- `-t, --tui`: launch TUI (also the default when no command is provided)
 
 ## Top-level commands
 
