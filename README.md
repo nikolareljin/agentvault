@@ -268,8 +268,8 @@ agentvault instructions push /path/to/project
 
 | Key | Action |
 |-----|--------|
-| `Tab` / `l` | Next tab |
-| `Shift+Tab` / `h` | Previous tab |
+| `Tab` | Next tab |
+| `Shift+Tab` | Previous tab |
 | `1-7` | Jump to tab |
 | `j`/`k` | Navigate list |
 | `Enter` | View details |
@@ -292,8 +292,8 @@ agentvault instructions push /path/to/project
 | Nanoclaw | `nanoclaw` | ✓ |
 | Ollama | `ollama` | ✓ |
 | Aider | `aider` | ✓ |
-| Gemini | - | - |
-| OpenAI | - | - |
+| Gemini | `gemini` | ✓ |
+| OpenAI | `openai` | ✓ |
 | Custom | - | - |
 
 ## Well-Known Instruction Files

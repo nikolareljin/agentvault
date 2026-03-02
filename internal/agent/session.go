@@ -111,7 +111,7 @@ func (sc *SessionConfig) RemoveSession(id string) bool {
 // GenerateSessionID creates a unique session ID.
 func GenerateSessionID() string {
 	now := time.Now().UTC()
-	var suffix [2]byte
+	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
 		// Fallback keeps IDs unique enough even if crypto/rand is unavailable.
 		return fmt.Sprintf("%d", now.UnixNano())
