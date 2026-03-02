@@ -64,8 +64,11 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
-func shouldLaunchTUI(launchTUI bool, args []string) bool {
-	return launchTUI || len(args) == 0
+func shouldLaunchTUI(flagProvided bool, launchTUI bool, args []string) bool {
+	if flagProvided {
+		return launchTUI
+	}
+	return len(args) == 0
 }
 
 func init() {
@@ -73,7 +76,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("tui", "t", false, "launch interactive terminal UI (default when no command is provided)")
 	rootCmd.RunE = func(cmd *cobra.Command, args []string) error {
 		launchTUI, _ := cmd.Flags().GetBool("tui")
-		if shouldLaunchTUI(launchTUI, args) {
+		flagProvided := cmd.Flags().Changed("tui")
+		if shouldLaunchTUI(flagProvided, launchTUI, args) {
 			v, err := openVault()
 			if err != nil {
 				return tui.Run()
