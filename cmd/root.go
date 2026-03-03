@@ -42,51 +42,72 @@ var (
 	Date    = "unknown"
 )
 
-var tuiTargetAliases = map[string]string{
-	"":             "agents",
-	"default":      "agents",
-	"home":         "agents",
-	"agent":        "agents",
-	"agents":       "agents",
-	"add":          "agents",
-	"list":         "agents",
-	"edit":         "agents",
-	"remove":       "agents",
-	"run":          "agents",
-	"init":         "agents",
-	"unlock":       "agents",
-	"inst":         "instructions",
-	"instruction":  "instructions",
-	"instructions": "instructions",
-	"rule":         "rules",
-	"rules":        "rules",
-	"sess":         "sessions",
-	"session":      "sessions",
-	"sessions":     "sessions",
-	"workspace":    "sessions",
-	"workspaces":   "sessions",
-	"detect":       "detected",
-	"detected":     "detected",
-	"command":      "commands",
-	"commands":     "commands",
-	"prompt":       "commands",
-	"sync":         "commands",
-	"generate":     "commands",
-	"status":       "status",
-	"config":       "status",
-	"setup":        "status",
-	"serve":        "status",
-	"version":      "status",
+type tuiTargetSpec struct {
+	canonical string
+	aliases   []string
 }
 
-var canonicalTUITargets = []string{
-	"agents",
-	"instructions",
-	"rules",
-	"sessions",
-	"detected",
-	"commands",
-	"status",
+// Keep canonical targets and aliases together to avoid drift across maps/slices.
+var tuiTargetSpecs = []tuiTargetSpec{
+	{
+		canonical: "agents",
+		aliases: []string{
+			"", "default", "home", "agent", "agents", "add", "list", "edit", "remove", "run", "init", "unlock",
+		},
+	},
+	{
+		canonical: "instructions",
+		aliases:   []string{"inst", "instruction", "instructions"},
+	},
+	{
+		canonical: "rules",
+		aliases:   []string{"rule", "rules"},
+	},
+	{
+		canonical: "sessions",
+		aliases:   []string{"sess", "session", "sessions", "workspace", "workspaces"},
+	},
+	{
+		canonical: "detected",
+		aliases:   []string{"detect", "detected"},
+	},
+	{
+		canonical: "commands",
+		aliases:   []string{"command", "commands", "prompt", "sync", "generate"},
+	},
+	{
+		canonical: "status",
+		aliases:   []string{"status", "config", "setup", "serve", "version"},
+	},
+}
+
+var (
+	canonicalTUITargets = buildCanonicalTUITargets()
+	tuiTargetAliases    = buildTUITargetAliases()
+)
+
+func buildCanonicalTUITargets() []string {
+	targets := make([]string, 0, len(tuiTargetSpecs))
+	for _, spec := range tuiTargetSpecs {
+		targets = append(targets, spec.canonical)
+	}
+	return targets
+}
+
+func buildTUITargetAliases() map[string]string {
+	aliases := make(map[string]string)
+	for _, spec := range tuiTargetSpecs {
+		aliases[strings.ToLower(spec.canonical)] = spec.canonical
+		for _, alias := range spec.aliases {
+			normalized := strings.ToLower(strings.TrimSpace(alias))
+			if normalized == "" {
+				aliases[""] = spec.canonical
+				continue
+			}
+			aliases[normalized] = spec.canonical
+		}
+	}
+	return aliases
 }
 
 var rootCmd = &cobra.Command{
@@ -189,10 +210,7 @@ func isVaultNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return true
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "vault not found")
+	return errors.Is(err, ErrVaultNotFound) || errors.Is(err, os.ErrNotExist)
 }
 
 func parseTUIInvocation(args []string) (bool, string, error) {
@@ -238,7 +256,7 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 	if tuiFlagValue != "" {
 		target, ok := normalizeTUITarget(tuiFlagValue)
 		if !ok {
-			return false, "", fmt.Errorf("invalid --tui target %q (valid: %s)", tuiFlagValue, strings.Join(canonicalTUITargets, ", "))
+			return false, "", fmt.Errorf("invalid TUI target %q (valid: %s)", tuiFlagValue, strings.Join(canonicalTUITargets, ", "))
 		}
 		return true, target, nil
 	}

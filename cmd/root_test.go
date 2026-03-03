@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -114,6 +115,9 @@ func TestParseTUIInvocation_InvalidTarget(t *testing.T) {
 	_, _, err := parseTUIInvocation([]string{"--tui", "invalid-target"})
 	if err == nil {
 		t.Fatalf("expected invalid target error")
+	}
+	if !strings.Contains(err.Error(), "invalid TUI target") {
+		t.Fatalf("expected TUI target wording, got: %v", err)
 	}
 }
 
@@ -278,22 +282,10 @@ func TestIsVaultNotFoundError(t *testing.T) {
 	if !isVaultNotFoundError(os.ErrNotExist) {
 		t.Fatalf("os.ErrNotExist should be treated as vault-not-found fallback")
 	}
-	if !isVaultNotFoundError(assertErr("vault not found at /tmp/vault.enc")) {
-		t.Fatalf("vault not found message should be treated as fallback")
+	if !isVaultNotFoundError(fmt.Errorf("wrapped: %w", ErrVaultNotFound)) {
+		t.Fatalf("ErrVaultNotFound should be treated as vault-not-found fallback")
 	}
-	if isVaultNotFoundError(assertErr("invalid password")) {
+	if isVaultNotFoundError(fmt.Errorf("invalid password")) {
 		t.Fatalf("non not-found errors must not fallback")
 	}
-}
-
-func assertErr(msg string) error {
-	return &testErr{msg: msg}
-}
-
-type testErr struct {
-	msg string
-}
-
-func (e *testErr) Error() string {
-	return e.msg
 }
