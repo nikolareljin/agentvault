@@ -4,6 +4,12 @@
 
 ### Added
 
+#### Prompt Mode
+- `-p` shortcut to enter interactive prompt mode directly from CLI root
+- Prompt mode loop supports submit (`Enter`), cancel (`/cancel`), and exit (`/exit`, `quit`, `:q`) actions
+- Optional prompt transcript/session metadata persistence in encrypted vault state
+- Prompt transcript retention cap in vault state to avoid unbounded growth
+
 #### HTTP API Server
 - `serve` command to start a lightweight HTTP server exposing the vault over a REST API
 - Endpoints: `GET /health`, `GET /api/v1/status`, `GET /api/v1/agents`, `GET /api/v1/agents/{name}`

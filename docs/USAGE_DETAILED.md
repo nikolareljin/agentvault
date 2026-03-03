@@ -16,6 +16,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `-t, --tui [target]`: Launch interactive TUI (also the default when no command is provided).
   - Supported targets: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`.
   - With command routing, `agentvault <command> -t` opens TUI on the command's matching tab and skips direct command execution.
+- `-p`: Enter interactive prompt mode directly (submit/cancel/exit loop).
 
 ## 2. Top-Level Commands
 
@@ -29,6 +30,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `remove`
 - `run`
 - `prompt`
+- `-p` (interactive prompt mode shortcut)
 - `status`
 - `rules`
 - `roles`
@@ -139,6 +141,15 @@ Flags:
 - `--no-log` (default: `false`): Disable run history write.
 - `--history-file <path>`: Override default `~/.config/agentvault/prompt-history.jsonl`.
 - `--timeout <duration>` (default: `5m`): Provider call timeout.
+
+### `agentvault -p`
+Enter interactive prompt mode immediately.
+
+Behavior:
+- Prompts for agent selection (unless only one agent exists).
+- Supports submit (`Enter`), cancel (`/cancel`), and exit (`/exit`, `quit`, `:q`).
+- Writes each execution to `~/.config/agentvault/prompt-history.jsonl`.
+- Can optionally persist transcript/session metadata in encrypted vault state on exit.
 
 ### `agentvault status`
 Show provider usage/quota status report.
