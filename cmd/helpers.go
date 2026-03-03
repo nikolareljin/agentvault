@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -10,6 +11,9 @@ import (
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"golang.org/x/term"
 )
+
+// ErrVaultNotFound marks a missing vault file condition.
+var ErrVaultNotFound = errors.New("vault not found")
 
 // resolveVaultPath returns the vault file path, respecting the --config flag.
 func resolveVaultPath() string {
@@ -40,7 +44,7 @@ func openVault() (*vault.Vault, error) {
 	vaultPath := resolveVaultPath()
 	v := vault.New(vaultPath)
 	if !v.Exists() {
-		return nil, fmt.Errorf("vault not found at %s (run 'agentvault init' first)", vaultPath)
+		return nil, fmt.Errorf("%w at %s (run 'agentvault init' first)", ErrVaultNotFound, vaultPath)
 	}
 	pw, err := readPassword("Master password: ")
 	if err != nil {
