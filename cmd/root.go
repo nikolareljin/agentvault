@@ -260,7 +260,14 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 	}
 
 	if consumeNextAsTarget && tuiFlagValue == "" && tuiFlagIdx+1 < len(args) && !strings.HasPrefix(args[tuiFlagIdx+1], "-") {
-		tuiFlagValue = strings.TrimSpace(args[tuiFlagIdx+1])
+		// Only consume the next token as an explicit target when it is canonical.
+		candidate := strings.TrimSpace(args[tuiFlagIdx+1])
+		if canonical, ok := normalizeExplicitTUITarget(candidate); ok {
+			tuiFlagValue = canonical
+		} else if tuiFlagIdx+2 >= len(args) {
+			// For trailing single-token values after -t/--tui, treat as explicit target input.
+			return false, "", fmt.Errorf("invalid TUI target %q (valid: %s)", candidate, strings.Join(canonicalTUITargets, ", "))
+		}
 	}
 	if tuiFlagValue != "" {
 		target, ok := normalizeExplicitTUITarget(tuiFlagValue)
@@ -298,10 +305,11 @@ func firstCommandToken(args []string) (string, bool) {
 			if arg == "--config" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				skipNext = true
 			}
-			// Skip consumed values for any bare --tui/-t occurrence so command inference
-			// always starts from the first real command token.
+			// Skip the next token only when bare --tui/-t actually consumed a canonical target.
 			if (arg == "--tui" || arg == "-t") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-				skipNext = true
+				if _, ok := normalizeExplicitTUITarget(args[i+1]); ok {
+					skipNext = true
+				}
 			}
 			continue
 		}
