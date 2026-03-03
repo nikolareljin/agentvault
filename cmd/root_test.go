@@ -51,6 +51,16 @@ func TestParseTUIInvocation_ExplicitTarget(t *testing.T) {
 	}
 }
 
+func TestParseTUIInvocation_BareFlagThenCommandInfersTarget(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"-t", "detect", "add"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(-t detect add) error = %v", err)
+	}
+	if !launch || target != "detected" {
+		t.Fatalf("launch,target = %v,%q want true,detected", launch, target)
+	}
+}
+
 func TestParseTUIInvocation_InlineShorthandRules(t *testing.T) {
 	launch, target, err := parseTUIInvocation([]string{"-trules"})
 	if err != nil {
