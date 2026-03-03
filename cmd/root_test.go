@@ -171,6 +171,43 @@ func TestParseTUIInvocation_IgnoresTUIFlagsAfterDoubleDash(t *testing.T) {
 	}
 }
 
+func TestParsePromptModeInvocation_FlagOnly(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_WithCommandDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"detect", "-p"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(detect -p) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_FlagAfterDoubleDashIgnored(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"detect", "--", "-p"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(detect -- -p) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestStripPromptModeFlags(t *testing.T) {
+	got := stripPromptModeFlags([]string{"-p", "--config", "/tmp/cfg", "--prompt-mode", "--help"})
+	if strings.Join(got, " ") != "--config /tmp/cfg --help" {
+		t.Fatalf("stripPromptModeFlags() = %q", got)
+	}
+}
+
 func TestApplyEarlyPersistentFlags_StopsAtDoubleDash(t *testing.T) {
 	t.Cleanup(func() {
 		_ = rootCmd.PersistentFlags().Set("config", "")

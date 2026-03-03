@@ -150,8 +150,14 @@ func Execute() error {
 
 	// Preserve Cobra help semantics even when TUI interception is enabled.
 	if containsHelpFlag(args) {
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs(stripPromptModeFlags(args))
 		return rootCmd.Execute()
+	}
+
+	if launch, err := parsePromptModeInvocation(args); err != nil {
+		return err
+	} else if launch {
+		return runPromptMode()
 	}
 
 	if launch, target, err := parseTUIInvocation(args); err != nil {
@@ -284,6 +290,37 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 		}
 	}
 	return true, "agents", nil
+}
+
+func parsePromptModeInvocation(args []string) (bool, error) {
+	flagSeen := false
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "-p" || arg == "--prompt-mode" {
+			flagSeen = true
+			break
+		}
+	}
+	if !flagSeen {
+		return false, nil
+	}
+	if _, hasCommand := firstCommandToken(args); hasCommand {
+		return false, nil
+	}
+	return true, nil
+}
+
+func stripPromptModeFlags(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "-p" || arg == "--prompt-mode" {
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func firstCommandToken(args []string) (string, bool) {

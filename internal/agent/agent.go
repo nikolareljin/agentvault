@@ -111,6 +111,38 @@ type InstructionFile struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// PromptTokenUsage captures token usage metadata for one prompt execution.
+type PromptTokenUsage struct {
+	InputTokens           int64 `json:"input_tokens,omitempty"`
+	CachedInputTokens     int64 `json:"cached_input_tokens,omitempty"`
+	OutputTokens          int64 `json:"output_tokens,omitempty"`
+	ReasoningOutputTokens int64 `json:"reasoning_output_tokens,omitempty"`
+	TotalTokens           int64 `json:"total_tokens,omitempty"`
+}
+
+// PromptTranscriptEntry stores one prompt/response interaction from prompt mode.
+type PromptTranscriptEntry struct {
+	Timestamp       time.Time        `json:"timestamp"`
+	Prompt          string           `json:"prompt"`
+	EffectivePrompt string           `json:"effective_prompt,omitempty"`
+	ResponsePreview string           `json:"response_preview,omitempty"`
+	TokenUsage      PromptTokenUsage `json:"token_usage,omitempty"`
+	Success         bool             `json:"success"`
+	Error           string           `json:"error,omitempty"`
+}
+
+// PromptSession stores prompt-mode transcript/session metadata in vault state.
+type PromptSession struct {
+	ID        string                  `json:"id"`
+	Name      string                  `json:"name,omitempty"`
+	AgentName string                  `json:"agent_name"`
+	Provider  string                  `json:"provider,omitempty"`
+	Model     string                  `json:"model,omitempty"`
+	StartedAt time.Time               `json:"started_at"`
+	EndedAt   time.Time               `json:"ended_at"`
+	Entries   []PromptTranscriptEntry `json:"entries,omitempty"`
+}
+
 // WellKnownInstructions maps common names to their conventional filenames.
 // These are the instruction files that each AI agent reads from a project root.
 // The sync command generates these files from unified rules, ensuring all
@@ -154,11 +186,12 @@ func FilenameForInstruction(name string) string {
 
 // SharedConfig holds global settings that apply to all agents unless overridden.
 type SharedConfig struct {
-	SystemPrompt string            `json:"system_prompt,omitempty"`
-	MCPServers   []MCPServer       `json:"mcp_servers,omitempty"`
-	Instructions []InstructionFile `json:"instructions,omitempty"`
-	Rules        []UnifiedRule     `json:"rules,omitempty"`
-	Roles        []Role            `json:"roles,omitempty"`
+	SystemPrompt   string            `json:"system_prompt,omitempty"`
+	MCPServers     []MCPServer       `json:"mcp_servers,omitempty"`
+	Instructions   []InstructionFile `json:"instructions,omitempty"`
+	Rules          []UnifiedRule     `json:"rules,omitempty"`
+	Roles          []Role            `json:"roles,omitempty"`
+	PromptSessions []PromptSession   `json:"prompt_sessions,omitempty"`
 }
 
 // ValidProviders returns all known provider values.
