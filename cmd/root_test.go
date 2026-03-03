@@ -121,6 +121,16 @@ func TestParseTUIInvocation_InvalidTarget(t *testing.T) {
 	}
 }
 
+func TestParseTUIInvocation_ExplicitAliasIsRejected(t *testing.T) {
+	_, _, err := parseTUIInvocation([]string{"--tui", "add"})
+	if err == nil {
+		t.Fatalf("expected explicit alias target to be rejected")
+	}
+	if !strings.Contains(err.Error(), "invalid TUI target") {
+		t.Fatalf("expected TUI target wording, got: %v", err)
+	}
+}
+
 func TestParseTUIInvocation_LastBareTUIFlagClearsEarlierAssignedTarget(t *testing.T) {
 	launch, target, err := parseTUIInvocation([]string{"--tui=commands", "detect", "-t"})
 	if err != nil {
