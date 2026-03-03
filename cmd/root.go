@@ -26,6 +26,11 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
 	"github.com/nikolareljin/agentvault/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -36,6 +41,83 @@ var (
 	Commit  = "none"
 	Date    = "unknown"
 )
+
+type tuiTargetSpec struct {
+	canonical string
+	aliases   []string
+}
+
+// Keep canonical targets and aliases together to avoid drift across maps/slices.
+var tuiTargetSpecs = []tuiTargetSpec{
+	{
+		canonical: "agents",
+		aliases: []string{
+			"", "default", "home", "agent", "agents", "add", "list", "edit", "remove", "run", "init", "unlock",
+		},
+	},
+	{
+		canonical: "instructions",
+		aliases:   []string{"inst", "instruction", "instructions"},
+	},
+	{
+		canonical: "rules",
+		aliases:   []string{"rule", "rules"},
+	},
+	{
+		canonical: "sessions",
+		aliases:   []string{"sess", "session", "sessions", "workspace", "workspaces"},
+	},
+	{
+		canonical: "detected",
+		aliases:   []string{"detect", "detected"},
+	},
+	{
+		canonical: "commands",
+		aliases:   []string{"command", "commands", "prompt", "sync", "generate"},
+	},
+	{
+		canonical: "status",
+		aliases:   []string{"status", "config", "setup", "serve", "version"},
+	},
+}
+
+var (
+	canonicalTUITargets = buildCanonicalTUITargets()
+	canonicalTUISet     = buildCanonicalTUISet()
+	tuiTargetAliases    = buildTUITargetAliases()
+)
+
+func buildCanonicalTUITargets() []string {
+	targets := make([]string, 0, len(tuiTargetSpecs))
+	for _, spec := range tuiTargetSpecs {
+		targets = append(targets, spec.canonical)
+	}
+	return targets
+}
+
+func buildTUITargetAliases() map[string]string {
+	aliases := make(map[string]string)
+	for _, spec := range tuiTargetSpecs {
+		aliases[strings.ToLower(spec.canonical)] = spec.canonical
+		for _, alias := range spec.aliases {
+			normalized := strings.ToLower(strings.TrimSpace(alias))
+			if normalized == "" {
+				aliases[""] = spec.canonical
+				continue
+			}
+			aliases[normalized] = spec.canonical
+		}
+	}
+	return aliases
+}
+
+func buildCanonicalTUISet() map[string]struct{} {
+	set := make(map[string]struct{}, len(canonicalTUITargets))
+	for _, target := range canonicalTUITargets {
+		set[strings.ToLower(target)] = struct{}{}
+	}
+	return set
+}
 
 var rootCmd = &cobra.Command{
 	Use:   "agentvault",
@@ -61,28 +143,203 @@ Get started:
 
 // Execute runs the root command. Called from main().
 func Execute() error {
+	args := os.Args[1:]
+	if err := applyEarlyPersistentFlags(args); err != nil {
+		return err
+	}
+
+	// Preserve Cobra help semantics even when TUI interception is enabled.
+	if containsHelpFlag(args) {
+		rootCmd.SetArgs(args)
+		return rootCmd.Execute()
+	}
+
+	if launch, target, err := parseTUIInvocation(args); err != nil {
+		return err
+	} else if launch {
+		return launchTUI(target)
+	}
+	rootCmd.SetArgs(args)
 	return rootCmd.Execute()
 }
 
-func shouldLaunchTUI(flagProvided bool, launchTUI bool, args []string) bool {
-	if flagProvided {
-		return launchTUI
+func containsHelpFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
 	}
-	return len(args) == 0
+	return false
+}
+
+func applyEarlyPersistentFlags(args []string) error {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		switch {
+		case arg == "--config":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return fmt.Errorf("flag needs an argument: --config")
+			}
+			if err := rootCmd.PersistentFlags().Set("config", args[i+1]); err != nil {
+				return err
+			}
+			i++
+		case strings.HasPrefix(arg, "--config="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, "--config="))
+			if value == "" {
+				return fmt.Errorf("flag needs an argument: --config")
+			}
+			if err := rootCmd.PersistentFlags().Set("config", value); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func launchTUI(target string) error {
+	v, err := openVault()
+	if err != nil {
+		if !isVaultNotFoundError(err) {
+			return err
+		}
+		// Fall back to placeholder TUI only when the vault does not exist yet.
+		return tui.RunWithTarget(target)
+	}
+	return tui.RunWithVaultTarget(v, target)
+}
+
+func isVaultNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrVaultNotFound) || errors.Is(err, os.ErrNotExist)
+}
+
+func parseTUIInvocation(args []string) (bool, string, error) {
+	if len(args) == 0 {
+		return true, "agents", nil
+	}
+
+	tuiFlagIdx := -1
+	tuiFlagValue := ""
+	consumeNextAsTarget := false
+	for i, arg := range args {
+		if arg == "--" {
+			break
+		}
+		switch {
+		case arg == "--tui" || arg == "-t":
+			tuiFlagIdx = i
+			tuiFlagValue = ""
+			consumeNextAsTarget = true
+		case strings.HasPrefix(arg, "--tui="):
+			tuiFlagIdx = i
+			tuiFlagValue = strings.TrimSpace(strings.TrimPrefix(arg, "--tui="))
+			consumeNextAsTarget = false
+		case strings.HasPrefix(arg, "-t="):
+			tuiFlagIdx = i
+			tuiFlagValue = strings.TrimSpace(strings.TrimPrefix(arg, "-t="))
+			consumeNextAsTarget = false
+		case strings.HasPrefix(arg, "-t") && len(arg) > 2 && arg[2] != '=':
+			tuiFlagIdx = i
+			tuiFlagValue = strings.TrimSpace(arg[2:])
+			consumeNextAsTarget = false
+		default:
+			continue
+		}
+	}
+	if tuiFlagIdx == -1 {
+		return false, "", nil
+	}
+
+	if consumeNextAsTarget && tuiFlagValue == "" && tuiFlagIdx+1 < len(args) && !strings.HasPrefix(args[tuiFlagIdx+1], "-") {
+		// Only consume the next token as an explicit target when it is canonical.
+		candidate := strings.TrimSpace(args[tuiFlagIdx+1])
+		if canonical, ok := normalizeExplicitTUITarget(candidate); ok {
+			tuiFlagValue = canonical
+		} else if tuiFlagIdx+2 >= len(args) {
+			// For trailing single-token values after -t/--tui, treat as explicit target input.
+			return false, "", fmt.Errorf("invalid TUI target %q (valid: %s)", candidate, strings.Join(canonicalTUITargets, ", "))
+		}
+	}
+	if tuiFlagValue != "" {
+		target, ok := normalizeExplicitTUITarget(tuiFlagValue)
+		if !ok {
+			return false, "", fmt.Errorf("invalid TUI target %q (valid: %s)", tuiFlagValue, strings.Join(canonicalTUITargets, ", "))
+		}
+		return true, target, nil
+	}
+
+	command, hasCommand := firstCommandToken(args)
+	if hasCommand {
+		if target, ok := normalizeTUITarget(command); ok {
+			return true, target, nil
+		}
+	}
+	return true, "agents", nil
+}
+
+func firstCommandToken(args []string) (string, bool) {
+	skipNext := false
+	afterDoubleDash := false
+	for i, arg := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if arg == "--" {
+			afterDoubleDash = true
+			continue
+		}
+		if afterDoubleDash {
+			return arg, true
+		}
+		if strings.HasPrefix(arg, "-") {
+			if arg == "--config" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				skipNext = true
+			}
+			// Skip the next token only when bare --tui/-t actually consumed a canonical target.
+			if (arg == "--tui" || arg == "-t") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				if _, ok := normalizeExplicitTUITarget(args[i+1]); ok {
+					skipNext = true
+				}
+			}
+			continue
+		}
+		return arg, true
+	}
+	return "", false
+}
+
+func normalizeTUITarget(raw string) (string, bool) {
+	target, ok := tuiTargetAliases[strings.ToLower(strings.TrimSpace(raw))]
+	return target, ok
+}
+
+func normalizeExplicitTUITarget(raw string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	if _, ok := canonicalTUISet[normalized]; !ok {
+		return "", false
+	}
+	return normalized, true
 }
 
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
-	rootCmd.PersistentFlags().BoolP("tui", "t", false, "launch interactive terminal UI (default when no command is provided)")
+	rootCmd.PersistentFlags().StringP("tui", "t", "", fmt.Sprintf("launch interactive terminal UI; optional target: %s", strings.Join(canonicalTUITargets, "|")))
+	if tuiFlag := rootCmd.PersistentFlags().Lookup("tui"); tuiFlag != nil {
+		tuiFlag.NoOptDefVal = "agents"
+	}
 	rootCmd.RunE = func(cmd *cobra.Command, args []string) error {
-		launchTUI, _ := cmd.Flags().GetBool("tui")
-		flagProvided := cmd.Flags().Changed("tui")
-		if shouldLaunchTUI(flagProvided, launchTUI, args) {
-			v, err := openVault()
-			if err != nil {
-				return tui.Run()
-			}
-			return tui.RunWithVault(v)
+		if len(args) == 0 {
+			return launchTUI("agents")
 		}
 		return cmd.Help()
 	}

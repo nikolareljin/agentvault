@@ -196,3 +196,32 @@ func TestAutoAddDetectedAgentsSkipsDuplicatePathAndExistingName(t *testing.T) {
 		t.Fatalf("claude-main count = %d, want 1 (existing agent must not be duplicated)", claudeMainCount)
 	}
 }
+
+func TestApplyStartTarget(t *testing.T) {
+	v := testVault(t)
+	base := initialModel(v)
+	cases := []struct {
+		target string
+		tab    tab
+		mode   viewMode
+	}{
+		{target: "", tab: tabAgents, mode: viewAgentList},
+		{target: "instructions", tab: tabInstructions, mode: viewInstructions},
+		{target: "rules", tab: tabRules, mode: viewRules},
+		{target: "sessions", tab: tabSessions, mode: viewSessions},
+		{target: "detected", tab: tabDetected, mode: viewDetected},
+		{target: "commands", tab: tabCommands, mode: viewCommands},
+		{target: "status", tab: tabStatus, mode: viewStatus},
+	}
+
+	for _, tc := range cases {
+		m := base
+		applyStartTarget(&m, tc.target)
+		if m.activeTab != tc.tab {
+			t.Fatalf("target %q activeTab = %v, want %v", tc.target, m.activeTab, tc.tab)
+		}
+		if m.mode != tc.mode {
+			t.Fatalf("target %q mode = %v, want %v", tc.target, m.mode, tc.mode)
+		}
+	}
+}
