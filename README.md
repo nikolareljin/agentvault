@@ -83,7 +83,7 @@ brew install nikolareljin/tap/agentvault
 | `detect add` | Auto-add detected agents |
 | `prompt <name>` | Route prompts through AgentVault gateway with usage logging |
 | `status` | Show token usage and quota status (JSON for orchestration) |
-| `--tui`, `-t` | Launch interactive terminal UI (same as default `agentvault`) |
+| `--tui`, `-t` | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
 
 ### Agent Management
 | Command | Description |

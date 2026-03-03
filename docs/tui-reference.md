@@ -10,6 +10,10 @@ agentvault
 agentvault --tui
 # or
 agentvault -t
+# optional target
+agentvault -t rules
+# inferred target from command
+agentvault session list -t
 ```
 
 Tabs:

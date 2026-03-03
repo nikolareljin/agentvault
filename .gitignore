@@ -30,3 +30,4 @@ artifacts/
 go[1-9]*.*.gz
 
 /ignore/
+TODO.txt

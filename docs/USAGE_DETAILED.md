@@ -13,7 +13,9 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 ### Global flags
 
 - `--config <dir>`: Use custom config directory instead of default `~/.config/agentvault`.
-- `-t, --tui`: Launch interactive TUI (also the default when no command is provided).
+- `-t, --tui [target]`: Launch interactive TUI (also the default when no command is provided).
+  - Supported targets: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`.
+  - With command routing, `agentvault <command> -t` opens TUI on the command's matching tab and skips direct command execution.
 
 ## 2. Top-Level Commands
 
@@ -420,6 +422,10 @@ agentvault
 agentvault --tui
 # or short:
 agentvault -t
+# direct target:
+agentvault -t detected
+# infer target from command:
+agentvault detect add -t
 ```
 
 Tabs:
