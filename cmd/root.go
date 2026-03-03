@@ -83,6 +83,7 @@ var tuiTargetSpecs = []tuiTargetSpec{
 
 var (
 	canonicalTUITargets = buildCanonicalTUITargets()
+	canonicalTUISet     = buildCanonicalTUISet()
 	tuiTargetAliases    = buildTUITargetAliases()
 )
 
@@ -108,6 +109,14 @@ func buildTUITargetAliases() map[string]string {
 		}
 	}
 	return aliases
+}
+
+func buildCanonicalTUISet() map[string]struct{} {
+	set := make(map[string]struct{}, len(canonicalTUITargets))
+	for _, target := range canonicalTUITargets {
+		set[strings.ToLower(target)] = struct{}{}
+	}
+	return set
 }
 
 var rootCmd = &cobra.Command{
@@ -254,7 +263,7 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 		tuiFlagValue = strings.TrimSpace(args[tuiFlagIdx+1])
 	}
 	if tuiFlagValue != "" {
-		target, ok := normalizeTUITarget(tuiFlagValue)
+		target, ok := normalizeExplicitTUITarget(tuiFlagValue)
 		if !ok {
 			return false, "", fmt.Errorf("invalid TUI target %q (valid: %s)", tuiFlagValue, strings.Join(canonicalTUITargets, ", "))
 		}
@@ -304,6 +313,14 @@ func firstCommandToken(args []string) (string, bool) {
 func normalizeTUITarget(raw string) (string, bool) {
 	target, ok := tuiTargetAliases[strings.ToLower(strings.TrimSpace(raw))]
 	return target, ok
+}
+
+func normalizeExplicitTUITarget(raw string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	if _, ok := canonicalTUISet[normalized]; !ok {
+		return "", false
+	}
+	return normalized, true
 }
 
 func init() {
