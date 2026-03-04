@@ -23,6 +23,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
@@ -341,7 +343,7 @@ func (v *Vault) ExportData() ([]byte, error) {
 
 // ImportData merges agents plus shared/provider/session config from JSON into this vault.
 // Agents with duplicate names are skipped. Shared config fields (system prompt,
-// MCP servers, instructions, rules, and roles) are merged using a
+// MCP servers, instructions, rules, roles, and prompt sessions) are merged using a
 // "don't overwrite existing" strategy. Provider configs and sessions are merged
 // with the same non-destructive behavior, so existing vault values take
 // precedence over imported values to prevent accidental data loss.
@@ -427,6 +429,9 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		seenPromptSessions[s.ID] = struct{}{}
 	}
 	if len(v.shared.PromptSessions) > agent.PromptSessionRetentionLimit {
+		sort.SliceStable(v.shared.PromptSessions, func(i, j int) bool {
+			return promptSessionTimestamp(v.shared.PromptSessions[i]).Before(promptSessionTimestamp(v.shared.PromptSessions[j]))
+		})
 		v.shared.PromptSessions = v.shared.PromptSessions[len(v.shared.PromptSessions)-agent.PromptSessionRetentionLimit:]
 	}
 	// merge provider configs (don't overwrite existing)
@@ -468,6 +473,16 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		v.sessions.ParallelLimitSet = true
 	}
 	return imported, skipped, v.Save()
+}
+
+func promptSessionTimestamp(s agent.PromptSession) time.Time {
+	if !s.EndedAt.IsZero() {
+		return s.EndedAt
+	}
+	if !s.StartedAt.IsZero() {
+		return s.StartedAt
+	}
+	return time.Time{}
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {

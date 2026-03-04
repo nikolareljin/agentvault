@@ -2,8 +2,10 @@ package vault
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -473,12 +475,14 @@ func TestImportDataPromptSessionsRetentionCap(t *testing.T) {
 	}
 
 	importSessions := make([]agent.PromptSession, 0, agent.PromptSessionRetentionLimit+5)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < agent.PromptSessionRetentionLimit+5; i++ {
+		ts := base.Add(time.Duration(i) * time.Minute)
 		importSessions = append(importSessions, agent.PromptSession{
-			ID:        "imp-session-" + time.Now().Add(time.Duration(i)*time.Nanosecond).Format("150405.000000000"),
+			ID:        fmt.Sprintf("imp-session-%d", i),
 			AgentName: "codex",
-			StartedAt: time.Now().UTC(),
-			EndedAt:   time.Now().UTC(),
+			StartedAt: ts,
+			EndedAt:   ts,
 		})
 	}
 
@@ -506,6 +510,64 @@ func TestImportDataPromptSessionsRetentionCap(t *testing.T) {
 	}
 	if shared.PromptSessions[len(shared.PromptSessions)-1].ID != importSessions[len(importSessions)-1].ID {
 		t.Fatalf("last session ID = %q, want %q", shared.PromptSessions[len(shared.PromptSessions)-1].ID, importSessions[len(importSessions)-1].ID)
+	}
+}
+
+func TestImportDataPromptSessionsKeepsNewestByTimestamp(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	existing := make([]agent.PromptSession, 0, agent.PromptSessionRetentionLimit)
+	for i := 0; i < agent.PromptSessionRetentionLimit; i++ {
+		ts := base.Add(time.Duration(1000+i) * time.Minute)
+		existing = append(existing, agent.PromptSession{
+			ID:        fmt.Sprintf("existing-%d", i),
+			AgentName: "codex",
+			StartedAt: ts,
+			EndedAt:   ts,
+		})
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{PromptSessions: existing}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	imported := make([]agent.PromptSession, 0, 5)
+	for i := 0; i < 5; i++ {
+		ts := base.Add(time.Duration(i) * time.Minute) // older than all existing sessions
+		imported = append(imported, agent.PromptSession{
+			ID:        fmt.Sprintf("imported-old-%d", i),
+			AgentName: "claude",
+			StartedAt: ts,
+			EndedAt:   ts,
+		})
+	}
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{PromptSessions: imported},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != agent.PromptSessionRetentionLimit {
+		t.Fatalf("prompt sessions len = %d, want %d", len(shared.PromptSessions), agent.PromptSessionRetentionLimit)
+	}
+	for _, session := range shared.PromptSessions {
+		if strings.HasPrefix(session.ID, "imported-old-") {
+			t.Fatalf("older imported session %q displaced newer existing sessions", session.ID)
+		}
 	}
 }
 
