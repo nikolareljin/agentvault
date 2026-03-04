@@ -470,10 +470,11 @@ func appendPromptRecord(path string, rec PromptRecord) error {
 
 func truncateForHistory(s string) string {
 	trimmed := strings.TrimSpace(s)
-	if len(trimmed) <= 500 {
+	runes := []rune(trimmed)
+	if len(runes) <= 500 {
 		return trimmed
 	}
-	return trimmed[:497] + "..."
+	return string(runes[:497]) + "..."
 }
 
 func optimizePromptForAgent(original string, a agent.Agent, shared agent.SharedConfig, requestedProfile string) (string, string) {

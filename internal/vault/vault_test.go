@@ -418,6 +418,97 @@ func TestImportDataMergesSharedRulesAndRolesWithoutOverwrite(t *testing.T) {
 	}
 }
 
+func TestImportDataMergesPromptSessionsWithoutOverwrite(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		PromptSessions: []agent.PromptSession{
+			{ID: "existing-session", AgentName: "codex", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+		},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{ID: "existing-session", AgentName: "claude", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+				{ID: "new-session", AgentName: "claude", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 2 {
+		t.Fatalf("prompt sessions len = %d, want 2", len(shared.PromptSessions))
+	}
+	if shared.PromptSessions[0].ID != "existing-session" {
+		t.Fatalf("first session ID = %q, want existing-session", shared.PromptSessions[0].ID)
+	}
+	if shared.PromptSessions[1].ID != "new-session" {
+		t.Fatalf("second session ID = %q, want new-session", shared.PromptSessions[1].ID)
+	}
+}
+
+func TestImportDataPromptSessionsRetentionCap(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	importSessions := make([]agent.PromptSession, 0, agent.PromptSessionRetentionLimit+5)
+	for i := 0; i < agent.PromptSessionRetentionLimit+5; i++ {
+		importSessions = append(importSessions, agent.PromptSession{
+			ID:        "imp-session-" + time.Now().Add(time.Duration(i)*time.Nanosecond).Format("150405.000000000"),
+			AgentName: "codex",
+			StartedAt: time.Now().UTC(),
+			EndedAt:   time.Now().UTC(),
+		})
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: importSessions,
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != agent.PromptSessionRetentionLimit {
+		t.Fatalf("prompt sessions len = %d, want %d", len(shared.PromptSessions), agent.PromptSessionRetentionLimit)
+	}
+	if shared.PromptSessions[len(shared.PromptSessions)-1].ID != importSessions[len(importSessions)-1].ID {
+		t.Fatalf("last session ID = %q, want %q", shared.PromptSessions[len(shared.PromptSessions)-1].ID, importSessions[len(importSessions)-1].ID)
+	}
+}
+
 func TestImportDataDeduplicatesImportedSessionIDs(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)
