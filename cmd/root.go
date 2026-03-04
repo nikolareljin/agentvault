@@ -307,7 +307,7 @@ func parsePromptModeInvocation(args []string) (bool, error) {
 		return false, nil
 	}
 	if _, hasCommand := firstCommandToken(args); hasCommand {
-		return false, nil
+		return false, fmt.Errorf("prompt mode flag must be used without a command")
 	}
 	if err := validatePromptModeArgs(args); err != nil {
 		return false, err

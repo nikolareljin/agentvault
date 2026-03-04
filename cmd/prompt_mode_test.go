@@ -60,7 +60,7 @@ func TestToPromptTranscriptEntry_MapsFields(t *testing.T) {
 		OriginalPrompt:  "hello",
 		EffectivePrompt: "optimized hello",
 		ResponsePreview: "world",
-		TokenUsage: agent.PromptTokenUsage{
+		TokenUsage: &agent.PromptTokenUsage{
 			InputTokens:  3,
 			OutputTokens: 5,
 			TotalTokens:  8,

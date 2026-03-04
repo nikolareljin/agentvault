@@ -22,19 +22,19 @@ import (
 
 // PromptRecord stores one agentvault prompt-through execution entry.
 type PromptRecord struct {
-	ID                  string                 `json:"id"`
-	Timestamp           time.Time              `json:"timestamp"`
-	AgentName           string                 `json:"agent_name"`
-	Provider            string                 `json:"provider"`
-	Model               string                 `json:"model,omitempty"`
-	Optimized           bool                   `json:"optimized"`
-	OptimizationProfile string                 `json:"optimization_profile,omitempty"`
-	OriginalPrompt      string                 `json:"original_prompt"`
-	EffectivePrompt     string                 `json:"effective_prompt"`
-	TokenUsage          agent.PromptTokenUsage `json:"token_usage,omitempty"`
-	ResponsePreview     string                 `json:"response_preview,omitempty"`
-	Success             bool                   `json:"success"`
-	Error               string                 `json:"error,omitempty"`
+	ID                  string                  `json:"id"`
+	Timestamp           time.Time               `json:"timestamp"`
+	AgentName           string                  `json:"agent_name"`
+	Provider            string                  `json:"provider"`
+	Model               string                  `json:"model,omitempty"`
+	Optimized           bool                    `json:"optimized"`
+	OptimizationProfile string                  `json:"optimization_profile,omitempty"`
+	OriginalPrompt      string                  `json:"original_prompt"`
+	EffectivePrompt     string                  `json:"effective_prompt"`
+	TokenUsage          *agent.PromptTokenUsage `json:"token_usage,omitempty"`
+	ResponsePreview     string                  `json:"response_preview,omitempty"`
+	Success             bool                    `json:"success"`
+	Error               string                  `json:"error,omitempty"`
 }
 
 type promptResult struct {
@@ -145,7 +145,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		Success:             execErr == nil,
 	}
 	if execErr == nil {
-		record.TokenUsage = result.Usage
+		record.TokenUsage = optionalTokenUsage(result.Usage)
 		record.ResponsePreview = truncateForHistory(result.Response)
 	} else {
 		record.Error = execErr.Error()
@@ -182,11 +182,23 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println(result.Response)
-	if result.Usage.TotalTokens > 0 || result.Usage.InputTokens > 0 || result.Usage.OutputTokens > 0 {
+	if usage := optionalTokenUsage(result.Usage); usage != nil {
 		fmt.Fprintf(os.Stderr, "tokens used: input=%d output=%d total=%d\n",
-			result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.TotalTokens)
+			usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
 	}
 	return nil
+}
+
+func optionalTokenUsage(usage agent.PromptTokenUsage) *agent.PromptTokenUsage {
+	if usage.InputTokens == 0 &&
+		usage.CachedInputTokens == 0 &&
+		usage.OutputTokens == 0 &&
+		usage.ReasoningOutputTokens == 0 &&
+		usage.TotalTokens == 0 {
+		return nil
+	}
+	u := usage
+	return &u
 }
 
 func readPromptInput(cmd *cobra.Command) (string, error) {

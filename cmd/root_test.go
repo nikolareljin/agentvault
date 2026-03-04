@@ -181,13 +181,26 @@ func TestParsePromptModeInvocation_FlagOnly(t *testing.T) {
 	}
 }
 
-func TestParsePromptModeInvocation_WithCommandDoesNotLaunch(t *testing.T) {
-	launch, err := parsePromptModeInvocation([]string{"detect", "-p"})
+func TestParsePromptModeInvocation_LongFlagOnly(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"--prompt-mode"})
 	if err != nil {
-		t.Fatalf("parsePromptModeInvocation(detect -p) error = %v", err)
+		t.Fatalf("parsePromptModeInvocation(--prompt-mode) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_WithCommandReturnsActionableError(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"detect", "-p"})
+	if err == nil {
+		t.Fatalf("expected prompt mode + command error")
 	}
 	if launch {
 		t.Fatalf("launch = true, want false")
+	}
+	if !strings.Contains(err.Error(), "prompt mode flag must be used without a command") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -362,7 +375,7 @@ func TestExecute_DoesNotReuseStaleSetArgsAfterHelp(t *testing.T) {
 	}
 }
 
-func TestExecute_CommandWithPromptModeFlagReturnsFlagError(t *testing.T) {
+func TestExecute_CommandWithPromptModeFlagReturnsActionableError(t *testing.T) {
 	origArgs := os.Args
 	t.Cleanup(func() { os.Args = origArgs })
 	os.Args = []string{"agentvault", "detect", "-p"}
@@ -371,7 +384,7 @@ func TestExecute_CommandWithPromptModeFlagReturnsFlagError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for command + -p combination")
 	}
-	if !strings.Contains(err.Error(), "unknown shorthand flag") && !strings.Contains(err.Error(), "unknown flag") {
+	if !strings.Contains(err.Error(), "prompt mode flag must be used without a command") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
