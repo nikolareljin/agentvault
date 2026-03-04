@@ -336,6 +336,8 @@ func validatePromptModeArgs(args []string) error {
 				i++
 			}
 			continue
+		case arg == "--tui" || arg == "-t" || strings.HasPrefix(arg, "--tui=") || strings.HasPrefix(arg, "-t="):
+			return fmt.Errorf("prompt mode cannot be combined with --tui/-t; choose either prompt mode flags or --tui, but not both")
 		case strings.HasPrefix(arg, "-"):
 			return fmt.Errorf("unknown flag for prompt mode: %s", arg)
 		default:

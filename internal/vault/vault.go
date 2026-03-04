@@ -420,7 +420,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	}
 	for _, s := range vd.Shared.PromptSessions {
 		if s.ID == "" {
-			s.ID = agent.GenerateSessionID()
+			s.ID = generateUniquePromptSessionID(seenPromptSessions)
 		}
 		if _, ok := seenPromptSessions[s.ID]; ok {
 			continue
@@ -483,6 +483,19 @@ func promptSessionTimestamp(s agent.PromptSession) time.Time {
 		return s.StartedAt
 	}
 	return time.Time{}
+}
+
+func generateUniquePromptSessionID(seen map[string]struct{}) string {
+	for {
+		id := agent.GenerateSessionID()
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		return id
+	}
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {

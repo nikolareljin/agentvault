@@ -467,6 +467,53 @@ func TestImportDataMergesPromptSessionsWithoutOverwrite(t *testing.T) {
 	}
 }
 
+func TestImportDataGeneratesUniqueIDForEmptyPromptSessionIDs(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		PromptSessions: []agent.PromptSession{
+			{ID: "existing-session", AgentName: "codex", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+		},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{ID: "", AgentName: "claude", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 2 {
+		t.Fatalf("prompt sessions len = %d, want 2", len(shared.PromptSessions))
+	}
+	imported := shared.PromptSessions[1].ID
+	if imported == "" {
+		t.Fatal("imported prompt session ID is empty")
+	}
+	if imported == "existing-session" {
+		t.Fatalf("imported prompt session ID collided with existing ID: %q", imported)
+	}
+}
+
 func TestImportDataPromptSessionsRetentionCap(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)
