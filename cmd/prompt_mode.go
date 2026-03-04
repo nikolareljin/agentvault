@@ -81,7 +81,7 @@ func runPromptMode() error {
 		}
 
 		record, response, execErr := executePromptInteraction(selected, v.SharedConfig(), input, 5*time.Minute)
-		session.Entries = append(session.Entries, toPromptTranscriptEntry(record))
+		appendPromptSessionEntryWithCap(&session, toPromptTranscriptEntry(record))
 
 		historyPath := resolvePromptHistoryPath()
 		if err := appendPromptRecord(historyPath, record); err != nil {
@@ -123,6 +123,13 @@ done:
 	}
 	fmt.Fprintf(promptModeOutput, "Saved prompt transcript session %q to vault state.\n", session.ID)
 	return nil
+}
+
+func appendPromptSessionEntryWithCap(session *agent.PromptSession, entry agent.PromptTranscriptEntry) {
+	session.Entries = append(session.Entries, entry)
+	if len(session.Entries) > maxEntriesPerPromptSession {
+		session.Entries = session.Entries[len(session.Entries)-maxEntriesPerPromptSession:]
+	}
 }
 
 func selectPromptModeAgent(reader *bufio.Reader, agents []agent.Agent) (agent.Agent, bool, error) {

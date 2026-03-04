@@ -285,8 +285,15 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 }
 
 func parsePromptModeInvocation(args []string) (bool, error) {
+	firstCmdIdx := firstCommandIndex(args)
+	scanUntil := len(args)
+	if firstCmdIdx >= 0 {
+		scanUntil = firstCmdIdx
+	}
+
 	flagSeen := false
-	for _, arg := range args {
+	for i := 0; i < scanUntil; i++ {
+		arg := args[i]
 		if arg == "--" {
 			break
 		}
@@ -299,10 +306,10 @@ func parsePromptModeInvocation(args []string) (bool, error) {
 	if !flagSeen {
 		return false, nil
 	}
-	if _, hasCommand := firstCommandToken(args); hasCommand {
+	if firstCmdIdx >= 0 {
 		return false, fmt.Errorf("prompt mode flag must be used without a command")
 	}
-	if err := validatePromptModeArgs(args); err != nil {
+	if err := validatePromptModeArgs(args[:scanUntil]); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -340,15 +347,20 @@ func validatePromptModeArgs(args []string) error {
 }
 
 func stripPromptModeFlags(args []string) []string {
+	firstCmdIdx := firstCommandIndex(args)
+	if firstCmdIdx < 0 {
+		firstCmdIdx = len(args)
+	}
+
 	out := make([]string, 0, len(args))
 	afterDoubleDash := false
-	for _, arg := range args {
+	for i, arg := range args {
 		if arg == "--" {
 			afterDoubleDash = true
 			out = append(out, arg)
 			continue
 		}
-		if afterDoubleDash {
+		if afterDoubleDash || i >= firstCmdIdx {
 			out = append(out, arg)
 			continue
 		}
@@ -361,6 +373,13 @@ func stripPromptModeFlags(args []string) []string {
 }
 
 func firstCommandToken(args []string) (string, bool) {
+	if idx := firstCommandIndex(args); idx >= 0 {
+		return args[idx], true
+	}
+	return "", false
+}
+
+func firstCommandIndex(args []string) int {
 	skipNext := false
 	afterDoubleDash := false
 	for i, arg := range args {
@@ -373,7 +392,7 @@ func firstCommandToken(args []string) (string, bool) {
 			continue
 		}
 		if afterDoubleDash {
-			return arg, true
+			return i
 		}
 		if strings.HasPrefix(arg, "-") {
 			if consumed, _, _ := consumeConfigFlag(args, i); consumed && arg == "--config" {
@@ -387,9 +406,9 @@ func firstCommandToken(args []string) (string, bool) {
 			}
 			continue
 		}
-		return arg, true
+		return i
 	}
-	return "", false
+	return -1
 }
 
 func consumeConfigFlag(args []string, i int) (consumed bool, value string, err error) {
@@ -446,7 +465,7 @@ func normalizeExplicitTUITarget(raw string) (string, bool) {
 
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
-	rootCmd.PersistentFlags().BoolP("prompt-mode", "p", false, "launch interactive prompt mode")
+	rootCmd.PersistentFlags().Bool("prompt-mode", false, "launch interactive prompt mode")
 	rootCmd.PersistentFlags().StringP("tui", "t", "", fmt.Sprintf("launch interactive terminal UI; optional target: %s", strings.Join(canonicalTUITargets, "|")))
 	if tuiFlag := rootCmd.PersistentFlags().Lookup("tui"); tuiFlag != nil {
 		tuiFlag.NoOptDefVal = "agents"
