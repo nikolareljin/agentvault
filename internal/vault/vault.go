@@ -408,6 +408,27 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		v.shared.Roles = append(v.shared.Roles, r)
 		seenRoles[r.Name] = struct{}{}
 	}
+	// merge prompt sessions (don't overwrite existing by ID)
+	seenPromptSessions := make(map[string]struct{})
+	for _, s := range v.shared.PromptSessions {
+		if s.ID == "" {
+			continue
+		}
+		seenPromptSessions[s.ID] = struct{}{}
+	}
+	for _, s := range vd.Shared.PromptSessions {
+		if s.ID == "" {
+			s.ID = agent.GenerateSessionID()
+		}
+		if _, ok := seenPromptSessions[s.ID]; ok {
+			continue
+		}
+		v.shared.PromptSessions = append(v.shared.PromptSessions, s)
+		seenPromptSessions[s.ID] = struct{}{}
+	}
+	if len(v.shared.PromptSessions) > agent.PromptSessionRetentionLimit {
+		v.shared.PromptSessions = v.shared.PromptSessions[len(v.shared.PromptSessions)-agent.PromptSessionRetentionLimit:]
+	}
 	// merge provider configs (don't overwrite existing)
 	if v.providerConfigs.Claude == nil && vd.ProviderConfigs.Claude != nil {
 		v.providerConfigs.Claude = vd.ProviderConfigs.Claude

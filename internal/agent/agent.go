@@ -143,6 +143,9 @@ type PromptSession struct {
 	Entries   []PromptTranscriptEntry `json:"entries,omitempty"`
 }
 
+// PromptSessionRetentionLimit caps how many prompt sessions are retained in shared config.
+const PromptSessionRetentionLimit = 20
+
 // WellKnownInstructions maps common names to their conventional filenames.
 // These are the instruction files that each AI agent reads from a project root.
 // The sync command generates these files from unified rules, ensuring all

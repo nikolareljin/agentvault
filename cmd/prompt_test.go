@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
@@ -115,5 +116,19 @@ func TestPromptRecordJSON_IncludesNonEmptyTokenUsage(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "token_usage") {
 		t.Fatalf("expected token_usage to be present, got: %s", string(raw))
+	}
+}
+
+func TestTruncateForHistory_TruncatesOnRuneBoundary(t *testing.T) {
+	long := strings.Repeat("界", 700)
+	got := truncateForHistory(long)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateForHistory returned invalid UTF-8")
+	}
+	if len([]rune(got)) != 500 {
+		t.Fatalf("rune length = %d, want 500", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("expected ellipsis suffix")
 	}
 }
