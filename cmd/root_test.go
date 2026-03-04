@@ -208,6 +208,13 @@ func TestStripPromptModeFlags(t *testing.T) {
 	}
 }
 
+func TestStripPromptModeFlags_PreservesArgsAfterDoubleDash(t *testing.T) {
+	got := stripPromptModeFlags([]string{"detect", "--", "-p", "--prompt-mode"})
+	if strings.Join(got, " ") != "detect -- -p --prompt-mode" {
+		t.Fatalf("stripPromptModeFlags() after -- = %q", got)
+	}
+}
+
 func TestApplyEarlyPersistentFlags_StopsAtDoubleDash(t *testing.T) {
 	t.Cleanup(func() {
 		_ = rootCmd.PersistentFlags().Set("config", "")

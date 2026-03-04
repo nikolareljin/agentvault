@@ -147,10 +147,11 @@ func Execute() error {
 	if err := applyEarlyPersistentFlags(args); err != nil {
 		return err
 	}
+	filteredArgs := stripPromptModeFlags(args)
 
 	// Preserve Cobra help semantics even when TUI interception is enabled.
 	if containsHelpFlag(args) {
-		rootCmd.SetArgs(stripPromptModeFlags(args))
+		rootCmd.SetArgs(filteredArgs)
 		return rootCmd.Execute()
 	}
 
@@ -160,12 +161,12 @@ func Execute() error {
 		return runPromptMode()
 	}
 
-	if launch, target, err := parseTUIInvocation(args); err != nil {
+	if launch, target, err := parseTUIInvocation(filteredArgs); err != nil {
 		return err
 	} else if launch {
 		return launchTUI(target)
 	}
-	rootCmd.SetArgs(args)
+	rootCmd.SetArgs(filteredArgs)
 	return rootCmd.Execute()
 }
 
@@ -314,7 +315,17 @@ func parsePromptModeInvocation(args []string) (bool, error) {
 
 func stripPromptModeFlags(args []string) []string {
 	out := make([]string, 0, len(args))
+	afterDoubleDash := false
 	for _, arg := range args {
+		if arg == "--" {
+			afterDoubleDash = true
+			out = append(out, arg)
+			continue
+		}
+		if afterDoubleDash {
+			out = append(out, arg)
+			continue
+		}
 		if arg == "-p" || arg == "--prompt-mode" {
 			continue
 		}

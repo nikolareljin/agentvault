@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
-	"github.com/nikolareljin/agentvault/internal/config"
 )
 
-const maxStoredPromptSessions = 20
+const (
+	maxStoredPromptSessions        = 20
+	maxEntriesPerPromptSession     = 200
+	maxStoredPromptFieldLenInVault = 4000
+)
 
 var (
 	promptModeInput  io.Reader = os.Stdin
@@ -81,7 +83,7 @@ func runPromptMode() error {
 		record, response, execErr := executePromptInteraction(selected, v.SharedConfig(), input, 5*time.Minute)
 		session.Entries = append(session.Entries, toPromptTranscriptEntry(record))
 
-		historyPath := filepath.Join(config.Dir(), "prompt-history.jsonl")
+		historyPath := resolvePromptHistoryPath()
 		if err := appendPromptRecord(historyPath, record); err != nil {
 			fmt.Fprintf(promptModeErr, "warning: could not write prompt history: %v\n", err)
 		}
@@ -190,8 +192,8 @@ func executePromptInteraction(a agent.Agent, shared agent.SharedConfig, text str
 func toPromptTranscriptEntry(record PromptRecord) agent.PromptTranscriptEntry {
 	return agent.PromptTranscriptEntry{
 		Timestamp:       record.Timestamp,
-		Prompt:          record.OriginalPrompt,
-		EffectivePrompt: record.EffectivePrompt,
+		Prompt:          truncatePromptFieldForVault(record.OriginalPrompt),
+		EffectivePrompt: truncatePromptFieldForVault(record.EffectivePrompt),
 		ResponsePreview: record.ResponsePreview,
 		TokenUsage: agent.PromptTokenUsage{
 			InputTokens:           record.TokenUsage.InputTokens,
@@ -211,6 +213,10 @@ type promptSessionStore interface {
 }
 
 func persistPromptSession(store promptSessionStore, session agent.PromptSession) error {
+	if len(session.Entries) > maxEntriesPerPromptSession {
+		// Cap entries per session to keep encrypted vault growth predictable.
+		session.Entries = session.Entries[len(session.Entries)-maxEntriesPerPromptSession:]
+	}
 	sc := store.SharedConfig()
 	sc.PromptSessions = append(sc.PromptSessions, session)
 	if len(sc.PromptSessions) > maxStoredPromptSessions {
@@ -218,4 +224,12 @@ func persistPromptSession(store promptSessionStore, session agent.PromptSession)
 		sc.PromptSessions = sc.PromptSessions[len(sc.PromptSessions)-maxStoredPromptSessions:]
 	}
 	return store.SetSharedConfig(sc)
+}
+
+func truncatePromptFieldForVault(s string) string {
+	trimmed := strings.TrimSpace(s)
+	if len(trimmed) <= maxStoredPromptFieldLenInVault {
+		return trimmed
+	}
+	return trimmed[:maxStoredPromptFieldLenInVault-3] + "..."
 }

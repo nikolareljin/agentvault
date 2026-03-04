@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,5 +75,48 @@ func TestToPromptTranscriptEntry_MapsFields(t *testing.T) {
 	}
 	if entry.TokenUsage.TotalTokens != 8 {
 		t.Fatalf("entry total tokens = %d, want 8", entry.TokenUsage.TotalTokens)
+	}
+}
+
+func TestToPromptTranscriptEntry_TruncatesLargePrompts(t *testing.T) {
+	long := strings.Repeat("x", maxStoredPromptFieldLenInVault+100)
+	record := PromptRecord{
+		OriginalPrompt:  long,
+		EffectivePrompt: long,
+	}
+	entry := toPromptTranscriptEntry(record)
+	if len(entry.Prompt) != maxStoredPromptFieldLenInVault {
+		t.Fatalf("len(entry.Prompt) = %d, want %d", len(entry.Prompt), maxStoredPromptFieldLenInVault)
+	}
+	if !strings.HasSuffix(entry.Prompt, "...") {
+		t.Fatalf("entry.Prompt should end with ellipsis")
+	}
+	if len(entry.EffectivePrompt) != maxStoredPromptFieldLenInVault {
+		t.Fatalf("len(entry.EffectivePrompt) = %d, want %d", len(entry.EffectivePrompt), maxStoredPromptFieldLenInVault)
+	}
+}
+
+func TestPersistPromptSession_EnforcesEntryLimit(t *testing.T) {
+	store := &testPromptSessionStore{}
+	entries := make([]agent.PromptTranscriptEntry, maxEntriesPerPromptSession+10)
+	for i := range entries {
+		entries[i] = agent.PromptTranscriptEntry{Prompt: fmt.Sprintf("p-%d", i)}
+	}
+	session := agent.PromptSession{
+		ID:        "session-with-many-entries",
+		AgentName: "codex",
+		StartedAt: time.Now(),
+		EndedAt:   time.Now(),
+		Entries:   entries,
+	}
+	if err := persistPromptSession(store, session); err != nil {
+		t.Fatalf("persistPromptSession() error = %v", err)
+	}
+	got := store.shared.PromptSessions[0].Entries
+	if len(got) != maxEntriesPerPromptSession {
+		t.Fatalf("len(entries) = %d, want %d", len(got), maxEntriesPerPromptSession)
+	}
+	if got[0].Prompt != "p-10" {
+		t.Fatalf("oldest kept prompt = %q, want p-10", got[0].Prompt)
 	}
 }
