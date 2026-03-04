@@ -362,6 +362,20 @@ func TestExecute_DoesNotReuseStaleSetArgsAfterHelp(t *testing.T) {
 	}
 }
 
+func TestExecute_CommandWithPromptModeFlagReturnsFlagError(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"agentvault", "detect", "-p"}
+
+	err := Execute()
+	if err == nil {
+		t.Fatalf("expected error for command + -p combination")
+	}
+	if !strings.Contains(err.Error(), "unknown shorthand flag") && !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestIsVaultNotFoundError(t *testing.T) {
 	if !isVaultNotFoundError(os.ErrNotExist) {
 		t.Fatalf("os.ErrNotExist should be treated as vault-not-found fallback")

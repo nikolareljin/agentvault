@@ -21,35 +21,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// PromptTokenUsage captures per-request token usage.
-type PromptTokenUsage struct {
-	InputTokens           int64 `json:"input_tokens,omitempty"`
-	CachedInputTokens     int64 `json:"cached_input_tokens,omitempty"`
-	OutputTokens          int64 `json:"output_tokens,omitempty"`
-	ReasoningOutputTokens int64 `json:"reasoning_output_tokens,omitempty"`
-	TotalTokens           int64 `json:"total_tokens,omitempty"`
-}
-
 // PromptRecord stores one agentvault prompt-through execution entry.
 type PromptRecord struct {
-	ID                  string           `json:"id"`
-	Timestamp           time.Time        `json:"timestamp"`
-	AgentName           string           `json:"agent_name"`
-	Provider            string           `json:"provider"`
-	Model               string           `json:"model,omitempty"`
-	Optimized           bool             `json:"optimized"`
-	OptimizationProfile string           `json:"optimization_profile,omitempty"`
-	OriginalPrompt      string           `json:"original_prompt"`
-	EffectivePrompt     string           `json:"effective_prompt"`
-	TokenUsage          PromptTokenUsage `json:"token_usage,omitempty"`
-	ResponsePreview     string           `json:"response_preview,omitempty"`
-	Success             bool             `json:"success"`
-	Error               string           `json:"error,omitempty"`
+	ID                  string                 `json:"id"`
+	Timestamp           time.Time              `json:"timestamp"`
+	AgentName           string                 `json:"agent_name"`
+	Provider            string                 `json:"provider"`
+	Model               string                 `json:"model,omitempty"`
+	Optimized           bool                   `json:"optimized"`
+	OptimizationProfile string                 `json:"optimization_profile,omitempty"`
+	OriginalPrompt      string                 `json:"original_prompt"`
+	EffectivePrompt     string                 `json:"effective_prompt"`
+	TokenUsage          agent.PromptTokenUsage `json:"token_usage,omitempty"`
+	ResponsePreview     string                 `json:"response_preview,omitempty"`
+	Success             bool                   `json:"success"`
+	Error               string                 `json:"error,omitempty"`
 }
 
 type promptResult struct {
 	Response string
-	Usage    PromptTokenUsage
+	Usage    agent.PromptTokenUsage
 }
 
 var promptCmd = &cobra.Command{
@@ -285,7 +276,7 @@ func executeOllamaPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		return promptResult{}, fmt.Errorf("decoding ollama response: %w", err)
 	}
 
-	usage := PromptTokenUsage{
+	usage := agent.PromptTokenUsage{
 		InputTokens:  out.PromptEvalCount,
 		OutputTokens: out.EvalCount,
 		TotalTokens:  out.PromptEvalCount + out.EvalCount,
@@ -344,8 +335,8 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	return promptResult{Response: response, Usage: usage}, nil
 }
 
-func parseCodexUsage(raw string) PromptTokenUsage {
-	usage := PromptTokenUsage{}
+func parseCodexUsage(raw string) agent.PromptTokenUsage {
+	usage := agent.PromptTokenUsage{}
 	type evt struct {
 		Payload struct {
 			Type string `json:"type"`
@@ -376,7 +367,7 @@ func parseCodexUsage(raw string) PromptTokenUsage {
 		if e.Payload.Type != "token_count" {
 			continue
 		}
-		usage = PromptTokenUsage{
+		usage = agent.PromptTokenUsage{
 			InputTokens:           e.Payload.Info.TotalTokenUsage.InputTokens,
 			CachedInputTokens:     e.Payload.Info.TotalTokenUsage.CachedInputTokens,
 			OutputTokens:          e.Payload.Info.TotalTokenUsage.OutputTokens,
@@ -441,7 +432,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		response = raw
 	}
 
-	usage := PromptTokenUsage{
+	usage := agent.PromptTokenUsage{
 		InputTokens:  extractInt64(decoded, []string{"input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens"}),
 		OutputTokens: extractInt64(decoded, []string{"output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens"}),
 		TotalTokens:  extractInt64(decoded, []string{"total_tokens", "usage.total_tokens"}),

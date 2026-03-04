@@ -190,21 +190,25 @@ func executePromptInteraction(a agent.Agent, shared agent.SharedConfig, text str
 }
 
 func toPromptTranscriptEntry(record PromptRecord) agent.PromptTranscriptEntry {
-	return agent.PromptTranscriptEntry{
+	entry := agent.PromptTranscriptEntry{
 		Timestamp:       record.Timestamp,
 		Prompt:          truncatePromptFieldForVault(record.OriginalPrompt),
 		EffectivePrompt: truncatePromptFieldForVault(record.EffectivePrompt),
 		ResponsePreview: record.ResponsePreview,
-		TokenUsage: agent.PromptTokenUsage{
-			InputTokens:           record.TokenUsage.InputTokens,
-			CachedInputTokens:     record.TokenUsage.CachedInputTokens,
-			OutputTokens:          record.TokenUsage.OutputTokens,
-			ReasoningOutputTokens: record.TokenUsage.ReasoningOutputTokens,
-			TotalTokens:           record.TokenUsage.TotalTokens,
-		},
-		Success: record.Success,
-		Error:   record.Error,
+		Success:         record.Success,
+		Error:           record.Error,
 	}
+	usage := agent.PromptTokenUsage{
+		InputTokens:           record.TokenUsage.InputTokens,
+		CachedInputTokens:     record.TokenUsage.CachedInputTokens,
+		OutputTokens:          record.TokenUsage.OutputTokens,
+		ReasoningOutputTokens: record.TokenUsage.ReasoningOutputTokens,
+		TotalTokens:           record.TokenUsage.TotalTokens,
+	}
+	if usage.InputTokens > 0 || usage.CachedInputTokens > 0 || usage.OutputTokens > 0 || usage.ReasoningOutputTokens > 0 || usage.TotalTokens > 0 {
+		entry.TokenUsage = &usage
+	}
+	return entry
 }
 
 type promptSessionStore interface {
