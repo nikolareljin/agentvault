@@ -313,6 +313,13 @@ func TestStripPromptModeFlags_PreservesArgsAfterDoubleDash(t *testing.T) {
 	}
 }
 
+func TestStripPromptModeFlags_RemovesExplicitFalseToken(t *testing.T) {
+	got := stripPromptModeFlags([]string{"--config", "/tmp/cfg", "--prompt-mode=false"})
+	if strings.Join(got, " ") != "--config /tmp/cfg" {
+		t.Fatalf("stripPromptModeFlags() = %q", got)
+	}
+}
+
 func TestApplyEarlyPersistentFlags_StopsAtDoubleDash(t *testing.T) {
 	t.Cleanup(func() {
 		_ = rootCmd.PersistentFlags().Set("config", "")

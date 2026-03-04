@@ -560,6 +560,65 @@ func TestImportDataPromptSessionsRetentionCap(t *testing.T) {
 	}
 }
 
+func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	long := strings.Repeat("界", maxImportedPromptFieldRunes+50)
+	entries := make([]agent.PromptTranscriptEntry, maxImportedPromptEntriesPerSession+25)
+	for i := range entries {
+		entries[i] = agent.PromptTranscriptEntry{
+			Prompt:          long,
+			EffectivePrompt: long,
+			ResponsePreview: long,
+			Error:           long,
+		}
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{ID: "imported-session", AgentName: "codex", Entries: entries},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 1 {
+		t.Fatalf("prompt sessions len = %d, want 1", len(shared.PromptSessions))
+	}
+	got := shared.PromptSessions[0].Entries
+	if len(got) != maxImportedPromptEntriesPerSession {
+		t.Fatalf("entries len = %d, want %d", len(got), maxImportedPromptEntriesPerSession)
+	}
+	if len([]rune(got[0].Prompt)) != maxImportedPromptFieldRunes {
+		t.Fatalf("prompt rune len = %d, want %d", len([]rune(got[0].Prompt)), maxImportedPromptFieldRunes)
+	}
+	if len([]rune(got[0].EffectivePrompt)) != maxImportedPromptFieldRunes {
+		t.Fatalf("effective prompt rune len = %d, want %d", len([]rune(got[0].EffectivePrompt)), maxImportedPromptFieldRunes)
+	}
+	if len([]rune(got[0].ResponsePreview)) != maxImportedPromptFieldRunes {
+		t.Fatalf("response preview rune len = %d, want %d", len([]rune(got[0].ResponsePreview)), maxImportedPromptFieldRunes)
+	}
+	if len([]rune(got[0].Error)) != maxImportedPromptFieldRunes {
+		t.Fatalf("error rune len = %d, want %d", len([]rune(got[0].Error)), maxImportedPromptFieldRunes)
+	}
+}
+
 func TestImportDataPromptSessionsKeepsNewestByTimestamp(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)

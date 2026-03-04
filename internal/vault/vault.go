@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -38,6 +39,11 @@ type vaultData struct {
 	ProviderConfigs agent.ProviderConfig `json:"provider_configs"`
 	Sessions        agent.SessionConfig  `json:"sessions"`
 }
+
+const (
+	maxImportedPromptEntriesPerSession = 200
+	maxImportedPromptFieldRunes        = 4000
+)
 
 // Vault represents the encrypted agent store.
 type Vault struct {
@@ -425,6 +431,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		if _, ok := seenPromptSessions[s.ID]; ok {
 			continue
 		}
+		s = sanitizeImportedPromptSession(s)
 		v.shared.PromptSessions = append(v.shared.PromptSessions, s)
 		seenPromptSessions[s.ID] = struct{}{}
 	}
@@ -496,6 +503,30 @@ func generateUniquePromptSessionID(seen map[string]struct{}) string {
 		}
 		return id
 	}
+}
+
+func sanitizeImportedPromptSession(session agent.PromptSession) agent.PromptSession {
+	entries := session.Entries
+	if len(entries) > maxImportedPromptEntriesPerSession {
+		entries = entries[len(entries)-maxImportedPromptEntriesPerSession:]
+	}
+	for i := range entries {
+		entries[i].Prompt = truncatePromptImportField(entries[i].Prompt)
+		entries[i].EffectivePrompt = truncatePromptImportField(entries[i].EffectivePrompt)
+		entries[i].ResponsePreview = truncatePromptImportField(entries[i].ResponsePreview)
+		entries[i].Error = truncatePromptImportField(entries[i].Error)
+	}
+	session.Entries = entries
+	return session
+}
+
+func truncatePromptImportField(value string) string {
+	trimmed := strings.TrimSpace(value)
+	runes := []rune(trimmed)
+	if len(runes) <= maxImportedPromptFieldRunes {
+		return trimmed
+	}
+	return string(runes[:maxImportedPromptFieldRunes-3]) + "..."
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {

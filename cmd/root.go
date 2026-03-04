@@ -148,10 +148,11 @@ func Execute() error {
 	if err := applyEarlyPersistentFlags(args); err != nil {
 		return err
 	}
+	execArgs := stripPromptModeFlags(args)
 
 	// Preserve Cobra help semantics even when TUI interception is enabled.
 	if containsHelpFlag(args) {
-		rootCmd.SetArgs(stripPromptModeFlags(args))
+		rootCmd.SetArgs(execArgs)
 		return rootCmd.Execute()
 	}
 
@@ -161,12 +162,12 @@ func Execute() error {
 		return runPromptMode()
 	}
 
-	if launch, target, err := parseTUIInvocation(args); err != nil {
+	if launch, target, err := parseTUIInvocation(execArgs); err != nil {
 		return err
 	} else if launch {
 		return launchTUI(target)
 	}
-	rootCmd.SetArgs(args)
+	rootCmd.SetArgs(execArgs)
 	return rootCmd.Execute()
 }
 
