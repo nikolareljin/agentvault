@@ -122,13 +122,13 @@ type PromptTokenUsage struct {
 
 // PromptTranscriptEntry stores one prompt/response interaction from prompt mode.
 type PromptTranscriptEntry struct {
-	Timestamp       time.Time        `json:"timestamp"`
-	Prompt          string           `json:"prompt"`
-	EffectivePrompt string           `json:"effective_prompt,omitempty"`
-	ResponsePreview string           `json:"response_preview,omitempty"`
-	TokenUsage      PromptTokenUsage `json:"token_usage,omitempty"`
-	Success         bool             `json:"success"`
-	Error           string           `json:"error,omitempty"`
+	Timestamp       time.Time         `json:"timestamp"`
+	Prompt          string            `json:"prompt"`
+	EffectivePrompt string            `json:"effective_prompt,omitempty"`
+	ResponsePreview string            `json:"response_preview,omitempty"`
+	TokenUsage      *PromptTokenUsage `json:"token_usage,omitempty"`
+	Success         bool              `json:"success"`
+	Error           string            `json:"error,omitempty"`
 }
 
 // PromptSession stores prompt-mode transcript/session metadata in vault state.

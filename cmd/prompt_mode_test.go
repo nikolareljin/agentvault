@@ -59,7 +59,7 @@ func TestToPromptTranscriptEntry_MapsFields(t *testing.T) {
 		OriginalPrompt:  "hello",
 		EffectivePrompt: "optimized hello",
 		ResponsePreview: "world",
-		TokenUsage: PromptTokenUsage{
+		TokenUsage: agent.PromptTokenUsage{
 			InputTokens:  3,
 			OutputTokens: 5,
 			TotalTokens:  8,
@@ -73,8 +73,17 @@ func TestToPromptTranscriptEntry_MapsFields(t *testing.T) {
 	if entry.Prompt != "hello" || entry.EffectivePrompt != "optimized hello" {
 		t.Fatalf("entry prompt mapping mismatch: %#v", entry)
 	}
-	if entry.TokenUsage.TotalTokens != 8 {
-		t.Fatalf("entry total tokens = %d, want 8", entry.TokenUsage.TotalTokens)
+	if entry.TokenUsage == nil || entry.TokenUsage.TotalTokens != 8 {
+		t.Fatalf("entry total tokens = %#v, want 8", entry.TokenUsage)
+	}
+}
+
+func TestToPromptTranscriptEntry_OmitsZeroTokenUsage(t *testing.T) {
+	entry := toPromptTranscriptEntry(PromptRecord{
+		OriginalPrompt: "hello",
+	})
+	if entry.TokenUsage != nil {
+		t.Fatalf("expected nil token usage for zero values, got %#v", entry.TokenUsage)
 	}
 }
 
