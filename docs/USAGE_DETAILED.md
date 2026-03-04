@@ -16,7 +16,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `-t, --tui [target]`: Launch interactive TUI (also the default when no command is provided).
   - Supported targets: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`.
   - With command routing, `agentvault <command> -t` opens TUI on the command's matching tab and skips direct command execution.
-- `-p`: Enter interactive prompt mode directly (submit/cancel/exit loop).
+- `-p, --prompt-mode[=true|false]`: Enter interactive prompt mode directly (submit/cancel/exit loop).
 
 ## 2. Top-Level Commands
 
