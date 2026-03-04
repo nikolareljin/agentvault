@@ -161,11 +161,22 @@ agentvault status --no-vault --json
 Send prompts through AgentVault instead of calling agent CLIs directly:
 
 ```bash
+# IMPORTANT: prompt requires an agent name as the first positional argument.
+# This fails (missing agent name):
+# agentvault prompt --text "create a demo app in Scala that says 'Hello World'"
+#
+# Find configured agent names first:
+agentvault list
+
 # direct prompt through configured agent
 agentvault prompt my-codex --text "review this implementation"
 
 # optimize prompt shape for local Ollama models
 agentvault prompt my-ollama --text "build auth middleware"
+
+# concrete "Hello World" style examples
+agentvault prompt my-codex --text "create a demo app in Scala that says 'Hello World'"
+agentvault prompt my-ollama --text "create a demo app in Scala that says 'Hello World'" --optimize-profile ollama
 
 # optimize for codex/copilot-style coding flows
 agentvault prompt my-codex --text "refactor this endpoint" --optimize-profile codex

@@ -124,11 +124,17 @@ Flags:
 Route prompt through AgentVault (gateway) to provider, with optimization + logging.
 
 Input rules:
+- `[agent-name]` is required as the first positional argument.
 - Use one of:
   - `--text <prompt>`
   - `--file <path>`
   - stdin pipe
 - `--text` and `--file` are mutually exclusive.
+
+Common error:
+- `agentvault prompt --text "create a demo app in Scala that says 'Hello World'"`
+- This fails with `accepts 1 arg(s), received 0` because `[agent-name]` is missing.
+- Run `agentvault list` to find available agent names first.
 
 Flags:
 - `--text <prompt>`
@@ -141,6 +147,18 @@ Flags:
 - `--no-log` (default: `false`): Disable run history write.
 - `--history-file <path>`: Override default `~/.config/agentvault/prompt-history.jsonl`.
 - `--timeout <duration>` (default: `5m`): Provider call timeout.
+
+Examples:
+```bash
+# list configured agents and pick one name
+agentvault list
+
+# codex example
+agentvault prompt my-codex --text "create a demo app in Scala that says 'Hello World'"
+
+# ollama example
+agentvault prompt my-ollama --text "create a demo app in Scala that says 'Hello World'" --optimize-profile ollama
+```
 
 ### `agentvault -p`
 Enter interactive prompt mode immediately.
