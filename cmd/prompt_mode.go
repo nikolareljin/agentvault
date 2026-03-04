@@ -50,7 +50,7 @@ func runPromptMode() error {
 	}
 
 	session := agent.PromptSession{
-		ID:        fmt.Sprintf("prompt-session-%d", time.Now().UnixNano()),
+		ID:        fmt.Sprintf("prompt-session-%s", agent.GenerateSessionID()),
 		AgentName: selected.Name,
 		Provider:  string(selected.Provider),
 		Model:     selected.Model,
@@ -94,7 +94,7 @@ func runPromptMode() error {
 		}
 
 		fmt.Fprintln(promptModeOutput, response)
-		if record.TokenUsage.TotalTokens > 0 || record.TokenUsage.InputTokens > 0 || record.TokenUsage.OutputTokens > 0 {
+		if record.TokenUsage != nil {
 			fmt.Fprintf(promptModeErr, "tokens used: input=%d output=%d total=%d\n",
 				record.TokenUsage.InputTokens,
 				record.TokenUsage.OutputTokens,
@@ -180,7 +180,7 @@ func executePromptInteraction(a agent.Agent, shared agent.SharedConfig, text str
 		Success:             execErr == nil,
 	}
 	if execErr == nil {
-		record.TokenUsage = result.Usage
+		record.TokenUsage = optionalTokenUsage(result.Usage)
 		record.ResponsePreview = truncateForHistory(result.Response)
 	} else {
 		record.Error = execErr.Error()
@@ -198,15 +198,17 @@ func toPromptTranscriptEntry(record PromptRecord) agent.PromptTranscriptEntry {
 		Success:         record.Success,
 		Error:           record.Error,
 	}
-	usage := agent.PromptTokenUsage{
-		InputTokens:           record.TokenUsage.InputTokens,
-		CachedInputTokens:     record.TokenUsage.CachedInputTokens,
-		OutputTokens:          record.TokenUsage.OutputTokens,
-		ReasoningOutputTokens: record.TokenUsage.ReasoningOutputTokens,
-		TotalTokens:           record.TokenUsage.TotalTokens,
-	}
-	if usage.InputTokens > 0 || usage.CachedInputTokens > 0 || usage.OutputTokens > 0 || usage.ReasoningOutputTokens > 0 || usage.TotalTokens > 0 {
-		entry.TokenUsage = &usage
+	if record.TokenUsage != nil {
+		usage := agent.PromptTokenUsage{
+			InputTokens:           record.TokenUsage.InputTokens,
+			CachedInputTokens:     record.TokenUsage.CachedInputTokens,
+			OutputTokens:          record.TokenUsage.OutputTokens,
+			ReasoningOutputTokens: record.TokenUsage.ReasoningOutputTokens,
+			TotalTokens:           record.TokenUsage.TotalTokens,
+		}
+		if usage.InputTokens > 0 || usage.CachedInputTokens > 0 || usage.OutputTokens > 0 || usage.ReasoningOutputTokens > 0 || usage.TotalTokens > 0 {
+			entry.TokenUsage = &usage
+		}
 	}
 	return entry
 }
