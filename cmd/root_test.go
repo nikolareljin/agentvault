@@ -213,6 +213,16 @@ func TestParsePromptModeInvocation_LongFlagEqualsFalseDoesNotLaunch(t *testing.T
 
 func TestParsePromptModeInvocation_WithCommandReturnsActionableError(t *testing.T) {
 	launch, err := parsePromptModeInvocation([]string{"detect", "-p"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(detect -p) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_RootFlagThenCommandReturnsActionableError(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p", "detect"})
 	if err == nil {
 		t.Fatalf("expected prompt mode + command error")
 	}
@@ -261,6 +271,21 @@ func TestParsePromptModeInvocation_AllowsConfigFlag(t *testing.T) {
 	}
 	if !launch {
 		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_DoesNotInterceptSubcommandProviderFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"add", "-p", "claude"},
+		{"edit", "my-agent", "-p", "codex"},
+	} {
+		launch, err := parsePromptModeInvocation(args)
+		if err != nil {
+			t.Fatalf("parsePromptModeInvocation(%v) error = %v", args, err)
+		}
+		if launch {
+			t.Fatalf("parsePromptModeInvocation(%v) launch = true, want false", args)
+		}
 	}
 }
 
@@ -405,7 +430,7 @@ func TestExecute_DoesNotReuseStaleSetArgsAfterHelp(t *testing.T) {
 	}
 }
 
-func TestExecute_CommandWithPromptModeFlagReturnsActionableError(t *testing.T) {
+func TestExecute_CommandWithPromptModeFlagReturnsCobraUnknownFlag(t *testing.T) {
 	origArgs := os.Args
 	t.Cleanup(func() { os.Args = origArgs })
 	os.Args = []string{"agentvault", "detect", "-p"}
@@ -414,7 +439,7 @@ func TestExecute_CommandWithPromptModeFlagReturnsActionableError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for command + -p combination")
 	}
-	if !strings.Contains(err.Error(), "prompt mode flag must be used without a command") {
+	if !strings.Contains(err.Error(), "unknown shorthand flag") && !strings.Contains(err.Error(), "unknown flag") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

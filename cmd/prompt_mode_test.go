@@ -147,3 +147,16 @@ func TestPersistPromptSession_EnforcesEntryLimit(t *testing.T) {
 		t.Fatalf("oldest kept prompt = %q, want p-10", got[0].Prompt)
 	}
 }
+
+func TestAppendPromptSessionEntryWithCap_EnforcesInMemoryLimit(t *testing.T) {
+	session := agent.PromptSession{}
+	for i := 0; i < maxEntriesPerPromptSession+10; i++ {
+		appendPromptSessionEntryWithCap(&session, agent.PromptTranscriptEntry{Prompt: fmt.Sprintf("p-%d", i)})
+	}
+	if len(session.Entries) != maxEntriesPerPromptSession {
+		t.Fatalf("len(entries) = %d, want %d", len(session.Entries), maxEntriesPerPromptSession)
+	}
+	if session.Entries[0].Prompt != "p-10" {
+		t.Fatalf("oldest kept prompt = %q, want p-10", session.Entries[0].Prompt)
+	}
+}
