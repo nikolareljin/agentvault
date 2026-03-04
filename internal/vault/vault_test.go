@@ -567,8 +567,8 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 		t.Fatalf("Init() error = %v", err)
 	}
 
-	long := strings.Repeat("界", maxImportedPromptFieldRunes+50)
-	entries := make([]agent.PromptTranscriptEntry, maxImportedPromptEntriesPerSession+25)
+	long := strings.Repeat("界", agent.PromptTranscriptFieldMaxRunes+50)
+	entries := make([]agent.PromptTranscriptEntry, agent.PromptSessionEntryLimit+25)
 	for i := range entries {
 		entries[i] = agent.PromptTranscriptEntry{
 			Prompt:          long,
@@ -585,7 +585,14 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 		Agents: []agent.Agent{},
 		Shared: agent.SharedConfig{
 			PromptSessions: []agent.PromptSession{
-				{ID: "imported-session", AgentName: "codex", Entries: entries},
+				{
+					ID:        "imported-session",
+					Name:      long,
+					AgentName: long,
+					Provider:  long,
+					Model:     long,
+					Entries:   entries,
+				},
 			},
 		},
 	}
@@ -602,20 +609,33 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 		t.Fatalf("prompt sessions len = %d, want 1", len(shared.PromptSessions))
 	}
 	got := shared.PromptSessions[0].Entries
-	if len(got) != maxImportedPromptEntriesPerSession {
-		t.Fatalf("entries len = %d, want %d", len(got), maxImportedPromptEntriesPerSession)
+	if len(got) != agent.PromptSessionEntryLimit {
+		t.Fatalf("entries len = %d, want %d", len(got), agent.PromptSessionEntryLimit)
 	}
-	if len([]rune(got[0].Prompt)) != maxImportedPromptFieldRunes {
-		t.Fatalf("prompt rune len = %d, want %d", len([]rune(got[0].Prompt)), maxImportedPromptFieldRunes)
+	if len([]rune(got[0].Prompt)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("prompt rune len = %d, want %d", len([]rune(got[0].Prompt)), agent.PromptTranscriptFieldMaxRunes)
 	}
-	if len([]rune(got[0].EffectivePrompt)) != maxImportedPromptFieldRunes {
-		t.Fatalf("effective prompt rune len = %d, want %d", len([]rune(got[0].EffectivePrompt)), maxImportedPromptFieldRunes)
+	if len([]rune(got[0].EffectivePrompt)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("effective prompt rune len = %d, want %d", len([]rune(got[0].EffectivePrompt)), agent.PromptTranscriptFieldMaxRunes)
 	}
-	if len([]rune(got[0].ResponsePreview)) != maxImportedPromptFieldRunes {
-		t.Fatalf("response preview rune len = %d, want %d", len([]rune(got[0].ResponsePreview)), maxImportedPromptFieldRunes)
+	if len([]rune(got[0].ResponsePreview)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("response preview rune len = %d, want %d", len([]rune(got[0].ResponsePreview)), agent.PromptTranscriptFieldMaxRunes)
 	}
-	if len([]rune(got[0].Error)) != maxImportedPromptFieldRunes {
-		t.Fatalf("error rune len = %d, want %d", len([]rune(got[0].Error)), maxImportedPromptFieldRunes)
+	if len([]rune(got[0].Error)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("error rune len = %d, want %d", len([]rune(got[0].Error)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	session := shared.PromptSessions[0]
+	if len([]rune(session.Name)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session name rune len = %d, want %d", len([]rune(session.Name)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(session.AgentName)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session agent_name rune len = %d, want %d", len([]rune(session.AgentName)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(session.Provider)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session provider rune len = %d, want %d", len([]rune(session.Provider)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(session.Model)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session model rune len = %d, want %d", len([]rune(session.Model)), agent.PromptTranscriptFieldMaxRunes)
 	}
 }
 

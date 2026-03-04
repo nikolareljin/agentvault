@@ -40,11 +40,6 @@ type vaultData struct {
 	Sessions        agent.SessionConfig  `json:"sessions"`
 }
 
-const (
-	maxImportedPromptEntriesPerSession = 200
-	maxImportedPromptFieldRunes        = 4000
-)
-
 // Vault represents the encrypted agent store.
 type Vault struct {
 	path            string
@@ -424,6 +419,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		}
 		seenPromptSessions[s.ID] = struct{}{}
 	}
+	importedPromptSessions := make([]agent.PromptSession, 0, len(vd.Shared.PromptSessions))
 	for _, s := range vd.Shared.PromptSessions {
 		if s.ID == "" {
 			s.ID = generateUniquePromptSessionID(seenPromptSessions)
@@ -431,9 +427,17 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		if _, ok := seenPromptSessions[s.ID]; ok {
 			continue
 		}
-		s = sanitizeImportedPromptSession(s)
-		v.shared.PromptSessions = append(v.shared.PromptSessions, s)
 		seenPromptSessions[s.ID] = struct{}{}
+		importedPromptSessions = append(importedPromptSessions, s)
+	}
+	if len(importedPromptSessions) > agent.PromptSessionRetentionLimit {
+		sort.SliceStable(importedPromptSessions, func(i, j int) bool {
+			return promptSessionTimestamp(importedPromptSessions[i]).Before(promptSessionTimestamp(importedPromptSessions[j]))
+		})
+		importedPromptSessions = importedPromptSessions[len(importedPromptSessions)-agent.PromptSessionRetentionLimit:]
+	}
+	for _, s := range importedPromptSessions {
+		v.shared.PromptSessions = append(v.shared.PromptSessions, sanitizeImportedPromptSession(s))
 	}
 	if len(v.shared.PromptSessions) > agent.PromptSessionRetentionLimit {
 		sort.SliceStable(v.shared.PromptSessions, func(i, j int) bool {
@@ -506,9 +510,13 @@ func generateUniquePromptSessionID(seen map[string]struct{}) string {
 }
 
 func sanitizeImportedPromptSession(session agent.PromptSession) agent.PromptSession {
+	session.Name = truncatePromptImportField(session.Name)
+	session.AgentName = truncatePromptImportField(session.AgentName)
+	session.Provider = truncatePromptImportField(session.Provider)
+	session.Model = truncatePromptImportField(session.Model)
 	entries := session.Entries
-	if len(entries) > maxImportedPromptEntriesPerSession {
-		entries = entries[len(entries)-maxImportedPromptEntriesPerSession:]
+	if len(entries) > agent.PromptSessionEntryLimit {
+		entries = entries[len(entries)-agent.PromptSessionEntryLimit:]
 	}
 	for i := range entries {
 		entries[i].Prompt = truncatePromptImportField(entries[i].Prompt)
@@ -523,10 +531,10 @@ func sanitizeImportedPromptSession(session agent.PromptSession) agent.PromptSess
 func truncatePromptImportField(value string) string {
 	trimmed := strings.TrimSpace(value)
 	runes := []rune(trimmed)
-	if len(runes) <= maxImportedPromptFieldRunes {
+	if len(runes) <= agent.PromptTranscriptFieldMaxRunes {
 		return trimmed
 	}
-	return string(runes[:maxImportedPromptFieldRunes-3]) + "..."
+	return string(runes[:agent.PromptTranscriptFieldMaxRunes-3]) + "..."
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {
