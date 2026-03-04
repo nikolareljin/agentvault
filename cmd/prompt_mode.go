@@ -232,8 +232,9 @@ func persistPromptSession(store promptSessionStore, session agent.PromptSession)
 
 func truncatePromptFieldForVault(s string) string {
 	trimmed := strings.TrimSpace(s)
-	if len(trimmed) <= maxStoredPromptFieldLenInVault {
+	runes := []rune(trimmed)
+	if len(runes) <= maxStoredPromptFieldLenInVault {
 		return trimmed
 	}
-	return trimmed[:maxStoredPromptFieldLenInVault-3] + "..."
+	return string(runes[:maxStoredPromptFieldLenInVault-3]) + "..."
 }
