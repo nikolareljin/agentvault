@@ -13,8 +13,8 @@ import (
 
 const (
 	maxStoredPromptSessions        = agent.PromptSessionRetentionLimit
-	maxEntriesPerPromptSession     = 200
-	maxStoredPromptFieldLenInVault = 4000
+	maxEntriesPerPromptSession     = agent.PromptSessionEntryLimit
+	maxStoredPromptFieldLenInVault = agent.PromptTranscriptFieldMaxRunes
 )
 
 var (

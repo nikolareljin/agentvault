@@ -146,6 +146,12 @@ type PromptSession struct {
 // PromptSessionRetentionLimit caps how many prompt sessions are retained in shared config.
 const PromptSessionRetentionLimit = 20
 
+// PromptSessionEntryLimit caps transcript entries stored per prompt session.
+const PromptSessionEntryLimit = 200
+
+// PromptTranscriptFieldMaxRunes caps stored transcript field size (runes).
+const PromptTranscriptFieldMaxRunes = 4000
+
 // WellKnownInstructions maps common names to their conventional filenames.
 // These are the instruction files that each AI agent reads from a project root.
 // The sync command generates these files from unified rules, ensuring all
