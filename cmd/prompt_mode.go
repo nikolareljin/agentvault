@@ -201,9 +201,9 @@ func toPromptTranscriptEntry(record PromptRecord) agent.PromptTranscriptEntry {
 		Timestamp:       record.Timestamp,
 		Prompt:          truncatePromptFieldForVault(record.OriginalPrompt),
 		EffectivePrompt: truncatePromptFieldForVault(record.EffectivePrompt),
-		ResponsePreview: record.ResponsePreview,
+		ResponsePreview: truncatePromptFieldForVault(record.ResponsePreview),
 		Success:         record.Success,
-		Error:           record.Error,
+		Error:           truncatePromptFieldForVault(record.Error),
 	}
 	if record.TokenUsage != nil {
 		usage := agent.PromptTokenUsage{

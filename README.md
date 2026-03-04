@@ -86,7 +86,7 @@ brew install nikolareljin/tap/agentvault
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
 | `prompt <name>` | Route prompts through AgentVault gateway with usage logging |
-| `-p` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
+| `-p, --prompt-mode[=true\|false]` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
 | `status` | Show token usage and quota status (JSON for orchestration) |
 | `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
 
