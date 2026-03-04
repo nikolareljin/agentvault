@@ -86,9 +86,9 @@ brew install nikolareljin/tap/agentvault
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
 | `prompt <name>` | Route prompts through AgentVault gateway with usage logging |
-| `-p` | Enter interactive prompt mode (submit/cancel/exit flow) |
+| `-p` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
 | `status` | Show token usage and quota status (JSON for orchestration) |
-| `--tui`, `-t` | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
+| `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
 
 ### Agent Management
 | Command | Description |
@@ -189,7 +189,8 @@ agentvault prompt my-ollama --text "summarize this design" --json
 agentvault -p
 ```
 
-Prompt runs are stored in `~/.config/agentvault/prompt-history.jsonl` by default.
+By default, prompt runs are written in plaintext to `~/.config/agentvault/prompt-history.jsonl`, which may contain sensitive data.
+Treat this file as sensitive and disable or clear it when prompts may include secrets.
 Prompt mode can also store session transcript metadata in encrypted vault state on exit.
 
 ## Unified Rules
