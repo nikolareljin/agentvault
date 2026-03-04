@@ -30,7 +30,6 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `remove`
 - `run`
 - `prompt`
-- `-p` (interactive prompt mode shortcut)
 - `status`
 - `rules`
 - `roles`

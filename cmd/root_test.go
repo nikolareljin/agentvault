@@ -201,6 +201,26 @@ func TestParsePromptModeInvocation_FlagAfterDoubleDashIgnored(t *testing.T) {
 	}
 }
 
+func TestParsePromptModeInvocation_UnknownFlagErrors(t *testing.T) {
+	_, err := parsePromptModeInvocation([]string{"-p", "--bogus"})
+	if err == nil {
+		t.Fatalf("expected unknown flag error")
+	}
+	if !strings.Contains(err.Error(), "unknown flag for prompt mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_AllowsConfigFlag(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p", "--config", "/tmp/agentvault"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p --config ...) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
 func TestStripPromptModeFlags(t *testing.T) {
 	got := stripPromptModeFlags([]string{"-p", "--config", "/tmp/cfg", "--prompt-mode", "--help"})
 	if strings.Join(got, " ") != "--config /tmp/cfg --help" {

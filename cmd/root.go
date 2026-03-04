@@ -310,7 +310,41 @@ func parsePromptModeInvocation(args []string) (bool, error) {
 	if _, hasCommand := firstCommandToken(args); hasCommand {
 		return false, nil
 	}
+	if err := validatePromptModeArgs(args); err != nil {
+		return false, err
+	}
 	return true, nil
+}
+
+func validatePromptModeArgs(args []string) error {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		switch {
+		case arg == "-p" || arg == "--prompt-mode":
+			continue
+		case arg == "--config":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				return fmt.Errorf("flag needs an argument: --config")
+			}
+			i++
+			continue
+		case strings.HasPrefix(arg, "--config="):
+			value := strings.TrimSpace(strings.TrimPrefix(arg, "--config="))
+			if value == "" {
+				return fmt.Errorf("flag needs an argument: --config")
+			}
+			continue
+		case strings.HasPrefix(arg, "-"):
+			return fmt.Errorf("unknown flag for prompt mode: %s", arg)
+		default:
+			// Non-flag positional args are treated as command args elsewhere.
+			return nil
+		}
+	}
+	return nil
 }
 
 func stripPromptModeFlags(args []string) []string {
