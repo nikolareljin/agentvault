@@ -191,6 +191,26 @@ func TestParsePromptModeInvocation_LongFlagOnly(t *testing.T) {
 	}
 }
 
+func TestParsePromptModeInvocation_LongFlagEqualsTrue(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"--prompt-mode=true"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(--prompt-mode=true) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_LongFlagEqualsFalseDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"--prompt-mode=false"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(--prompt-mode=false) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
 func TestParsePromptModeInvocation_WithCommandReturnsActionableError(t *testing.T) {
 	launch, err := parsePromptModeInvocation([]string{"detect", "-p"})
 	if err == nil {
@@ -220,6 +240,16 @@ func TestParsePromptModeInvocation_UnknownFlagErrors(t *testing.T) {
 		t.Fatalf("expected unknown flag error")
 	}
 	if !strings.Contains(err.Error(), "unknown flag for prompt mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_InvalidBooleanValueErrors(t *testing.T) {
+	_, err := parsePromptModeInvocation([]string{"--prompt-mode=maybe"})
+	if err == nil {
+		t.Fatalf("expected invalid boolean error")
+	}
+	if !strings.Contains(err.Error(), "invalid boolean value for --prompt-mode") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
