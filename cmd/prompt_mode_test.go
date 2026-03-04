@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
@@ -102,6 +103,23 @@ func TestToPromptTranscriptEntry_TruncatesLargePrompts(t *testing.T) {
 	}
 	if len(entry.EffectivePrompt) != maxStoredPromptFieldLenInVault {
 		t.Fatalf("len(entry.EffectivePrompt) = %d, want %d", len(entry.EffectivePrompt), maxStoredPromptFieldLenInVault)
+	}
+}
+
+func TestToPromptTranscriptEntry_TruncatesOnRuneBoundary(t *testing.T) {
+	// Use a multi-byte rune to ensure truncation does not split UTF-8 bytes.
+	long := strings.Repeat("界", maxStoredPromptFieldLenInVault+20)
+	entry := toPromptTranscriptEntry(PromptRecord{
+		OriginalPrompt: long,
+	})
+	if !utf8.ValidString(entry.Prompt) {
+		t.Fatalf("truncated prompt is not valid UTF-8")
+	}
+	if len([]rune(entry.Prompt)) != maxStoredPromptFieldLenInVault {
+		t.Fatalf("rune length = %d, want %d", len([]rune(entry.Prompt)), maxStoredPromptFieldLenInVault)
+	}
+	if !strings.HasSuffix(entry.Prompt, "...") {
+		t.Fatalf("entry.Prompt should end with ellipsis")
 	}
 }
 

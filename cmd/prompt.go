@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
-	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -155,7 +154,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	noLog, _ := cmd.Flags().GetBool("no-log")
 	historyPath, _ := cmd.Flags().GetString("history-file")
 	if historyPath == "" {
-		historyPath = filepath.Join(config.Dir(), "prompt-history.jsonl")
+		historyPath = resolvePromptHistoryPath()
 	}
 	if !noLog {
 		if err := appendPromptRecord(historyPath, record); err != nil {
