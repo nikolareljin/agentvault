@@ -254,6 +254,16 @@ func TestParsePromptModeInvocation_UnknownFlagErrors(t *testing.T) {
 	}
 }
 
+func TestParsePromptModeInvocation_TUIFlagReturnsMutualExclusionError(t *testing.T) {
+	_, err := parsePromptModeInvocation([]string{"-p", "--tui"})
+	if err == nil {
+		t.Fatalf("expected prompt mode and tui mutual exclusion error")
+	}
+	if !strings.Contains(err.Error(), "prompt mode cannot be combined with --tui/-t") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParsePromptModeInvocation_InvalidBooleanValueErrors(t *testing.T) {
 	_, err := parsePromptModeInvocation([]string{"--prompt-mode=maybe"})
 	if err == nil {

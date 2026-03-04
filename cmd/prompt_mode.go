@@ -62,6 +62,7 @@ func runPromptMode() error {
 
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	historyPath := resolvePromptHistoryPath()
 	for {
 		fmt.Fprint(promptModeOutput, "prompt> ")
 		if !scanner.Scan() {
@@ -83,7 +84,6 @@ func runPromptMode() error {
 		record, response, execErr := executePromptInteraction(selected, v.SharedConfig(), input, 5*time.Minute)
 		appendPromptSessionEntryWithCap(&session, toPromptTranscriptEntry(record))
 
-		historyPath := resolvePromptHistoryPath()
 		if err := appendPromptRecord(historyPath, record); err != nil {
 			fmt.Fprintf(promptModeErr, "warning: could not write prompt history: %v\n", err)
 		}
