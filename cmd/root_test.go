@@ -211,7 +211,7 @@ func TestParsePromptModeInvocation_LongFlagEqualsFalseDoesNotLaunch(t *testing.T
 	}
 }
 
-func TestParsePromptModeInvocation_WithCommandReturnsActionableError(t *testing.T) {
+func TestParsePromptModeInvocation_WithCommandDoesNotIntercept(t *testing.T) {
 	launch, err := parsePromptModeInvocation([]string{"detect", "-p"})
 	if err != nil {
 		t.Fatalf("parsePromptModeInvocation(detect -p) error = %v", err)

@@ -465,7 +465,7 @@ func normalizeExplicitTUITarget(raw string) (string, bool) {
 
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
-	rootCmd.PersistentFlags().Bool("prompt-mode", false, "launch interactive prompt mode")
+	rootCmd.Flags().Bool("prompt-mode", false, "launch interactive prompt mode")
 	rootCmd.PersistentFlags().StringP("tui", "t", "", fmt.Sprintf("launch interactive terminal UI; optional target: %s", strings.Join(canonicalTUITargets, "|")))
 	if tuiFlag := rootCmd.PersistentFlags().Lookup("tui"); tuiFlag != nil {
 		tuiFlag.NoOptDefVal = "agents"
