@@ -434,16 +434,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 			continue
 		}
 		seenPromptSessions[s.ID] = struct{}{}
-		importedPromptSessions = append(importedPromptSessions, s)
-	}
-	if len(importedPromptSessions) > agent.PromptSessionRetentionLimit {
-		sort.SliceStable(importedPromptSessions, func(i, j int) bool {
-			return promptSessionTimestamp(importedPromptSessions[i]).Before(promptSessionTimestamp(importedPromptSessions[j]))
-		})
-		start := len(importedPromptSessions) - agent.PromptSessionRetentionLimit
-		capped := make([]agent.PromptSession, agent.PromptSessionRetentionLimit)
-		copy(capped, importedPromptSessions[start:])
-		importedPromptSessions = capped
+		importedPromptSessions = appendNewestPromptSessions(importedPromptSessions, s, agent.PromptSessionRetentionLimit)
 	}
 	for _, s := range importedPromptSessions {
 		v.shared.PromptSessions = append(v.shared.PromptSessions, sanitizeImportedPromptSession(s))
@@ -560,6 +551,21 @@ func isPromptSessionIDOverlong(value string) bool {
 		}
 	}
 	return false
+}
+
+func appendNewestPromptSessions(sessions []agent.PromptSession, incoming agent.PromptSession, limit int) []agent.PromptSession {
+	if limit <= 0 {
+		return sessions[:0]
+	}
+	sessions = append(sessions, incoming)
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return promptSessionTimestamp(sessions[i]).Before(promptSessionTimestamp(sessions[j]))
+	})
+	if len(sessions) <= limit {
+		return sessions
+	}
+	copy(sessions, sessions[len(sessions)-limit:])
+	return sessions[:limit]
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {

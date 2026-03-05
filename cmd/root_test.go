@@ -284,6 +284,19 @@ func TestParsePromptModeInvocation_FlagAfterDoubleDashIgnored(t *testing.T) {
 	}
 }
 
+func TestParsePromptModeInvocation_DoubleDashPayloadReturnsError(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p", "--", "something"})
+	if err == nil {
+		t.Fatalf("expected positional-argument error after --")
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+	if !strings.Contains(err.Error(), "does not accept positional arguments after --") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParsePromptModeInvocation_UnknownFlagErrors(t *testing.T) {
 	_, err := parsePromptModeInvocation([]string{"-p", "--bogus"})
 	if err == nil {

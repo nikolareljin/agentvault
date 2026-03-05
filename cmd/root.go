@@ -312,6 +312,9 @@ func parsePromptModeInvocation(args []string) (bool, error) {
 	if !flagSeen {
 		return false, nil
 	}
+	if idx := doubleDashIndex(args); idx >= 0 && idx+1 < len(args) {
+		return false, fmt.Errorf("prompt mode does not accept positional arguments after --")
+	}
 	if firstCmdIdx >= 0 {
 		return false, fmt.Errorf("prompt mode flag must be used without a command")
 	}
@@ -421,6 +424,15 @@ func firstCommandIndex(args []string) int {
 			continue
 		}
 		return i
+	}
+	return -1
+}
+
+func doubleDashIndex(args []string) int {
+	for i, arg := range args {
+		if arg == "--" {
+			return i
+		}
 	}
 	return -1
 }
