@@ -160,3 +160,28 @@ func TestAppendPromptSessionEntryWithCap_EnforcesInMemoryLimit(t *testing.T) {
 		t.Fatalf("oldest kept prompt = %q, want p-10", session.Entries[0].Prompt)
 	}
 }
+
+func TestGeneratePromptModeSessionID_SkipsEmptyAndDuplicate(t *testing.T) {
+	originalGenerator := promptModeSessionIDGenerator
+	t.Cleanup(func() {
+		promptModeSessionIDGenerator = originalGenerator
+	})
+
+	sequence := []string{"", "dup", "fresh"}
+	var i int
+	promptModeSessionIDGenerator = func() string {
+		if i >= len(sequence) {
+			return "fresh"
+		}
+		value := sequence[i]
+		i++
+		return value
+	}
+
+	id := generatePromptModeSessionID([]agent.PromptSession{
+		{ID: "prompt-session-dup"},
+	})
+	if id != "prompt-session-fresh" {
+		t.Fatalf("generatePromptModeSessionID() = %q, want prompt-session-fresh", id)
+	}
+}

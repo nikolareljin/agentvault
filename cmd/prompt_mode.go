@@ -18,9 +18,10 @@ const (
 )
 
 var (
-	promptModeInput  io.Reader = os.Stdin
-	promptModeOutput io.Writer = os.Stdout
-	promptModeErr    io.Writer = os.Stderr
+	promptModeInput              io.Reader = os.Stdin
+	promptModeOutput             io.Writer = os.Stdout
+	promptModeErr                io.Writer = os.Stderr
+	promptModeSessionIDGenerator           = agent.GenerateSessionID
 )
 
 func runPromptMode() error {
@@ -50,7 +51,7 @@ func runPromptMode() error {
 	}
 
 	session := agent.PromptSession{
-		ID:        fmt.Sprintf("prompt-session-%s", agent.GenerateSessionID()),
+		ID:        generatePromptModeSessionID(v.SharedConfig().PromptSessions),
 		AgentName: selected.Name,
 		Provider:  string(selected.Provider),
 		Model:     selected.Model,
@@ -129,6 +130,28 @@ func appendPromptSessionEntryWithCap(session *agent.PromptSession, entry agent.P
 	session.Entries = append(session.Entries, entry)
 	if len(session.Entries) > maxEntriesPerPromptSession {
 		session.Entries = session.Entries[len(session.Entries)-maxEntriesPerPromptSession:]
+	}
+}
+
+func generatePromptModeSessionID(existing []agent.PromptSession) string {
+	seen := make(map[string]struct{}, len(existing))
+	for _, session := range existing {
+		if session.ID == "" {
+			continue
+		}
+		seen[session.ID] = struct{}{}
+	}
+
+	for {
+		baseID := strings.TrimSpace(promptModeSessionIDGenerator())
+		if baseID == "" {
+			continue
+		}
+		candidate := fmt.Sprintf("prompt-session-%s", baseID)
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		return candidate
 	}
 }
 
