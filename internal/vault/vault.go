@@ -423,9 +423,12 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	}
 	importedPromptSessions := make([]agent.PromptSession, 0, len(vd.Shared.PromptSessions))
 	for _, s := range vd.Shared.PromptSessions {
-		s.ID = truncatePromptImportField(s.ID)
-		if s.ID == "" {
+		trimmedOriginalID := strings.TrimSpace(s.ID)
+		normalizedID := truncatePromptImportField(s.ID)
+		if normalizedID == "" || isPromptSessionIDOverlong(trimmedOriginalID) {
 			s.ID = generateUniquePromptSessionID(seenPromptSessions)
+		} else {
+			s.ID = normalizedID
 		}
 		if _, ok := seenPromptSessions[s.ID]; ok {
 			continue
@@ -543,6 +546,20 @@ func sanitizeImportedPromptSession(session agent.PromptSession) agent.PromptSess
 func truncatePromptImportField(value string) string {
 	trimmed := strings.TrimSpace(value)
 	return textutil.TruncateRunesWithEllipsis(trimmed, agent.PromptTranscriptFieldMaxRunes)
+}
+
+func isPromptSessionIDOverlong(value string) bool {
+	if value == "" {
+		return false
+	}
+	runes := 0
+	for range value {
+		runes++
+		if runes > agent.PromptTranscriptFieldMaxRunes {
+			return true
+		}
+	}
+	return false
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {
