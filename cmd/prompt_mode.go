@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -255,11 +256,24 @@ func persistPromptSession(store promptSessionStore, session agent.PromptSession)
 	}
 	sc := store.SharedConfig()
 	sc.PromptSessions = append(sc.PromptSessions, session)
+	sort.SliceStable(sc.PromptSessions, func(i, j int) bool {
+		return promptSessionRecencyTimestamp(sc.PromptSessions[i]).Before(promptSessionRecencyTimestamp(sc.PromptSessions[j]))
+	})
 	if len(sc.PromptSessions) > maxStoredPromptSessions {
 		// Keep only the most recent sessions to avoid unbounded vault growth.
 		sc.PromptSessions = sc.PromptSessions[len(sc.PromptSessions)-maxStoredPromptSessions:]
 	}
 	return store.SetSharedConfig(sc)
+}
+
+func promptSessionRecencyTimestamp(session agent.PromptSession) time.Time {
+	if !session.EndedAt.IsZero() {
+		return session.EndedAt
+	}
+	if !session.StartedAt.IsZero() {
+		return session.StartedAt
+	}
+	return time.Time{}
 }
 
 func truncatePromptFieldForVault(s string) string {
