@@ -677,11 +677,54 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 	if len([]rune(session.Model)) != agent.PromptTranscriptFieldMaxRunes {
 		t.Fatalf("session model rune len = %d, want %d", len([]rune(session.Model)), agent.PromptTranscriptFieldMaxRunes)
 	}
-	if len([]rune(session.ID)) != agent.PromptTranscriptFieldMaxRunes {
-		t.Fatalf("session id rune len = %d, want %d", len([]rune(session.ID)), agent.PromptTranscriptFieldMaxRunes)
+	if session.ID == "" {
+		t.Fatalf("session id should be regenerated for overlong imported IDs")
 	}
-	if strings.TrimSpace(session.ID) != session.ID {
-		t.Fatalf("session id should be trimmed, got %q", session.ID)
+	if len([]rune(session.ID)) > agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session id rune len = %d, should be <= %d", len([]rune(session.ID)), agent.PromptTranscriptFieldMaxRunes)
+	}
+}
+
+func TestImportDataOverlongPromptSessionIDsDoNotCollideByTruncation(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	prefix := strings.Repeat("a", agent.PromptTranscriptFieldMaxRunes)
+	idA := prefix + "-left"
+	idB := prefix + "-right"
+	if idA == idB {
+		t.Fatal("test setup must use distinct IDs")
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{ID: idA, AgentName: "claude"},
+				{ID: idB, AgentName: "claude"},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 2 {
+		t.Fatalf("prompt sessions len = %d, want 2", len(shared.PromptSessions))
+	}
+	if shared.PromptSessions[0].ID == shared.PromptSessions[1].ID {
+		t.Fatalf("generated prompt session IDs should be unique, got duplicate %q", shared.PromptSessions[0].ID)
 	}
 }
 

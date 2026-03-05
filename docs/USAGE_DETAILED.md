@@ -165,7 +165,7 @@ Enter interactive prompt mode immediately.
 Behavior:
 - Prompts for agent selection (unless only one agent exists).
 - Supports submit (`Enter`), cancel (`/cancel`), and exit (`/exit`, `quit`, `:q`).
-- Writes each execution to `~/.config/agentvault/prompt-history.jsonl`.
+- Can optionally log each execution to `~/.config/agentvault/prompt-history.jsonl` when history logging is enabled.
 - Can optionally persist transcript/session metadata in encrypted vault state on exit.
 
 ### `agentvault status`
