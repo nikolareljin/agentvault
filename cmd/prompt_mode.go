@@ -252,7 +252,10 @@ type promptSessionStore interface {
 func persistPromptSession(store promptSessionStore, session agent.PromptSession) error {
 	if len(session.Entries) > maxEntriesPerPromptSession {
 		// Cap entries per session to keep encrypted vault growth predictable.
-		session.Entries = session.Entries[len(session.Entries)-maxEntriesPerPromptSession:]
+		start := len(session.Entries) - maxEntriesPerPromptSession
+		capped := make([]agent.PromptTranscriptEntry, maxEntriesPerPromptSession)
+		copy(capped, session.Entries[start:])
+		session.Entries = capped
 	}
 	sc := store.SharedConfig()
 	sc.PromptSessions = append(sc.PromptSessions, session)
@@ -261,7 +264,10 @@ func persistPromptSession(store promptSessionStore, session agent.PromptSession)
 	})
 	if len(sc.PromptSessions) > maxStoredPromptSessions {
 		// Keep only the most recent sessions to avoid unbounded vault growth.
-		sc.PromptSessions = sc.PromptSessions[len(sc.PromptSessions)-maxStoredPromptSessions:]
+		start := len(sc.PromptSessions) - maxStoredPromptSessions
+		capped := make([]agent.PromptSession, maxStoredPromptSessions)
+		copy(capped, sc.PromptSessions[start:])
+		sc.PromptSessions = capped
 	}
 	return store.SetSharedConfig(sc)
 }
