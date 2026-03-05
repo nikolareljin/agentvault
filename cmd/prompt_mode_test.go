@@ -53,6 +53,59 @@ func TestPersistPromptSession_EnforcesRetentionLimit(t *testing.T) {
 	}
 }
 
+func TestPersistPromptSession_EnforcesRetentionByRecency(t *testing.T) {
+	base := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	sessions := make([]agent.PromptSession, 0, maxStoredPromptSessions)
+	// Intentionally place a very recent session first to simulate out-of-order imports.
+	sessions = append(sessions, agent.PromptSession{
+		ID:        fmt.Sprintf("session-%d", maxStoredPromptSessions),
+		AgentName: "codex",
+		StartedAt: base.Add(time.Duration(maxStoredPromptSessions) * time.Minute),
+		EndedAt:   base.Add(time.Duration(maxStoredPromptSessions) * time.Minute),
+	})
+	for i := 1; i < maxStoredPromptSessions; i++ {
+		sessions = append(sessions, agent.PromptSession{
+			ID:        fmt.Sprintf("session-%d", i),
+			AgentName: "codex",
+			StartedAt: base.Add(time.Duration(i) * time.Minute),
+			EndedAt:   base.Add(time.Duration(i) * time.Minute),
+		})
+	}
+	store := &testPromptSessionStore{
+		shared: agent.SharedConfig{
+			PromptSessions: sessions,
+		},
+	}
+
+	newestID := fmt.Sprintf("session-%d", maxStoredPromptSessions+1)
+	if err := persistPromptSession(store, agent.PromptSession{
+		ID:        newestID,
+		AgentName: "codex",
+		StartedAt: base.Add(time.Duration(maxStoredPromptSessions+1) * time.Minute),
+		EndedAt:   base.Add(time.Duration(maxStoredPromptSessions+1) * time.Minute),
+	}); err != nil {
+		t.Fatalf("persistPromptSession() error = %v", err)
+	}
+
+	if len(store.shared.PromptSessions) != maxStoredPromptSessions {
+		t.Fatalf("len(PromptSessions) = %d, want %d", len(store.shared.PromptSessions), maxStoredPromptSessions)
+	}
+
+	kept := make(map[string]struct{}, len(store.shared.PromptSessions))
+	for _, s := range store.shared.PromptSessions {
+		kept[s.ID] = struct{}{}
+	}
+	if _, ok := kept["session-1"]; ok {
+		t.Fatalf("session-1 should be evicted as the oldest session")
+	}
+	if _, ok := kept[fmt.Sprintf("session-%d", maxStoredPromptSessions)]; !ok {
+		t.Fatalf("most recent pre-existing session should be retained")
+	}
+	if _, ok := kept[newestID]; !ok {
+		t.Fatalf("newly appended most-recent session should be retained")
+	}
+}
+
 func TestToPromptTranscriptEntry_MapsFields(t *testing.T) {
 	ts := time.Now().UTC()
 	record := PromptRecord{
