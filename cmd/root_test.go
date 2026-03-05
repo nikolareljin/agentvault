@@ -201,10 +201,30 @@ func TestParsePromptModeInvocation_LongFlagEqualsTrue(t *testing.T) {
 	}
 }
 
+func TestParsePromptModeInvocation_ShortFlagEqualsTrue(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p=true"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p=true) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
 func TestParsePromptModeInvocation_LongFlagEqualsFalseDoesNotLaunch(t *testing.T) {
 	launch, err := parsePromptModeInvocation([]string{"--prompt-mode=false"})
 	if err != nil {
 		t.Fatalf("parsePromptModeInvocation(--prompt-mode=false) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_ShortFlagEqualsFalseDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p=false"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p=false) error = %v", err)
 	}
 	if launch {
 		t.Fatalf("launch = true, want false")
@@ -274,6 +294,16 @@ func TestParsePromptModeInvocation_InvalidBooleanValueErrors(t *testing.T) {
 	}
 }
 
+func TestParsePromptModeInvocation_InvalidShortBooleanValueErrors(t *testing.T) {
+	_, err := parsePromptModeInvocation([]string{"-p=maybe"})
+	if err == nil {
+		t.Fatalf("expected invalid boolean error")
+	}
+	if !strings.Contains(err.Error(), "invalid boolean value for -p") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParsePromptModeInvocation_AllowsConfigFlag(t *testing.T) {
 	launch, err := parsePromptModeInvocation([]string{"-p", "--config", "/tmp/agentvault"})
 	if err != nil {
@@ -315,6 +345,13 @@ func TestStripPromptModeFlags_PreservesArgsAfterDoubleDash(t *testing.T) {
 
 func TestStripPromptModeFlags_RemovesExplicitFalseToken(t *testing.T) {
 	got := stripPromptModeFlags([]string{"--config", "/tmp/cfg", "--prompt-mode=false"})
+	if strings.Join(got, " ") != "--config /tmp/cfg" {
+		t.Fatalf("stripPromptModeFlags() = %q", got)
+	}
+}
+
+func TestStripPromptModeFlags_RemovesShortExplicitFalseToken(t *testing.T) {
+	got := stripPromptModeFlags([]string{"--config", "/tmp/cfg", "-p=false"})
 	if strings.Join(got, " ") != "--config /tmp/cfg" {
 		t.Fatalf("stripPromptModeFlags() = %q", got)
 	}
