@@ -221,10 +221,30 @@ func TestParsePromptModeInvocation_LongFlagEqualsFalseDoesNotLaunch(t *testing.T
 	}
 }
 
+func TestParsePromptModeInvocation_LongFlagSpaceFalseDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"--prompt-mode", "false"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(--prompt-mode false) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
 func TestParsePromptModeInvocation_ShortFlagEqualsFalseDoesNotLaunch(t *testing.T) {
 	launch, err := parsePromptModeInvocation([]string{"-p=false"})
 	if err != nil {
 		t.Fatalf("parsePromptModeInvocation(-p=false) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_ShortFlagSpaceFalseDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p", "false"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p false) error = %v", err)
 	}
 	if launch {
 		t.Fatalf("launch = true, want false")
@@ -353,6 +373,13 @@ func TestStripPromptModeFlags_RemovesExplicitFalseToken(t *testing.T) {
 func TestStripPromptModeFlags_RemovesShortExplicitFalseToken(t *testing.T) {
 	got := stripPromptModeFlags([]string{"--config", "/tmp/cfg", "-p=false"})
 	if strings.Join(got, " ") != "--config /tmp/cfg" {
+		t.Fatalf("stripPromptModeFlags() = %q", got)
+	}
+}
+
+func TestStripPromptModeFlags_RemovesSpaceSeparatedBooleanToken(t *testing.T) {
+	got := stripPromptModeFlags([]string{"--config", "/tmp/cfg", "--prompt-mode", "false", "--help"})
+	if strings.Join(got, " ") != "--config /tmp/cfg --help" {
 		t.Fatalf("stripPromptModeFlags() = %q", got)
 	}
 }
