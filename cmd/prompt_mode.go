@@ -50,6 +50,10 @@ func runPromptMode() error {
 	if err != nil {
 		return err
 	}
+	logHistory, err := shouldLogPromptModeHistory(reader)
+	if err != nil {
+		return err
+	}
 
 	session := agent.PromptSession{
 		ID:        generatePromptModeSessionID(v.SharedConfig().PromptSessions),
@@ -86,8 +90,10 @@ func runPromptMode() error {
 		record, response, execErr := executePromptInteraction(selected, v.SharedConfig(), input, 5*time.Minute)
 		appendPromptSessionEntryWithCap(&session, toPromptTranscriptEntry(record))
 
-		if err := appendPromptRecord(historyPath, record); err != nil {
-			fmt.Fprintf(promptModeErr, "warning: could not write prompt history: %v\n", err)
+		if logHistory {
+			if err := appendPromptRecord(historyPath, record); err != nil {
+				fmt.Fprintf(promptModeErr, "warning: could not write prompt history: %v\n", err)
+			}
 		}
 
 		if execErr != nil {
@@ -192,6 +198,10 @@ func askYesNo(reader *bufio.Reader, prompt string) (bool, error) {
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes", nil
+}
+
+func shouldLogPromptModeHistory(reader *bufio.Reader) (bool, error) {
+	return askYesNo(reader, "Write plaintext prompt history to disk (equivalent to prompt command logging)? [y/N]: ")
 }
 
 func executePromptInteraction(a agent.Agent, shared agent.SharedConfig, text string, timeout time.Duration) (PromptRecord, string, error) {

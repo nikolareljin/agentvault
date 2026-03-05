@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -236,5 +238,41 @@ func TestGeneratePromptModeSessionID_SkipsEmptyAndDuplicate(t *testing.T) {
 	})
 	if id != "prompt-session-fresh" {
 		t.Fatalf("generatePromptModeSessionID() = %q, want prompt-session-fresh", id)
+	}
+}
+
+func TestShouldLogPromptModeHistory_DefaultNo(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("\n"))
+	var out bytes.Buffer
+	originalOut := promptModeOutput
+	promptModeOutput = &out
+	t.Cleanup(func() {
+		promptModeOutput = originalOut
+	})
+
+	logHistory, err := shouldLogPromptModeHistory(reader)
+	if err != nil {
+		t.Fatalf("shouldLogPromptModeHistory() error = %v", err)
+	}
+	if logHistory {
+		t.Fatalf("logHistory = true, want false")
+	}
+}
+
+func TestShouldLogPromptModeHistory_Yes(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("yes\n"))
+	var out bytes.Buffer
+	originalOut := promptModeOutput
+	promptModeOutput = &out
+	t.Cleanup(func() {
+		promptModeOutput = originalOut
+	})
+
+	logHistory, err := shouldLogPromptModeHistory(reader)
+	if err != nil {
+		t.Fatalf("shouldLogPromptModeHistory() error = %v", err)
+	}
+	if !logHistory {
+		t.Fatalf("logHistory = false, want true")
 	}
 }
