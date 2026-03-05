@@ -183,7 +183,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println(result.Response)
-	if usage := optionalTokenUsage(result.Usage); usage != nil {
+	if usage := record.TokenUsage; usage != nil {
 		fmt.Fprintf(os.Stderr, "tokens used: input=%d output=%d total=%d\n",
 			usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
 	}
