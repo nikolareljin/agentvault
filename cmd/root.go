@@ -298,10 +298,15 @@ func parsePromptModeInvocation(args []string) (bool, error) {
 		if arg == "--" {
 			break
 		}
-		if matched, enabled, err := parsePromptModeToken(arg); err != nil {
+		matched, enabled, consumedNext, err := consumePromptModeFlag(args, i)
+		if err != nil {
 			return false, err
-		} else if matched && enabled {
+		}
+		if matched && enabled {
 			flagSeen = true
+		}
+		if consumedNext {
+			i++
 		}
 	}
 	if !flagSeen {
@@ -324,8 +329,12 @@ func validatePromptModeArgs(args []string) error {
 		}
 		switch {
 		case isPromptModeToken(arg):
-			if _, _, err := parsePromptModeToken(arg); err != nil {
+			_, _, consumedNext, err := consumePromptModeFlag(args, i)
+			if err != nil {
 				return err
+			}
+			if consumedNext {
+				i++
 			}
 			continue
 		case arg == "--config" || strings.HasPrefix(arg, "--config="):
@@ -357,7 +366,8 @@ func stripPromptModeFlags(args []string) []string {
 
 	out := make([]string, 0, len(args))
 	afterDoubleDash := false
-	for i, arg := range args {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--" {
 			afterDoubleDash = true
 			out = append(out, arg)
@@ -367,7 +377,10 @@ func stripPromptModeFlags(args []string) []string {
 			out = append(out, arg)
 			continue
 		}
-		if isPromptModeToken(arg) {
+		if matched, _, consumedNext, _ := consumePromptModeFlag(args, i); matched {
+			if consumedNext {
+				i++
+			}
 			continue
 		}
 		out = append(out, arg)
@@ -399,6 +412,9 @@ func firstCommandIndex(args []string) int {
 		}
 		if strings.HasPrefix(arg, "-") {
 			if consumed, _, _ := consumeConfigFlag(args, i); consumed && arg == "--config" {
+				skipNext = true
+			}
+			if matched, _, consumedNext, _ := consumePromptModeFlag(args, i); matched && consumedNext {
 				skipNext = true
 			}
 			// Skip the next token only when bare --tui/-t actually consumed a canonical target.
@@ -461,6 +477,23 @@ func parsePromptModeToken(arg string) (matched bool, enabled bool, err error) {
 	default:
 		return false, false, nil
 	}
+}
+
+func consumePromptModeFlag(args []string, i int) (matched bool, enabled bool, consumedNext bool, err error) {
+	arg := args[i]
+	matched, enabled, err = parsePromptModeToken(arg)
+	if err != nil || !matched {
+		return matched, enabled, false, err
+	}
+	if (arg == "-p" || arg == "--prompt-mode") && i+1 < len(args) {
+		next := strings.TrimSpace(args[i+1])
+		if next != "" && !strings.HasPrefix(next, "-") {
+			if nextBool, parseErr := strconv.ParseBool(next); parseErr == nil {
+				return true, nextBool, true, nil
+			}
+		}
+	}
+	return true, enabled, false, nil
 }
 
 func normalizeTUITarget(raw string) (string, bool) {
