@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/spf13/cobra"
 )
 
@@ -470,7 +471,7 @@ func appendPromptRecord(path string, rec PromptRecord) error {
 
 func truncateForHistory(s string) string {
 	trimmed := strings.TrimSpace(s)
-	return truncateRunesWithEllipsis(trimmed, 500)
+	return textutil.TruncateRunesWithEllipsis(trimmed, 500)
 }
 
 func optimizePromptForAgent(original string, a agent.Agent, shared agent.SharedConfig, requestedProfile string) (string, string) {

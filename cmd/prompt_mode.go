@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 const (
@@ -294,5 +295,5 @@ func promptSessionRecencyTimestamp(session agent.PromptSession) time.Time {
 
 func truncatePromptFieldForVault(s string) string {
 	trimmed := strings.TrimSpace(s)
-	return truncateRunesWithEllipsis(trimmed, maxStoredPromptFieldLenInVault)
+	return textutil.TruncateRunesWithEllipsis(trimmed, maxStoredPromptFieldLenInVault)
 }

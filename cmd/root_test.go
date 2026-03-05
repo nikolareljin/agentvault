@@ -397,13 +397,10 @@ func TestApplyEarlyPersistentFlags_StopsAtDoubleDash(t *testing.T) {
 	}
 }
 
-func TestFirstCommandToken_UsesPositionalAfterDoubleDash(t *testing.T) {
+func TestFirstCommandToken_IgnoresTokensAfterDoubleDash(t *testing.T) {
 	token, ok := firstCommandToken([]string{"--config", "/tmp/custom", "--", "-t"})
-	if !ok {
-		t.Fatalf("expected token after --")
-	}
-	if token != "-t" {
-		t.Fatalf("token = %q, want -t", token)
+	if ok {
+		t.Fatalf("expected no command token, got %q", token)
 	}
 }
 
