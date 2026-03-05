@@ -434,13 +434,23 @@ func consumeConfigFlag(args []string, i int) (consumed bool, value string, err e
 }
 
 func isPromptModeToken(arg string) bool {
-	return arg == "-p" || arg == "--prompt-mode" || strings.HasPrefix(arg, "--prompt-mode=")
+	return arg == "-p" ||
+		arg == "--prompt-mode" ||
+		strings.HasPrefix(arg, "--prompt-mode=") ||
+		strings.HasPrefix(arg, "-p=")
 }
 
 func parsePromptModeToken(arg string) (matched bool, enabled bool, err error) {
 	switch {
 	case arg == "-p" || arg == "--prompt-mode":
 		return true, true, nil
+	case strings.HasPrefix(arg, "-p="):
+		raw := strings.TrimSpace(strings.TrimPrefix(arg, "-p="))
+		value, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			return false, false, fmt.Errorf("invalid boolean value for -p: %q", raw)
+		}
+		return true, value, nil
 	case strings.HasPrefix(arg, "--prompt-mode="):
 		raw := strings.TrimSpace(strings.TrimPrefix(arg, "--prompt-mode="))
 		value, parseErr := strconv.ParseBool(raw)
