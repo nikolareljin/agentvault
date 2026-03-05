@@ -294,9 +294,5 @@ func promptSessionRecencyTimestamp(session agent.PromptSession) time.Time {
 
 func truncatePromptFieldForVault(s string) string {
 	trimmed := strings.TrimSpace(s)
-	runes := []rune(trimmed)
-	if len(runes) <= maxStoredPromptFieldLenInVault {
-		return trimmed
-	}
-	return string(runes[:maxStoredPromptFieldLenInVault-3]) + "..."
+	return truncateRunesWithEllipsis(trimmed, maxStoredPromptFieldLenInVault)
 }

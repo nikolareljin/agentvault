@@ -540,11 +540,7 @@ func sanitizeImportedPromptSession(session agent.PromptSession) agent.PromptSess
 
 func truncatePromptImportField(value string) string {
 	trimmed := strings.TrimSpace(value)
-	runes := []rune(trimmed)
-	if len(runes) <= agent.PromptTranscriptFieldMaxRunes {
-		return trimmed
-	}
-	return string(runes[:agent.PromptTranscriptFieldMaxRunes-3]) + "..."
+	return truncateRunesWithEllipsis(trimmed, agent.PromptTranscriptFieldMaxRunes)
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {
