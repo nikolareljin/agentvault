@@ -397,18 +397,13 @@ func firstCommandToken(args []string) (string, bool) {
 
 func firstCommandIndex(args []string) int {
 	skipNext := false
-	afterDoubleDash := false
 	for i, arg := range args {
 		if skipNext {
 			skipNext = false
 			continue
 		}
 		if arg == "--" {
-			afterDoubleDash = true
-			continue
-		}
-		if afterDoubleDash {
-			return i
+			break
 		}
 		if strings.HasPrefix(arg, "-") {
 			if consumed, _, _ := consumeConfigFlag(args, i); consumed && arg == "--config" {

@@ -1,11 +1,13 @@
-package cmd
+package textutil
 
-func truncateRunesWithEllipsis(s string, maxRunes int) string {
+// TruncateRunesWithEllipsis truncates s to maxRunes runes and appends "..."
+// when truncation is required and maxRunes allows it.
+func TruncateRunesWithEllipsis(s string, maxRunes int) string {
 	if maxRunes <= 0 || len(s) == 0 {
 		return ""
 	}
 	if maxRunes <= 3 {
-		return truncateRunes(s, maxRunes)
+		return TruncateRunes(s, maxRunes)
 	}
 
 	keepRunes := maxRunes - 3
@@ -24,7 +26,8 @@ func truncateRunesWithEllipsis(s string, maxRunes int) string {
 	return s
 }
 
-func truncateRunes(s string, maxRunes int) string {
+// TruncateRunes truncates s to at most maxRunes runes.
+func TruncateRunes(s string, maxRunes int) string {
 	if maxRunes <= 0 || len(s) == 0 {
 		return ""
 	}

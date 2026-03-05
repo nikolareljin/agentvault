@@ -29,6 +29,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 // vaultData is the JSON structure persisted inside the encrypted file.
@@ -414,10 +415,11 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	// merge prompt sessions (don't overwrite existing by ID)
 	seenPromptSessions := make(map[string]struct{})
 	for _, s := range v.shared.PromptSessions {
-		if s.ID == "" {
+		normalizedID := truncatePromptImportField(s.ID)
+		if normalizedID == "" {
 			continue
 		}
-		seenPromptSessions[s.ID] = struct{}{}
+		seenPromptSessions[normalizedID] = struct{}{}
 	}
 	importedPromptSessions := make([]agent.PromptSession, 0, len(vd.Shared.PromptSessions))
 	for _, s := range vd.Shared.PromptSessions {
@@ -540,7 +542,7 @@ func sanitizeImportedPromptSession(session agent.PromptSession) agent.PromptSess
 
 func truncatePromptImportField(value string) string {
 	trimmed := strings.TrimSpace(value)
-	return truncateRunesWithEllipsis(trimmed, agent.PromptTranscriptFieldMaxRunes)
+	return textutil.TruncateRunesWithEllipsis(trimmed, agent.PromptTranscriptFieldMaxRunes)
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {
