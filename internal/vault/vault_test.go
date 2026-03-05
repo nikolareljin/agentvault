@@ -586,7 +586,7 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 		Shared: agent.SharedConfig{
 			PromptSessions: []agent.PromptSession{
 				{
-					ID:        "imported-session",
+					ID:        "  " + long + "  ",
 					Name:      long,
 					AgentName: long,
 					Provider:  long,
@@ -636,6 +636,12 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 	}
 	if len([]rune(session.Model)) != agent.PromptTranscriptFieldMaxRunes {
 		t.Fatalf("session model rune len = %d, want %d", len([]rune(session.Model)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(session.ID)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session id rune len = %d, want %d", len([]rune(session.ID)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if strings.TrimSpace(session.ID) != session.ID {
+		t.Fatalf("session id should be trimmed, got %q", session.ID)
 	}
 }
 

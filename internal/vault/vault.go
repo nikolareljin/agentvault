@@ -421,6 +421,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	}
 	importedPromptSessions := make([]agent.PromptSession, 0, len(vd.Shared.PromptSessions))
 	for _, s := range vd.Shared.PromptSessions {
+		s.ID = truncatePromptImportField(s.ID)
 		if s.ID == "" {
 			s.ID = generateUniquePromptSessionID(seenPromptSessions)
 		}
