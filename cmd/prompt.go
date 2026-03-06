@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/envutil"
 	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/spf13/cobra"
 )
@@ -331,7 +332,7 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, "codex", args...)
-	cmd.Env = setEnvValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
+	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -418,7 +419,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, "claude", args...)
-	cmd.Env = setEnvValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
+	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -457,21 +458,6 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	}
 
 	return promptResult{Response: strings.TrimSpace(response), Usage: usage}, nil
-}
-
-func setEnvValueWithPrecedence(baseEnv []string, key string, value string) []string {
-	prefix := key + "="
-	out := make([]string, 0, len(baseEnv)+1)
-	for _, entry := range baseEnv {
-		if strings.HasPrefix(entry, prefix) {
-			continue
-		}
-		out = append(out, entry)
-	}
-	if value != "" {
-		out = append(out, prefix+value)
-	}
-	return out
 }
 
 func appendPromptRecord(path string, rec PromptRecord) error {
