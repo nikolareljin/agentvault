@@ -78,6 +78,8 @@
 ### Fixed
 - Code formatting issues resolved with gofmt
 - Test files updated for new view mode names
+- Prompt runtime configuration precedence now consistently prefers local vault values over environment variables, with environment and default fallbacks applied explicitly.
+- TUI agent detail now shows effective value sources (`local`, `env`, `default`) for prompt-related model/API key/base URL fields.
 
 ---
 
