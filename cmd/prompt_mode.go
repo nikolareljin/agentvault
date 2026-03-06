@@ -144,10 +144,11 @@ func appendPromptSessionEntryWithCap(session *agent.PromptSession, entry agent.P
 func generatePromptModeSessionID(existing []agent.PromptSession) string {
 	seen := make(map[string]struct{}, len(existing))
 	for _, session := range existing {
-		if session.ID == "" {
+		id := strings.TrimSpace(session.ID)
+		if id == "" {
 			continue
 		}
-		seen[session.ID] = struct{}{}
+		seen[id] = struct{}{}
 	}
 
 	for {

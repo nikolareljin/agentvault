@@ -152,6 +152,9 @@ const PromptSessionEntryLimit = 200
 // PromptTranscriptFieldMaxRunes caps stored transcript field size (runes).
 const PromptTranscriptFieldMaxRunes = 4000
 
+// PromptSessionIDMaxRunes caps imported/stored prompt session identifier size.
+const PromptSessionIDMaxRunes = 128
+
 // WellKnownInstructions maps common names to their conventional filenames.
 // These are the instruction files that each AI agent reads from a project root.
 // The sync command generates these files from unified rules, ensuring all

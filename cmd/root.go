@@ -310,6 +310,9 @@ func parsePromptModeInvocation(args []string) (bool, error) {
 		}
 	}
 	if !flagSeen {
+		if firstCmdIdx >= 0 && hasPromptModeFlagAfterCommand(args, firstCmdIdx) {
+			return false, fmt.Errorf("prompt mode flag must be used without a command")
+		}
 		return false, nil
 	}
 	if idx := doubleDashIndex(args); idx >= 0 && idx+1 < len(args) {
@@ -389,6 +392,41 @@ func stripPromptModeFlags(args []string) []string {
 		out = append(out, arg)
 	}
 	return out
+}
+
+func hasPromptModeFlagAfterCommand(args []string, firstCmdIdx int) bool {
+	if firstCmdIdx < 0 || firstCmdIdx >= len(args) {
+		return false
+	}
+	if commandAllowsProviderShorthand(args[firstCmdIdx]) {
+		return false
+	}
+	for i := firstCmdIdx + 1; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		matched, enabled, consumedNext, err := consumePromptModeFlag(args, i)
+		if err != nil || !matched {
+			continue
+		}
+		if consumedNext {
+			i++
+		}
+		if enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func commandAllowsProviderShorthand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "add", "edit":
+		return true
+	default:
+		return false
+	}
 }
 
 func firstCommandToken(args []string) (string, bool) {
