@@ -9,6 +9,8 @@
 - Prompt mode loop supports submit (`Enter`), cancel (`/cancel`), and exit (`/exit`, `quit`, `:q`) actions
 - Optional prompt transcript/session metadata persistence in encrypted vault state
 - Prompt transcript retention cap in vault state to avoid unbounded growth
+- `prompt --validate-only` to validate provider/backend connectivity without sending a prompt
+- Claude backend routing support (`anthropic`, `ollama`, `bedrock`) with backend-aware prompt execution
 
 #### HTTP API Server
 - `serve` command to start a lightweight HTTP server exposing the vault over a REST API
@@ -61,6 +63,7 @@
 - Help screen (press `?`)
 - Refresh functionality (press `r`)
 - Improved keyboard navigation and visual feedback
+- Claude backend field in agent detail and in-place backend switching (`b`) for Claude profiles
 
 #### Vault Enhancements
 - `ProviderConfigs` field for storing provider-specific settings

@@ -85,7 +85,7 @@ brew install nikolareljin/tap/agentvault
 | `init` | Initialize encrypted vault |
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
-| `prompt <name>` | Route prompts through AgentVault gateway with usage logging |
+| `prompt <name>` | Route prompts through AgentVault gateway with usage logging (`--validate-only` supported) |
 | `-p, --prompt-mode[=true\|false]` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
 | `status` | Show token usage and quota status (JSON for orchestration) |
 | `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
@@ -93,9 +93,9 @@ brew install nikolareljin/tap/agentvault
 ### Agent Management
 | Command | Description |
 |---------|-------------|
-| `add <name>` | Add new agent |
+| `add <name>` | Add new agent (supports Claude `--backend anthropic|ollama|bedrock`) |
 | `list` | List all agents |
-| `edit <name>` | Edit agent (supports `--role`, `--disable-rules`) |
+| `edit <name>` | Edit agent (supports `--role`, `--disable-rules`, `--backend`) |
 | `remove <name>` | Remove agent |
 | `run <name>` | Show effective configuration |
 

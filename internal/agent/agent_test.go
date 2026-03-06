@@ -31,6 +31,16 @@ func TestValidate(t *testing.T) {
 			agent:   Agent{Name: "test", Provider: "unknown"},
 			wantErr: true,
 		},
+		{
+			name:    "valid claude backend",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: ClaudeBackendOllama},
+			wantErr: false,
+		},
+		{
+			name:    "invalid claude backend",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: "invalid"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -40,6 +50,25 @@ func TestValidate(t *testing.T) {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestNormalizeClaudeBackend(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ClaudeBackendAnthropic},
+		{"anthropic", ClaudeBackendAnthropic},
+		{"ollama", ClaudeBackendOllama},
+		{"bedrock", ClaudeBackendBedrock},
+		{"  OLLAMA  ", ClaudeBackendOllama},
+		{"unknown", ClaudeBackendAnthropic},
+	}
+	for _, tt := range tests {
+		if got := NormalizeClaudeBackend(tt.in); got != tt.want {
+			t.Fatalf("NormalizeClaudeBackend(%q)=%q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 
