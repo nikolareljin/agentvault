@@ -22,16 +22,51 @@ jobs:
           script: |
             const sha = context.sha;
             const { owner, repo } = context.repo;
-            const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              owner, repo, commit_sha: sha,
-            });
-            const merged = prs.data.find(
-              (pr) => pr.merged_at && pr.base.ref === "main"
-            );
-            if (!merged) return;
-            const match = merged.head.ref.match(/^release\/(\d+\.\d+\.\d+(?:-rc\d+)?)$/);
-            if (!match) return;
-            const version = match[1];
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const releaseBranchPattern = /^release\/(\d+\.\d+\.\d+(?:-rc\d+)?)$/;
+            let version = null;
+
+            // GitHub can lag in associating PRs to freshly created merge commits on push.
+            for (let attempt = 1; attempt <= 5 && !version; attempt++) {
+              const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner,
+                repo,
+                commit_sha: sha,
+              });
+              const merged = prs.data.find(
+                (pr) =>
+                  pr.merged_at &&
+                  pr.base.ref === "main" &&
+                  pr.merge_commit_sha === sha &&
+                  releaseBranchPattern.test(pr.head.ref)
+              );
+              if (merged) {
+                version = merged.head.ref.match(releaseBranchPattern)[1];
+                break;
+              }
+              if (attempt < 5) {
+                core.info(`No matching merged release PR for ${sha} on attempt ${attempt}; retrying...`);
+                await sleep(2000);
+              }
+            }
+
+            if (!version) {
+              // Fallback: parse merge commit message format:
+              // "Merge pull request #123 from owner/release/X.Y.Z"
+              const commit = await github.rest.repos.getCommit({ owner, repo, ref: sha });
+              const message = commit.data?.commit?.message || "";
+              const mergeMessageMatch = message.match(/Merge pull request #\d+ from [^/\n]+\/release\/(\d+\.\d+\.\d+(?:-rc\d+)?)/);
+              if (mergeMessageMatch) {
+                version = mergeMessageMatch[1];
+                core.info(`Resolved release version ${version} from merge commit message fallback.`);
+              }
+            }
+
+            if (!version) {
+              core.info(`No release version detected for merge commit ${sha}; skipping tag creation.`);
+              return;
+            }
+
             try {
               await github.rest.git.getRef({ owner, repo, ref: `tags/${version}` });
               core.info(`Tag ${version} already exists`);
