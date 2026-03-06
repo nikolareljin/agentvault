@@ -38,6 +38,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/envutil"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/vault"
 )
@@ -2415,7 +2416,7 @@ func executeGatewayCodex(a agent.Agent, prompt string, timeout time.Duration) (s
 	args = append(args, prompt)
 
 	cmd := exec.Command("codex", args...)
-	cmd.Env = setEnvValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
+	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -2445,7 +2446,7 @@ func executeGatewayClaude(a agent.Agent, prompt string, timeout time.Duration) (
 	args = append(args, prompt)
 
 	cmd := exec.Command("claude", args...)
-	cmd.Env = setEnvValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
+	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -2494,21 +2495,6 @@ func runCommandWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {
 		}
 		return fmt.Errorf("timed out after %s", timeout)
 	}
-}
-
-func setEnvValueWithPrecedence(baseEnv []string, key string, value string) []string {
-	prefix := key + "="
-	out := make([]string, 0, len(baseEnv)+1)
-	for _, entry := range baseEnv {
-		if strings.HasPrefix(entry, prefix) {
-			continue
-		}
-		out = append(out, entry)
-	}
-	if value != "" {
-		out = append(out, prefix+value)
-	}
-	return out
 }
 
 func parseGatewayCodexUsage(raw string) gatewayUsage {
