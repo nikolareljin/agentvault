@@ -17,39 +17,30 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
-	"github.com/nikolareljin/agentvault/internal/config"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/spf13/cobra"
 )
 
-// PromptTokenUsage captures per-request token usage.
-type PromptTokenUsage struct {
-	InputTokens           int64 `json:"input_tokens,omitempty"`
-	CachedInputTokens     int64 `json:"cached_input_tokens,omitempty"`
-	OutputTokens          int64 `json:"output_tokens,omitempty"`
-	ReasoningOutputTokens int64 `json:"reasoning_output_tokens,omitempty"`
-	TotalTokens           int64 `json:"total_tokens,omitempty"`
-}
-
 // PromptRecord stores one agentvault prompt-through execution entry.
 type PromptRecord struct {
-	ID                  string           `json:"id"`
-	Timestamp           time.Time        `json:"timestamp"`
-	AgentName           string           `json:"agent_name"`
-	Provider            string           `json:"provider"`
-	Model               string           `json:"model,omitempty"`
-	Optimized           bool             `json:"optimized"`
-	OptimizationProfile string           `json:"optimization_profile,omitempty"`
-	OriginalPrompt      string           `json:"original_prompt"`
-	EffectivePrompt     string           `json:"effective_prompt"`
-	TokenUsage          PromptTokenUsage `json:"token_usage,omitempty"`
-	ResponsePreview     string           `json:"response_preview,omitempty"`
-	Success             bool             `json:"success"`
-	Error               string           `json:"error,omitempty"`
+	ID                  string                  `json:"id"`
+	Timestamp           time.Time               `json:"timestamp"`
+	AgentName           string                  `json:"agent_name"`
+	Provider            string                  `json:"provider"`
+	Model               string                  `json:"model,omitempty"`
+	Optimized           bool                    `json:"optimized"`
+	OptimizationProfile string                  `json:"optimization_profile,omitempty"`
+	OriginalPrompt      string                  `json:"original_prompt"`
+	EffectivePrompt     string                  `json:"effective_prompt"`
+	TokenUsage          *agent.PromptTokenUsage `json:"token_usage,omitempty"`
+	ResponsePreview     string                  `json:"response_preview,omitempty"`
+	Success             bool                    `json:"success"`
+	Error               string                  `json:"error,omitempty"`
 }
 
 type promptResult struct {
 	Response string
-	Usage    PromptTokenUsage
+	Usage    agent.PromptTokenUsage
 }
 
 var promptCmd = &cobra.Command{
@@ -155,7 +146,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		Success:             execErr == nil,
 	}
 	if execErr == nil {
-		record.TokenUsage = result.Usage
+		record.TokenUsage = optionalTokenUsage(result.Usage)
 		record.ResponsePreview = truncateForHistory(result.Response)
 	} else {
 		record.Error = execErr.Error()
@@ -164,7 +155,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	noLog, _ := cmd.Flags().GetBool("no-log")
 	historyPath, _ := cmd.Flags().GetString("history-file")
 	if historyPath == "" {
-		historyPath = filepath.Join(config.Dir(), "prompt-history.jsonl")
+		historyPath = resolvePromptHistoryPath()
 	}
 	if !noLog {
 		if err := appendPromptRecord(historyPath, record); err != nil {
@@ -192,11 +183,23 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println(result.Response)
-	if result.Usage.TotalTokens > 0 || result.Usage.InputTokens > 0 || result.Usage.OutputTokens > 0 {
+	if usage := record.TokenUsage; usage != nil {
 		fmt.Fprintf(os.Stderr, "tokens used: input=%d output=%d total=%d\n",
-			result.Usage.InputTokens, result.Usage.OutputTokens, result.Usage.TotalTokens)
+			usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
 	}
 	return nil
+}
+
+func optionalTokenUsage(usage agent.PromptTokenUsage) *agent.PromptTokenUsage {
+	if usage.InputTokens == 0 &&
+		usage.CachedInputTokens == 0 &&
+		usage.OutputTokens == 0 &&
+		usage.ReasoningOutputTokens == 0 &&
+		usage.TotalTokens == 0 {
+		return nil
+	}
+	u := usage
+	return &u
 }
 
 func readPromptInput(cmd *cobra.Command) (string, error) {
@@ -285,7 +288,7 @@ func executeOllamaPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		return promptResult{}, fmt.Errorf("decoding ollama response: %w", err)
 	}
 
-	usage := PromptTokenUsage{
+	usage := agent.PromptTokenUsage{
 		InputTokens:  out.PromptEvalCount,
 		OutputTokens: out.EvalCount,
 		TotalTokens:  out.PromptEvalCount + out.EvalCount,
@@ -344,8 +347,8 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	return promptResult{Response: response, Usage: usage}, nil
 }
 
-func parseCodexUsage(raw string) PromptTokenUsage {
-	usage := PromptTokenUsage{}
+func parseCodexUsage(raw string) agent.PromptTokenUsage {
+	usage := agent.PromptTokenUsage{}
 	type evt struct {
 		Payload struct {
 			Type string `json:"type"`
@@ -376,7 +379,7 @@ func parseCodexUsage(raw string) PromptTokenUsage {
 		if e.Payload.Type != "token_count" {
 			continue
 		}
-		usage = PromptTokenUsage{
+		usage = agent.PromptTokenUsage{
 			InputTokens:           e.Payload.Info.TotalTokenUsage.InputTokens,
 			CachedInputTokens:     e.Payload.Info.TotalTokenUsage.CachedInputTokens,
 			OutputTokens:          e.Payload.Info.TotalTokenUsage.OutputTokens,
@@ -441,7 +444,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		response = raw
 	}
 
-	usage := PromptTokenUsage{
+	usage := agent.PromptTokenUsage{
 		InputTokens:  extractInt64(decoded, []string{"input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens"}),
 		OutputTokens: extractInt64(decoded, []string{"output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens"}),
 		TotalTokens:  extractInt64(decoded, []string{"total_tokens", "usage.total_tokens"}),
@@ -468,10 +471,7 @@ func appendPromptRecord(path string, rec PromptRecord) error {
 
 func truncateForHistory(s string) string {
 	trimmed := strings.TrimSpace(s)
-	if len(trimmed) <= 500 {
-		return trimmed
-	}
-	return trimmed[:497] + "..."
+	return textutil.TruncateRunesWithEllipsis(trimmed, 500)
 }
 
 func optimizePromptForAgent(original string, a agent.Agent, shared agent.SharedConfig, requestedProfile string) (string, string) {

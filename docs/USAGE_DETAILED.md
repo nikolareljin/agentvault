@@ -16,6 +16,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `-t, --tui [target]`: Launch interactive TUI (also the default when no command is provided).
   - Supported targets: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`.
   - With command routing, `agentvault <command> -t` opens TUI on the command's matching tab and skips direct command execution.
+- `-p, --prompt-mode[=true|false]`: Enter interactive prompt mode directly (submit/cancel/exit loop).
 
 ## 2. Top-Level Commands
 
@@ -122,11 +123,17 @@ Flags:
 Route prompt through AgentVault (gateway) to provider, with optimization + logging.
 
 Input rules:
+- `[agent-name]` is required as the first positional argument.
 - Use one of:
   - `--text <prompt>`
   - `--file <path>`
   - stdin pipe
 - `--text` and `--file` are mutually exclusive.
+
+Common error:
+- `agentvault prompt --text "create a demo app in Scala that says 'Hello World'"`
+- This fails with `accepts 1 arg(s), received 0` because `[agent-name]` is missing.
+- Run `agentvault list` to find available agent names first.
 
 Flags:
 - `--text <prompt>`
@@ -139,6 +146,27 @@ Flags:
 - `--no-log` (default: `false`): Disable run history write.
 - `--history-file <path>`: Override default `~/.config/agentvault/prompt-history.jsonl`.
 - `--timeout <duration>` (default: `5m`): Provider call timeout.
+
+Examples:
+```bash
+# list configured agents and pick one name
+agentvault list
+
+# codex example
+agentvault prompt my-codex --text "create a demo app in Scala that says 'Hello World'"
+
+# ollama example
+agentvault prompt my-ollama --text "create a demo app in Scala that says 'Hello World'" --optimize-profile ollama
+```
+
+### `agentvault -p`
+Enter interactive prompt mode immediately.
+
+Behavior:
+- Prompts for agent selection (unless only one agent exists).
+- Supports submit (`Enter`), cancel (`/cancel`), and exit (`/exit`, `quit`, `:q`).
+- Can optionally log each execution to `~/.config/agentvault/prompt-history.jsonl` when history logging is enabled.
+- Can optionally persist transcript/session metadata in encrypted vault state on exit.
 
 ### `agentvault status`
 Show provider usage/quota status report.

@@ -23,9 +23,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 // vaultData is the JSON structure persisted inside the encrypted file.
@@ -341,7 +345,7 @@ func (v *Vault) ExportData() ([]byte, error) {
 
 // ImportData merges agents plus shared/provider/session config from JSON into this vault.
 // Agents with duplicate names are skipped. Shared config fields (system prompt,
-// MCP servers, instructions, rules, and roles) are merged using a
+// MCP servers, instructions, rules, roles, and prompt sessions) are merged using a
 // "don't overwrite existing" strategy. Provider configs and sessions are merged
 // with the same non-destructive behavior, so existing vault values take
 // precedence over imported values to prevent accidental data loss.
@@ -408,6 +412,41 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		v.shared.Roles = append(v.shared.Roles, r)
 		seenRoles[r.Name] = struct{}{}
 	}
+	// merge prompt sessions (don't overwrite existing by ID)
+	seenPromptSessions := make(map[string]struct{})
+	for _, s := range v.shared.PromptSessions {
+		normalizedID := normalizePromptSessionID(s.ID)
+		if normalizedID == "" {
+			continue
+		}
+		seenPromptSessions[normalizedID] = struct{}{}
+	}
+	importedPromptSessions := make([]agent.PromptSession, 0, len(vd.Shared.PromptSessions))
+	for _, s := range vd.Shared.PromptSessions {
+		normalizedID := normalizePromptSessionID(s.ID)
+		if normalizedID == "" || isPromptSessionIDOverlong(normalizedID) {
+			s.ID = generateUniquePromptSessionID(seenPromptSessions)
+		} else {
+			s.ID = normalizedID
+		}
+		if _, ok := seenPromptSessions[s.ID]; ok {
+			continue
+		}
+		seenPromptSessions[s.ID] = struct{}{}
+		importedPromptSessions = appendNewestPromptSessions(importedPromptSessions, s, agent.PromptSessionRetentionLimit)
+	}
+	for _, s := range importedPromptSessions {
+		v.shared.PromptSessions = append(v.shared.PromptSessions, sanitizeImportedPromptSession(s))
+	}
+	if len(v.shared.PromptSessions) > agent.PromptSessionRetentionLimit {
+		sort.SliceStable(v.shared.PromptSessions, func(i, j int) bool {
+			return promptSessionTimestamp(v.shared.PromptSessions[i]).Before(promptSessionTimestamp(v.shared.PromptSessions[j]))
+		})
+		start := len(v.shared.PromptSessions) - agent.PromptSessionRetentionLimit
+		capped := make([]agent.PromptSession, agent.PromptSessionRetentionLimit)
+		copy(capped, v.shared.PromptSessions[start:])
+		v.shared.PromptSessions = capped
+	}
 	// merge provider configs (don't overwrite existing)
 	if v.providerConfigs.Claude == nil && vd.ProviderConfigs.Claude != nil {
 		v.providerConfigs.Claude = vd.ProviderConfigs.Claude
@@ -447,6 +486,89 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		v.sessions.ParallelLimitSet = true
 	}
 	return imported, skipped, v.Save()
+}
+
+func promptSessionTimestamp(s agent.PromptSession) time.Time {
+	if !s.EndedAt.IsZero() {
+		return s.EndedAt
+	}
+	if !s.StartedAt.IsZero() {
+		return s.StartedAt
+	}
+	return time.Time{}
+}
+
+func generateUniquePromptSessionID(seen map[string]struct{}) string {
+	for {
+		id := agent.GenerateSessionID()
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		return id
+	}
+}
+
+func sanitizeImportedPromptSession(session agent.PromptSession) agent.PromptSession {
+	session.Name = truncatePromptImportField(session.Name)
+	session.AgentName = truncatePromptImportField(session.AgentName)
+	session.Provider = truncatePromptImportField(session.Provider)
+	session.Model = truncatePromptImportField(session.Model)
+	entries := session.Entries
+	if len(entries) > agent.PromptSessionEntryLimit {
+		start := len(entries) - agent.PromptSessionEntryLimit
+		capped := make([]agent.PromptTranscriptEntry, agent.PromptSessionEntryLimit)
+		copy(capped, entries[start:])
+		entries = capped
+	}
+	for i := range entries {
+		entries[i].Prompt = truncatePromptImportField(entries[i].Prompt)
+		entries[i].EffectivePrompt = truncatePromptImportField(entries[i].EffectivePrompt)
+		entries[i].ResponsePreview = truncatePromptImportField(entries[i].ResponsePreview)
+		entries[i].Error = truncatePromptImportField(entries[i].Error)
+	}
+	session.Entries = entries
+	return session
+}
+
+func truncatePromptImportField(value string) string {
+	trimmed := strings.TrimSpace(value)
+	return textutil.TruncateRunesWithEllipsis(trimmed, agent.PromptTranscriptFieldMaxRunes)
+}
+
+func normalizePromptSessionID(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func isPromptSessionIDOverlong(value string) bool {
+	if value == "" {
+		return false
+	}
+	runes := 0
+	for range value {
+		runes++
+		if runes > agent.PromptSessionIDMaxRunes {
+			return true
+		}
+	}
+	return false
+}
+
+func appendNewestPromptSessions(sessions []agent.PromptSession, incoming agent.PromptSession, limit int) []agent.PromptSession {
+	if limit <= 0 {
+		return sessions[:0]
+	}
+	sessions = append(sessions, incoming)
+	sort.SliceStable(sessions, func(i, j int) bool {
+		return promptSessionTimestamp(sessions[i]).Before(promptSessionTimestamp(sessions[j]))
+	})
+	if len(sessions) <= limit {
+		return sessions
+	}
+	copy(sessions, sessions[len(sessions)-limit:])
+	return sessions[:limit]
 }
 
 func isSessionConfigUnset(sc agent.SessionConfig) bool {

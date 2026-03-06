@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
@@ -73,5 +75,60 @@ func TestParseCodexUsage(t *testing.T) {
 	u := parseCodexUsage(raw)
 	if u.InputTokens != 10 || u.OutputTokens != 3 || u.TotalTokens != 13 || u.CachedInputTokens != 2 {
 		t.Fatalf("unexpected usage parsed: %#v", u)
+	}
+}
+
+func TestPromptRecordJSON_OmitsEmptyTokenUsage(t *testing.T) {
+	record := PromptRecord{
+		ID:              "prompt-1",
+		AgentName:       "codex",
+		Provider:        "codex",
+		OriginalPrompt:  "hello",
+		EffectivePrompt: "hello",
+		Success:         true,
+	}
+
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("json.Marshal(record) error = %v", err)
+	}
+	if strings.Contains(string(raw), "token_usage") {
+		t.Fatalf("expected token_usage to be omitted, got: %s", string(raw))
+	}
+}
+
+func TestPromptRecordJSON_IncludesNonEmptyTokenUsage(t *testing.T) {
+	record := PromptRecord{
+		ID:              "prompt-2",
+		AgentName:       "codex",
+		Provider:        "codex",
+		OriginalPrompt:  "hello",
+		EffectivePrompt: "hello",
+		Success:         true,
+		TokenUsage: &agent.PromptTokenUsage{
+			InputTokens: 1,
+		},
+	}
+
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("json.Marshal(record) error = %v", err)
+	}
+	if !strings.Contains(string(raw), "token_usage") {
+		t.Fatalf("expected token_usage to be present, got: %s", string(raw))
+	}
+}
+
+func TestTruncateForHistory_TruncatesOnRuneBoundary(t *testing.T) {
+	long := strings.Repeat("界", 700)
+	got := truncateForHistory(long)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateForHistory returned invalid UTF-8")
+	}
+	if len([]rune(got)) != 500 {
+		t.Fatalf("rune length = %d, want 500", len([]rune(got)))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("expected ellipsis suffix")
 	}
 }
