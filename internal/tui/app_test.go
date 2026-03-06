@@ -105,6 +105,47 @@ func TestEnterDetailView(t *testing.T) {
 	}
 }
 
+func TestCycleClaudeBackend_PersistsViaUpdate(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	var detail model
+	switch mm := m2.(type) {
+	case model:
+		detail = mm
+	case *model:
+		detail = *mm
+	default:
+		t.Fatalf("unexpected model type: %T", m2)
+	}
+	if detail.mode != viewAgentDetail {
+		t.Fatalf("mode = %v, want viewAgentDetail", detail.mode)
+	}
+
+	m3, _ := detail.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	var updated model
+	switch mm := m3.(type) {
+	case model:
+		updated = mm
+	case *model:
+		updated = *mm
+	default:
+		t.Fatalf("unexpected model type after cycle: %T", m3)
+	}
+
+	agentInVault, ok := v.Get("claude-main")
+	if !ok {
+		t.Fatalf("claude-main should exist in vault")
+	}
+	if agent.NormalizeClaudeBackend(agentInVault.Backend) != agent.ClaudeBackendOllama {
+		t.Fatalf("backend = %q, want %q", agentInVault.Backend, agent.ClaudeBackendOllama)
+	}
+	if !strings.Contains(updated.statusMsg, "Claude backend set to ollama") {
+		t.Fatalf("status message = %q, expected backend switch confirmation", updated.statusMsg)
+	}
+}
+
 func TestRenderAgentDetail_ShowsEnvAndDefaultSources(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
 	dir := t.TempDir()

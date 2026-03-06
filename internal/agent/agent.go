@@ -420,11 +420,14 @@ func (a *Agent) Validate() error {
 	if !valid {
 		return errors.New("unknown provider: " + string(a.Provider))
 	}
+	backendRaw := strings.TrimSpace(a.Backend)
 	if a.Provider == ProviderClaude {
-		backend := strings.ToLower(strings.TrimSpace(a.Backend))
+		backend := strings.ToLower(backendRaw)
 		if backend != "" && backend != ClaudeBackendAnthropic && backend != ClaudeBackendOllama && backend != ClaudeBackendBedrock {
-			return errors.New("unknown claude backend: " + strings.TrimSpace(a.Backend))
+			return errors.New("unknown claude backend: " + backendRaw)
 		}
+	} else if backendRaw != "" {
+		return errors.New("backend is only supported for claude agents")
 	}
 	return nil
 }

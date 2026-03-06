@@ -46,6 +46,11 @@ func TestValidate(t *testing.T) {
 			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: "  OLLAMA  "},
 			wantErr: false,
 		},
+		{
+			name:    "backend rejected for non-claude provider",
+			agent:   Agent{Name: "test", Provider: ProviderOllama, Backend: ClaudeBackendBedrock},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
