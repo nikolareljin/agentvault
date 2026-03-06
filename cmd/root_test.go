@@ -171,6 +171,235 @@ func TestParseTUIInvocation_IgnoresTUIFlagsAfterDoubleDash(t *testing.T) {
 	}
 }
 
+func TestParsePromptModeInvocation_FlagOnly(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_LongFlagOnly(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"--prompt-mode"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(--prompt-mode) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_LongFlagEqualsTrue(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"--prompt-mode=true"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(--prompt-mode=true) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_ShortFlagEqualsTrue(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p=true"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p=true) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_LongFlagEqualsFalseDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"--prompt-mode=false"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(--prompt-mode=false) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_LongFlagSpaceFalseDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"--prompt-mode", "false"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(--prompt-mode false) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_ShortFlagEqualsFalseDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p=false"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p=false) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_ShortFlagSpaceFalseDoesNotLaunch(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p", "false"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p false) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_WithCommandReturnsActionableError(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"detect", "-p"})
+	if err == nil {
+		t.Fatalf("expected prompt mode + command error")
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+	if !strings.Contains(err.Error(), "prompt mode flag must be used without a command") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_RootFlagThenCommandReturnsActionableError(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p", "detect"})
+	if err == nil {
+		t.Fatalf("expected prompt mode + command error")
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+	if !strings.Contains(err.Error(), "prompt mode flag must be used without a command") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_FlagAfterDoubleDashIgnored(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"detect", "--", "-p"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(detect -- -p) error = %v", err)
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+}
+
+func TestParsePromptModeInvocation_DoubleDashPayloadReturnsError(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p", "--", "something"})
+	if err == nil {
+		t.Fatalf("expected positional-argument error after --")
+	}
+	if launch {
+		t.Fatalf("launch = true, want false")
+	}
+	if !strings.Contains(err.Error(), "does not accept positional arguments after --") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_UnknownFlagErrors(t *testing.T) {
+	_, err := parsePromptModeInvocation([]string{"-p", "--bogus"})
+	if err == nil {
+		t.Fatalf("expected unknown flag error")
+	}
+	if !strings.Contains(err.Error(), "unknown flag for prompt mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_TUIFlagReturnsMutualExclusionError(t *testing.T) {
+	_, err := parsePromptModeInvocation([]string{"-p", "--tui"})
+	if err == nil {
+		t.Fatalf("expected prompt mode and tui mutual exclusion error")
+	}
+	if !strings.Contains(err.Error(), "prompt mode cannot be combined with --tui/-t") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_InvalidBooleanValueErrors(t *testing.T) {
+	_, err := parsePromptModeInvocation([]string{"--prompt-mode=maybe"})
+	if err == nil {
+		t.Fatalf("expected invalid boolean error")
+	}
+	if !strings.Contains(err.Error(), "invalid boolean value for --prompt-mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_InvalidShortBooleanValueErrors(t *testing.T) {
+	_, err := parsePromptModeInvocation([]string{"-p=maybe"})
+	if err == nil {
+		t.Fatalf("expected invalid boolean error")
+	}
+	if !strings.Contains(err.Error(), "invalid boolean value for -p") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParsePromptModeInvocation_AllowsConfigFlag(t *testing.T) {
+	launch, err := parsePromptModeInvocation([]string{"-p", "--config", "/tmp/agentvault"})
+	if err != nil {
+		t.Fatalf("parsePromptModeInvocation(-p --config ...) error = %v", err)
+	}
+	if !launch {
+		t.Fatalf("launch = false, want true")
+	}
+}
+
+func TestParsePromptModeInvocation_DoesNotInterceptSubcommandProviderFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"add", "-p", "claude"},
+		{"edit", "my-agent", "-p", "codex"},
+	} {
+		launch, err := parsePromptModeInvocation(args)
+		if err != nil {
+			t.Fatalf("parsePromptModeInvocation(%v) error = %v", args, err)
+		}
+		if launch {
+			t.Fatalf("parsePromptModeInvocation(%v) launch = true, want false", args)
+		}
+	}
+}
+
+func TestStripPromptModeFlags(t *testing.T) {
+	got := stripPromptModeFlags([]string{"-p", "--config", "/tmp/cfg", "--prompt-mode", "--help"})
+	if strings.Join(got, " ") != "--config /tmp/cfg --help" {
+		t.Fatalf("stripPromptModeFlags() = %q", got)
+	}
+}
+
+func TestStripPromptModeFlags_PreservesArgsAfterDoubleDash(t *testing.T) {
+	got := stripPromptModeFlags([]string{"detect", "--", "-p", "--prompt-mode"})
+	if strings.Join(got, " ") != "detect -- -p --prompt-mode" {
+		t.Fatalf("stripPromptModeFlags() after -- = %q", got)
+	}
+}
+
+func TestStripPromptModeFlags_RemovesExplicitFalseToken(t *testing.T) {
+	got := stripPromptModeFlags([]string{"--config", "/tmp/cfg", "--prompt-mode=false"})
+	if strings.Join(got, " ") != "--config /tmp/cfg" {
+		t.Fatalf("stripPromptModeFlags() = %q", got)
+	}
+}
+
+func TestStripPromptModeFlags_RemovesShortExplicitFalseToken(t *testing.T) {
+	got := stripPromptModeFlags([]string{"--config", "/tmp/cfg", "-p=false"})
+	if strings.Join(got, " ") != "--config /tmp/cfg" {
+		t.Fatalf("stripPromptModeFlags() = %q", got)
+	}
+}
+
+func TestStripPromptModeFlags_RemovesSpaceSeparatedBooleanToken(t *testing.T) {
+	got := stripPromptModeFlags([]string{"--config", "/tmp/cfg", "--prompt-mode", "false", "--help"})
+	if strings.Join(got, " ") != "--config /tmp/cfg --help" {
+		t.Fatalf("stripPromptModeFlags() = %q", got)
+	}
+}
+
 func TestApplyEarlyPersistentFlags_StopsAtDoubleDash(t *testing.T) {
 	t.Cleanup(func() {
 		_ = rootCmd.PersistentFlags().Set("config", "")
@@ -184,13 +413,10 @@ func TestApplyEarlyPersistentFlags_StopsAtDoubleDash(t *testing.T) {
 	}
 }
 
-func TestFirstCommandToken_UsesPositionalAfterDoubleDash(t *testing.T) {
+func TestFirstCommandToken_IgnoresTokensAfterDoubleDash(t *testing.T) {
 	token, ok := firstCommandToken([]string{"--config", "/tmp/custom", "--", "-t"})
-	if !ok {
-		t.Fatalf("expected token after --")
-	}
-	if token != "-t" {
-		t.Fatalf("token = %q, want -t", token)
+	if ok {
+		t.Fatalf("expected no command token, got %q", token)
 	}
 }
 
@@ -295,6 +521,20 @@ func TestExecute_DoesNotReuseStaleSetArgsAfterHelp(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown command") {
 		t.Fatalf("expected unknown command error, got: %v", err)
+	}
+}
+
+func TestExecute_CommandWithPromptModeFlagReturnsActionableError(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() { os.Args = origArgs })
+	os.Args = []string{"agentvault", "detect", "-p"}
+
+	err := Execute()
+	if err == nil {
+		t.Fatalf("expected error for command + -p combination")
+	}
+	if !strings.Contains(err.Error(), "prompt mode flag must be used without a command") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

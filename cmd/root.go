@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/nikolareljin/agentvault/internal/tui"
@@ -147,19 +148,26 @@ func Execute() error {
 	if err := applyEarlyPersistentFlags(args); err != nil {
 		return err
 	}
+	execArgs := stripPromptModeFlags(args)
 
 	// Preserve Cobra help semantics even when TUI interception is enabled.
 	if containsHelpFlag(args) {
-		rootCmd.SetArgs(args)
+		rootCmd.SetArgs(execArgs)
 		return rootCmd.Execute()
 	}
 
-	if launch, target, err := parseTUIInvocation(args); err != nil {
+	if launch, err := parsePromptModeInvocation(args); err != nil {
+		return err
+	} else if launch {
+		return runPromptMode()
+	}
+
+	if launch, target, err := parseTUIInvocation(execArgs); err != nil {
 		return err
 	} else if launch {
 		return launchTUI(target)
 	}
-	rootCmd.SetArgs(args)
+	rootCmd.SetArgs(execArgs)
 	return rootCmd.Execute()
 }
 
@@ -177,26 +185,17 @@ func containsHelpFlag(args []string) bool {
 
 func applyEarlyPersistentFlags(args []string) error {
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
+		if args[i] == "--" {
 			break
 		}
-		switch {
-		case arg == "--config":
-			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
-				return fmt.Errorf("flag needs an argument: --config")
-			}
-			if err := rootCmd.PersistentFlags().Set("config", args[i+1]); err != nil {
-				return err
-			}
-			i++
-		case strings.HasPrefix(arg, "--config="):
-			value := strings.TrimSpace(strings.TrimPrefix(arg, "--config="))
-			if value == "" {
-				return fmt.Errorf("flag needs an argument: --config")
-			}
+		if consumed, value, err := consumeConfigFlag(args, i); err != nil {
+			return err
+		} else if consumed {
 			if err := rootCmd.PersistentFlags().Set("config", value); err != nil {
 				return err
+			}
+			if args[i] == "--config" {
+				i++
 			}
 		}
 	}
@@ -286,23 +285,172 @@ func parseTUIInvocation(args []string) (bool, string, error) {
 	return true, "agents", nil
 }
 
-func firstCommandToken(args []string) (string, bool) {
-	skipNext := false
+func parsePromptModeInvocation(args []string) (bool, error) {
+	firstCmdIdx := firstCommandIndex(args)
+	scanUntil := len(args)
+	if firstCmdIdx >= 0 {
+		scanUntil = firstCmdIdx
+	}
+
+	flagSeen := false
+	for i := 0; i < scanUntil; i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		matched, enabled, consumedNext, err := consumePromptModeFlag(args, i)
+		if err != nil {
+			return false, err
+		}
+		if matched && enabled {
+			flagSeen = true
+		}
+		if consumedNext {
+			i++
+		}
+	}
+	if !flagSeen {
+		if firstCmdIdx >= 0 && hasPromptModeFlagAfterCommand(args, firstCmdIdx) {
+			return false, fmt.Errorf("prompt mode flag must be used without a command")
+		}
+		return false, nil
+	}
+	if idx := doubleDashIndex(args); idx >= 0 && idx+1 < len(args) {
+		return false, fmt.Errorf("prompt mode does not accept positional arguments after --")
+	}
+	if firstCmdIdx >= 0 {
+		return false, fmt.Errorf("prompt mode flag must be used without a command")
+	}
+	if err := validatePromptModeArgs(args[:scanUntil]); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func validatePromptModeArgs(args []string) error {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		switch {
+		case isPromptModeToken(arg):
+			_, _, consumedNext, err := consumePromptModeFlag(args, i)
+			if err != nil {
+				return err
+			}
+			if consumedNext {
+				i++
+			}
+			continue
+		case arg == "--config" || strings.HasPrefix(arg, "--config="):
+			consumed, _, err := consumeConfigFlag(args, i)
+			if err != nil {
+				return err
+			}
+			if consumed && arg == "--config" {
+				i++
+			}
+			continue
+		case arg == "--tui" || arg == "-t" || strings.HasPrefix(arg, "--tui=") || strings.HasPrefix(arg, "-t="):
+			return fmt.Errorf("prompt mode cannot be combined with --tui/-t; choose either prompt mode flags or --tui, but not both")
+		case strings.HasPrefix(arg, "-"):
+			return fmt.Errorf("unknown flag for prompt mode: %s", arg)
+		default:
+			// Non-flag positional args are treated as command args elsewhere.
+			return nil
+		}
+	}
+	return nil
+}
+
+func stripPromptModeFlags(args []string) []string {
+	firstCmdIdx := firstCommandIndex(args)
+	if firstCmdIdx < 0 {
+		firstCmdIdx = len(args)
+	}
+
+	out := make([]string, 0, len(args))
 	afterDoubleDash := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			afterDoubleDash = true
+			out = append(out, arg)
+			continue
+		}
+		if afterDoubleDash || i >= firstCmdIdx {
+			out = append(out, arg)
+			continue
+		}
+		if matched, _, consumedNext, _ := consumePromptModeFlag(args, i); matched {
+			if consumedNext {
+				i++
+			}
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
+}
+
+func hasPromptModeFlagAfterCommand(args []string, firstCmdIdx int) bool {
+	if firstCmdIdx < 0 || firstCmdIdx >= len(args) {
+		return false
+	}
+	if commandAllowsProviderShorthand(args[firstCmdIdx]) {
+		return false
+	}
+	for i := firstCmdIdx + 1; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		matched, enabled, consumedNext, err := consumePromptModeFlag(args, i)
+		if err != nil || !matched {
+			continue
+		}
+		if consumedNext {
+			i++
+		}
+		if enabled {
+			return true
+		}
+	}
+	return false
+}
+
+func commandAllowsProviderShorthand(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "add", "edit":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstCommandToken(args []string) (string, bool) {
+	if idx := firstCommandIndex(args); idx >= 0 {
+		return args[idx], true
+	}
+	return "", false
+}
+
+func firstCommandIndex(args []string) int {
+	skipNext := false
 	for i, arg := range args {
 		if skipNext {
 			skipNext = false
 			continue
 		}
 		if arg == "--" {
-			afterDoubleDash = true
-			continue
-		}
-		if afterDoubleDash {
-			return arg, true
+			break
 		}
 		if strings.HasPrefix(arg, "-") {
-			if arg == "--config" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			if consumed, _, _ := consumeConfigFlag(args, i); consumed && arg == "--config" {
+				skipNext = true
+			}
+			if matched, _, consumedNext, _ := consumePromptModeFlag(args, i); matched && consumedNext {
 				skipNext = true
 			}
 			// Skip the next token only when bare --tui/-t actually consumed a canonical target.
@@ -313,9 +461,84 @@ func firstCommandToken(args []string) (string, bool) {
 			}
 			continue
 		}
-		return arg, true
+		return i
 	}
-	return "", false
+	return -1
+}
+
+func doubleDashIndex(args []string) int {
+	for i, arg := range args {
+		if arg == "--" {
+			return i
+		}
+	}
+	return -1
+}
+
+func consumeConfigFlag(args []string, i int) (consumed bool, value string, err error) {
+	arg := args[i]
+	switch {
+	case arg == "--config":
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+			return false, "", fmt.Errorf("flag needs an argument: --config")
+		}
+		return true, args[i+1], nil
+	case strings.HasPrefix(arg, "--config="):
+		v := strings.TrimSpace(strings.TrimPrefix(arg, "--config="))
+		if v == "" {
+			return false, "", fmt.Errorf("flag needs an argument: --config")
+		}
+		return true, v, nil
+	default:
+		return false, "", nil
+	}
+}
+
+func isPromptModeToken(arg string) bool {
+	return arg == "-p" ||
+		arg == "--prompt-mode" ||
+		strings.HasPrefix(arg, "--prompt-mode=") ||
+		strings.HasPrefix(arg, "-p=")
+}
+
+func parsePromptModeToken(arg string) (matched bool, enabled bool, err error) {
+	switch {
+	case arg == "-p" || arg == "--prompt-mode":
+		return true, true, nil
+	case strings.HasPrefix(arg, "-p="):
+		raw := strings.TrimSpace(strings.TrimPrefix(arg, "-p="))
+		value, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			return false, false, fmt.Errorf("invalid boolean value for -p: %q", raw)
+		}
+		return true, value, nil
+	case strings.HasPrefix(arg, "--prompt-mode="):
+		raw := strings.TrimSpace(strings.TrimPrefix(arg, "--prompt-mode="))
+		value, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			return false, false, fmt.Errorf("invalid boolean value for --prompt-mode: %q", raw)
+		}
+		return true, value, nil
+	default:
+		return false, false, nil
+	}
+}
+
+func consumePromptModeFlag(args []string, i int) (matched bool, enabled bool, consumedNext bool, err error) {
+	arg := args[i]
+	matched, enabled, err = parsePromptModeToken(arg)
+	if err != nil || !matched {
+		return matched, enabled, false, err
+	}
+	if (arg == "-p" || arg == "--prompt-mode") && i+1 < len(args) {
+		next := strings.TrimSpace(args[i+1])
+		if next != "" && !strings.HasPrefix(next, "-") {
+			if nextBool, parseErr := strconv.ParseBool(next); parseErr == nil {
+				return true, nextBool, true, nil
+			}
+		}
+	}
+	return true, enabled, false, nil
 }
 
 func normalizeTUITarget(raw string) (string, bool) {
@@ -333,6 +556,7 @@ func normalizeExplicitTUITarget(raw string) (string, bool) {
 
 func init() {
 	rootCmd.PersistentFlags().String("config", "", "config directory (default: ~/.config/agentvault)")
+	rootCmd.Flags().BoolP("prompt-mode", "p", false, "launch interactive prompt mode")
 	rootCmd.PersistentFlags().StringP("tui", "t", "", fmt.Sprintf("launch interactive terminal UI; optional target: %s", strings.Join(canonicalTUITargets, "|")))
 	if tuiFlag := rootCmd.PersistentFlags().Lookup("tui"); tuiFlag != nil {
 		tuiFlag.NoOptDefVal = "agents"

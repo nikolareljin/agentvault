@@ -17,11 +17,28 @@ var ErrVaultNotFound = errors.New("vault not found")
 
 // resolveVaultPath returns the vault file path, respecting the --config flag.
 func resolveVaultPath() string {
-	cfgDir, err := rootCmd.PersistentFlags().GetString("config")
-	if err == nil && cfgDir != "" {
+	cfgDir := resolveConfigDir()
+	if cfgDir != "" {
 		return filepath.Join(cfgDir, config.VaultFile)
 	}
 	return config.VaultPath()
+}
+
+// resolvePromptHistoryPath returns the prompt history path, respecting --config.
+func resolvePromptHistoryPath() string {
+	cfgDir := resolveConfigDir()
+	if cfgDir != "" {
+		return filepath.Join(cfgDir, "prompt-history.jsonl")
+	}
+	return filepath.Join(config.Dir(), "prompt-history.jsonl")
+}
+
+func resolveConfigDir() string {
+	cfgDir, err := rootCmd.PersistentFlags().GetString("config")
+	if err == nil && cfgDir != "" {
+		return cfgDir
+	}
+	return ""
 }
 
 // readPassword prompts for a password from the terminal without echo.

@@ -2,8 +2,10 @@ package vault
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -415,6 +417,372 @@ func TestImportDataMergesSharedRulesAndRolesWithoutOverwrite(t *testing.T) {
 	}
 	if shared.Roles[1].Name != "new-role" {
 		t.Fatalf("second role name = %q, want new-role", shared.Roles[1].Name)
+	}
+}
+
+func TestImportDataMergesPromptSessionsWithoutOverwrite(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		PromptSessions: []agent.PromptSession{
+			{ID: "existing-session", AgentName: "codex", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+		},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{ID: "existing-session", AgentName: "claude", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+				{ID: "new-session", AgentName: "claude", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 2 {
+		t.Fatalf("prompt sessions len = %d, want 2", len(shared.PromptSessions))
+	}
+	if shared.PromptSessions[0].ID != "existing-session" {
+		t.Fatalf("first session ID = %q, want existing-session", shared.PromptSessions[0].ID)
+	}
+	if shared.PromptSessions[1].ID != "new-session" {
+		t.Fatalf("second session ID = %q, want new-session", shared.PromptSessions[1].ID)
+	}
+}
+
+func TestImportDataNormalizesExistingPromptSessionIDsForDeduplication(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		PromptSessions: []agent.PromptSession{
+			{ID: " existing-session ", AgentName: "codex", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+		},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{ID: "existing-session", AgentName: "claude", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 1 {
+		t.Fatalf("prompt sessions len = %d, want 1", len(shared.PromptSessions))
+	}
+}
+
+func TestImportDataGeneratesUniqueIDForEmptyPromptSessionIDs(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		PromptSessions: []agent.PromptSession{
+			{ID: "existing-session", AgentName: "codex", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+		},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{ID: "", AgentName: "claude", StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC()},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 2 {
+		t.Fatalf("prompt sessions len = %d, want 2", len(shared.PromptSessions))
+	}
+	imported := shared.PromptSessions[1].ID
+	if imported == "" {
+		t.Fatal("imported prompt session ID is empty")
+	}
+	if imported == "existing-session" {
+		t.Fatalf("imported prompt session ID collided with existing ID: %q", imported)
+	}
+}
+
+func TestImportDataPromptSessionsRetentionCap(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	importSessions := make([]agent.PromptSession, 0, agent.PromptSessionRetentionLimit+5)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < agent.PromptSessionRetentionLimit+5; i++ {
+		ts := base.Add(time.Duration(i) * time.Minute)
+		importSessions = append(importSessions, agent.PromptSession{
+			ID:        fmt.Sprintf("imp-session-%d", i),
+			AgentName: "codex",
+			StartedAt: ts,
+			EndedAt:   ts,
+		})
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: importSessions,
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != agent.PromptSessionRetentionLimit {
+		t.Fatalf("prompt sessions len = %d, want %d", len(shared.PromptSessions), agent.PromptSessionRetentionLimit)
+	}
+	if shared.PromptSessions[len(shared.PromptSessions)-1].ID != importSessions[len(importSessions)-1].ID {
+		t.Fatalf("last session ID = %q, want %q", shared.PromptSessions[len(shared.PromptSessions)-1].ID, importSessions[len(importSessions)-1].ID)
+	}
+}
+
+func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	long := strings.Repeat("界", agent.PromptTranscriptFieldMaxRunes+50)
+	entries := make([]agent.PromptTranscriptEntry, agent.PromptSessionEntryLimit+25)
+	for i := range entries {
+		entries[i] = agent.PromptTranscriptEntry{
+			Prompt:          long,
+			EffectivePrompt: long,
+			ResponsePreview: long,
+			Error:           long,
+		}
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{
+					ID:        "  " + long + "  ",
+					Name:      long,
+					AgentName: long,
+					Provider:  long,
+					Model:     long,
+					Entries:   entries,
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 1 {
+		t.Fatalf("prompt sessions len = %d, want 1", len(shared.PromptSessions))
+	}
+	got := shared.PromptSessions[0].Entries
+	if len(got) != agent.PromptSessionEntryLimit {
+		t.Fatalf("entries len = %d, want %d", len(got), agent.PromptSessionEntryLimit)
+	}
+	if len([]rune(got[0].Prompt)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("prompt rune len = %d, want %d", len([]rune(got[0].Prompt)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(got[0].EffectivePrompt)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("effective prompt rune len = %d, want %d", len([]rune(got[0].EffectivePrompt)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(got[0].ResponsePreview)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("response preview rune len = %d, want %d", len([]rune(got[0].ResponsePreview)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(got[0].Error)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("error rune len = %d, want %d", len([]rune(got[0].Error)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	session := shared.PromptSessions[0]
+	if len([]rune(session.Name)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session name rune len = %d, want %d", len([]rune(session.Name)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(session.AgentName)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session agent_name rune len = %d, want %d", len([]rune(session.AgentName)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(session.Provider)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session provider rune len = %d, want %d", len([]rune(session.Provider)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if len([]rune(session.Model)) != agent.PromptTranscriptFieldMaxRunes {
+		t.Fatalf("session model rune len = %d, want %d", len([]rune(session.Model)), agent.PromptTranscriptFieldMaxRunes)
+	}
+	if session.ID == "" {
+		t.Fatalf("session id should be regenerated for overlong imported IDs")
+	}
+	if len([]rune(session.ID)) > agent.PromptSessionIDMaxRunes {
+		t.Fatalf("session id rune len = %d, should be <= %d", len([]rune(session.ID)), agent.PromptSessionIDMaxRunes)
+	}
+}
+
+func TestImportDataOverlongPromptSessionIDsDoNotCollideByTruncation(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	prefix := strings.Repeat("a", agent.PromptSessionIDMaxRunes)
+	idA := prefix + "-left"
+	idB := prefix + "-right"
+	if idA == idB {
+		t.Fatal("test setup must use distinct IDs")
+	}
+
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{
+			PromptSessions: []agent.PromptSession{
+				{ID: idA, AgentName: "claude"},
+				{ID: idB, AgentName: "claude"},
+			},
+		},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != 2 {
+		t.Fatalf("prompt sessions len = %d, want 2", len(shared.PromptSessions))
+	}
+	if shared.PromptSessions[0].ID == shared.PromptSessions[1].ID {
+		t.Fatalf("generated prompt session IDs should be unique, got duplicate %q", shared.PromptSessions[0].ID)
+	}
+}
+
+func TestImportDataPromptSessionsKeepsNewestByTimestamp(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	existing := make([]agent.PromptSession, 0, agent.PromptSessionRetentionLimit)
+	for i := 0; i < agent.PromptSessionRetentionLimit; i++ {
+		ts := base.Add(time.Duration(1000+i) * time.Minute)
+		existing = append(existing, agent.PromptSession{
+			ID:        fmt.Sprintf("existing-%d", i),
+			AgentName: "codex",
+			StartedAt: ts,
+			EndedAt:   ts,
+		})
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{PromptSessions: existing}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	imported := make([]agent.PromptSession, 0, 5)
+	for i := 0; i < 5; i++ {
+		ts := base.Add(time.Duration(i) * time.Minute) // older than all existing sessions
+		imported = append(imported, agent.PromptSession{
+			ID:        fmt.Sprintf("imported-old-%d", i),
+			AgentName: "claude",
+			StartedAt: ts,
+			EndedAt:   ts,
+		})
+	}
+	importData := struct {
+		Agents []agent.Agent      `json:"agents"`
+		Shared agent.SharedConfig `json:"shared"`
+	}{
+		Agents: []agent.Agent{},
+		Shared: agent.SharedConfig{PromptSessions: imported},
+	}
+	raw, err := json.Marshal(importData)
+	if err != nil {
+		t.Fatalf("json.Marshal(importData) error = %v", err)
+	}
+	if _, _, err := v.ImportData(raw); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	shared := v.SharedConfig()
+	if len(shared.PromptSessions) != agent.PromptSessionRetentionLimit {
+		t.Fatalf("prompt sessions len = %d, want %d", len(shared.PromptSessions), agent.PromptSessionRetentionLimit)
+	}
+	for _, session := range shared.PromptSessions {
+		if strings.HasPrefix(session.ID, "imported-old-") {
+			t.Fatalf("older imported session %q displaced newer existing sessions", session.ID)
+		}
 	}
 }
 

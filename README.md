@@ -14,6 +14,7 @@ Detailed command and TUI references: `docs/README.md`.
 - **Portable Setup**: Export/import complete configurations including sessions between machines
 - **Agent Detection**: Auto-detect installed CLI agents
 - **Unified Instructions**: Sync AGENTS.md, CLAUDE.md, codex.md, etc. across projects
+- **Prompt Mode**: Start a focused interactive loop with `agentvault -p`
 - **Interactive TUI**: Multi-tab interface with search, filtering, and status views
 - **MCP Server Support**: Configure Model Context Protocol servers per agent
 
@@ -26,17 +27,20 @@ agentvault init
 # 2. Launch TUI (default when no command is provided)
 agentvault
 
-# 3. Initialize default rules and roles (one time)
+# 3. Enter prompt mode (optional)
+agentvault -p
+
+# 4. Initialize default rules and roles (one time)
 agentvault rules init
 agentvault roles init
 
-# 4. Create a multi-agent session
+# 5. Create a multi-agent session
 agentvault session create my-project --dir /path/to/project
 
-# 5. Start all agents in parallel
+# 6. Start all agents in parallel
 agentvault session start my-project
 
-# 6. Launch TUI to manage everything
+# 7. Launch TUI to manage everything
 agentvault
 ```
 
@@ -82,8 +86,9 @@ brew install nikolareljin/tap/agentvault
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
 | `prompt <name>` | Route prompts through AgentVault gateway with usage logging |
+| `-p, --prompt-mode[=true\|false]` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
 | `status` | Show token usage and quota status (JSON for orchestration) |
-| `--tui`, `-t` | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
+| `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
 
 ### Agent Management
 | Command | Description |
@@ -156,11 +161,22 @@ agentvault status --no-vault --json
 Send prompts through AgentVault instead of calling agent CLIs directly:
 
 ```bash
+# IMPORTANT: prompt requires an agent name as the first positional argument.
+# This fails (missing agent name):
+# agentvault prompt --text "create a demo app in Scala that says 'Hello World'"
+#
+# Find configured agent names first:
+agentvault list
+
 # direct prompt through configured agent
 agentvault prompt my-codex --text "review this implementation"
 
 # optimize prompt shape for local Ollama models
 agentvault prompt my-ollama --text "build auth middleware"
+
+# concrete "Hello World" style examples
+agentvault prompt my-codex --text "create a demo app in Scala that says 'Hello World'"
+agentvault prompt my-ollama --text "create a demo app in Scala that says 'Hello World'" --optimize-profile ollama
 
 # optimize for codex/copilot-style coding flows
 agentvault prompt my-codex --text "refactor this endpoint" --optimize-profile codex
@@ -168,9 +184,14 @@ agentvault prompt my-copilot --text "write tests for this function" --optimize-p
 
 # JSON output for orchestration systems
 agentvault prompt my-ollama --text "summarize this design" --json
+
+# interactive prompt loop with submit/cancel/exit actions
+agentvault -p
 ```
 
-Prompt runs are stored in `~/.config/agentvault/prompt-history.jsonl` by default.
+By default, prompt runs are written in plaintext to `~/.config/agentvault/prompt-history.jsonl`, which may contain sensitive data.
+Treat this file as sensitive and disable or clear it when prompts may include secrets.
+Prompt mode can also store session transcript metadata in encrypted vault state on exit.
 
 ## Unified Rules
 
