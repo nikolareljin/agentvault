@@ -290,25 +290,9 @@ func validatePromptBackend(a agent.Agent, timeout time.Duration) error {
 	case agent.ProviderClaude:
 		switch agent.NormalizeClaudeBackend(a.Backend) {
 		case agent.ClaudeBackendOllama:
-			baseURL := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
-			if baseURL == "" {
-				baseURL = "http://localhost:11434"
-			}
-			client := &http.Client{Timeout: timeout}
-			req, err := http.NewRequest(http.MethodGet, baseURL+"/api/tags", nil)
-			if err != nil {
-				return err
-			}
-			resp, err := client.Do(req)
-			if err != nil {
-				return fmt.Errorf("ollama backend validation failed: %w", err)
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode >= 400 {
-				raw, _ := io.ReadAll(resp.Body)
-				return fmt.Errorf("ollama backend validation failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-			}
-			return nil
+			return validateOllamaEndpoint(a.BaseURL, timeout, "ollama backend validation")
+		case agent.ClaudeBackendBedrock:
+			return errors.New("bedrock backend validation is not supported yet; validate AWS credentials manually")
 		default:
 			if _, err := exec.LookPath("claude"); err != nil {
 				return errors.New("claude binary not found in PATH")
@@ -316,25 +300,7 @@ func validatePromptBackend(a agent.Agent, timeout time.Duration) error {
 			return nil
 		}
 	case agent.ProviderOllama:
-		baseURL := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
-		if baseURL == "" {
-			baseURL = "http://localhost:11434"
-		}
-		client := &http.Client{Timeout: timeout}
-		req, err := http.NewRequest(http.MethodGet, baseURL+"/api/tags", nil)
-		if err != nil {
-			return err
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return fmt.Errorf("ollama validation failed: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode >= 400 {
-			raw, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("ollama validation failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
-		}
-		return nil
+		return validateOllamaEndpoint(a.BaseURL, timeout, "ollama validation")
 	case agent.ProviderCodex:
 		if _, err := exec.LookPath("codex"); err != nil {
 			return errors.New("codex binary not found in PATH")
@@ -343,6 +309,28 @@ func validatePromptBackend(a agent.Agent, timeout time.Duration) error {
 	default:
 		return fmt.Errorf("provider %q is not supported for validate-only", a.Provider)
 	}
+}
+
+func validateOllamaEndpoint(baseURL string, timeout time.Duration, context string) error {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/api/tags", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s failed: %w", context, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s failed (%d): %s", context, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
 }
 
 func executeOllamaPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {

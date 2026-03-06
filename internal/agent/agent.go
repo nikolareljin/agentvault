@@ -421,9 +421,9 @@ func (a *Agent) Validate() error {
 		return errors.New("unknown provider: " + string(a.Provider))
 	}
 	if a.Provider == ProviderClaude {
-		backend := strings.TrimSpace(a.Backend)
+		backend := strings.ToLower(strings.TrimSpace(a.Backend))
 		if backend != "" && backend != ClaudeBackendAnthropic && backend != ClaudeBackendOllama && backend != ClaudeBackendBedrock {
-			return errors.New("unknown claude backend: " + backend)
+			return errors.New("unknown claude backend: " + strings.TrimSpace(a.Backend))
 		}
 	}
 	return nil
