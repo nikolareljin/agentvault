@@ -28,6 +28,7 @@ Example:
 		model, _ := cmd.Flags().GetString("model")
 		apiKey, _ := cmd.Flags().GetString("api-key")
 		baseURL, _ := cmd.Flags().GetString("base-url")
+		backend, _ := cmd.Flags().GetString("backend")
 		systemPrompt, _ := cmd.Flags().GetString("system-prompt")
 		taskDesc, _ := cmd.Flags().GetString("task-desc")
 		tagsStr, _ := cmd.Flags().GetString("tags")
@@ -47,6 +48,7 @@ Example:
 			Name:         args[0],
 			Provider:     agent.Provider(provider),
 			Model:        model,
+			Backend:      backend,
 			APIKey:       apiKey,
 			BaseURL:      baseURL,
 			SystemPrompt: systemPrompt,
@@ -70,6 +72,7 @@ func init() {
 	rootCmd.AddCommand(addCmd)
 	addCmd.Flags().StringP("provider", "p", "", "provider (claude, gemini, codex, ollama, openai, custom)")
 	addCmd.Flags().StringP("model", "m", "", "model name")
+	addCmd.Flags().String("backend", "", "backend (for claude: anthropic|ollama|bedrock)")
 	addCmd.Flags().StringP("api-key", "k", "", "API key")
 	addCmd.Flags().String("base-url", "", "custom base URL")
 	addCmd.Flags().String("system-prompt", "", "system prompt")

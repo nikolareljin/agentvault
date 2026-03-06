@@ -645,6 +645,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			return m.handleAdd()
 
+		case "b":
+			return m.handleCycleClaudeBackend()
+
 		case "c":
 			return m.handleConnectDetected()
 
@@ -1221,6 +1224,48 @@ func (m *model) handleAdd() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) handleCycleClaudeBackend() (tea.Model, tea.Cmd) {
+	if m.activeTab != tabAgents || m.mode != viewAgentDetail || m.cursor >= len(m.filteredAgents) {
+		return m, nil
+	}
+	idx := m.filteredAgents[m.cursor]
+	if idx < 0 || idx >= len(m.agents) {
+		return m, nil
+	}
+	a := m.agents[idx]
+	if a.Provider != agent.ProviderClaude {
+		m.setStatus("Backend switch is only available for Claude profiles", true)
+		return m, nil
+	}
+
+	order := []string{
+		agent.ClaudeBackendAnthropic,
+		agent.ClaudeBackendOllama,
+		agent.ClaudeBackendBedrock,
+	}
+	current := agent.NormalizeClaudeBackend(a.Backend)
+	next := order[0]
+	for i, b := range order {
+		if b == current {
+			next = order[(i+1)%len(order)]
+			break
+		}
+	}
+	a.Backend = next
+	a.UpdatedAt = time.Now()
+	if err := a.Validate(); err != nil {
+		m.setStatus(fmt.Sprintf("Invalid backend selection: %v", err), true)
+		return m, nil
+	}
+	if err := m.vault.Update(a); err != nil {
+		m.setStatus(fmt.Sprintf("Failed to update backend: %v", err), true)
+		return m, nil
+	}
+	m.refresh()
+	m.setStatus(fmt.Sprintf("Claude backend set to %s for %s", next, a.Name), false)
+	return m, nil
+}
+
 func (m *model) handleConnectDetected() (tea.Model, tea.Cmd) {
 	if m.activeTab != tabDetected {
 		return m, nil
@@ -1483,6 +1528,9 @@ func (m model) renderAgentDetail() string {
 	}
 
 	field("Provider", string(a.Provider))
+	if a.Provider == agent.ProviderClaude {
+		field("Backend", agent.NormalizeClaudeBackend(a.Backend))
+	}
 	field("Model", runtimeCfg.Model.Value+sourceSuffix(runtimeCfg.Model.Source))
 
 	if runtimeCfg.APIKey.Value != "" {
@@ -2207,6 +2255,7 @@ func (m model) renderHelp() string {
 			keys: [][]string{
 				{"/", "Search/filter agents"},
 				{"d", "Delete selected agent"},
+				{"b", "Cycle Claude backend in agent detail"},
 			},
 		},
 		{
@@ -2270,7 +2319,7 @@ func (m model) renderHelpBar() string {
 		} else {
 			switch m.activeTab {
 			case tabAgents:
-				help = "tab: tabs  /: search  d: delete  : run cmd  enter: detail  ?: help  q: quit"
+				help = "tab: tabs  /: search  d: delete  b: cycle backend (detail)  : run cmd  enter: detail  ?: help  q: quit"
 			case tabInstructions:
 				help = "tab: tabs  e: edit  d: delete  : run cmd  enter: detail  ?: help  q: quit"
 			case tabRules:
@@ -2332,7 +2381,12 @@ func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (
 	case agent.ProviderCodex:
 		return executeGatewayCodex(a, prompt, timeout)
 	case agent.ProviderClaude:
-		return executeGatewayClaude(a, prompt, timeout)
+		switch agent.NormalizeClaudeBackend(a.Backend) {
+		case agent.ClaudeBackendOllama:
+			return executeGatewayOllama(a, prompt, timeout)
+		default:
+			return executeGatewayClaude(a, prompt, timeout)
+		}
 	default:
 		return "", gatewayUsage{}, fmt.Errorf("provider %q is not supported in TUI gateway yet", a.Provider)
 	}
