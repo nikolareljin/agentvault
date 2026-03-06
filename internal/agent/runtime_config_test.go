@@ -36,6 +36,7 @@ func TestResolvePromptRuntimeConfig_UsesEnvFallback(t *testing.T) {
 }
 
 func TestResolvePromptRuntimeConfig_UsesDefaultFallback(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "")
 	a := Agent{
 		Provider: ProviderOllama,
 		Model:    "llama3.2",
