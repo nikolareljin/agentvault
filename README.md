@@ -189,6 +189,13 @@ agentvault prompt my-ollama --text "summarize this design" --json
 agentvault -p
 ```
 
+Runtime value precedence for prompt execution is:
+- local agent setting in vault
+- process environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`)
+- built-in default fallback (for Ollama base URL: `http://localhost:11434`)
+
+In the TUI Agent detail view, effective values include source tags (`local`, `env`, `default`) for model/API key/base URL.
+
 By default, prompt runs are written in plaintext to `~/.config/agentvault/prompt-history.jsonl`, which may contain sensitive data.
 Treat this file as sensitive and disable or clear it when prompts may include secrets.
 Prompt mode can also store session transcript metadata in encrypted vault state on exit.

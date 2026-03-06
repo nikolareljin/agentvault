@@ -89,6 +89,10 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("agent %q not found", args[0])
 	}
+	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
+	a.Model = runtimeCfg.Model.Value
+	a.APIKey = runtimeCfg.APIKey.Value
+	a.BaseURL = runtimeCfg.BaseURL.Value
 
 	text, err := readPromptInput(cmd)
 	if err != nil {
@@ -123,6 +127,11 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 				"optimized":        optimized,
 				"profile":          optimizationProfile,
 				"effective_prompt": effectivePrompt,
+				"value_sources": map[string]string{
+					"model":    string(runtimeCfg.Model.Source),
+					"api_key":  string(runtimeCfg.APIKey.Source),
+					"base_url": string(runtimeCfg.BaseURL.Source),
+				},
 			})
 			return nil
 		}
@@ -322,10 +331,7 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, "codex", args...)
-	cmd.Env = os.Environ()
-	if strings.TrimSpace(a.APIKey) != "" {
-		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+a.APIKey)
-	}
+	cmd.Env = setEnvValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -412,10 +418,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, "claude", args...)
-	cmd.Env = os.Environ()
-	if strings.TrimSpace(a.APIKey) != "" {
-		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+a.APIKey)
-	}
+	cmd.Env = setEnvValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -454,6 +457,21 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	}
 
 	return promptResult{Response: strings.TrimSpace(response), Usage: usage}, nil
+}
+
+func setEnvValueWithPrecedence(baseEnv []string, key string, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(baseEnv)+1)
+	for _, entry := range baseEnv {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	if value != "" {
+		out = append(out, prefix+value)
+	}
+	return out
 }
 
 func appendPromptRecord(path string, rec PromptRecord) error {

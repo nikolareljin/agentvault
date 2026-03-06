@@ -147,6 +147,13 @@ Flags:
 - `--history-file <path>`: Override default `~/.config/agentvault/prompt-history.jsonl`.
 - `--timeout <duration>` (default: `5m`): Provider call timeout.
 
+Runtime value precedence:
+- local agent value in vault
+- environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`)
+- default fallback (`http://localhost:11434` for Ollama base URL)
+
+TUI agent detail renders effective model/API key/base URL with source tags (`local`, `env`, `default`).
+
 Examples:
 ```bash
 # list configured agents and pick one name
