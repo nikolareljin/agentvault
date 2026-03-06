@@ -99,6 +99,30 @@ func TestEnterDetailView(t *testing.T) {
 	if !strings.Contains(view, "sk-1") {
 		t.Error("detailView missing masked API key prefix")
 	}
+	if !strings.Contains(view, "(local)") {
+		t.Error("detailView should show value source tags")
+	}
+}
+
+func TestRenderAgentDetail_ShowsEnvAndDefaultSources(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
+	dir := t.TempDir()
+	v := vault.New(dir + "/env-default.enc")
+	if err := v.Init("testpass"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	_ = v.Add(agent.Agent{Name: "ollama-env", Provider: agent.ProviderOllama, Model: "llama3"})
+	m := initialModel(v)
+	view := m.renderAgentDetail()
+	if !strings.Contains(view, "http://env-ollama:11434 (env)") {
+		t.Fatalf("expected env source in base URL, got: %s", view)
+	}
+
+	t.Setenv("OLLAMA_HOST", "")
+	view = m.renderAgentDetail()
+	if !strings.Contains(view, "http://localhost:11434 (default)") {
+		t.Fatalf("expected default source in base URL, got: %s", view)
+	}
 }
 
 func TestEscBackToList(t *testing.T) {

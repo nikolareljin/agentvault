@@ -1461,6 +1461,7 @@ func (m model) renderAgentDetail() string {
 		return ""
 	}
 	a := m.agents[m.filteredAgents[m.cursor]]
+	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Agent: %s", a.Name)))
@@ -1473,17 +1474,25 @@ func (m model) renderAgentDetail() string {
 		b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render(fmt.Sprintf("%-16s", label+":")), value))
 	}
 
-	field("Provider", string(a.Provider))
-	field("Model", a.Model)
+	sourceSuffix := func(source agent.ValueSource) string {
+		if source == agent.ValueSourceUnset {
+			return ""
+		}
+		return fmt.Sprintf(" (%s)", source)
+	}
 
-	if a.APIKey != "" {
-		masked := a.APIKey[:min(4, len(a.APIKey))] + strings.Repeat("*", max(0, len(a.APIKey)-4))
-		field("API Key", masked)
+	field("Provider", string(a.Provider))
+	field("Model", runtimeCfg.Model.Value+sourceSuffix(runtimeCfg.Model.Source))
+
+	if runtimeCfg.APIKey.Value != "" {
+		masked := runtimeCfg.APIKey.Value[:min(4, len(runtimeCfg.APIKey.Value))] +
+			strings.Repeat("*", max(0, len(runtimeCfg.APIKey.Value)-4))
+		field("API Key", masked+sourceSuffix(runtimeCfg.APIKey.Source))
 	} else {
 		field("API Key", "")
 	}
 
-	field("Base URL", a.BaseURL)
+	field("Base URL", runtimeCfg.BaseURL.Value+sourceSuffix(runtimeCfg.BaseURL.Source))
 	field("Role", a.Role)
 
 	effectivePrompt := a.EffectiveSystemPrompt(m.shared)
@@ -2311,6 +2320,11 @@ func runGatewayPromptCmd(a agent.Agent, prompt string, timeout time.Duration) te
 }
 
 func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
+	a.Model = runtimeCfg.Model.Value
+	a.APIKey = runtimeCfg.APIKey.Value
+	a.BaseURL = runtimeCfg.BaseURL.Value
+
 	switch a.Provider {
 	case agent.ProviderOllama:
 		return executeGatewayOllama(a, prompt, timeout)
@@ -2401,10 +2415,7 @@ func executeGatewayCodex(a agent.Agent, prompt string, timeout time.Duration) (s
 	args = append(args, prompt)
 
 	cmd := exec.Command("codex", args...)
-	cmd.Env = os.Environ()
-	if strings.TrimSpace(a.APIKey) != "" {
-		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+a.APIKey)
-	}
+	cmd.Env = setEnvValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -2434,10 +2445,7 @@ func executeGatewayClaude(a agent.Agent, prompt string, timeout time.Duration) (
 	args = append(args, prompt)
 
 	cmd := exec.Command("claude", args...)
-	cmd.Env = os.Environ()
-	if strings.TrimSpace(a.APIKey) != "" {
-		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+a.APIKey)
-	}
+	cmd.Env = setEnvValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -2486,6 +2494,21 @@ func runCommandWithTimeout(cmd *exec.Cmd, timeout time.Duration) error {
 		}
 		return fmt.Errorf("timed out after %s", timeout)
 	}
+}
+
+func setEnvValueWithPrecedence(baseEnv []string, key string, value string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(baseEnv)+1)
+	for _, entry := range baseEnv {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	if value != "" {
+		out = append(out, prefix+value)
+	}
+	return out
 }
 
 func parseGatewayCodexUsage(raw string) gatewayUsage {
