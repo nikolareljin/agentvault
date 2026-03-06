@@ -1234,7 +1234,7 @@ func (m *model) handleCycleClaudeBackend() (tea.Model, tea.Cmd) {
 	}
 	a := m.agents[idx]
 	if a.Provider != agent.ProviderClaude {
-		m.setStatus("Backend switch is only available for Claude profiles", true)
+		m.setStatus("Backend switch is only available for Claude profiles", false)
 		return m, nil
 	}
 

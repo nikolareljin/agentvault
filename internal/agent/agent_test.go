@@ -41,6 +41,11 @@ func TestValidate(t *testing.T) {
 			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: "invalid"},
 			wantErr: true,
 		},
+		{
+			name:    "valid claude backend uppercase",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: "  OLLAMA  "},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -66,9 +71,12 @@ func TestNormalizeClaudeBackend(t *testing.T) {
 		{"unknown", ClaudeBackendAnthropic},
 	}
 	for _, tt := range tests {
-		if got := NormalizeClaudeBackend(tt.in); got != tt.want {
-			t.Fatalf("NormalizeClaudeBackend(%q)=%q, want %q", tt.in, got, tt.want)
-		}
+		tt := tt
+		t.Run(tt.in, func(t *testing.T) {
+			if got := NormalizeClaudeBackend(tt.in); got != tt.want {
+				t.Fatalf("NormalizeClaudeBackend(%q)=%q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 
