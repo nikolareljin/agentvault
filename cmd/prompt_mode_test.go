@@ -222,11 +222,11 @@ func TestGeneratePromptModeSessionID_SkipsEmptyAndDuplicate(t *testing.T) {
 		promptModeSessionIDGenerator = originalGenerator
 	})
 
-	sequence := []string{"", "dup", "fresh"}
+	sequence := []string{"", "dup", "fresh", "newer"}
 	var i int
 	promptModeSessionIDGenerator = func() string {
 		if i >= len(sequence) {
-			return "fresh"
+			return "newer"
 		}
 		value := sequence[i]
 		i++
@@ -235,9 +235,10 @@ func TestGeneratePromptModeSessionID_SkipsEmptyAndDuplicate(t *testing.T) {
 
 	id := generatePromptModeSessionID([]agent.PromptSession{
 		{ID: "prompt-session-dup"},
+		{ID: "  prompt-session-fresh  "},
 	})
-	if id != "prompt-session-fresh" {
-		t.Fatalf("generatePromptModeSessionID() = %q, want prompt-session-fresh", id)
+	if id != "prompt-session-newer" {
+		t.Fatalf("generatePromptModeSessionID() = %q, want prompt-session-newer", id)
 	}
 }
 

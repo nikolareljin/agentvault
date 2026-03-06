@@ -251,13 +251,16 @@ func TestParsePromptModeInvocation_ShortFlagSpaceFalseDoesNotLaunch(t *testing.T
 	}
 }
 
-func TestParsePromptModeInvocation_WithCommandDoesNotIntercept(t *testing.T) {
+func TestParsePromptModeInvocation_WithCommandReturnsActionableError(t *testing.T) {
 	launch, err := parsePromptModeInvocation([]string{"detect", "-p"})
-	if err != nil {
-		t.Fatalf("parsePromptModeInvocation(detect -p) error = %v", err)
+	if err == nil {
+		t.Fatalf("expected prompt mode + command error")
 	}
 	if launch {
 		t.Fatalf("launch = true, want false")
+	}
+	if !strings.Contains(err.Error(), "prompt mode flag must be used without a command") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -521,7 +524,7 @@ func TestExecute_DoesNotReuseStaleSetArgsAfterHelp(t *testing.T) {
 	}
 }
 
-func TestExecute_CommandWithPromptModeFlagReturnsCobraUnknownFlag(t *testing.T) {
+func TestExecute_CommandWithPromptModeFlagReturnsActionableError(t *testing.T) {
 	origArgs := os.Args
 	t.Cleanup(func() { os.Args = origArgs })
 	os.Args = []string{"agentvault", "detect", "-p"}
@@ -530,7 +533,7 @@ func TestExecute_CommandWithPromptModeFlagReturnsCobraUnknownFlag(t *testing.T) 
 	if err == nil {
 		t.Fatalf("expected error for command + -p combination")
 	}
-	if !strings.Contains(err.Error(), "unknown shorthand flag") && !strings.Contains(err.Error(), "unknown flag") {
+	if !strings.Contains(err.Error(), "prompt mode flag must be used without a command") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

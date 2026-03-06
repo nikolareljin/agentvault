@@ -415,7 +415,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	// merge prompt sessions (don't overwrite existing by ID)
 	seenPromptSessions := make(map[string]struct{})
 	for _, s := range v.shared.PromptSessions {
-		normalizedID := truncatePromptImportField(s.ID)
+		normalizedID := normalizePromptSessionID(s.ID)
 		if normalizedID == "" {
 			continue
 		}
@@ -423,9 +423,8 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	}
 	importedPromptSessions := make([]agent.PromptSession, 0, len(vd.Shared.PromptSessions))
 	for _, s := range vd.Shared.PromptSessions {
-		trimmedOriginalID := strings.TrimSpace(s.ID)
-		normalizedID := truncatePromptImportField(s.ID)
-		if normalizedID == "" || isPromptSessionIDOverlong(trimmedOriginalID) {
+		normalizedID := normalizePromptSessionID(s.ID)
+		if normalizedID == "" || isPromptSessionIDOverlong(normalizedID) {
 			s.ID = generateUniquePromptSessionID(seenPromptSessions)
 		} else {
 			s.ID = normalizedID
@@ -539,6 +538,10 @@ func truncatePromptImportField(value string) string {
 	return textutil.TruncateRunesWithEllipsis(trimmed, agent.PromptTranscriptFieldMaxRunes)
 }
 
+func normalizePromptSessionID(value string) string {
+	return strings.TrimSpace(value)
+}
+
 func isPromptSessionIDOverlong(value string) bool {
 	if value == "" {
 		return false
@@ -546,7 +549,7 @@ func isPromptSessionIDOverlong(value string) bool {
 	runes := 0
 	for range value {
 		runes++
-		if runes > agent.PromptTranscriptFieldMaxRunes {
+		if runes > agent.PromptSessionIDMaxRunes {
 			return true
 		}
 	}

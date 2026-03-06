@@ -680,8 +680,8 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 	if session.ID == "" {
 		t.Fatalf("session id should be regenerated for overlong imported IDs")
 	}
-	if len([]rune(session.ID)) > agent.PromptTranscriptFieldMaxRunes {
-		t.Fatalf("session id rune len = %d, should be <= %d", len([]rune(session.ID)), agent.PromptTranscriptFieldMaxRunes)
+	if len([]rune(session.ID)) > agent.PromptSessionIDMaxRunes {
+		t.Fatalf("session id rune len = %d, should be <= %d", len([]rune(session.ID)), agent.PromptSessionIDMaxRunes)
 	}
 }
 
@@ -692,7 +692,7 @@ func TestImportDataOverlongPromptSessionIDsDoNotCollideByTruncation(t *testing.T
 		t.Fatalf("Init() error = %v", err)
 	}
 
-	prefix := strings.Repeat("a", agent.PromptTranscriptFieldMaxRunes)
+	prefix := strings.Repeat("a", agent.PromptSessionIDMaxRunes)
 	idA := prefix + "-left"
 	idB := prefix + "-right"
 	if idA == idB {
