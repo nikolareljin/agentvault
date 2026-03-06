@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -107,11 +108,13 @@ func TestEnterDetailView(t *testing.T) {
 func TestRenderAgentDetail_ShowsEnvAndDefaultSources(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
 	dir := t.TempDir()
-	v := vault.New(dir + "/env-default.enc")
+	v := vault.New(filepath.Join(dir, "env-default.enc"))
 	if err := v.Init("testpass"); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
-	_ = v.Add(agent.Agent{Name: "ollama-env", Provider: agent.ProviderOllama, Model: "llama3"})
+	if err := v.Add(agent.Agent{Name: "ollama-env", Provider: agent.ProviderOllama, Model: "llama3"}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
 	m := initialModel(v)
 	view := m.renderAgentDetail()
 	if !strings.Contains(view, "http://env-ollama:11434 (env)") {
