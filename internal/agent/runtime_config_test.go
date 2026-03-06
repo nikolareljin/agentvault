@@ -66,3 +66,37 @@ func TestResolvePromptRuntimeConfig_UsesEnvForOllamaBaseURL(t *testing.T) {
 		t.Fatalf("base url source = %q, want %q", cfg.BaseURL.Source, ValueSourceEnv)
 	}
 }
+
+func TestResolvePromptRuntimeConfig_PrefersLocalOllamaBaseURLOverEnv(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
+	a := Agent{
+		Provider: ProviderOllama,
+		Model:    "llama3.2",
+		BaseURL:  "http://local-ollama:11434",
+	}
+
+	cfg := ResolvePromptRuntimeConfig(a)
+	if cfg.BaseURL.Value != "http://local-ollama:11434" {
+		t.Fatalf("base url = %q, want local value", cfg.BaseURL.Value)
+	}
+	if cfg.BaseURL.Source != ValueSourceLocal {
+		t.Fatalf("base url source = %q, want %q", cfg.BaseURL.Source, ValueSourceLocal)
+	}
+}
+
+func TestResolvePromptRuntimeConfig_PrefersLocalClaudeAPIKeyOverEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
+	a := Agent{
+		Provider: ProviderClaude,
+		Model:    "claude-sonnet",
+		APIKey:   "local-anthropic-key",
+	}
+
+	cfg := ResolvePromptRuntimeConfig(a)
+	if cfg.APIKey.Value != "local-anthropic-key" {
+		t.Fatalf("api key = %q, want local value", cfg.APIKey.Value)
+	}
+	if cfg.APIKey.Source != ValueSourceLocal {
+		t.Fatalf("api key source = %q, want %q", cfg.APIKey.Source, ValueSourceLocal)
+	}
+}
