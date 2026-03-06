@@ -311,7 +311,7 @@ func validatePromptBackend(a agent.Agent, timeout time.Duration) error {
 	}
 }
 
-func validateOllamaEndpoint(baseURL string, timeout time.Duration, context string) error {
+func validateOllamaEndpoint(baseURL string, timeout time.Duration, operationName string) error {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
@@ -323,12 +323,12 @@ func validateOllamaEndpoint(baseURL string, timeout time.Duration, context strin
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s failed: %w", context, err)
+		return fmt.Errorf("%s failed: %w", operationName, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s failed (%d): %s", context, resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("%s failed (%d): %s", operationName, resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return nil
 }
