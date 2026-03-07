@@ -306,7 +306,7 @@ func TestExecuteGatewayPrompt_BedrockReturnsExplicitError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for bedrock gateway execution")
 	}
-	if !strings.Contains(err.Error(), "Claude Bedrock backend is not supported in TUI gateway yet") {
+	if !strings.Contains(err.Error(), "claude bedrock backend is not supported in TUI gateway yet") {
 		t.Fatalf("unexpected bedrock gateway execution error: %v", err)
 	}
 }

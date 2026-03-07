@@ -2306,7 +2306,11 @@ func (m model) renderHelpBar() string {
 	var help string
 	switch m.mode {
 	case viewAgentDetail, viewInstructionDetail, viewRuleDetail, viewSessionDetail:
-		help = "esc: back  q: quit"
+		if m.mode == viewAgentDetail && m.activeTab == tabAgents {
+			help = "b: cycle backend  esc: back  q: quit"
+		} else {
+			help = "esc: back  q: quit"
+		}
 	case viewHelp:
 		help = "esc: back  q: quit"
 	case viewConfirmDelete:
@@ -2385,7 +2389,7 @@ func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (
 		case agent.ClaudeBackendOllama:
 			return executeGatewayOllama(a, prompt, timeout)
 		case agent.ClaudeBackendBedrock:
-			return "", gatewayUsage{}, fmt.Errorf("Claude Bedrock backend is not supported in TUI gateway yet")
+			return "", gatewayUsage{}, fmt.Errorf("claude bedrock backend is not supported in TUI gateway yet")
 		default:
 			return executeGatewayClaude(a, prompt, timeout)
 		}
