@@ -32,6 +32,9 @@ Example:
 		if cmd.Flags().Changed("provider") {
 			p, _ := cmd.Flags().GetString("provider")
 			a.Provider = agent.Provider(p)
+			if a.Provider != agent.ProviderClaude && !cmd.Flags().Changed("backend") {
+				a.Backend = ""
+			}
 		}
 		if cmd.Flags().Changed("model") {
 			a.Model, _ = cmd.Flags().GetString("model")
