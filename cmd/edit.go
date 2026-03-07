@@ -37,7 +37,11 @@ Example:
 			a.Model, _ = cmd.Flags().GetString("model")
 		}
 		if cmd.Flags().Changed("backend") {
-			a.Backend, _ = cmd.Flags().GetString("backend")
+			rawBackend, _ := cmd.Flags().GetString("backend")
+			a.Backend = strings.TrimSpace(rawBackend)
+			if a.Provider == agent.ProviderClaude {
+				a.Backend = strings.ToLower(a.Backend)
+			}
 		}
 		if cmd.Flags().Changed("api-key") {
 			a.APIKey, _ = cmd.Flags().GetString("api-key")
