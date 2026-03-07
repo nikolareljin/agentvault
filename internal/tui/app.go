@@ -2306,7 +2306,13 @@ func (m model) renderHelpBar() string {
 	var help string
 	switch m.mode {
 	case viewAgentDetail, viewInstructionDetail, viewRuleDetail, viewSessionDetail:
-		if m.mode == viewAgentDetail && m.activeTab == tabAgents {
+		if m.mode == viewAgentDetail &&
+			m.activeTab == tabAgents &&
+			m.cursor >= 0 &&
+			m.cursor < len(m.filteredAgents) &&
+			m.filteredAgents[m.cursor] >= 0 &&
+			m.filteredAgents[m.cursor] < len(m.agents) &&
+			m.agents[m.filteredAgents[m.cursor]].Provider == agent.ProviderClaude {
 			help = "b: cycle backend  esc: back  q: quit"
 		} else {
 			help = "esc: back  q: quit"
