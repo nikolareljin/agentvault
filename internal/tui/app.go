@@ -2384,6 +2384,8 @@ func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (
 		switch agent.NormalizeClaudeBackend(a.Backend) {
 		case agent.ClaudeBackendOllama:
 			return executeGatewayOllama(a, prompt, timeout)
+		case agent.ClaudeBackendBedrock:
+			return "", gatewayUsage{}, fmt.Errorf("Claude Bedrock backend is not supported in TUI gateway yet")
 		default:
 			return executeGatewayClaude(a, prompt, timeout)
 		}

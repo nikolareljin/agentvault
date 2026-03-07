@@ -26,6 +26,22 @@ func TestValidatePromptBackend_BedrockReturnsExplicitError(t *testing.T) {
 	}
 }
 
+func TestExecutePrompt_BedrockReturnsExplicitError(t *testing.T) {
+	a := agent.Agent{
+		Name:     "claude-bedrock",
+		Provider: agent.ProviderClaude,
+		Backend:  agent.ClaudeBackendBedrock,
+	}
+
+	_, err := executePrompt(a, "hello", time.Second)
+	if err == nil {
+		t.Fatalf("expected error for bedrock execution")
+	}
+	if !strings.Contains(err.Error(), "bedrock backend execution is not supported yet") {
+		t.Fatalf("unexpected bedrock execution error: %v", err)
+	}
+}
+
 func TestValidateOllamaEndpoint(t *testing.T) {
 	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/tags" {
