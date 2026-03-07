@@ -69,6 +69,7 @@ Required:
 
 Optional:
 - `-m, --model <model>`
+- `--backend <backend>`
 - `-k, --api-key <key>`
 - `--base-url <url>`
 - `--system-prompt <text>`
@@ -84,6 +85,7 @@ Flags:
 Flags:
 - `-p, --provider <provider>`
 - `-m, --model <model>`
+- `--backend <backend>`
 - `-k, --api-key <key>`
 - `--base-url <url>`
 - `--system-prompt <text>`
@@ -116,6 +118,7 @@ Flags:
 - `--optimize-profile <profile>` (default: `auto`): `auto|generic|ollama|codex|copilot|claude`
 - `--optimize-ollama` (default: `true`, compatibility)
 - `--dry-run` (default: `false`)
+- `--validate-only` (default: `false`)
 - `--no-log` (default: `false`)
 - `--history-file <path>`
 - `--timeout <duration>` (default: `5m`)

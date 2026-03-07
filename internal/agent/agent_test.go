@@ -31,6 +31,26 @@ func TestValidate(t *testing.T) {
 			agent:   Agent{Name: "test", Provider: "unknown"},
 			wantErr: true,
 		},
+		{
+			name:    "valid claude backend",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: ClaudeBackendOllama},
+			wantErr: false,
+		},
+		{
+			name:    "invalid claude backend",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: "invalid"},
+			wantErr: true,
+		},
+		{
+			name:    "valid claude backend uppercase",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: "  OLLAMA  "},
+			wantErr: false,
+		},
+		{
+			name:    "backend rejected for non-claude provider",
+			agent:   Agent{Name: "test", Provider: ProviderOllama, Backend: ClaudeBackendBedrock},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -38,6 +58,28 @@ func TestValidate(t *testing.T) {
 			err := tt.agent.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNormalizeClaudeBackend(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ClaudeBackendAnthropic},
+		{"anthropic", ClaudeBackendAnthropic},
+		{"ollama", ClaudeBackendOllama},
+		{"bedrock", ClaudeBackendBedrock},
+		{"  OLLAMA  ", ClaudeBackendOllama},
+		{"unknown", ClaudeBackendAnthropic},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.in, func(t *testing.T) {
+			if got := NormalizeClaudeBackend(tt.in); got != tt.want {
+				t.Fatalf("NormalizeClaudeBackend(%q)=%q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}

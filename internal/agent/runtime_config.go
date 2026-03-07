@@ -37,8 +37,17 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 
 	switch a.Provider {
 	case ProviderClaude:
-		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), []string{"ANTHROPIC_API_KEY"}, "")
-		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
+		switch NormalizeClaudeBackend(a.Backend) {
+		case ClaudeBackendOllama:
+			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
+			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), []string{"OLLAMA_HOST"}, "http://localhost:11434")
+		case ClaudeBackendBedrock:
+			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
+			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
+		default:
+			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), []string{"ANTHROPIC_API_KEY"}, "")
+			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
+		}
 	case ProviderCodex, ProviderOpenAI:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), []string{"OPENAI_API_KEY"}, "")
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")

@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -102,6 +103,47 @@ func TestEnterDetailView(t *testing.T) {
 	}
 	if !strings.Contains(view, "(local)") {
 		t.Error("detailView should show value source tags")
+	}
+}
+
+func TestCycleClaudeBackend_PersistsViaUpdate(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+
+	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	var detail model
+	switch mm := m2.(type) {
+	case model:
+		detail = mm
+	case *model:
+		detail = *mm
+	default:
+		t.Fatalf("unexpected model type: %T", m2)
+	}
+	if detail.mode != viewAgentDetail {
+		t.Fatalf("mode = %v, want viewAgentDetail", detail.mode)
+	}
+
+	m3, _ := detail.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	var updated model
+	switch mm := m3.(type) {
+	case model:
+		updated = mm
+	case *model:
+		updated = *mm
+	default:
+		t.Fatalf("unexpected model type after cycle: %T", m3)
+	}
+
+	agentInVault, ok := v.Get("claude-main")
+	if !ok {
+		t.Fatalf("claude-main should exist in vault")
+	}
+	if agent.NormalizeClaudeBackend(agentInVault.Backend) != agent.ClaudeBackendOllama {
+		t.Fatalf("backend = %q, want %q", agentInVault.Backend, agent.ClaudeBackendOllama)
+	}
+	if !strings.Contains(updated.statusMsg, "Claude backend set to ollama") {
+		t.Fatalf("status message = %q, expected backend switch confirmation", updated.statusMsg)
 	}
 }
 
@@ -250,5 +292,21 @@ func TestApplyStartTarget(t *testing.T) {
 		if m.mode != tc.mode {
 			t.Fatalf("target %q mode = %v, want %v", tc.target, m.mode, tc.mode)
 		}
+	}
+}
+
+func TestExecuteGatewayPrompt_BedrockReturnsExplicitError(t *testing.T) {
+	a := agent.Agent{
+		Name:     "claude-bedrock",
+		Provider: agent.ProviderClaude,
+		Backend:  agent.ClaudeBackendBedrock,
+	}
+
+	_, _, err := executeGatewayPrompt(a, "hello", time.Second)
+	if err == nil {
+		t.Fatalf("expected error for bedrock gateway execution")
+	}
+	if !strings.Contains(err.Error(), "claude bedrock backend is not supported in TUI gateway yet") {
+		t.Fatalf("unexpected bedrock gateway execution error: %v", err)
 	}
 }
