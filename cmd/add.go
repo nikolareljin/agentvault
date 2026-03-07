@@ -44,11 +44,15 @@ Example:
 		}
 
 		now := time.Now()
+		normalizedBackend := strings.TrimSpace(backend)
+		if agent.Provider(provider) == agent.ProviderClaude {
+			normalizedBackend = strings.ToLower(normalizedBackend)
+		}
 		a := agent.Agent{
 			Name:         args[0],
 			Provider:     agent.Provider(provider),
 			Model:        model,
-			Backend:      backend,
+			Backend:      normalizedBackend,
 			APIKey:       apiKey,
 			BaseURL:      baseURL,
 			SystemPrompt: systemPrompt,
