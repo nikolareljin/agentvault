@@ -270,6 +270,8 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 		switch agent.NormalizeClaudeBackend(a.Backend) {
 		case agent.ClaudeBackendOllama:
 			return executeOllamaPrompt(a, prompt, timeout)
+		case agent.ClaudeBackendBedrock:
+			return promptResult{}, errors.New("bedrock backend execution is not supported yet")
 		default:
 			return executeClaudePrompt(a, prompt, timeout)
 		}

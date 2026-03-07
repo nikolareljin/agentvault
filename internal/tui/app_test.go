@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -291,5 +292,21 @@ func TestApplyStartTarget(t *testing.T) {
 		if m.mode != tc.mode {
 			t.Fatalf("target %q mode = %v, want %v", tc.target, m.mode, tc.mode)
 		}
+	}
+}
+
+func TestExecuteGatewayPrompt_BedrockReturnsExplicitError(t *testing.T) {
+	a := agent.Agent{
+		Name:     "claude-bedrock",
+		Provider: agent.ProviderClaude,
+		Backend:  agent.ClaudeBackendBedrock,
+	}
+
+	_, _, err := executeGatewayPrompt(a, "hello", time.Second)
+	if err == nil {
+		t.Fatalf("expected error for bedrock gateway execution")
+	}
+	if !strings.Contains(err.Error(), "Claude Bedrock backend is not supported in TUI gateway yet") {
+		t.Fatalf("unexpected bedrock gateway execution error: %v", err)
 	}
 }
