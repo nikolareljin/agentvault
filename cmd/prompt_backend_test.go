@@ -69,3 +69,53 @@ func TestValidateOllamaEndpoint(t *testing.T) {
 		t.Fatalf("unexpected status error: %v", err)
 	}
 }
+
+func TestEffectivePromptBackend(t *testing.T) {
+	tests := []struct {
+		name string
+		a    agent.Agent
+		want string
+	}{
+		{
+			name: "claude defaults to anthropic",
+			a: agent.Agent{
+				Provider: agent.ProviderClaude,
+				Backend:  "",
+			},
+			want: agent.ClaudeBackendAnthropic,
+		},
+		{
+			name: "claude explicit backend",
+			a: agent.Agent{
+				Provider: agent.ProviderClaude,
+				Backend:  agent.ClaudeBackendOllama,
+			},
+			want: agent.ClaudeBackendOllama,
+		},
+		{
+			name: "non-claude returns provider",
+			a: agent.Agent{
+				Provider: agent.ProviderCodex,
+			},
+			want: string(agent.ProviderCodex),
+		},
+		{
+			name: "invalid claude backend returns normalized raw value",
+			a: agent.Agent{
+				Provider: agent.ProviderClaude,
+				Backend:  "  CUSTOM  ",
+			},
+			want: "custom",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			got := effectivePromptBackend(tt.a)
+			if got != tt.want {
+				t.Fatalf("effectivePromptBackend() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
