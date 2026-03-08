@@ -82,6 +82,9 @@ func init() {
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "text")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "file")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "optimize")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "optimize-profile")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "no-log")
 }
 
 func runPrompt(cmd *cobra.Command, args []string) error {
