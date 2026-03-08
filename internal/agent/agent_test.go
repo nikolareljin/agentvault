@@ -31,6 +31,26 @@ func TestValidate(t *testing.T) {
 			agent:   Agent{Name: "test", Provider: "unknown"},
 			wantErr: true,
 		},
+		{
+			name:    "valid claude backend",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: ClaudeBackendOllama},
+			wantErr: false,
+		},
+		{
+			name:    "invalid claude backend",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: "invalid"},
+			wantErr: true,
+		},
+		{
+			name:    "valid claude backend uppercase",
+			agent:   Agent{Name: "test", Provider: ProviderClaude, Backend: "  OLLAMA  "},
+			wantErr: false,
+		},
+		{
+			name:    "backend rejected for non-claude provider",
+			agent:   Agent{Name: "test", Provider: ProviderOllama, Backend: ClaudeBackendBedrock},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -38,6 +58,60 @@ func TestValidate(t *testing.T) {
 			err := tt.agent.Validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNormalizeClaudeBackend(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ClaudeBackendAnthropic},
+		{"anthropic", ClaudeBackendAnthropic},
+		{"ollama", ClaudeBackendOllama},
+		{"bedrock", ClaudeBackendBedrock},
+		{"  OLLAMA  ", ClaudeBackendOllama},
+		{"unknown", ClaudeBackendAnthropic},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.in, func(t *testing.T) {
+			if got := NormalizeClaudeBackend(tt.in); got != tt.want {
+				t.Fatalf("NormalizeClaudeBackend(%q)=%q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseClaudeBackend(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty defaults to anthropic", in: "", want: ClaudeBackendAnthropic},
+		{name: "anthropic", in: "anthropic", want: ClaudeBackendAnthropic},
+		{name: "ollama", in: "ollama", want: ClaudeBackendOllama},
+		{name: "bedrock", in: "bedrock", want: ClaudeBackendBedrock},
+		{name: "trim and lowercase", in: "  OLLAMA  ", want: ClaudeBackendOllama},
+		{name: "unknown returns error", in: "unknown", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseClaudeBackend(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseClaudeBackend(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("ParseClaudeBackend(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -60,20 +134,20 @@ func TestEffectiveSystemPrompt(t *testing.T) {
 	shared := SharedConfig{SystemPrompt: "Be helpful and concise."}
 
 	// agent without own prompt uses shared
-	a1 := Agent{Name: "a1", Provider: ProviderClaude}
-	if got := a1.EffectiveSystemPrompt(shared); got != "Be helpful and concise." {
+	agentUsingSharedPrompt := Agent{Name: "agent-using-shared-prompt", Provider: ProviderClaude}
+	if got := agentUsingSharedPrompt.EffectiveSystemPrompt(shared); got != "Be helpful and concise." {
 		t.Errorf("EffectiveSystemPrompt() = %q, want shared prompt", got)
 	}
 
 	// agent with own prompt overrides shared
-	a2 := Agent{Name: "a2", Provider: ProviderClaude, SystemPrompt: "Custom."}
-	if got := a2.EffectiveSystemPrompt(shared); got != "Custom." {
+	agentWithCustomPrompt := Agent{Name: "agent-with-custom-prompt", Provider: ProviderClaude, SystemPrompt: "Custom."}
+	if got := agentWithCustomPrompt.EffectiveSystemPrompt(shared); got != "Custom." {
 		t.Errorf("EffectiveSystemPrompt() = %q, want agent prompt", got)
 	}
 
 	// empty shared, empty agent
-	a3 := Agent{Name: "a3", Provider: ProviderClaude}
-	if got := a3.EffectiveSystemPrompt(SharedConfig{}); got != "" {
+	agentWithNoPrompt := Agent{Name: "agent-with-no-prompt", Provider: ProviderClaude}
+	if got := agentWithNoPrompt.EffectiveSystemPrompt(SharedConfig{}); got != "" {
 		t.Errorf("EffectiveSystemPrompt() = %q, want empty", got)
 	}
 }
@@ -106,21 +180,21 @@ func TestEffectiveMCPServers(t *testing.T) {
 	}
 
 	// agent with no MCP servers gets all shared
-	a1 := Agent{Name: "a1", Provider: ProviderClaude}
-	servers := a1.EffectiveMCPServers(shared)
+	agentUsingSharedServers := Agent{Name: "agent-using-shared-servers", Provider: ProviderClaude}
+	servers := agentUsingSharedServers.EffectiveMCPServers(shared)
 	if len(servers) != 2 {
 		t.Fatalf("EffectiveMCPServers() len = %d, want 2", len(servers))
 	}
 
 	// agent with overlapping MCP server overrides shared
-	a2 := Agent{
-		Name:     "a2",
+	agentWithOverrideServer := Agent{
+		Name:     "agent-with-override-server",
 		Provider: ProviderClaude,
 		MCPServers: []MCPServer{
 			{Name: "filesystem", Command: "custom-fs", Args: []string{"--custom"}},
 		},
 	}
-	servers = a2.EffectiveMCPServers(shared)
+	servers = agentWithOverrideServer.EffectiveMCPServers(shared)
 	if len(servers) != 2 {
 		t.Fatalf("EffectiveMCPServers() len = %d, want 2", len(servers))
 	}
@@ -134,14 +208,14 @@ func TestEffectiveMCPServers(t *testing.T) {
 	}
 
 	// agent with unique MCP server adds to shared
-	a3 := Agent{
-		Name:     "a3",
+	agentWithAdditionalServer := Agent{
+		Name:     "agent-with-additional-server",
 		Provider: ProviderClaude,
 		MCPServers: []MCPServer{
 			{Name: "custom-tool", Command: "my-tool"},
 		},
 	}
-	servers = a3.EffectiveMCPServers(shared)
+	servers = agentWithAdditionalServer.EffectiveMCPServers(shared)
 	if len(servers) != 3 {
 		t.Fatalf("EffectiveMCPServers() len = %d, want 3", len(servers))
 	}

@@ -28,6 +28,7 @@ Example:
 		model, _ := cmd.Flags().GetString("model")
 		apiKey, _ := cmd.Flags().GetString("api-key")
 		baseURL, _ := cmd.Flags().GetString("base-url")
+		backend, _ := cmd.Flags().GetString("backend")
 		systemPrompt, _ := cmd.Flags().GetString("system-prompt")
 		taskDesc, _ := cmd.Flags().GetString("task-desc")
 		tagsStr, _ := cmd.Flags().GetString("tags")
@@ -43,10 +44,15 @@ Example:
 		}
 
 		now := time.Now()
+		normalizedBackend := strings.TrimSpace(backend)
+		if agent.Provider(provider) == agent.ProviderClaude {
+			normalizedBackend = strings.ToLower(normalizedBackend)
+		}
 		a := agent.Agent{
 			Name:         args[0],
 			Provider:     agent.Provider(provider),
 			Model:        model,
+			Backend:      normalizedBackend,
 			APIKey:       apiKey,
 			BaseURL:      baseURL,
 			SystemPrompt: systemPrompt,
@@ -70,6 +76,7 @@ func init() {
 	rootCmd.AddCommand(addCmd)
 	addCmd.Flags().StringP("provider", "p", "", "provider (claude, gemini, codex, ollama, openai, custom)")
 	addCmd.Flags().StringP("model", "m", "", "model name")
+	addCmd.Flags().String("backend", "", "backend (for claude: anthropic|ollama|bedrock)")
 	addCmd.Flags().StringP("api-key", "k", "", "API key")
 	addCmd.Flags().String("base-url", "", "custom base URL")
 	addCmd.Flags().String("system-prompt", "", "system prompt")

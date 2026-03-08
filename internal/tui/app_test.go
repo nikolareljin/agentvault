@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -55,16 +56,16 @@ func TestNavigateDown(t *testing.T) {
 	if m.cursor != 0 {
 		t.Fatalf("initial cursor = %d, want 0", m.cursor)
 	}
-	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m2 := newModel.(model)
-	if m2.cursor != 1 {
-		t.Errorf("after j: cursor = %d, want 1", m2.cursor)
+	modelAfterFirstDownKey, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	afterFirstDown := modelAfterFirstDownKey.(model)
+	if afterFirstDown.cursor != 1 {
+		t.Errorf("after j: cursor = %d, want 1", afterFirstDown.cursor)
 	}
 	// can't go past end
-	newModel, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	m3 := newModel.(model)
-	if m3.cursor != 1 {
-		t.Errorf("after second j: cursor = %d, want 1", m3.cursor)
+	modelAfterSecondDownKey, _ := afterFirstDown.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	afterSecondDown := modelAfterSecondDownKey.(model)
+	if afterSecondDown.cursor != 1 {
+		t.Errorf("after second j: cursor = %d, want 1", afterSecondDown.cursor)
 	}
 }
 
@@ -72,28 +73,28 @@ func TestNavigateUp(t *testing.T) {
 	v := testVault(t)
 	m := initialModel(v)
 	m.cursor = 1
-	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m2 := newModel.(model)
-	if m2.cursor != 0 {
-		t.Errorf("after k: cursor = %d, want 0", m2.cursor)
+	modelAfterFirstUpKey, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	afterFirstUp := modelAfterFirstUpKey.(model)
+	if afterFirstUp.cursor != 0 {
+		t.Errorf("after k: cursor = %d, want 0", afterFirstUp.cursor)
 	}
 	// can't go past start
-	newModel, _ = m2.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	m3 := newModel.(model)
-	if m3.cursor != 0 {
-		t.Errorf("after second k: cursor = %d, want 0", m3.cursor)
+	modelAfterSecondUpKey, _ := afterFirstUp.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	afterSecondUp := modelAfterSecondUpKey.(model)
+	if afterSecondUp.cursor != 0 {
+		t.Errorf("after second k: cursor = %d, want 0", afterSecondUp.cursor)
 	}
 }
 
 func TestEnterDetailView(t *testing.T) {
 	v := testVault(t)
 	m := initialModel(v)
-	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m2 := newModel.(model)
-	if m2.mode != viewAgentDetail {
-		t.Errorf("after enter: mode = %d, want viewAgentDetail", m2.mode)
+	modelAfterEnterKey, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	detailModel := modelAfterEnterKey.(model)
+	if detailModel.mode != viewAgentDetail {
+		t.Errorf("after enter: mode = %d, want viewAgentDetail", detailModel.mode)
 	}
-	view := m2.View()
+	view := detailModel.View()
 	if !strings.Contains(view, "Agent: claude-main") {
 		t.Error("detailView missing agent title")
 	}
@@ -102,6 +103,32 @@ func TestEnterDetailView(t *testing.T) {
 	}
 	if !strings.Contains(view, "(local)") {
 		t.Error("detailView should show value source tags")
+	}
+}
+
+func TestCycleClaudeBackend_PersistsViaUpdate(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+
+	modelAfterEnterKey, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	detailModel := modelAfterEnterKey.(model)
+	if detailModel.mode != viewAgentDetail {
+		t.Fatalf("mode = %v, want viewAgentDetail", detailModel.mode)
+	}
+
+	modelAfterBackendCycleKey, _ := detailModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	// This update path returns *model, so unwrap it for stable field assertions.
+	modelAfterBackendCycle := *(modelAfterBackendCycleKey.(*model))
+
+	agentInVault, ok := v.Get("claude-main")
+	if !ok {
+		t.Fatalf("claude-main should exist in vault")
+	}
+	if agent.NormalizeClaudeBackend(agentInVault.Backend) != agent.ClaudeBackendOllama {
+		t.Fatalf("backend = %q, want %q", agentInVault.Backend, agent.ClaudeBackendOllama)
+	}
+	if !strings.Contains(modelAfterBackendCycle.statusMsg, "Claude backend set to ollama") {
+		t.Fatalf("status message = %q, expected backend switch confirmation", modelAfterBackendCycle.statusMsg)
 	}
 }
 
@@ -132,10 +159,10 @@ func TestEscBackToList(t *testing.T) {
 	v := testVault(t)
 	m := initialModel(v)
 	m.mode = viewAgentDetail
-	newModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m2 := newModel.(model)
-	if m2.mode != viewAgentList {
-		t.Errorf("after esc: mode = %d, want viewAgentList", m2.mode)
+	modelAfterEscKey, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	listModelAfterEsc := modelAfterEscKey.(model)
+	if listModelAfterEsc.mode != viewAgentList {
+		t.Errorf("after esc: mode = %d, want viewAgentList", listModelAfterEsc.mode)
 	}
 }
 
@@ -250,5 +277,21 @@ func TestApplyStartTarget(t *testing.T) {
 		if m.mode != tc.mode {
 			t.Fatalf("target %q mode = %v, want %v", tc.target, m.mode, tc.mode)
 		}
+	}
+}
+
+func TestExecuteGatewayPrompt_BedrockReturnsExplicitError(t *testing.T) {
+	a := agent.Agent{
+		Name:     "claude-bedrock",
+		Provider: agent.ProviderClaude,
+		Backend:  agent.ClaudeBackendBedrock,
+	}
+
+	_, _, err := executeGatewayPrompt(a, "hello", time.Second)
+	if err == nil {
+		t.Fatalf("expected error for bedrock gateway execution")
+	}
+	if !strings.Contains(err.Error(), "claude bedrock backend is not supported in TUI gateway yet") {
+		t.Fatalf("unexpected bedrock gateway execution error: %v", err)
 	}
 }

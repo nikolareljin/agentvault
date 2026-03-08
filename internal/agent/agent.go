@@ -14,6 +14,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +37,12 @@ const (
 	ProviderCustom   Provider = "custom"
 )
 
+const (
+	ClaudeBackendAnthropic = "anthropic"
+	ClaudeBackendOllama    = "ollama"
+	ClaudeBackendBedrock   = "bedrock"
+)
+
 // MCPServer represents a Model Context Protocol server configuration.
 type MCPServer struct {
 	Name    string            `json:"name"`
@@ -49,6 +56,7 @@ type Agent struct {
 	Name          string      `json:"name"`
 	Provider      Provider    `json:"provider"`
 	Model         string      `json:"model"`
+	Backend       string      `json:"backend,omitempty"`
 	APIKey        string      `json:"api_key,omitempty"`
 	BaseURL       string      `json:"base_url,omitempty"`
 	SystemPrompt  string      `json:"system_prompt,omitempty"`
@@ -413,7 +421,47 @@ func (a *Agent) Validate() error {
 	if !valid {
 		return errors.New("unknown provider: " + string(a.Provider))
 	}
+	backendRaw := strings.TrimSpace(a.Backend)
+	if a.Provider == ProviderClaude {
+		backend := strings.ToLower(backendRaw)
+		if backend != "" && backend != ClaudeBackendAnthropic && backend != ClaudeBackendOllama && backend != ClaudeBackendBedrock {
+			return errors.New("unknown claude backend: " + backendRaw)
+		}
+	} else if backendRaw != "" {
+		return errors.New("backend is only supported for claude agents")
+	}
 	return nil
+}
+
+// NormalizeClaudeBackend normalizes a raw Claude backend string to a canonical value.
+// It trims whitespace, lowercases the input, and defaults to ClaudeBackendAnthropic
+// for empty or unrecognized values.
+func NormalizeClaudeBackend(raw string) string {
+	backend := strings.TrimSpace(strings.ToLower(raw))
+	if backend == "" {
+		return ClaudeBackendAnthropic
+	}
+	switch backend {
+	case ClaudeBackendAnthropic, ClaudeBackendOllama, ClaudeBackendBedrock:
+		return backend
+	default:
+		return ClaudeBackendAnthropic
+	}
+}
+
+// ParseClaudeBackend normalizes a raw Claude backend string and returns an
+// error when the value is non-empty and unrecognized.
+func ParseClaudeBackend(raw string) (string, error) {
+	backend := strings.TrimSpace(strings.ToLower(raw))
+	if backend == "" {
+		return ClaudeBackendAnthropic, nil
+	}
+	switch backend {
+	case ClaudeBackendAnthropic, ClaudeBackendOllama, ClaudeBackendBedrock:
+		return backend, nil
+	default:
+		return "", fmt.Errorf("unknown claude backend: %s", raw)
+	}
 }
 
 // EffectiveSystemPrompt returns the agent's system prompt, falling back to the

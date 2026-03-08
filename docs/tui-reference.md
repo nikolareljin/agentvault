@@ -48,6 +48,9 @@ Keys:
 - `Enter`: open detail
 - `d`: delete selected agent (confirmation required)
 
+Detail view keys:
+- `b`: cycle Claude backend (`anthropic` -> `ollama` -> `bedrock`; when `ollama` is selected in TUI gateway execution, the Claude agent is routed through the Ollama gateway)
+
 Search mode keys:
 - type to filter
 - `Enter`: apply and exit search mode
@@ -170,7 +173,7 @@ Gateway stages and keys:
 - `Esc`: exit gateway
 
 Supported providers in TUI gateway execution:
-- `claude`
+- `claude` (when backend is `ollama`, executes via Ollama gateway route)
 - `codex`
 - `ollama`
 

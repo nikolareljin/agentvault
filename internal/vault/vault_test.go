@@ -57,12 +57,12 @@ func TestUnlockEmptyVault(t *testing.T) {
 	if err := v.Init("master"); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
-	v2 := New(path)
-	if err := v2.Unlock("master"); err != nil {
+	reopenedVault := New(path)
+	if err := reopenedVault.Unlock("master"); err != nil {
 		t.Fatalf("Unlock() error = %v", err)
 	}
-	if len(v2.List()) != 0 {
-		t.Errorf("List() len = %d, want 0", len(v2.List()))
+	if len(reopenedVault.List()) != 0 {
+		t.Errorf("List() len = %d, want 0", len(reopenedVault.List()))
 	}
 }
 
@@ -72,8 +72,8 @@ func TestUnlockWrongPassword(t *testing.T) {
 	if err := v.Init("correct"); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
-	v2 := New(path)
-	if err := v2.Unlock("wrong"); err == nil {
+	reopenedVault := New(path)
+	if err := reopenedVault.Unlock("wrong"); err == nil {
 		t.Error("Unlock() should fail with wrong password")
 	}
 }
@@ -128,11 +128,11 @@ func TestAddPersistsAcrossUnlock(t *testing.T) {
 		t.Fatalf("Add() error = %v", err)
 	}
 
-	v2 := New(path)
-	if err := v2.Unlock("master"); err != nil {
+	reopenedVault := New(path)
+	if err := reopenedVault.Unlock("master"); err != nil {
 		t.Fatalf("Unlock() error = %v", err)
 	}
-	agents := v2.List()
+	agents := reopenedVault.List()
 	if len(agents) != 1 {
 		t.Fatalf("after reopen: List() len = %d, want 1", len(agents))
 	}
@@ -145,15 +145,15 @@ func TestGet(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)
 	_ = v.Init("master")
-	_ = v.Add(agent.Agent{Name: "a1", Provider: agent.ProviderClaude})
-	_ = v.Add(agent.Agent{Name: "a2", Provider: agent.ProviderOpenAI})
+	_ = v.Add(agent.Agent{Name: "claude-agent", Provider: agent.ProviderClaude})
+	_ = v.Add(agent.Agent{Name: "openai-agent", Provider: agent.ProviderOpenAI})
 
-	got, ok := v.Get("a1")
+	got, ok := v.Get("claude-agent")
 	if !ok {
 		t.Fatal("Get() not found")
 	}
-	if got.Name != "a1" {
-		t.Errorf("Get() name = %q, want %q", got.Name, "a1")
+	if got.Name != "claude-agent" {
+		t.Errorf("Get() name = %q, want %q", got.Name, "claude-agent")
 	}
 	_, ok = v.Get("nonexistent")
 	if ok {
@@ -209,14 +209,14 @@ func TestRemovePersists(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)
 	_ = v.Init("master")
-	_ = v.Add(agent.Agent{Name: "a1", Provider: agent.ProviderClaude})
-	_ = v.Add(agent.Agent{Name: "a2", Provider: agent.ProviderOpenAI})
-	_ = v.Remove("a1")
+	_ = v.Add(agent.Agent{Name: "claude-agent", Provider: agent.ProviderClaude})
+	_ = v.Add(agent.Agent{Name: "openai-agent", Provider: agent.ProviderOpenAI})
+	_ = v.Remove("claude-agent")
 
-	v2 := New(path)
-	_ = v2.Unlock("master")
-	if len(v2.List()) != 1 {
-		t.Fatalf("after reopen: len = %d, want 1", len(v2.List()))
+	reopenedVault := New(path)
+	_ = reopenedVault.Unlock("master")
+	if len(reopenedVault.List()) != 1 {
+		t.Fatalf("after reopen: len = %d, want 1", len(reopenedVault.List()))
 	}
 }
 
@@ -257,17 +257,17 @@ func TestSharedConfig(t *testing.T) {
 	}
 
 	// persists across reopen
-	v2 := New(path)
-	_ = v2.Unlock("master")
-	shared2 := v2.SharedConfig()
-	if shared2.SystemPrompt != "Be helpful." {
-		t.Errorf("after reopen: shared prompt = %q, want %q", shared2.SystemPrompt, "Be helpful.")
+	reopenedVault := New(path)
+	_ = reopenedVault.Unlock("master")
+	sharedAfterReopen := reopenedVault.SharedConfig()
+	if sharedAfterReopen.SystemPrompt != "Be helpful." {
+		t.Errorf("after reopen: shared prompt = %q, want %q", sharedAfterReopen.SystemPrompt, "Be helpful.")
 	}
-	if len(shared2.MCPServers) != 1 {
-		t.Fatalf("after reopen: shared MCPs len = %d, want 1", len(shared2.MCPServers))
+	if len(sharedAfterReopen.MCPServers) != 1 {
+		t.Fatalf("after reopen: shared MCPs len = %d, want 1", len(sharedAfterReopen.MCPServers))
 	}
-	if shared2.MCPServers[0].Name != "fs" {
-		t.Errorf("after reopen: MCP name = %q, want %q", shared2.MCPServers[0].Name, "fs")
+	if sharedAfterReopen.MCPServers[0].Name != "fs" {
+		t.Errorf("after reopen: MCP name = %q, want %q", sharedAfterReopen.MCPServers[0].Name, "fs")
 	}
 }
 
@@ -983,9 +983,9 @@ func TestInstructionPersistsAcrossUnlock(t *testing.T) {
 		Content:  "Be thorough and precise.",
 	})
 
-	v2 := New(path)
-	_ = v2.Unlock("master")
-	got, ok := v2.GetInstruction("claude")
+	reopenedVault := New(path)
+	_ = reopenedVault.Unlock("master")
+	got, ok := reopenedVault.GetInstruction("claude")
 	if !ok {
 		t.Fatal("instruction not found after reopen")
 	}
@@ -1091,9 +1091,9 @@ func TestAddWithMCPServers(t *testing.T) {
 	}
 
 	// reopen and verify MCP servers persist
-	v2 := New(path)
-	_ = v2.Unlock("master")
-	got, ok := v2.Get("mcp-agent")
+	reopenedVault := New(path)
+	_ = reopenedVault.Unlock("master")
+	got, ok := reopenedVault.Get("mcp-agent")
 	if !ok {
 		t.Fatal("agent not found after reopen")
 	}
