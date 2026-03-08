@@ -57,14 +57,14 @@ func TestBuildWindowQuotaBounds(t *testing.T) {
 	if q.RemainingPercent != 0 {
 		t.Fatalf("remaining = %.1f, want 0", q.RemainingPercent)
 	}
-	q2 := buildWindowQuota(-10, 60, 100)
-	if q2.UsedPercent != 0 {
-		t.Fatalf("used = %.1f, want 0", q2.UsedPercent)
+	quotaWithNegativeUsage := buildWindowQuota(-10, 60, 100)
+	if quotaWithNegativeUsage.UsedPercent != 0 {
+		t.Fatalf("used = %.1f, want 0", quotaWithNegativeUsage.UsedPercent)
 	}
-	if q2.RemainingPercent != 100 {
-		t.Fatalf("remaining = %.1f, want 100", q2.RemainingPercent)
+	if quotaWithNegativeUsage.RemainingPercent != 100 {
+		t.Fatalf("remaining = %.1f, want 100", quotaWithNegativeUsage.RemainingPercent)
 	}
-	if !q2.ResetsAtTime.Equal(time.Unix(100, 0).UTC()) {
-		t.Fatalf("unexpected reset time: %v", q2.ResetsAtTime)
+	if !quotaWithNegativeUsage.ResetsAtTime.Equal(time.Unix(100, 0).UTC()) {
+		t.Fatalf("unexpected reset time: %v", quotaWithNegativeUsage.ResetsAtTime)
 	}
 }

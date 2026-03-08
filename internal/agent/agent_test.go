@@ -134,20 +134,20 @@ func TestEffectiveSystemPrompt(t *testing.T) {
 	shared := SharedConfig{SystemPrompt: "Be helpful and concise."}
 
 	// agent without own prompt uses shared
-	a1 := Agent{Name: "a1", Provider: ProviderClaude}
-	if got := a1.EffectiveSystemPrompt(shared); got != "Be helpful and concise." {
+	agentUsingSharedPrompt := Agent{Name: "agent-using-shared-prompt", Provider: ProviderClaude}
+	if got := agentUsingSharedPrompt.EffectiveSystemPrompt(shared); got != "Be helpful and concise." {
 		t.Errorf("EffectiveSystemPrompt() = %q, want shared prompt", got)
 	}
 
 	// agent with own prompt overrides shared
-	a2 := Agent{Name: "a2", Provider: ProviderClaude, SystemPrompt: "Custom."}
-	if got := a2.EffectiveSystemPrompt(shared); got != "Custom." {
+	agentWithCustomPrompt := Agent{Name: "agent-with-custom-prompt", Provider: ProviderClaude, SystemPrompt: "Custom."}
+	if got := agentWithCustomPrompt.EffectiveSystemPrompt(shared); got != "Custom." {
 		t.Errorf("EffectiveSystemPrompt() = %q, want agent prompt", got)
 	}
 
 	// empty shared, empty agent
-	a3 := Agent{Name: "a3", Provider: ProviderClaude}
-	if got := a3.EffectiveSystemPrompt(SharedConfig{}); got != "" {
+	agentWithNoPrompt := Agent{Name: "agent-with-no-prompt", Provider: ProviderClaude}
+	if got := agentWithNoPrompt.EffectiveSystemPrompt(SharedConfig{}); got != "" {
 		t.Errorf("EffectiveSystemPrompt() = %q, want empty", got)
 	}
 }
@@ -180,21 +180,21 @@ func TestEffectiveMCPServers(t *testing.T) {
 	}
 
 	// agent with no MCP servers gets all shared
-	a1 := Agent{Name: "a1", Provider: ProviderClaude}
-	servers := a1.EffectiveMCPServers(shared)
+	agentUsingSharedServers := Agent{Name: "agent-using-shared-servers", Provider: ProviderClaude}
+	servers := agentUsingSharedServers.EffectiveMCPServers(shared)
 	if len(servers) != 2 {
 		t.Fatalf("EffectiveMCPServers() len = %d, want 2", len(servers))
 	}
 
 	// agent with overlapping MCP server overrides shared
-	a2 := Agent{
-		Name:     "a2",
+	agentWithOverrideServer := Agent{
+		Name:     "agent-with-override-server",
 		Provider: ProviderClaude,
 		MCPServers: []MCPServer{
 			{Name: "filesystem", Command: "custom-fs", Args: []string{"--custom"}},
 		},
 	}
-	servers = a2.EffectiveMCPServers(shared)
+	servers = agentWithOverrideServer.EffectiveMCPServers(shared)
 	if len(servers) != 2 {
 		t.Fatalf("EffectiveMCPServers() len = %d, want 2", len(servers))
 	}
@@ -208,14 +208,14 @@ func TestEffectiveMCPServers(t *testing.T) {
 	}
 
 	// agent with unique MCP server adds to shared
-	a3 := Agent{
-		Name:     "a3",
+	agentWithAdditionalServer := Agent{
+		Name:     "agent-with-additional-server",
 		Provider: ProviderClaude,
 		MCPServers: []MCPServer{
 			{Name: "custom-tool", Command: "my-tool"},
 		},
 	}
-	servers = a3.EffectiveMCPServers(shared)
+	servers = agentWithAdditionalServer.EffectiveMCPServers(shared)
 	if len(servers) != 3 {
 		t.Fatalf("EffectiveMCPServers() len = %d, want 3", len(servers))
 	}
