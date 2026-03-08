@@ -85,6 +85,38 @@ func TestNormalizeClaudeBackend(t *testing.T) {
 	}
 }
 
+func TestParseClaudeBackend(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty defaults to anthropic", in: "", want: ClaudeBackendAnthropic},
+		{name: "anthropic", in: "anthropic", want: ClaudeBackendAnthropic},
+		{name: "ollama", in: "ollama", want: ClaudeBackendOllama},
+		{name: "bedrock", in: "bedrock", want: ClaudeBackendBedrock},
+		{name: "trim and lowercase", in: "  OLLAMA  ", want: ClaudeBackendOllama},
+		{name: "unknown returns error", in: "unknown", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseClaudeBackend(tt.in)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("ParseClaudeBackend(%q) error = %v, wantErr %v", tt.in, err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got != tt.want {
+				t.Fatalf("ParseClaudeBackend(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAllProviders(t *testing.T) {
 	providers := ValidProviders()
 	if len(providers) != 10 {

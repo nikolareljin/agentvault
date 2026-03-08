@@ -348,7 +348,6 @@ func (m *model) autoAddDetectedAgents() {
 	}
 	// Re-sync in-memory lists after auto-add.
 	m.agents = m.vault.List()
-	m.refreshHasClaudeAgent()
 	m.markDetectedInVault()
 }
 
