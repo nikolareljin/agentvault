@@ -2247,6 +2247,14 @@ func (m model) renderHelp() string {
 	b.WriteString(titleStyle.Render("Keyboard Shortcuts"))
 	b.WriteString("\n\n")
 
+	agentsTabKeys := [][]string{
+		{"/", "Search/filter agents"},
+		{"d", "Delete selected agent"},
+	}
+	if m.hasClaudeAgent {
+		agentsTabKeys = append(agentsTabKeys, []string{"b", "Cycle Claude backend in agent detail"})
+	}
+
 	sections := []struct {
 		title string
 		keys  [][]string
@@ -2265,11 +2273,7 @@ func (m model) renderHelp() string {
 		},
 		{
 			title: "Agents Tab",
-			keys: [][]string{
-				{"/", "Search/filter agents"},
-				{"d", "Delete selected agent"},
-				{"b", "Cycle Claude backend in agent detail"},
-			},
+			keys:  agentsTabKeys,
 		},
 		{
 			title: "Instructions Tab",
