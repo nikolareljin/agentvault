@@ -2329,7 +2329,18 @@ func (m model) renderHelpBar() string {
 		} else {
 			switch m.activeTab {
 			case tabAgents:
-				help = "tab: tabs  /: search  d: delete  b: cycle backend (detail)  : run cmd  enter: detail  ?: help  q: quit"
+				hasClaudeAgent := false
+				for _, ag := range m.agents {
+					if ag.Provider == agent.ProviderClaude {
+						hasClaudeAgent = true
+						break
+					}
+				}
+				if hasClaudeAgent {
+					help = "tab: tabs  /: search  d: delete  b: cycle backend (detail, claude)  : run cmd  enter: detail  ?: help  q: quit"
+				} else {
+					help = "tab: tabs  /: search  d: delete  : run cmd  enter: detail  ?: help  q: quit"
+				}
 			case tabInstructions:
 				help = "tab: tabs  e: edit  d: delete  : run cmd  enter: detail  ?: help  q: quit"
 			case tabRules:
