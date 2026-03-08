@@ -12,6 +12,9 @@
 - `prompt --validate-only` to validate provider/backend connectivity without sending a prompt
 - Claude backend routing support (`anthropic`, `ollama`, `bedrock`) with backend-aware prompt execution
 
+#### Agent Management
+- `agentvault add` and `agentvault edit` support a `--backend` flag to select the Claude backend (`anthropic`, `ollama`, `bedrock`) for an agent
+
 #### HTTP API Server
 - `serve` command to start a lightweight HTTP server exposing the vault over a REST API
 - Endpoints: `GET /health`, `GET /api/v1/status`, `GET /api/v1/agents`, `GET /api/v1/agents/{name}`

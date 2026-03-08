@@ -432,6 +432,9 @@ func (a *Agent) Validate() error {
 	return nil
 }
 
+// NormalizeClaudeBackend normalizes a raw Claude backend string to a canonical value.
+// It trims whitespace, lowercases the input, and defaults to ClaudeBackendAnthropic
+// for empty or unrecognized values.
 func NormalizeClaudeBackend(raw string) string {
 	backend := strings.TrimSpace(strings.ToLower(raw))
 	if backend == "" {
