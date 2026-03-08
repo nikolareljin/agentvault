@@ -296,7 +296,7 @@ func effectivePromptBackend(a agent.Agent) string {
 	if a.Provider == agent.ProviderClaude {
 		backend, err := agent.ParseClaudeBackend(a.Backend)
 		if err != nil {
-			return strings.TrimSpace(strings.ToLower(a.Backend))
+			return agent.NormalizeClaudeBackend(a.Backend)
 		}
 		return backend
 	}
