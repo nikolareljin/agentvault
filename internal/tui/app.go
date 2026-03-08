@@ -163,14 +163,15 @@ type gatewayFinishedMsg struct {
 // It holds all data loaded from the vault plus UI state (cursor, tabs, search).
 type model struct {
 	// Data from vault (refreshed on 'r' key)
-	vault        *vault.Vault
-	agents       []agent.Agent
-	shared       agent.SharedConfig
-	instructions []agent.InstructionFile
-	detected     []DetectedAgentInfo
-	providerCfgs agent.ProviderConfig
-	statusReport *statuspkg.Report
-	statusErr    string
+	vault          *vault.Vault
+	agents         []agent.Agent
+	hasClaudeAgent bool
+	shared         agent.SharedConfig
+	instructions   []agent.InstructionFile
+	detected       []DetectedAgentInfo
+	providerCfgs   agent.ProviderConfig
+	statusReport   *statuspkg.Report
+	statusErr      string
 
 	// UI navigation state
 	activeTab      tab
@@ -257,6 +258,7 @@ func initialModel(v *vault.Vault) model {
 	m.detected = detectAgentsForTUI()
 	m.markDetectedInVault()
 	m.autoAddDetectedAgents()
+	m.refreshHasClaudeAgent()
 	m.refreshLocalInstructions()
 	return m
 }
@@ -305,6 +307,7 @@ func (m *model) refresh() {
 	m.providerCfgs = m.vault.ProviderConfigs()
 	m.markDetectedInVault()
 	m.autoAddDetectedAgents()
+	m.refreshHasClaudeAgent()
 	m.refreshLocalInstructions()
 	m.updateFilteredAgents()
 }
@@ -345,7 +348,18 @@ func (m *model) autoAddDetectedAgents() {
 	}
 	// Re-sync in-memory lists after auto-add.
 	m.agents = m.vault.List()
+	m.refreshHasClaudeAgent()
 	m.markDetectedInVault()
+}
+
+func (m *model) refreshHasClaudeAgent() {
+	m.hasClaudeAgent = false
+	for _, ag := range m.agents {
+		if ag.Provider == agent.ProviderClaude {
+			m.hasClaudeAgent = true
+			return
+		}
+	}
 }
 
 func (m *model) vaultHasAgentNamed(name string) bool {
@@ -2329,14 +2343,7 @@ func (m model) renderHelpBar() string {
 		} else {
 			switch m.activeTab {
 			case tabAgents:
-				hasClaudeAgent := false
-				for _, ag := range m.agents {
-					if ag.Provider == agent.ProviderClaude {
-						hasClaudeAgent = true
-						break
-					}
-				}
-				if hasClaudeAgent {
+				if m.hasClaudeAgent {
 					help = "tab: tabs  /: search  d: delete  b: cycle backend (detail, claude)  : run cmd  enter: detail  ?: help  q: quit"
 				} else {
 					help = "tab: tabs  /: search  d: delete  : run cmd  enter: detail  ?: help  q: quit"
