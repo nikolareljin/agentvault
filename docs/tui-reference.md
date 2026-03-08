@@ -47,7 +47,9 @@ Keys:
 - `/`: start search mode
 - `Enter`: open detail
 - `d`: delete selected agent (confirmation required)
-- `b`: cycle Claude backend in agent detail view (`anthropic` -> `ollama` -> `bedrock`)
+
+Detail view keys:
+- `b`: cycle Claude backend (`anthropic` -> `ollama` -> `bedrock`)
 
 Search mode keys:
 - type to filter

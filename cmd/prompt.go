@@ -80,6 +80,8 @@ func init() {
 	promptCmd.Flags().String("history-file", "", "history file path (default: ~/.config/agentvault/prompt-history.jsonl)")
 	promptCmd.Flags().Duration("timeout", 5*time.Minute, "provider call timeout")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "text")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "file")
 }
 
 func runPrompt(cmd *cobra.Command, args []string) error {
