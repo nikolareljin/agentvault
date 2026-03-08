@@ -100,12 +100,12 @@ func TestEffectivePromptBackend(t *testing.T) {
 			want: string(agent.ProviderCodex),
 		},
 		{
-			name: "invalid claude backend returns normalized raw value",
+			name: "invalid claude backend falls back to normalized default",
 			a: agent.Agent{
 				Provider: agent.ProviderClaude,
 				Backend:  "  CUSTOM  ",
 			},
-			want: "custom",
+			want: agent.ClaudeBackendAnthropic,
 		},
 	}
 
