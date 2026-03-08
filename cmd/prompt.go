@@ -75,9 +75,18 @@ func init() {
 	promptCmd.Flags().String("optimize-profile", "auto", "optimization profile: auto|generic|ollama|codex|copilot|claude")
 	promptCmd.Flags().Bool("optimize-ollama", true, "deprecated: kept for compatibility; use --optimize/--optimize-profile")
 	promptCmd.Flags().Bool("dry-run", false, "show effective prompt without executing")
+	promptCmd.Flags().Bool("validate-only", false, "validate configured provider/backend connectivity and exit")
 	promptCmd.Flags().Bool("no-log", false, "do not write prompt execution history")
 	promptCmd.Flags().String("history-file", "", "history file path (default: ~/.config/agentvault/prompt-history.jsonl)")
 	promptCmd.Flags().Duration("timeout", 5*time.Minute, "provider call timeout")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "text")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "file")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "optimize")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "optimize-profile")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "no-log")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "optimize-ollama")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "history-file")
 }
 
 func runPrompt(cmd *cobra.Command, args []string) error {
@@ -94,6 +103,27 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	a.Model = runtimeCfg.Model.Value
 	a.APIKey = runtimeCfg.APIKey.Value
 	a.BaseURL = runtimeCfg.BaseURL.Value
+
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	validateOnly, _ := cmd.Flags().GetBool("validate-only")
+	jsonOut, _ := cmd.Flags().GetBool("json")
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	if validateOnly {
+		if err := validatePromptBackend(a, timeout); err != nil {
+			return err
+		}
+		if jsonOut {
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"agent":    a.Name,
+				"provider": a.Provider,
+				"backend":  effectivePromptBackend(a),
+				"status":   "ok",
+			})
+			return nil
+		}
+		fmt.Printf("Backend validation OK (%s)\n", effectivePromptBackend(a))
+		return nil
+	}
 
 	text, err := readPromptInput(cmd)
 	if err != nil {
@@ -118,8 +148,6 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		optimized = true
 	}
 
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	jsonOut, _ := cmd.Flags().GetBool("json")
 	if dryRun {
 		if jsonOut {
 			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
@@ -139,8 +167,6 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		fmt.Println(effectivePrompt)
 		return nil
 	}
-
-	timeout, _ := cmd.Flags().GetDuration("timeout")
 	result, execErr := executePrompt(a, effectivePrompt, timeout)
 
 	record := PromptRecord{
@@ -249,10 +275,80 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 	case agent.ProviderCodex:
 		return executeCodexPrompt(a, prompt, timeout)
 	case agent.ProviderClaude:
-		return executeClaudePrompt(a, prompt, timeout)
+		backend, err := agent.ParseClaudeBackend(a.Backend)
+		if err != nil {
+			return promptResult{}, err
+		}
+		switch backend {
+		case agent.ClaudeBackendOllama:
+			return executeOllamaPrompt(a, prompt, timeout)
+		case agent.ClaudeBackendBedrock:
+			return promptResult{}, errors.New("bedrock backend execution is not supported yet")
+		default:
+			return executeClaudePrompt(a, prompt, timeout)
+		}
 	default:
 		return promptResult{}, fmt.Errorf("provider %q is not supported by prompt gateway yet", a.Provider)
 	}
+}
+
+func effectivePromptBackend(a agent.Agent) string {
+	if a.Provider == agent.ProviderClaude {
+		return agent.NormalizeClaudeBackend(a.Backend)
+	}
+	return string(a.Provider)
+}
+
+func validatePromptBackend(a agent.Agent, timeout time.Duration) error {
+	switch a.Provider {
+	case agent.ProviderClaude:
+		backend, err := agent.ParseClaudeBackend(a.Backend)
+		if err != nil {
+			return err
+		}
+		switch backend {
+		case agent.ClaudeBackendOllama:
+			return validateOllamaEndpoint(a.BaseURL, timeout, "ollama backend validation")
+		case agent.ClaudeBackendBedrock:
+			return errors.New("bedrock backend validation is not supported yet; validate AWS credentials manually")
+		default:
+			if _, err := exec.LookPath("claude"); err != nil {
+				return errors.New("claude binary not found in PATH")
+			}
+			return nil
+		}
+	case agent.ProviderOllama:
+		return validateOllamaEndpoint(a.BaseURL, timeout, "ollama validation")
+	case agent.ProviderCodex:
+		if _, err := exec.LookPath("codex"); err != nil {
+			return errors.New("codex binary not found in PATH")
+		}
+		return nil
+	default:
+		return fmt.Errorf("provider %q is not supported for validate-only", a.Provider)
+	}
+}
+
+func validateOllamaEndpoint(baseURL string, timeout time.Duration, operationName string) error {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = "http://localhost:11434"
+	}
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/api/tags", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s failed: %w", operationName, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s failed (%d): %s", operationName, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
 }
 
 func executeOllamaPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {

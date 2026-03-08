@@ -163,14 +163,15 @@ type gatewayFinishedMsg struct {
 // It holds all data loaded from the vault plus UI state (cursor, tabs, search).
 type model struct {
 	// Data from vault (refreshed on 'r' key)
-	vault        *vault.Vault
-	agents       []agent.Agent
-	shared       agent.SharedConfig
-	instructions []agent.InstructionFile
-	detected     []DetectedAgentInfo
-	providerCfgs agent.ProviderConfig
-	statusReport *statuspkg.Report
-	statusErr    string
+	vault          *vault.Vault
+	agents         []agent.Agent
+	hasClaudeAgent bool
+	shared         agent.SharedConfig
+	instructions   []agent.InstructionFile
+	detected       []DetectedAgentInfo
+	providerCfgs   agent.ProviderConfig
+	statusReport   *statuspkg.Report
+	statusErr      string
 
 	// UI navigation state
 	activeTab      tab
@@ -257,6 +258,7 @@ func initialModel(v *vault.Vault) model {
 	m.detected = detectAgentsForTUI()
 	m.markDetectedInVault()
 	m.autoAddDetectedAgents()
+	m.refreshHasClaudeAgent()
 	m.refreshLocalInstructions()
 	return m
 }
@@ -305,6 +307,7 @@ func (m *model) refresh() {
 	m.providerCfgs = m.vault.ProviderConfigs()
 	m.markDetectedInVault()
 	m.autoAddDetectedAgents()
+	m.refreshHasClaudeAgent()
 	m.refreshLocalInstructions()
 	m.updateFilteredAgents()
 }
@@ -346,6 +349,16 @@ func (m *model) autoAddDetectedAgents() {
 	// Re-sync in-memory lists after auto-add.
 	m.agents = m.vault.List()
 	m.markDetectedInVault()
+}
+
+func (m *model) refreshHasClaudeAgent() {
+	m.hasClaudeAgent = false
+	for _, ag := range m.agents {
+		if ag.Provider == agent.ProviderClaude {
+			m.hasClaudeAgent = true
+			return
+		}
+	}
 }
 
 func (m *model) vaultHasAgentNamed(name string) bool {
@@ -644,6 +657,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "a":
 			return m.handleAdd()
+
+		case "b":
+			return m.handleCycleClaudeBackend()
 
 		case "c":
 			return m.handleConnectDetected()
@@ -1221,6 +1237,48 @@ func (m *model) handleAdd() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) handleCycleClaudeBackend() (tea.Model, tea.Cmd) {
+	if m.activeTab != tabAgents || m.mode != viewAgentDetail || m.cursor >= len(m.filteredAgents) {
+		return m, nil
+	}
+	idx := m.filteredAgents[m.cursor]
+	if idx < 0 || idx >= len(m.agents) {
+		return m, nil
+	}
+	a := m.agents[idx]
+	if a.Provider != agent.ProviderClaude {
+		m.setStatus("Backend switch is only available for Claude profiles", false)
+		return m, nil
+	}
+
+	order := []string{
+		agent.ClaudeBackendAnthropic,
+		agent.ClaudeBackendOllama,
+		agent.ClaudeBackendBedrock,
+	}
+	current := agent.NormalizeClaudeBackend(a.Backend)
+	next := order[0]
+	for i, b := range order {
+		if b == current {
+			next = order[(i+1)%len(order)]
+			break
+		}
+	}
+	a.Backend = next
+	a.UpdatedAt = time.Now()
+	if err := a.Validate(); err != nil {
+		m.setStatus(fmt.Sprintf("Invalid backend selection: %v", err), true)
+		return m, nil
+	}
+	if err := m.vault.Update(a); err != nil {
+		m.setStatus(fmt.Sprintf("Failed to update backend: %v", err), true)
+		return m, nil
+	}
+	m.refresh()
+	m.setStatus(fmt.Sprintf("Claude backend set to %s for %s", next, a.Name), false)
+	return m, nil
+}
+
 func (m *model) handleConnectDetected() (tea.Model, tea.Cmd) {
 	if m.activeTab != tabDetected {
 		return m, nil
@@ -1483,6 +1541,9 @@ func (m model) renderAgentDetail() string {
 	}
 
 	field("Provider", string(a.Provider))
+	if a.Provider == agent.ProviderClaude {
+		field("Backend", agent.NormalizeClaudeBackend(a.Backend))
+	}
 	field("Model", runtimeCfg.Model.Value+sourceSuffix(runtimeCfg.Model.Source))
 
 	if runtimeCfg.APIKey.Value != "" {
@@ -2186,6 +2247,14 @@ func (m model) renderHelp() string {
 	b.WriteString(titleStyle.Render("Keyboard Shortcuts"))
 	b.WriteString("\n\n")
 
+	agentsTabKeys := [][]string{
+		{"/", "Search/filter agents"},
+		{"d", "Delete selected agent"},
+	}
+	if m.hasClaudeAgent {
+		agentsTabKeys = append(agentsTabKeys, []string{"b", "Cycle Claude backend in agent detail"})
+	}
+
 	sections := []struct {
 		title string
 		keys  [][]string
@@ -2204,10 +2273,7 @@ func (m model) renderHelp() string {
 		},
 		{
 			title: "Agents Tab",
-			keys: [][]string{
-				{"/", "Search/filter agents"},
-				{"d", "Delete selected agent"},
-			},
+			keys:  agentsTabKeys,
 		},
 		{
 			title: "Instructions Tab",
@@ -2257,7 +2323,17 @@ func (m model) renderHelpBar() string {
 	var help string
 	switch m.mode {
 	case viewAgentDetail, viewInstructionDetail, viewRuleDetail, viewSessionDetail:
-		help = "esc: back  q: quit"
+		if m.mode == viewAgentDetail &&
+			m.activeTab == tabAgents &&
+			m.cursor >= 0 &&
+			m.cursor < len(m.filteredAgents) &&
+			m.filteredAgents[m.cursor] >= 0 &&
+			m.filteredAgents[m.cursor] < len(m.agents) &&
+			m.agents[m.filteredAgents[m.cursor]].Provider == agent.ProviderClaude {
+			help = "b: cycle backend  esc: back  q: quit"
+		} else {
+			help = "esc: back  q: quit"
+		}
 	case viewHelp:
 		help = "esc: back  q: quit"
 	case viewConfirmDelete:
@@ -2332,7 +2408,18 @@ func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (
 	case agent.ProviderCodex:
 		return executeGatewayCodex(a, prompt, timeout)
 	case agent.ProviderClaude:
-		return executeGatewayClaude(a, prompt, timeout)
+		backend, err := agent.ParseClaudeBackend(a.Backend)
+		if err != nil {
+			return "", gatewayUsage{}, err
+		}
+		switch backend {
+		case agent.ClaudeBackendOllama:
+			return executeGatewayOllama(a, prompt, timeout)
+		case agent.ClaudeBackendBedrock:
+			return "", gatewayUsage{}, fmt.Errorf("claude bedrock backend is not supported in TUI gateway yet")
+		default:
+			return executeGatewayClaude(a, prompt, timeout)
+		}
 	default:
 		return "", gatewayUsage{}, fmt.Errorf("provider %q is not supported in TUI gateway yet", a.Provider)
 	}

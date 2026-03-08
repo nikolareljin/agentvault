@@ -32,9 +32,19 @@ Example:
 		if cmd.Flags().Changed("provider") {
 			p, _ := cmd.Flags().GetString("provider")
 			a.Provider = agent.Provider(p)
+			if a.Provider != agent.ProviderClaude && !cmd.Flags().Changed("backend") {
+				a.Backend = ""
+			}
 		}
 		if cmd.Flags().Changed("model") {
 			a.Model, _ = cmd.Flags().GetString("model")
+		}
+		if cmd.Flags().Changed("backend") {
+			rawBackend, _ := cmd.Flags().GetString("backend")
+			a.Backend = strings.TrimSpace(rawBackend)
+			if a.Provider == agent.ProviderClaude {
+				a.Backend = strings.ToLower(a.Backend)
+			}
 		}
 		if cmd.Flags().Changed("api-key") {
 			a.APIKey, _ = cmd.Flags().GetString("api-key")
@@ -90,6 +100,7 @@ func init() {
 	rootCmd.AddCommand(editCmd)
 	editCmd.Flags().StringP("provider", "p", "", "provider")
 	editCmd.Flags().StringP("model", "m", "", "model name")
+	editCmd.Flags().String("backend", "", "backend (for claude: anthropic|ollama|bedrock)")
 	editCmd.Flags().StringP("api-key", "k", "", "API key")
 	editCmd.Flags().String("base-url", "", "custom base URL")
 	editCmd.Flags().String("system-prompt", "", "system prompt")
