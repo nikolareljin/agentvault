@@ -69,7 +69,7 @@ Required:
 
 Optional:
 - `-m, --model <model>`
-- `--backend <backend>`
+- `--backend <backend>`: `anthropic|ollama|bedrock`
 - `-k, --api-key <key>`
 - `--base-url <url>`
 - `--system-prompt <text>`
@@ -85,7 +85,7 @@ Flags:
 Flags:
 - `-p, --provider <provider>`
 - `-m, --model <model>`
-- `--backend <backend>`
+- `--backend <backend>`: `anthropic|ollama|bedrock`
 - `-k, --api-key <key>`
 - `--base-url <url>`
 - `--system-prompt <text>`
