@@ -111,29 +111,13 @@ func TestCycleClaudeBackend_PersistsViaUpdate(t *testing.T) {
 	m := initialModel(v)
 
 	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	var detail model
-	switch mm := m2.(type) {
-	case model:
-		detail = mm
-	case *model:
-		detail = *mm
-	default:
-		t.Fatalf("unexpected model type: %T", m2)
-	}
+	detail := m2.(model)
 	if detail.mode != viewAgentDetail {
 		t.Fatalf("mode = %v, want viewAgentDetail", detail.mode)
 	}
 
 	m3, _ := detail.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	var updated model
-	switch mm := m3.(type) {
-	case model:
-		updated = mm
-	case *model:
-		updated = *mm
-	default:
-		t.Fatalf("unexpected model type after cycle: %T", m3)
-	}
+	updated := *(m3.(*model))
 
 	agentInVault, ok := v.Get("claude-main")
 	if !ok {
