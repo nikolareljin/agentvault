@@ -79,6 +79,7 @@ func init() {
 	promptCmd.Flags().Bool("no-log", false, "do not write prompt execution history")
 	promptCmd.Flags().String("history-file", "", "history file path (default: ~/.config/agentvault/prompt-history.jsonl)")
 	promptCmd.Flags().Duration("timeout", 5*time.Minute, "provider call timeout")
+	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
 }
 
 func runPrompt(cmd *cobra.Command, args []string) error {
@@ -267,7 +268,11 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 	case agent.ProviderCodex:
 		return executeCodexPrompt(a, prompt, timeout)
 	case agent.ProviderClaude:
-		switch agent.NormalizeClaudeBackend(a.Backend) {
+		backend, err := agent.ParseClaudeBackend(a.Backend)
+		if err != nil {
+			return promptResult{}, err
+		}
+		switch backend {
 		case agent.ClaudeBackendOllama:
 			return executeOllamaPrompt(a, prompt, timeout)
 		case agent.ClaudeBackendBedrock:
@@ -282,7 +287,11 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 
 func effectivePromptBackend(a agent.Agent) string {
 	if a.Provider == agent.ProviderClaude {
-		return agent.NormalizeClaudeBackend(a.Backend)
+		backend, err := agent.ParseClaudeBackend(a.Backend)
+		if err != nil {
+			return strings.TrimSpace(strings.ToLower(a.Backend))
+		}
+		return backend
 	}
 	return string(a.Provider)
 }
@@ -290,7 +299,11 @@ func effectivePromptBackend(a agent.Agent) string {
 func validatePromptBackend(a agent.Agent, timeout time.Duration) error {
 	switch a.Provider {
 	case agent.ProviderClaude:
-		switch agent.NormalizeClaudeBackend(a.Backend) {
+		backend, err := agent.ParseClaudeBackend(a.Backend)
+		if err != nil {
+			return err
+		}
+		switch backend {
 		case agent.ClaudeBackendOllama:
 			return validateOllamaEndpoint(a.BaseURL, timeout, "ollama backend validation")
 		case agent.ClaudeBackendBedrock:

@@ -2391,7 +2391,11 @@ func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (
 	case agent.ProviderCodex:
 		return executeGatewayCodex(a, prompt, timeout)
 	case agent.ProviderClaude:
-		switch agent.NormalizeClaudeBackend(a.Backend) {
+		backend, err := agent.ParseClaudeBackend(a.Backend)
+		if err != nil {
+			return "", gatewayUsage{}, err
+		}
+		switch backend {
 		case agent.ClaudeBackendOllama:
 			return executeGatewayOllama(a, prompt, timeout)
 		case agent.ClaudeBackendBedrock:
