@@ -216,13 +216,13 @@ func TestMultipleInstructionFilesCoexist(t *testing.T) {
 	}
 
 	// reopen and verify all persist
-	v2 := New(vaultPath)
-	_ = v2.Unlock("master")
-	if len(v2.ListInstructions()) != 4 {
-		t.Fatalf("after reopen: len = %d, want 4", len(v2.ListInstructions()))
+	reopenedVault := New(vaultPath)
+	_ = reopenedVault.Unlock("master")
+	if len(reopenedVault.ListInstructions()) != 4 {
+		t.Fatalf("after reopen: len = %d, want 4", len(reopenedVault.ListInstructions()))
 	}
 	for _, name := range names {
-		inst, ok := v2.GetInstruction(name)
+		inst, ok := reopenedVault.GetInstruction(name)
 		if !ok {
 			t.Errorf("instruction %q not found after reopen", name)
 			continue

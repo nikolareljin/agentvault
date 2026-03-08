@@ -118,8 +118,8 @@ func (v *Vault) Unlock(masterPassword string) error {
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
 		// try legacy format (plain agent array) for backward compat
 		var agents []agent.Agent
-		if err2 := json.Unmarshal(plaintext, &agents); err2 != nil {
-			return fmt.Errorf("decoding vault data: %w", err)
+		if legacyDecodeErr := json.Unmarshal(plaintext, &agents); legacyDecodeErr != nil {
+			return fmt.Errorf("decoding vault data: %w", legacyDecodeErr)
 		}
 		vd = vaultData{Agents: agents}
 	}
