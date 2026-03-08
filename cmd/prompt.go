@@ -294,11 +294,7 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 
 func effectivePromptBackend(a agent.Agent) string {
 	if a.Provider == agent.ProviderClaude {
-		backend, err := agent.ParseClaudeBackend(a.Backend)
-		if err != nil {
-			return agent.NormalizeClaudeBackend(a.Backend)
-		}
-		return backend
+		return agent.NormalizeClaudeBackend(a.Backend)
 	}
 	return string(a.Provider)
 }
