@@ -14,6 +14,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -445,6 +446,21 @@ func NormalizeClaudeBackend(raw string) string {
 		return backend
 	default:
 		return ClaudeBackendAnthropic
+	}
+}
+
+// ParseClaudeBackend normalizes a raw Claude backend string and returns an
+// error when the value is non-empty and unrecognized.
+func ParseClaudeBackend(raw string) (string, error) {
+	backend := strings.TrimSpace(strings.ToLower(raw))
+	if backend == "" {
+		return ClaudeBackendAnthropic, nil
+	}
+	switch backend {
+	case ClaudeBackendAnthropic, ClaudeBackendOllama, ClaudeBackendBedrock:
+		return backend, nil
+	default:
+		return "", fmt.Errorf("unknown claude backend: %s", raw)
 	}
 }
 
