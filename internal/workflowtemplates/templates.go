@@ -236,9 +236,6 @@ func ExportBundle(configDir string) (Bundle, []string, error) {
 			warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; exporting built-in default", spec.Filename))
 			merged = append(merged, spec)
 		}
-		for _, asset := range byKey {
-			merged = append(merged, asset)
-		}
 		assets = merged
 	}
 	sort.Slice(assets, func(i, j int) bool { return assets[i].Filename < assets[j].Filename })
@@ -272,6 +269,10 @@ func ImportBundle(configDir string, bundle Bundle) ([]string, error) {
 		asset.Key = normalizeTemplateName(asset.Key)
 		if asset.Key == "" {
 			warnings = append(warnings, "skipped template with empty key")
+			continue
+		}
+		if _, supported := findDefaultByKey(asset.Key); !supported {
+			warnings = append(warnings, fmt.Sprintf("skipped unsupported template key %q", asset.Key))
 			continue
 		}
 		filename := asset.Filename
@@ -334,6 +335,9 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 				}
 				if _, ok := meta.Filenames[spec.Key]; !ok {
 					meta.Filenames[spec.Key] = spec.Filename
+				}
+				if _, ok := meta.Updated[spec.Key]; !ok {
+					meta.Updated[spec.Key] = now
 				}
 				continue
 			}

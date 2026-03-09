@@ -174,6 +174,7 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 		Assets: []TemplateAsset{
 			{Key: "implement_issue", Filename: "implement_issue.txt", Version: "v1", Content: "valid\n"},
 			{Key: "implement_pr", Filename: "implement_pr.txt", Version: "v1", Content: "\n"},
+			{Key: "custom_template", Filename: "custom_template.txt", Version: "v1", Content: "custom\n"},
 		},
 	}
 	warnings, err := ImportBundle(cfgDir, bundle)
@@ -188,6 +189,9 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "implement_pr.txt")); !os.IsNotExist(err) {
 		t.Fatalf("implement_pr.txt should not exist, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "custom_template.txt")); !os.IsNotExist(err) {
+		t.Fatalf("custom_template.txt should not exist, err=%v", err)
 	}
 }
 
@@ -439,5 +443,41 @@ func TestExportBundleIncludesMissingDefaults(t *testing.T) {
 	}
 	if !foundMissingDefaultWarning {
 		t.Fatalf("expected warning about exporting built-in default")
+	}
+}
+
+func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
+	cfgDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates(force=true) error = %v", err)
+	}
+	// Remove updated metadata while keeping template files in place.
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "versions": {
+    "implement_issue": "builtin-1.0",
+    "implement_pr": "builtin-1.0",
+    "add_issue": "builtin-1.0"
+  },
+  "filenames": {
+    "implement_issue": "implement_issue.txt",
+    "implement_pr": "implement_pr.txt",
+    "add_issue": "add_issue.txt"
+  }
+}`), 0600); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatalf("RefreshConfigTemplates(force=false) error = %v", err)
+	}
+	meta, err := readMetadata(cfgDir)
+	if err != nil {
+		t.Fatalf("readMetadata() error = %v", err)
+	}
+	for _, key := range []string{"implement_issue", "implement_pr", "add_issue"} {
+		ts := meta.Updated[key]
+		if ts.IsZero() {
+			t.Fatalf("meta.Updated[%q] should be backfilled", key)
+		}
 	}
 }
