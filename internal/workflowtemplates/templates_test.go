@@ -190,3 +190,122 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 		t.Fatalf("implement_pr.txt should not exist, err=%v", err)
 	}
 }
+
+func TestImportBundleRejectsUnsafeFilename(t *testing.T) {
+	cfgDir := t.TempDir()
+	bundle := Bundle{
+		SchemaVersion: DefaultSchemaVersion,
+		ExportedAt:    time.Now().UTC(),
+		Assets: []TemplateAsset{
+			{Key: "implement_issue", Filename: "../escape.txt", Version: "v1", Content: "x\n"},
+		},
+	}
+	_, err := ImportBundle(cfgDir, bundle)
+	if err == nil {
+		t.Fatalf("ImportBundle() expected unsafe filename error")
+	}
+	if !strings.Contains(err.Error(), "invalid filename") {
+		t.Fatalf("ImportBundle() err = %v, want invalid filename", err)
+	}
+}
+
+func TestImportBundleRejectsUnsupportedSchemaVersion(t *testing.T) {
+	cfgDir := t.TempDir()
+	bundle := Bundle{
+		SchemaVersion: "99",
+		ExportedAt:    time.Now().UTC(),
+		Assets: []TemplateAsset{
+			{Key: "implement_issue", Filename: "implement_issue.txt", Version: "v1", Content: "x\n"},
+		},
+	}
+	_, err := ImportBundle(cfgDir, bundle)
+	if err == nil {
+		t.Fatalf("ImportBundle() expected schema version error")
+	}
+	if !strings.Contains(err.Error(), "unsupported template bundle schema version") {
+		t.Fatalf("ImportBundle() err = %v, want schema version error", err)
+	}
+}
+
+func TestLoadResolvedUsesSanitizedMetadataFilename(t *testing.T) {
+	cfgDir := t.TempDir()
+	repoDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates() error = %v", err)
+	}
+
+	customName := "custom-pr-template.txt"
+	customContent := "custom pr template\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, customName), []byte(customContent), 0644); err != nil {
+		t.Fatalf("WriteFile(custom template): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "filenames": {"implement_pr": "`+customName+`"}
+}`), 0644); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	resolved, warnings, err := LoadResolved(cfgDir, repoDir)
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+	var matched *ResolvedTemplate
+	for i := range resolved {
+		if resolved[i].Key == "implement_pr" {
+			matched = &resolved[i]
+			break
+		}
+	}
+	if matched == nil {
+		t.Fatalf("implement_pr template not resolved")
+	}
+	if matched.Filename != customName {
+		t.Fatalf("Filename = %q, want %q", matched.Filename, customName)
+	}
+	wantPath := filepath.Join(cfgDir, TemplatesDirName, customName)
+	if matched.Path != wantPath {
+		t.Fatalf("Path = %q, want %q", matched.Path, wantPath)
+	}
+	if strings.TrimSpace(matched.Content) != strings.TrimSpace(customContent) {
+		t.Fatalf("content mismatch")
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
+	}
+}
+
+func TestLoadResolvedIgnoresUnsafeMetadataFilename(t *testing.T) {
+	cfgDir := t.TempDir()
+	repoDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "filenames": {"implement_issue": "../leak.txt"}
+}`), 0644); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	resolved, warnings, err := LoadResolved(cfgDir, repoDir)
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+	var issue ResolvedTemplate
+	for _, item := range resolved {
+		if item.Key == "implement_issue" {
+			issue = item
+			break
+		}
+	}
+	if issue.Filename != "implement_issue.txt" {
+		t.Fatalf("Filename = %q, want canonical fallback", issue.Filename)
+	}
+	if issue.Path != filepath.Join(cfgDir, TemplatesDirName, "implement_issue.txt") {
+		t.Fatalf("Path = %q, want canonical path", issue.Path)
+	}
+	if len(warnings) == 0 {
+		t.Fatalf("expected warning for unsafe metadata filename")
+	}
+}

@@ -147,6 +147,17 @@ func FindTemplateFilename(name string) (string, bool) {
 	return "", false
 }
 
+// FindTemplateKey resolves a key or filename into the canonical key.
+func FindTemplateKey(name string) (string, bool) {
+	norm := normalizeTemplateName(name)
+	for _, spec := range defaultSpecs {
+		if norm == spec.Key || norm == normalizeTemplateName(spec.Filename) {
+			return spec.Key, true
+		}
+	}
+	return "", false
+}
+
 // LoadResolved loads effective templates with precedence repo-local > config > built-in.
 func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []string, error) {
 	assets, warnings, err := loadConfigAssets(configDir)
@@ -184,7 +195,7 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 			resolved = append(resolved, ResolvedTemplate{
 				TemplateAsset: asset,
 				Source:        "config",
-				Path:          filepath.Join(configTemplatesDir(configDir), spec.Filename),
+				Path:          filepath.Join(configTemplatesDir(configDir), asset.Filename),
 			})
 			continue
 		}
@@ -220,6 +231,9 @@ func ExportBundle(configDir string) (Bundle, []string, error) {
 
 // ImportBundle writes template assets into config storage.
 func ImportBundle(configDir string, bundle Bundle) ([]string, error) {
+	if bundle.SchemaVersion != "" && bundle.SchemaVersion != DefaultSchemaVersion {
+		return nil, fmt.Errorf("unsupported template bundle schema version %q", bundle.SchemaVersion)
+	}
 	if len(bundle.Assets) == 0 {
 		return []string{"bundle did not include workflow templates; nothing imported"}, nil
 	}
@@ -247,6 +261,10 @@ func ImportBundle(configDir string, bundle Bundle) ([]string, error) {
 			} else {
 				filename = asset.Key + ".txt"
 			}
+		}
+		filename, err := sanitizeTemplateFilename(filename)
+		if err != nil {
+			return nil, fmt.Errorf("invalid filename for template key %q: %w", asset.Key, err)
 		}
 		if strings.TrimSpace(asset.Content) == "" {
 			warnings = append(warnings, fmt.Sprintf("skipped empty template %q", filename))
@@ -327,7 +345,12 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 		filename := spec.Filename
 		if meta.Filenames != nil {
 			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
-				filename = mfn
+				safeFilename, err := sanitizeTemplateFilename(mfn)
+				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("ignoring unsafe metadata filename for %q: %v", spec.Key, err))
+				} else {
+					filename = safeFilename
+				}
 			}
 		}
 		path := filepath.Join(configTemplatesDir(configDir), filename)
@@ -427,6 +450,27 @@ func normalizeTemplateName(name string) string {
 	n = strings.TrimSuffix(n, ".txt")
 	n = strings.ReplaceAll(n, "-", "_")
 	return n
+}
+
+func sanitizeTemplateFilename(filename string) (string, error) {
+	name := strings.TrimSpace(filename)
+	if name == "" {
+		return "", errors.New("empty filename")
+	}
+	cleaned := filepath.Clean(name)
+	if filepath.IsAbs(name) || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("absolute paths are not allowed: %q", filename)
+	}
+	if cleaned == "." || cleaned == ".." {
+		return "", fmt.Errorf("invalid path: %q", filename)
+	}
+	if filepath.Base(cleaned) != cleaned {
+		return "", fmt.Errorf("path separators are not allowed: %q", filename)
+	}
+	if strings.Contains(cleaned, "/") || strings.Contains(cleaned, `\`) {
+		return "", fmt.Errorf("path separators are not allowed: %q", filename)
+	}
+	return cleaned, nil
 }
 
 func dedupeWarnings(warnings []string) []string {
