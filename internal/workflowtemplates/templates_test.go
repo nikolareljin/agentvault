@@ -259,6 +259,65 @@ func TestImportBundleRejectsUnsupportedSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestImportBundleRepairsInvalidExistingMetadata(t *testing.T) {
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, TemplatesDirName), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte("{invalid json"), 0644); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+	bundle := Bundle{
+		SchemaVersion: DefaultSchemaVersion,
+		ExportedAt:    time.Now().UTC(),
+		Assets: []TemplateAsset{
+			{Key: "implement_issue", Filename: "implement_issue.txt", Version: "v2", Content: "fixed content\n"},
+		},
+	}
+
+	imported, warnings, err := ImportBundle(cfgDir, bundle)
+	if err != nil {
+		t.Fatalf("ImportBundle() error = %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("ImportBundle() imported count = %d, want 1", imported)
+	}
+	var hasRepairWarning bool
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, "existing template metadata invalid; resetting metadata defaults") {
+			hasRepairWarning = true
+		}
+	}
+	if !hasRepairWarning {
+		t.Fatalf("expected metadata repair warning, got %v", warnings)
+	}
+	meta, err := readMetadata(cfgDir)
+	if err != nil {
+		t.Fatalf("readMetadata() error = %v", err)
+	}
+	if meta.Versions["implement_issue"] != "v2" {
+		t.Fatalf("metadata version = %q, want v2", meta.Versions["implement_issue"])
+	}
+}
+
+func TestRefreshConfigTemplatesErrorsOnInvalidMetadata(t *testing.T) {
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, TemplatesDirName), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte("{invalid json"), 0644); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	_, err := RefreshConfigTemplates(cfgDir, false)
+	if err == nil {
+		t.Fatalf("RefreshConfigTemplates() expected metadata error")
+	}
+	if !strings.Contains(err.Error(), "reading template metadata") {
+		t.Fatalf("RefreshConfigTemplates() err = %v, want metadata read context", err)
+	}
+}
+
 func TestLoadResolvedUsesSanitizedMetadataFilename(t *testing.T) {
 	cfgDir := t.TempDir()
 	repoDir := t.TempDir()
