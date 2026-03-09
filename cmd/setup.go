@@ -466,15 +466,18 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 	if err := v.SetProviderConfigs(pc); err != nil {
 		return fmt.Errorf("updating provider configs: %w", err)
 	}
-	templateWarnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), bundle.Templates)
-	if err != nil {
-		return fmt.Errorf("importing workflow templates: %w", err)
-	}
-	if len(bundle.Templates.Assets) > 0 {
-		fmt.Printf("  Imported: workflow templates (%d)\n", len(bundle.Templates.Assets))
-	}
-	for _, warn := range templateWarnings {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+	// Backward compatibility: older bundles may not include workflow templates.
+	if bundle.Templates.SchemaVersion != "" || len(bundle.Templates.Assets) > 0 {
+		templateWarnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), bundle.Templates)
+		if err != nil {
+			return fmt.Errorf("importing workflow templates: %w", err)
+		}
+		if len(bundle.Templates.Assets) > 0 {
+			fmt.Printf("  Imported: workflow templates (%d)\n", len(bundle.Templates.Assets))
+		}
+		for _, warn := range templateWarnings {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+		}
 	}
 
 	// Import sessions
