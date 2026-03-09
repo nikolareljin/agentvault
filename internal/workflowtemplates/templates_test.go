@@ -133,9 +133,12 @@ func TestExportImportRoundTripPreservesTemplateMetadata(t *testing.T) {
 		t.Fatalf("bundle assets empty")
 	}
 
-	importWarnings, err := ImportBundle(dstCfg, bundle)
+	imported, importWarnings, err := ImportBundle(dstCfg, bundle)
 	if err != nil {
 		t.Fatalf("ImportBundle() error = %v", err)
+	}
+	if imported == 0 {
+		t.Fatalf("ImportBundle() imported count = 0, want > 0")
 	}
 	if len(importWarnings) != 0 {
 		t.Fatalf("ImportBundle() warnings = %v, want none", importWarnings)
@@ -177,9 +180,12 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 			{Key: "custom_template", Filename: "custom_template.txt", Version: "v1", Content: "custom\n"},
 		},
 	}
-	warnings, err := ImportBundle(cfgDir, bundle)
+	imported, warnings, err := ImportBundle(cfgDir, bundle)
 	if err != nil {
 		t.Fatalf("ImportBundle() error = %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("ImportBundle() imported count = %d, want 1", imported)
 	}
 	if len(warnings) == 0 {
 		t.Fatalf("expected warnings for empty asset")
@@ -224,7 +230,7 @@ func TestImportBundleRejectsUnsafeFilename(t *testing.T) {
 					{Key: "implement_issue", Filename: tc.filename, Version: "v1", Content: "x\n"},
 				},
 			}
-			_, err := ImportBundle(cfgDir, bundle)
+			_, _, err := ImportBundle(cfgDir, bundle)
 			if err == nil {
 				t.Fatalf("ImportBundle() expected unsafe filename error for %q", tc.filename)
 			}
@@ -244,7 +250,7 @@ func TestImportBundleRejectsUnsupportedSchemaVersion(t *testing.T) {
 			{Key: "implement_issue", Filename: "implement_issue.txt", Version: "v1", Content: "x\n"},
 		},
 	}
-	_, err := ImportBundle(cfgDir, bundle)
+	_, _, err := ImportBundle(cfgDir, bundle)
 	if err == nil {
 		t.Fatalf("ImportBundle() expected schema version error")
 	}
@@ -479,5 +485,59 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 		if ts.IsZero() {
 			t.Fatalf("meta.Updated[%q] should be backfilled", key)
 		}
+	}
+}
+
+func TestImportBundlePreservesMetadataForUntouchedKeys(t *testing.T) {
+	cfgDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates() error = %v", err)
+	}
+	beforeMeta, err := readMetadata(cfgDir)
+	if err != nil {
+		t.Fatalf("readMetadata(before) error = %v", err)
+	}
+	originalPRFilename := beforeMeta.Filenames["implement_pr"]
+	originalPRVersion := beforeMeta.Versions["implement_pr"]
+	originalPRUpdated := beforeMeta.Updated["implement_pr"]
+	if originalPRFilename == "" || originalPRVersion == "" || originalPRUpdated.IsZero() {
+		t.Fatalf("expected initialized metadata for implement_pr")
+	}
+
+	bundle := Bundle{
+		SchemaVersion: DefaultSchemaVersion,
+		ExportedAt:    time.Now().UTC(),
+		Assets: []TemplateAsset{
+			{
+				Key:      "implement_issue",
+				Filename: "implement_issue.txt",
+				Version:  "imported-v2",
+				Content:  "updated issue body\n",
+			},
+		},
+	}
+	imported, warnings, err := ImportBundle(cfgDir, bundle)
+	if err != nil {
+		t.Fatalf("ImportBundle() error = %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("ImportBundle() imported count = %d, want 1", imported)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("ImportBundle() warnings = %v, want none", warnings)
+	}
+
+	afterMeta, err := readMetadata(cfgDir)
+	if err != nil {
+		t.Fatalf("readMetadata(after) error = %v", err)
+	}
+	if afterMeta.Filenames["implement_pr"] != originalPRFilename {
+		t.Fatalf("implement_pr filename changed unexpectedly: %q -> %q", originalPRFilename, afterMeta.Filenames["implement_pr"])
+	}
+	if afterMeta.Versions["implement_pr"] != originalPRVersion {
+		t.Fatalf("implement_pr version changed unexpectedly: %q -> %q", originalPRVersion, afterMeta.Versions["implement_pr"])
+	}
+	if !afterMeta.Updated["implement_pr"].Equal(originalPRUpdated) {
+		t.Fatalf("implement_pr updated timestamp changed unexpectedly: %v -> %v", originalPRUpdated, afterMeta.Updated["implement_pr"])
 	}
 }

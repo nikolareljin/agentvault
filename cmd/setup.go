@@ -468,12 +468,12 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 	}
 	// Backward compatibility: older bundles may not include workflow templates.
 	if bundle.Templates.SchemaVersion != "" || len(bundle.Templates.Assets) > 0 {
-		templateWarnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), bundle.Templates)
+		importedTemplates, templateWarnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), bundle.Templates)
 		if err != nil {
 			return fmt.Errorf("importing workflow templates: %w", err)
 		}
-		if len(bundle.Templates.Assets) > 0 {
-			fmt.Printf("  Imported: workflow templates (%d)\n", len(bundle.Templates.Assets))
+		if importedTemplates > 0 {
+			fmt.Printf("  Imported: workflow templates (%d)\n", importedTemplates)
 		}
 		for _, warn := range templateWarnings {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
