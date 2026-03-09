@@ -364,6 +364,47 @@ func TestLoadResolvedDoesNotDuplicateFallbackWarning(t *testing.T) {
 	}
 }
 
+func TestLoadResolvedKeepsFallbackWarningAfterUnsafeMetadataWarning(t *testing.T) {
+	cfgDir := t.TempDir()
+	repoDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates() error = %v", err)
+	}
+	// Remove canonical file so built-in fallback is required.
+	if err := os.Remove(filepath.Join(cfgDir, TemplatesDirName, "implement_issue.txt")); err != nil {
+		t.Fatalf("Remove(canonical template): %v", err)
+	}
+	// Add unsafe metadata filename to trigger metadata warning for same key.
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "filenames": {"implement_issue": "../unsafe.txt"}
+}`), 0600); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	_, warnings, err := LoadResolved(cfgDir, repoDir)
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+
+	var hasUnsafeMetaWarning bool
+	var hasFallbackMissingWarning bool
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, `ignoring unsafe metadata filename for "implement_issue"`) {
+			hasUnsafeMetaWarning = true
+		}
+		if strings.Contains(warningText, `template "implement_issue.txt" missing from config storage; using built-in default`) {
+			hasFallbackMissingWarning = true
+		}
+	}
+	if !hasUnsafeMetaWarning {
+		t.Fatalf("expected unsafe metadata warning")
+	}
+	if !hasFallbackMissingWarning {
+		t.Fatalf("expected missing fallback warning even when unsafe metadata warning exists")
+	}
+}
+
 func TestExportBundleIncludesMissingDefaults(t *testing.T) {
 	cfgDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(cfgDir, TemplatesDirName), 0700); err != nil {
