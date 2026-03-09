@@ -177,7 +177,7 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 					TemplateAsset: TemplateAsset{
 						Key:       spec.Key,
 						Filename:  spec.Filename,
-						Version:   "repo-local",
+						Version:   spec.Version,
 						UpdatedAt: time.Time{},
 						Content:   content,
 					},
@@ -246,62 +246,76 @@ func ExportBundle(configDir string) (Bundle, []string, error) {
 	}, dedupeWarnings(warnings), nil
 }
 
-// ImportBundle writes template assets into config storage.
-func ImportBundle(configDir string, bundle Bundle) ([]string, error) {
+// ImportBundle writes template assets into config storage and returns imported asset count.
+func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 	if bundle.SchemaVersion != "" && bundle.SchemaVersion != DefaultSchemaVersion {
-		return nil, fmt.Errorf("unsupported template bundle schema version %q", bundle.SchemaVersion)
+		return 0, nil, fmt.Errorf("unsupported template bundle schema version %q", bundle.SchemaVersion)
 	}
 	if len(bundle.Assets) == 0 {
-		return []string{"bundle did not include workflow templates; nothing imported"}, nil
+		return 0, []string{"bundle did not include workflow templates; nothing imported"}, nil
 	}
 	if err := os.MkdirAll(configTemplatesDir(configDir), 0700); err != nil {
-		return nil, fmt.Errorf("creating templates directory: %w", err)
+		return 0, nil, fmt.Errorf("creating templates directory: %w", err)
 	}
-	meta := metadataFile{
-		SchemaVersion: DefaultSchemaVersion,
-		UpdatedAt:     time.Now().UTC(),
-		Versions:      make(map[string]string),
-		Updated:       make(map[string]time.Time),
-		Filenames:     make(map[string]string),
+	meta, metaErr := readMetadata(configDir)
+	if metaErr != nil {
+		if !errors.Is(metaErr, os.ErrNotExist) {
+			return 0, nil, fmt.Errorf("reading existing template metadata: %w", metaErr)
+		}
+		meta = metadataFile{
+			SchemaVersion: DefaultSchemaVersion,
+		}
+	}
+	if meta.SchemaVersion == "" {
+		meta.SchemaVersion = DefaultSchemaVersion
+	}
+	if meta.Versions == nil {
+		meta.Versions = make(map[string]string)
+	}
+	if meta.Updated == nil {
+		meta.Updated = make(map[string]time.Time)
+	}
+	if meta.Filenames == nil {
+		meta.Filenames = make(map[string]string)
 	}
 	warnings := make([]string, 0)
+	importedCount := 0
 	for _, asset := range bundle.Assets {
 		asset.Key = normalizeTemplateName(asset.Key)
 		if asset.Key == "" {
 			warnings = append(warnings, "skipped template with empty key")
 			continue
 		}
-		if _, supported := findDefaultByKey(asset.Key); !supported {
+		defaultSpec, supported := findDefaultByKey(asset.Key)
+		if !supported {
 			warnings = append(warnings, fmt.Sprintf("skipped unsupported template key %q", asset.Key))
 			continue
 		}
 		filename := asset.Filename
 		if filename == "" {
-			if def, ok := findDefaultByKey(asset.Key); ok {
-				filename = def.Filename
-			} else {
-				filename = asset.Key + ".txt"
-			}
+			filename = defaultSpec.Filename
 		}
 		filename, err := sanitizeTemplateFilename(filename)
 		if err != nil {
-			return nil, fmt.Errorf("invalid filename for template key %q: %w", asset.Key, err)
+			return 0, nil, fmt.Errorf("invalid filename for template key %q: %w", asset.Key, err)
 		}
 		if strings.TrimSpace(asset.Content) == "" {
 			warnings = append(warnings, fmt.Sprintf("skipped empty template %q", filename))
 			continue
 		}
 		if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), filename), []byte(asset.Content), 0600); err != nil {
-			return nil, fmt.Errorf("writing template %s: %w", filename, err)
+			return 0, nil, fmt.Errorf("writing template %s: %w", filename, err)
 		}
 		meta.Versions[asset.Key] = firstNonEmpty(asset.Version, "imported")
 		meta.Updated[asset.Key] = nonZeroTime(asset.UpdatedAt, time.Now().UTC())
 		meta.Filenames[asset.Key] = filename
+		importedCount++
 	}
+	meta.UpdatedAt = time.Now().UTC()
 	if err := writeMetadata(configDir, meta); err != nil {
-		return nil, err
+		return 0, nil, err
 	}
-	return dedupeWarnings(warnings), nil
+	return importedCount, dedupeWarnings(warnings), nil
 }
 
 // RefreshConfigTemplates ensures config storage contains default templates and metadata.
