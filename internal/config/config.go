@@ -29,3 +29,8 @@ func VaultPath() string {
 func ConfigPath() string {
 	return filepath.Join(Dir(), ConfigFile)
 }
+
+// TemplatesDir returns the template storage directory.
+func TemplatesDir() string {
+	return filepath.Join(Dir(), "templates")
+}
