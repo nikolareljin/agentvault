@@ -76,7 +76,7 @@ func runTemplatesShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	wantFile, ok := workflowtemplates.FindTemplateFilename(args[0])
+	wantKey, ok := workflowtemplates.FindTemplateKey(args[0])
 	if !ok {
 		return fmt.Errorf("unknown template %q; supported: %s", args[0], strings.Join(workflowtemplates.SupportedKeys(), ", "))
 	}
@@ -86,7 +86,7 @@ func runTemplatesShow(cmd *cobra.Command, args []string) error {
 	}
 	includeMeta, _ := cmd.Flags().GetBool("metadata")
 	for _, t := range resolved {
-		if t.Filename != wantFile {
+		if t.Key != wantKey {
 			continue
 		}
 		if includeMeta {
@@ -101,7 +101,7 @@ func runTemplatesShow(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("template %q was not resolved", wantFile)
+	return fmt.Errorf("template %q was not resolved", wantKey)
 }
 
 func runTemplatesRefresh(cmd *cobra.Command, args []string) error {
