@@ -531,9 +531,25 @@ func hasSpecificTemplateWarning(warnings []string, key, filename string) bool {
 		return false
 	}
 	quotedFilename := fmt.Sprintf("%q", filename)
+	unusableIndicators := []string{
+		"empty",
+		"cannot read",
+		"can't read",
+		"failed to read",
+		"unreadable",
+		"corrupt",
+		"invalid",
+		"malformed",
+	}
 	for _, warningText := range warnings {
-		if strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, key) {
-			return true
+		if !(strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, key)) {
+			continue
+		}
+		lowered := strings.ToLower(warningText)
+		for _, indicator := range unusableIndicators {
+			if strings.Contains(lowered, indicator) {
+				return true
+			}
 		}
 	}
 	return false
