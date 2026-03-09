@@ -17,6 +17,8 @@
 //	│   ├── to/vault/preview
 //	├── setup                  Full configuration export/import
 //	│   ├── export/import/show/apply/pull
+//	├── templates              Workflow templates (issue/PR/TODO flows)
+//	│   ├── list/show/refresh
 //	├── instructions           Manage stored instruction files
 //	├── prompt                 Gateway prompt execution with usage tracking
 //	├── serve                  Start HTTP API server for vault integration
