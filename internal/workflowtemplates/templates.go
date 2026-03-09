@@ -43,12 +43,11 @@ type ResolvedTemplate struct {
 }
 
 type metadataFile struct {
-	SchemaVersion string                     `json:"schema_version"`
-	UpdatedAt     time.Time                  `json:"updated_at,omitempty"`
-	Versions      map[string]string          `json:"versions,omitempty"`
-	Updated       map[string]time.Time       `json:"updated,omitempty"`
-	Filenames     map[string]string          `json:"filenames,omitempty"`
-	Extra         map[string]json.RawMessage `json:"-"`
+	SchemaVersion string               `json:"schema_version"`
+	UpdatedAt     time.Time            `json:"updated_at,omitempty"`
+	Versions      map[string]string    `json:"versions,omitempty"`
+	Updated       map[string]time.Time `json:"updated,omitempty"`
+	Filenames     map[string]string    `json:"filenames,omitempty"`
 }
 
 var defaultSpecs = []TemplateAsset{
@@ -410,10 +409,16 @@ func readMetadata(configDir string) (metadataFile, error) {
 	if meta.SchemaVersion == "" {
 		meta.SchemaVersion = DefaultSchemaVersion
 	}
+	if meta.SchemaVersion != DefaultSchemaVersion {
+		return metadataFile{}, fmt.Errorf("unsupported metadata schema version %q", meta.SchemaVersion)
+	}
 	return meta, nil
 }
 
 func writeMetadata(configDir string, meta metadataFile) error {
+	if meta.SchemaVersion == "" {
+		meta.SchemaVersion = DefaultSchemaVersion
+	}
 	if err := os.MkdirAll(configTemplatesDir(configDir), 0755); err != nil {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
