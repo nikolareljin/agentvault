@@ -203,19 +203,31 @@ func TestFindTemplateFilenameAcceptsFilenameInput(t *testing.T) {
 
 func TestImportBundleRejectsUnsafeFilename(t *testing.T) {
 	cfgDir := t.TempDir()
-	bundle := Bundle{
-		SchemaVersion: DefaultSchemaVersion,
-		ExportedAt:    time.Now().UTC(),
-		Assets: []TemplateAsset{
-			{Key: "implement_issue", Filename: "../escape.txt", Version: "v1", Content: "x\n"},
-		},
+	testCases := []struct {
+		name     string
+		filename string
+	}{
+		{name: "path-traversal", filename: "../escape.txt"},
+		{name: "reserved-metadata", filename: "metadata.json"},
+		{name: "windows-volume", filename: "C:escape.txt"},
 	}
-	_, err := ImportBundle(cfgDir, bundle)
-	if err == nil {
-		t.Fatalf("ImportBundle() expected unsafe filename error")
-	}
-	if !strings.Contains(err.Error(), "invalid filename") {
-		t.Fatalf("ImportBundle() err = %v, want invalid filename", err)
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			bundle := Bundle{
+				SchemaVersion: DefaultSchemaVersion,
+				ExportedAt:    time.Now().UTC(),
+				Assets: []TemplateAsset{
+					{Key: "implement_issue", Filename: tc.filename, Version: "v1", Content: "x\n"},
+				},
+			}
+			_, err := ImportBundle(cfgDir, bundle)
+			if err == nil {
+				t.Fatalf("ImportBundle() expected unsafe filename error for %q", tc.filename)
+			}
+			if !strings.Contains(err.Error(), "invalid filename") {
+				t.Fatalf("ImportBundle() err = %v, want invalid filename", err)
+			}
+		})
 	}
 }
 

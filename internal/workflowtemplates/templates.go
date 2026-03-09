@@ -462,9 +462,15 @@ func sanitizeTemplateFilename(filename string) (string, error) {
 	if name == "" {
 		return "", errors.New("empty filename")
 	}
+	if strings.EqualFold(name, metadataFileName) {
+		return "", fmt.Errorf("reserved filename is not allowed: %q", filename)
+	}
 	cleaned := filepath.Clean(name)
 	if filepath.IsAbs(name) || filepath.IsAbs(cleaned) {
 		return "", fmt.Errorf("absolute paths are not allowed: %q", filename)
+	}
+	if filepath.VolumeName(name) != "" || filepath.VolumeName(cleaned) != "" || strings.Contains(cleaned, ":") {
+		return "", fmt.Errorf("volume-qualified paths are not allowed: %q", filename)
 	}
 	if cleaned == "." || cleaned == ".." {
 		return "", fmt.Errorf("invalid path: %q", filename)
