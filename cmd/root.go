@@ -17,7 +17,7 @@
 //	│   ├── to/vault/preview
 //	├── setup                  Full configuration export/import
 //	│   ├── export/import/show/apply/pull
-//	├── templates              Workflow templates (issue/PR/TODO flows)
+//	├── templates              Workflow templates (issue/PR/add-issue flows)
 //	│   ├── list/show/refresh
 //	├── instructions           Manage stored instruction files
 //	├── prompt                 Gateway prompt execution with usage tracking

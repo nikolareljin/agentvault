@@ -191,6 +191,16 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 	}
 }
 
+func TestFindTemplateFilenameAcceptsFilenameInput(t *testing.T) {
+	got, ok := FindTemplateFilename("implement_issue.txt")
+	if !ok {
+		t.Fatalf("FindTemplateFilename() should resolve canonical filename input")
+	}
+	if got != "implement_issue.txt" {
+		t.Fatalf("FindTemplateFilename() = %q, want implement_issue.txt", got)
+	}
+}
+
 func TestImportBundleRejectsUnsafeFilename(t *testing.T) {
 	cfgDir := t.TempDir()
 	bundle := Bundle{

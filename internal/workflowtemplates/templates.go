@@ -139,7 +139,7 @@ func SupportedKeys() []string {
 func FindTemplateFilename(name string) (string, bool) {
 	norm := normalizeTemplateName(name)
 	for _, spec := range defaultSpecs {
-		if norm == spec.Key || norm == spec.Filename {
+		if norm == spec.Key || norm == normalizeTemplateName(spec.Filename) {
 			return spec.Filename, true
 		}
 	}
