@@ -331,3 +331,72 @@ func TestLoadResolvedIgnoresUnsafeMetadataFilename(t *testing.T) {
 		t.Fatalf("expected warning for unsafe metadata filename")
 	}
 }
+
+func TestLoadResolvedDoesNotDuplicateFallbackWarning(t *testing.T) {
+	cfgDir := t.TempDir()
+	repoDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, "implement_issue.txt"), []byte("\n"), 0600); err != nil {
+		t.Fatalf("WriteFile(empty): %v", err)
+	}
+
+	_, warnings, err := LoadResolved(cfgDir, repoDir)
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+	emptyCount := 0
+	missingCount := 0
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, `template "implement_issue.txt" is empty; skipping`) {
+			emptyCount++
+		}
+		if strings.Contains(warningText, `template "implement_issue.txt" missing from config storage; using built-in default`) {
+			missingCount++
+		}
+	}
+	if emptyCount != 1 {
+		t.Fatalf("empty warning count = %d, want 1", emptyCount)
+	}
+	if missingCount != 0 {
+		t.Fatalf("missing warning count = %d, want 0 when specific warning exists", missingCount)
+	}
+}
+
+func TestExportBundleIncludesMissingDefaults(t *testing.T) {
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, TemplatesDirName), 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, "implement_issue.txt"), []byte("issue-only\n"), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	bundle, warnings, err := ExportBundle(cfgDir)
+	if err != nil {
+		t.Fatalf("ExportBundle() error = %v", err)
+	}
+	byKey := make(map[string]TemplateAsset, len(bundle.Assets))
+	for _, asset := range bundle.Assets {
+		byKey[asset.Key] = asset
+	}
+	for _, key := range []string{"implement_issue", "implement_pr", "add_issue"} {
+		if _, ok := byKey[key]; !ok {
+			t.Fatalf("missing key %q in exported bundle", key)
+		}
+	}
+	if strings.TrimSpace(byKey["implement_issue"].Content) != "issue-only" {
+		t.Fatalf("implement_issue content mismatch")
+	}
+	foundMissingDefaultWarning := false
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, "exporting built-in default") {
+			foundMissingDefaultWarning = true
+			break
+		}
+	}
+	if !foundMissingDefaultWarning {
+		t.Fatalf("expected warning about exporting built-in default")
+	}
+}

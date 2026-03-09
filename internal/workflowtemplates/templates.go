@@ -199,7 +199,9 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 			continue
 		}
 
-		warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; using built-in default", spec.Filename))
+		if !hasSpecificTemplateWarning(warnings, spec.Key, spec.Filename) {
+			warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; using built-in default", spec.Filename))
+		}
 		resolved = append(resolved, ResolvedTemplate{
 			TemplateAsset: spec,
 			Source:        "built-in",
@@ -219,6 +221,25 @@ func ExportBundle(configDir string) (Bundle, []string, error) {
 	if len(assets) == 0 {
 		assets = cloneDefaults()
 		warnings = append(warnings, "no workflow templates found in config storage; exporting built-in defaults")
+	} else {
+		byKey := make(map[string]TemplateAsset, len(assets))
+		for _, asset := range assets {
+			byKey[asset.Key] = asset
+		}
+		merged := make([]TemplateAsset, 0, len(defaultSpecs)+len(assets))
+		for _, spec := range defaultSpecs {
+			if asset, ok := byKey[spec.Key]; ok && strings.TrimSpace(asset.Content) != "" {
+				merged = append(merged, asset)
+				delete(byKey, spec.Key)
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; exporting built-in default", spec.Filename))
+			merged = append(merged, spec)
+		}
+		for _, asset := range byKey {
+			merged = append(merged, asset)
+		}
+		assets = merged
 	}
 	sort.Slice(assets, func(i, j int) bool { return assets[i].Filename < assets[j].Filename })
 	return Bundle{
@@ -236,7 +257,7 @@ func ImportBundle(configDir string, bundle Bundle) ([]string, error) {
 	if len(bundle.Assets) == 0 {
 		return []string{"bundle did not include workflow templates; nothing imported"}, nil
 	}
-	if err := os.MkdirAll(configTemplatesDir(configDir), 0755); err != nil {
+	if err := os.MkdirAll(configTemplatesDir(configDir), 0700); err != nil {
 		return nil, fmt.Errorf("creating templates directory: %w", err)
 	}
 	meta := metadataFile{
@@ -269,7 +290,7 @@ func ImportBundle(configDir string, bundle Bundle) ([]string, error) {
 			warnings = append(warnings, fmt.Sprintf("skipped empty template %q", filename))
 			continue
 		}
-		if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), filename), []byte(asset.Content), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), filename), []byte(asset.Content), 0600); err != nil {
 			return nil, fmt.Errorf("writing template %s: %w", filename, err)
 		}
 		meta.Versions[asset.Key] = firstNonEmpty(asset.Version, "imported")
@@ -285,7 +306,7 @@ func ImportBundle(configDir string, bundle Bundle) ([]string, error) {
 // RefreshConfigTemplates ensures config storage contains default templates and metadata.
 func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, error) {
 	templatesDir := configTemplatesDir(configDir)
-	if err := os.MkdirAll(templatesDir, 0755); err != nil {
+	if err := os.MkdirAll(templatesDir, 0700); err != nil {
 		return nil, fmt.Errorf("creating templates directory: %w", err)
 	}
 	now := time.Now().UTC()
@@ -317,7 +338,7 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 				continue
 			}
 		}
-		if err := os.WriteFile(path, []byte(spec.Content), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(spec.Content), 0600); err != nil {
 			return nil, fmt.Errorf("writing template %s: %w", spec.Filename, err)
 		}
 		meta.Versions[spec.Key] = spec.Version
@@ -419,14 +440,14 @@ func writeMetadata(configDir string, meta metadataFile) error {
 	if meta.SchemaVersion == "" {
 		meta.SchemaVersion = DefaultSchemaVersion
 	}
-	if err := os.MkdirAll(configTemplatesDir(configDir), 0755); err != nil {
+	if err := os.MkdirAll(configTemplatesDir(configDir), 0700); err != nil {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding metadata: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), metadataFileName), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), metadataFileName), data, 0600); err != nil {
 		return fmt.Errorf("writing metadata: %w", err)
 	}
 	return nil
@@ -503,6 +524,19 @@ func dedupeWarnings(warnings []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func hasSpecificTemplateWarning(warnings []string, key, filename string) bool {
+	if len(warnings) == 0 {
+		return false
+	}
+	quotedFilename := fmt.Sprintf("%q", filename)
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, key) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstNonEmpty(values ...string) string {
