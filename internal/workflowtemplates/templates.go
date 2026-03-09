@@ -257,10 +257,12 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 	if err := os.MkdirAll(configTemplatesDir(configDir), 0700); err != nil {
 		return 0, nil, fmt.Errorf("creating templates directory: %w", err)
 	}
+	warnings := make([]string, 0)
 	meta, metaErr := readMetadata(configDir)
 	if metaErr != nil {
 		if !errors.Is(metaErr, os.ErrNotExist) {
-			return 0, nil, fmt.Errorf("reading existing template metadata: %w", metaErr)
+			// Allow bundle import to repair corrupted metadata by resetting to defaults.
+			warnings = append(warnings, fmt.Sprintf("existing template metadata invalid; resetting metadata defaults (%v)", metaErr))
 		}
 		meta = metadataFile{
 			SchemaVersion: DefaultSchemaVersion,
@@ -278,7 +280,6 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 	if meta.Filenames == nil {
 		meta.Filenames = make(map[string]string)
 	}
-	warnings := make([]string, 0)
 	importedCount := 0
 	seenFilenames := make(map[string]string)
 	for _, asset := range bundle.Assets {
@@ -330,7 +331,13 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 		return nil, fmt.Errorf("creating templates directory: %w", err)
 	}
 	now := time.Now().UTC()
-	meta, _ := readMetadata(configDir)
+	meta, metaErr := readMetadata(configDir)
+	if metaErr != nil {
+		if !errors.Is(metaErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("reading template metadata: %w", metaErr)
+		}
+		meta = metadataFile{}
+	}
 	if meta.SchemaVersion == "" {
 		meta.SchemaVersion = DefaultSchemaVersion
 	}
