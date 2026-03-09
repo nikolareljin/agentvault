@@ -280,6 +280,7 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 	}
 	warnings := make([]string, 0)
 	importedCount := 0
+	seenFilenames := make(map[string]string)
 	for _, asset := range bundle.Assets {
 		asset.Key = normalizeTemplateName(asset.Key)
 		if asset.Key == "" {
@@ -299,6 +300,10 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		if err != nil {
 			return 0, nil, fmt.Errorf("invalid filename for template key %q: %w", asset.Key, err)
 		}
+		if existingKey, exists := seenFilenames[filename]; exists {
+			return 0, nil, fmt.Errorf("duplicate template filename %q for keys %q and %q", filename, existingKey, asset.Key)
+		}
+		seenFilenames[filename] = asset.Key
 		if strings.TrimSpace(asset.Content) == "" {
 			warnings = append(warnings, fmt.Sprintf("skipped empty template %q", filename))
 			continue

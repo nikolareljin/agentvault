@@ -541,3 +541,22 @@ func TestImportBundlePreservesMetadataForUntouchedKeys(t *testing.T) {
 		t.Fatalf("implement_pr updated timestamp changed unexpectedly: %v -> %v", originalPRUpdated, afterMeta.Updated["implement_pr"])
 	}
 }
+
+func TestImportBundleRejectsDuplicateResolvedFilenames(t *testing.T) {
+	cfgDir := t.TempDir()
+	bundle := Bundle{
+		SchemaVersion: DefaultSchemaVersion,
+		ExportedAt:    time.Now().UTC(),
+		Assets: []TemplateAsset{
+			{Key: "implement_issue", Filename: "shared.txt", Version: "v1", Content: "issue\n"},
+			{Key: "implement_pr", Filename: "shared.txt", Version: "v1", Content: "pr\n"},
+		},
+	}
+	_, _, err := ImportBundle(cfgDir, bundle)
+	if err == nil {
+		t.Fatalf("ImportBundle() expected duplicate filename error")
+	}
+	if !strings.Contains(err.Error(), "duplicate template filename") {
+		t.Fatalf("ImportBundle() err = %v, want duplicate template filename", err)
+	}
+}
