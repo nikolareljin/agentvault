@@ -96,7 +96,7 @@ func runTemplatesShow(cmd *cobra.Command, args []string) error {
 		if !strings.HasSuffix(t.Content, "\n") {
 			fmt.Println()
 		}
-		for _, warn := range warnings {
+		for _, warn := range filterTemplateWarnings(warnings, t.Key, t.Filename) {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
 		}
 		return nil
@@ -131,4 +131,23 @@ func resolveRepoDir(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("resolving repo path: %w", err)
 	}
 	return abs, nil
+}
+
+func filterTemplateWarnings(warnings []string, key string, filename string) []string {
+	if len(warnings) == 0 {
+		return nil
+	}
+	filtered := make([]string, 0, len(warnings))
+	for _, warningText := range warnings {
+		// Keep template-specific warnings for the selected template.
+		if strings.Contains(warningText, key) || strings.Contains(warningText, fmt.Sprintf("%q", filename)) {
+			filtered = append(filtered, warningText)
+			continue
+		}
+		// Keep global metadata-level warnings since they affect resolution semantics broadly.
+		if strings.Contains(strings.ToLower(warningText), "metadata") {
+			filtered = append(filtered, warningText)
+		}
+	}
+	return filtered
 }
