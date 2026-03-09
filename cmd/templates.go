@@ -111,7 +111,7 @@ func runTemplatesRefresh(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(written) == 0 {
-		fmt.Println("No templates written. Config storage is already initialized.")
+		fmt.Println("No template bodies were rewritten. Config storage metadata is up to date.")
 		return nil
 	}
 	fmt.Printf("Initialized %d workflow template(s) in config storage:\n", len(written))
