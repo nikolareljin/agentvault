@@ -30,7 +30,7 @@ type SetupBundle struct {
 	Sessions        agent.SessionConfig      `json:"sessions,omitempty"`
 	SharedConfig    agent.SharedConfig       `json:"shared_config"`
 	ProviderConfigs agent.ProviderConfig     `json:"provider_configs"`
-	Templates       workflowtemplates.Bundle `json:"workflow_templates,omitempty"`
+	Templates       workflowtemplates.Bundle `json:"workflow_templates"`
 	StatusSnapshot  *statuspkg.Report        `json:"status_snapshot,omitempty"`
 	DetectedAgents  []DetectedAgent          `json:"detected_agents,omitempty"`
 	InstallGuide    InstallGuide             `json:"install_guide"`
