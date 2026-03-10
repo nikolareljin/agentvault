@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -11,7 +10,11 @@ func TestSetupBundleMarshalIncludesWorkflowTemplatesField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal(SetupBundle{}) error = %v", err)
 	}
-	if !strings.Contains(string(data), `"workflow_templates"`) {
-		t.Fatalf("marshal output = %s, want workflow_templates field present", string(data))
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal(marshal output) error = %v", err)
+	}
+	if _, ok := payload["workflow_templates"]; !ok {
+		t.Fatalf("marshal output keys = %v, want workflow_templates field present", payload)
 	}
 }

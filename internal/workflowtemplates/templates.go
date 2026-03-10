@@ -448,10 +448,9 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 		path := filepath.Join(configTemplatesDir(configDir), selectedFilename)
 		content, ok, warn := readTemplateFile(path)
 		if !ok {
+			fallbackTarget := "built-in default template"
 			if warn != "" {
 				warnings = append(warnings, warn)
-			} else if usedMetadataFilename {
-				warnings = append(warnings, fmt.Sprintf("template %q referenced by metadata for %q is missing; falling back", selectedFilename, spec.Key))
 			}
 			if usedMetadataFilename {
 				canonicalPath := filepath.Join(configTemplatesDir(configDir), spec.Filename)
@@ -460,8 +459,12 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 					content = canonicalContent
 					ok = true
 					selectedFilename = spec.Filename
+					fallbackTarget = fmt.Sprintf("canonical config template %q", spec.Filename)
 				} else if canonicalWarn != "" {
 					warnings = append(warnings, canonicalWarn)
+				}
+				if warn == "" {
+					warnings = append(warnings, fmt.Sprintf("template %q referenced by metadata for %q is missing; falling back to %s", path, spec.Key, fallbackTarget))
 				}
 			}
 		}
@@ -500,11 +503,11 @@ func readTemplateFile(path string) (string, bool, string) {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", false, ""
 		}
-		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", filepath.Base(path), err)
+		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
 	}
 	content := strings.TrimSpace(string(data))
 	if content == "" {
-		return "", false, fmt.Sprintf("template %q is empty; skipping", filepath.Base(path))
+		return "", false, fmt.Sprintf("template %q is empty; skipping", path)
 	}
 	return string(data), true, ""
 }

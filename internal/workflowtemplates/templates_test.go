@@ -475,7 +475,7 @@ func TestLoadResolvedWarnsOnMissingMetadataSelectedFilename(t *testing.T) {
 
 	var hasMissingMetadataWarning bool
 	for _, warningText := range warnings {
-		if strings.Contains(warningText, `template "custom-issue-template.txt" referenced by metadata for "implement_issue" is missing; falling back`) {
+		if strings.Contains(warningText, `custom-issue-template.txt" referenced by metadata for "implement_issue" is missing; falling back to built-in default template`) {
 			hasMissingMetadataWarning = true
 		}
 	}
@@ -523,7 +523,7 @@ func TestLoadResolvedFallsBackToCanonicalConfigFileWhenMetadataFileMissing(t *te
 	}
 	var hasMissingMetadataWarning bool
 	for _, warningText := range warnings {
-		if strings.Contains(warningText, `template "custom-issue-template.txt" referenced by metadata for "implement_issue" is missing; falling back`) {
+		if strings.Contains(warningText, `custom-issue-template.txt" referenced by metadata for "implement_issue" is missing; falling back to canonical config template "implement_issue.txt"`) {
 			hasMissingMetadataWarning = true
 		}
 	}
@@ -549,7 +549,7 @@ func TestLoadResolvedDoesNotDuplicateFallbackWarning(t *testing.T) {
 	emptyCount := 0
 	missingCount := 0
 	for _, warningText := range warnings {
-		if strings.Contains(warningText, `template "implement_issue.txt" is empty; skipping`) {
+		if strings.Contains(warningText, `/templates/implement_issue.txt" is empty; skipping`) {
 			emptyCount++
 		}
 		if strings.Contains(warningText, `template "implement_issue.txt" missing from config storage; using built-in default`) {
