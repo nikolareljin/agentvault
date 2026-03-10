@@ -139,9 +139,10 @@ func filterTemplateWarnings(warnings []string, key string, filename string) []st
 		return nil
 	}
 	filtered := make([]string, 0, len(warnings))
+	quotedFilename := fmt.Sprintf("%q", filename)
 	for _, warningText := range warnings {
 		// Keep template-specific warnings for the selected template.
-		if strings.Contains(warningText, key) || strings.Contains(warningText, fmt.Sprintf("%q", filename)) {
+		if strings.Contains(warningText, key) || strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, filename) {
 			filtered = append(filtered, warningText)
 			continue
 		}
