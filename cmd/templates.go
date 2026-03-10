@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -61,12 +60,14 @@ func runTemplatesList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("Workflow templates")
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
+	fmt.Fprintln(out, "Workflow templates")
 	for _, t := range resolved {
-		fmt.Printf("  - %s (%s, version=%s)\n", t.Filename, t.Source, t.Version)
+		fmt.Fprintf(out, "  - %s (%s, version=%s)\n", t.Filename, t.Source, t.Version)
 	}
 	for _, warn := range warnings {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+		fmt.Fprintf(errOut, "warning: %s\n", warn)
 	}
 	return nil
 }
@@ -76,32 +77,31 @@ func runTemplatesShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	wantKey, ok := workflowtemplates.FindTemplateKey(args[0])
-	if !ok {
-		return fmt.Errorf("unknown template %q; supported: %s", args[0], strings.Join(workflowtemplates.SupportedKeys(), ", "))
-	}
 	resolved, warnings, err := workflowtemplates.LoadResolved(resolveConfigDir(), repoDir)
 	if err != nil {
 		return err
 	}
+	requested := normalizeTemplateSelector(args[0])
 	includeMeta, _ := cmd.Flags().GetBool("metadata")
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
 	for _, t := range resolved {
-		if t.Key != wantKey {
+		if normalizeTemplateSelector(t.Key) != requested && normalizeTemplateSelector(t.Filename) != requested {
 			continue
 		}
 		if includeMeta {
-			fmt.Printf("# Source: %s\n# File: %s\n# Version: %s\n\n", t.Source, t.Filename, t.Version)
+			fmt.Fprintf(out, "# Source: %s\n# File: %s\n# Version: %s\n\n", t.Source, t.Filename, t.Version)
 		}
-		fmt.Print(t.Content)
+		fmt.Fprint(out, t.Content)
 		if !strings.HasSuffix(t.Content, "\n") {
-			fmt.Println()
+			fmt.Fprintln(out)
 		}
 		for _, warn := range filterTemplateWarnings(warnings, t.Key, t.Filename) {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+			fmt.Fprintf(errOut, "warning: %s\n", warn)
 		}
 		return nil
 	}
-	return fmt.Errorf("template %q was not resolved", wantKey)
+	return fmt.Errorf("unknown template %q; supported: %s", args[0], strings.Join(workflowtemplates.SupportedKeys(), ", "))
 }
 
 func runTemplatesRefresh(cmd *cobra.Command, args []string) error {
@@ -110,13 +110,14 @@ func runTemplatesRefresh(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	out := cmd.OutOrStdout()
 	if len(written) == 0 {
-		fmt.Println("No template bodies were rewritten. Config storage metadata is up to date.")
+		fmt.Fprintln(out, "No template bodies were rewritten. Config storage metadata is up to date.")
 		return nil
 	}
-	fmt.Printf("Initialized %d workflow template(s) in config storage:\n", len(written))
+	fmt.Fprintf(out, "Initialized %d workflow template(s) in config storage:\n", len(written))
 	for _, t := range written {
-		fmt.Printf("  - %s (%s)\n", t.Filename, t.Version)
+		fmt.Fprintf(out, "  - %s (%s)\n", t.Filename, t.Version)
 	}
 	return nil
 }
@@ -150,4 +151,11 @@ func filterTemplateWarnings(warnings []string, key string, filename string) []st
 		}
 	}
 	return filtered
+}
+
+func normalizeTemplateSelector(value string) string {
+	v := strings.TrimSpace(strings.ToLower(value))
+	v = strings.TrimSuffix(v, ".txt")
+	v = strings.ReplaceAll(v, "-", "_")
+	return v
 }
