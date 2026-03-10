@@ -234,7 +234,9 @@ func ExportBundle(configDir string) (Bundle, []string, error) {
 				delete(byKey, spec.Key)
 				continue
 			}
-			warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; exporting built-in default", spec.Filename))
+			if !hasSpecificTemplateWarning(warnings, spec.Key, spec.Filename) {
+				warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; exporting built-in default", spec.Filename))
+			}
 			merged = append(merged, spec)
 		}
 		assets = merged
