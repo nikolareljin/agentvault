@@ -549,7 +549,7 @@ func TestLoadResolvedDoesNotDuplicateFallbackWarning(t *testing.T) {
 	emptyCount := 0
 	missingCount := 0
 	for _, warningText := range warnings {
-		if strings.Contains(warningText, `/templates/implement_issue.txt" is empty; skipping`) {
+		if strings.Contains(warningText, `implement_issue.txt" is empty; skipping`) {
 			emptyCount++
 		}
 		if strings.Contains(warningText, `template "implement_issue.txt" missing from config storage; using built-in default`) {
