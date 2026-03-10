@@ -363,28 +363,56 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 
 	written := make([]TemplateAsset, 0, len(defaultSpecs))
 	for _, spec := range defaultSpecs {
-		path := filepath.Join(templatesDir, spec.Filename)
+		filename := spec.Filename
+		if meta.Filenames != nil {
+			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
+				safeFilename, err := sanitizeTemplateFilename(mfn)
+				if err == nil {
+					filename = safeFilename
+				}
+			}
+		}
+		path := filepath.Join(templatesDir, filename)
 		if !force {
 			if content, ok, _ := readTemplateFile(path); ok && strings.TrimSpace(content) != "" {
 				if _, ok := meta.Versions[spec.Key]; !ok {
 					meta.Versions[spec.Key] = spec.Version
 				}
 				if _, ok := meta.Filenames[spec.Key]; !ok {
-					meta.Filenames[spec.Key] = spec.Filename
+					meta.Filenames[spec.Key] = filename
 				}
 				if _, ok := meta.Updated[spec.Key]; !ok {
 					meta.Updated[spec.Key] = now
 				}
 				continue
 			}
+			if filename != spec.Filename {
+				canonicalPath := filepath.Join(templatesDir, spec.Filename)
+				if content, ok, _ := readTemplateFile(canonicalPath); ok && strings.TrimSpace(content) != "" {
+					if _, ok := meta.Versions[spec.Key]; !ok {
+						meta.Versions[spec.Key] = spec.Version
+					}
+					meta.Filenames[spec.Key] = spec.Filename
+					if _, ok := meta.Updated[spec.Key]; !ok {
+						meta.Updated[spec.Key] = now
+					}
+					continue
+				}
+			}
 		}
 		if err := os.WriteFile(path, []byte(spec.Content), 0600); err != nil {
-			return nil, fmt.Errorf("writing template %s: %w", spec.Filename, err)
+			return nil, fmt.Errorf("writing template %s: %w", filename, err)
 		}
 		meta.Versions[spec.Key] = spec.Version
 		meta.Updated[spec.Key] = now
-		meta.Filenames[spec.Key] = spec.Filename
-		written = append(written, spec)
+		meta.Filenames[spec.Key] = filename
+		written = append(written, TemplateAsset{
+			Key:       spec.Key,
+			Filename:  filename,
+			Version:   spec.Version,
+			UpdatedAt: now,
+			Content:   spec.Content,
+		})
 	}
 	meta.UpdatedAt = now
 	if err := writeMetadata(configDir, meta); err != nil {
@@ -584,6 +612,7 @@ func hasSpecificTemplateWarning(warnings []string, key, filename string) bool {
 		"corrupt",
 		"invalid",
 		"malformed",
+		"missing",
 	}
 	for _, warningText := range warnings {
 		if !(strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, key)) {

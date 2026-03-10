@@ -628,6 +628,55 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 	}
 }
 
+func TestRefreshConfigTemplatesPreservesMetadataSelectedFilenameWithoutForce(t *testing.T) {
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, TemplatesDirName), 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	customName := "custom-issue-template.txt"
+	customContent := "custom issue body\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, customName), []byte(customContent), 0600); err != nil {
+		t.Fatalf("WriteFile(custom): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "versions": {"implement_issue": "custom-v1"},
+  "updated": {"implement_issue": "2026-03-09T00:00:00Z"},
+  "filenames": {"implement_issue": "`+customName+`"}
+}`), 0600); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	written, err := RefreshConfigTemplates(cfgDir, false)
+	if err != nil {
+		t.Fatalf("RefreshConfigTemplates(force=false) error = %v", err)
+	}
+	foundCustomRewrite := false
+	for _, asset := range written {
+		if asset.Key == "implement_issue" {
+			foundCustomRewrite = true
+		}
+	}
+	if foundCustomRewrite {
+		t.Fatalf("RefreshConfigTemplates(force=false) should not rewrite existing metadata-selected file")
+	}
+
+	meta, err := readMetadata(cfgDir)
+	if err != nil {
+		t.Fatalf("readMetadata() error = %v", err)
+	}
+	if meta.Filenames["implement_issue"] != customName {
+		t.Fatalf("metadata filename = %q, want %q", meta.Filenames["implement_issue"], customName)
+	}
+	content, err := os.ReadFile(filepath.Join(cfgDir, TemplatesDirName, customName))
+	if err != nil {
+		t.Fatalf("ReadFile(custom): %v", err)
+	}
+	if string(content) != customContent {
+		t.Fatalf("custom content changed unexpectedly")
+	}
+}
+
 func TestImportBundlePreservesMetadataForUntouchedKeys(t *testing.T) {
 	cfgDir := t.TempDir()
 	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
