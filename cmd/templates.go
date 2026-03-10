@@ -28,7 +28,7 @@ var templatesListCmd = &cobra.Command{
 }
 
 var templatesShowCmd = &cobra.Command{
-	Use:   "show [name]",
+	Use:   "show <name>",
 	Short: "Show effective workflow template content",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runTemplatesShow,

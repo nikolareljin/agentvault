@@ -449,7 +449,7 @@ Workflow template precedence:
 ### `agentvault templates list`
 List effective templates and their source.
 
-### `agentvault templates show [name]`
+### `agentvault templates show <name>`
 Show effective template content by key or filename.
 
 ### `agentvault templates refresh`
