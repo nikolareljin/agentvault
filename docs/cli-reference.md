@@ -373,7 +373,7 @@ Flags:
 Flags:
 - `--repo <path>` (default: current directory)
 
-### `agentvault templates show [name]`
+### `agentvault templates show <name>`
 Flags:
 - `--repo <path>` (default: current directory)
 - `--metadata` (default: `false`)
