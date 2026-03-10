@@ -642,6 +642,46 @@ func TestExportBundleIncludesMissingDefaults(t *testing.T) {
 	}
 }
 
+func TestExportBundleAvoidsDuplicateResolvedFilenames(t *testing.T) {
+	cfgDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, TemplatesDirName), 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, "shared.txt"), []byte("shared body\n"), 0600); err != nil {
+		t.Fatalf("WriteFile(shared): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "filenames": {
+    "implement_issue": "shared.txt",
+    "implement_pr": "shared.txt"
+  }
+}`), 0600); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	bundle, warnings, err := ExportBundle(cfgDir)
+	if err != nil {
+		t.Fatalf("ExportBundle() error = %v", err)
+	}
+	seen := make(map[string]string, len(bundle.Assets))
+	for _, asset := range bundle.Assets {
+		if existingKey, exists := seen[asset.Filename]; exists {
+			t.Fatalf("duplicate exported filename %q for keys %q and %q", asset.Filename, existingKey, asset.Key)
+		}
+		seen[asset.Filename] = asset.Key
+	}
+	var hasConflictWarning bool
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, `conflicts with`) {
+			hasConflictWarning = true
+		}
+	}
+	if !hasConflictWarning {
+		t.Fatalf("expected duplicate filename conflict warning, got %v", warnings)
+	}
+}
+
 func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 	cfgDir := t.TempDir()
 	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {

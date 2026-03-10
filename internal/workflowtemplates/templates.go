@@ -429,6 +429,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 	}
 
 	assets := make([]TemplateAsset, 0, len(defaultSpecs))
+	seenFilenames := make(map[string]string, len(defaultSpecs))
 	for _, spec := range defaultSpecs {
 		filename := spec.Filename
 		usedMetadataFilename := false
@@ -482,6 +483,11 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 		if meta.Updated != nil {
 			asset.UpdatedAt = meta.Updated[spec.Key]
 		}
+		if existingKey, exists := seenFilenames[asset.Filename]; exists {
+			warnings = append(warnings, fmt.Sprintf("template %q for %q conflicts with %q; falling back to built-in default", asset.Filename, spec.Key, existingKey))
+			continue
+		}
+		seenFilenames[asset.Filename] = spec.Key
 		assets = append(assets, asset)
 	}
 
