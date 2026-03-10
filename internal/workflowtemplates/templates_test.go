@@ -46,6 +46,9 @@ func TestLoadResolvedPrecedence(t *testing.T) {
 	if gotIssue.Source != "repo-local" {
 		t.Fatalf("implement_issue source = %q, want repo-local", gotIssue.Source)
 	}
+	if gotIssue.Version != RepoLocalVersion {
+		t.Fatalf("implement_issue version = %q, want %q", gotIssue.Version, RepoLocalVersion)
+	}
 	if strings.TrimSpace(gotIssue.Content) != strings.TrimSpace(repoOverride) {
 		t.Fatalf("implement_issue content mismatch")
 	}
@@ -198,6 +201,32 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "custom_template.txt")); !os.IsNotExist(err) {
 		t.Fatalf("custom_template.txt should not exist, err=%v", err)
+	}
+}
+
+func TestImportBundleNoOpDoesNotWriteMetadata(t *testing.T) {
+	cfgDir := t.TempDir()
+	bundle := Bundle{
+		SchemaVersion: DefaultSchemaVersion,
+		ExportedAt:    time.Now().UTC(),
+		Assets: []TemplateAsset{
+			{Key: "implement_issue", Filename: "implement_issue.txt", Version: "v1", Content: "\n"},
+			{Key: "unsupported", Filename: "unsupported.txt", Version: "v1", Content: "x\n"},
+		},
+	}
+
+	imported, warnings, err := ImportBundle(cfgDir, bundle)
+	if err != nil {
+		t.Fatalf("ImportBundle() error = %v", err)
+	}
+	if imported != 0 {
+		t.Fatalf("ImportBundle() imported count = %d, want 0", imported)
+	}
+	if len(warnings) == 0 {
+		t.Fatalf("expected warnings for no-op import")
+	}
+	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, metadataFileName)); !os.IsNotExist(err) {
+		t.Fatalf("metadata.json should not exist after no-op import, err=%v", err)
 	}
 }
 

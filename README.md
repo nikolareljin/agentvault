@@ -199,7 +199,7 @@ Runtime value precedence for prompt execution is:
 
 Workflow template precedence is:
 - repository-local override (`./implement_issue.txt`, `./implement_pr.txt`, `./add_issue.txt`)
-- config storage (`~/.config/agentvault/templates/`)
+- config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`)
 - built-in defaults (with warning)
 
 In the TUI Agent detail view, effective values include source tags (`local`, `env`, `default`) for model/API key/base URL.

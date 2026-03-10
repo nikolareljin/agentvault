@@ -17,6 +17,7 @@ const (
 	DefaultSchemaVersion = "1"
 	TemplatesDirName     = "templates"
 	metadataFileName     = "metadata.json"
+	RepoLocalVersion     = "repo-local"
 )
 
 // TemplateAsset stores one workflow template body with metadata.
@@ -177,7 +178,7 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 					TemplateAsset: TemplateAsset{
 						Key:       spec.Key,
 						Filename:  spec.Filename,
-						Version:   spec.Version,
+						Version:   RepoLocalVersion,
 						UpdatedAt: time.Time{},
 						Content:   content,
 					},
@@ -259,6 +260,7 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 	}
 	warnings := make([]string, 0)
 	meta, metaErr := readMetadata(configDir)
+	metadataNeedsRepair := metaErr != nil && !errors.Is(metaErr, os.ErrNotExist)
 	if metaErr != nil {
 		if !errors.Is(metaErr, os.ErrNotExist) {
 			// Allow bundle import to repair corrupted metadata by resetting to defaults.
@@ -316,6 +318,9 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		meta.Updated[asset.Key] = nonZeroTime(asset.UpdatedAt, time.Now().UTC())
 		meta.Filenames[asset.Key] = filename
 		importedCount++
+	}
+	if importedCount == 0 && !metadataNeedsRepair {
+		return 0, dedupeWarnings(warnings), nil
 	}
 	meta.UpdatedAt = time.Now().UTC()
 	if err := writeMetadata(configDir, meta); err != nil {
