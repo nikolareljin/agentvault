@@ -288,6 +288,26 @@ func TestImportBundleRejectsUnsupportedSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestImportBundleRejectsDuplicateKeys(t *testing.T) {
+	cfgDir := t.TempDir()
+	bundle := Bundle{
+		SchemaVersion: DefaultSchemaVersion,
+		ExportedAt:    time.Now().UTC(),
+		Assets: []TemplateAsset{
+			{Key: "implement_issue", Filename: "implement_issue.txt", Version: "v1", Content: "first\n"},
+			{Key: "implement_issue", Filename: "implement_issue-copy.txt", Version: "v2", Content: "second\n"},
+		},
+	}
+
+	_, _, err := ImportBundle(cfgDir, bundle)
+	if err == nil {
+		t.Fatalf("ImportBundle() expected duplicate key error")
+	}
+	if !strings.Contains(err.Error(), "duplicate template key") {
+		t.Fatalf("ImportBundle() err = %v, want duplicate template key", err)
+	}
+}
+
 func TestImportBundleRepairsInvalidExistingMetadata(t *testing.T) {
 	cfgDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(cfgDir, TemplatesDirName), 0755); err != nil {
@@ -427,6 +447,38 @@ func TestLoadResolvedIgnoresUnsafeMetadataFilename(t *testing.T) {
 	}
 	if len(warnings) == 0 {
 		t.Fatalf("expected warning for unsafe metadata filename")
+	}
+}
+
+func TestLoadResolvedWarnsOnMissingMetadataSelectedFilename(t *testing.T) {
+	cfgDir := t.TempDir()
+	repoDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates() error = %v", err)
+	}
+	if err := os.Remove(filepath.Join(cfgDir, TemplatesDirName, "implement_issue.txt")); err != nil {
+		t.Fatalf("Remove(canonical template): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "filenames": {"implement_issue": "custom-issue-template.txt"}
+}`), 0644); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	_, warnings, err := LoadResolved(cfgDir, repoDir)
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+
+	var hasMissingMetadataWarning bool
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, `template "custom-issue-template.txt" referenced by metadata for "implement_issue" is missing; falling back`) {
+			hasMissingMetadataWarning = true
+		}
+	}
+	if !hasMissingMetadataWarning {
+		t.Fatalf("expected missing metadata-selected filename warning, got %v", warnings)
 	}
 }
 
