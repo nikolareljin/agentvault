@@ -629,6 +629,8 @@ func hasSpecificTemplateWarning(warnings []string, key, filename string) bool {
 		"can't read",
 		"failed to read",
 		"unreadable",
+		"conflict",
+		"conflicts",
 		"corrupt",
 		"invalid",
 		"malformed",
