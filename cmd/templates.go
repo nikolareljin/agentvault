@@ -15,7 +15,7 @@ var templatesCmd = &cobra.Command{
 	Short: "Manage workflow templates used by issue/PR automation workflows",
 	Long: `Workflow templates are resolved with explicit precedence:
   1) repository-local files (./implement_issue.txt, etc.)
-  2) AgentVault config storage (~/.config/agentvault/templates)
+  2) AgentVault config storage (default: ~/.config/agentvault/templates; honors XDG_CONFIG_HOME/--config)
   3) built-in safe defaults
 
 Use these commands to inspect effective content and refresh config templates.`,
