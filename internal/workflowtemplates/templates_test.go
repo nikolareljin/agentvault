@@ -682,6 +682,47 @@ func TestExportBundleAvoidsDuplicateResolvedFilenames(t *testing.T) {
 	}
 }
 
+func TestLoadResolvedDoesNotAddGenericMissingWarningAfterConflictWarning(t *testing.T) {
+	cfgDir := t.TempDir()
+	repoDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfgDir, TemplatesDirName), 0700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, "shared.txt"), []byte("shared body\n"), 0600); err != nil {
+		t.Fatalf("WriteFile(shared): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "filenames": {
+    "implement_issue": "shared.txt",
+    "implement_pr": "shared.txt"
+  }
+}`), 0600); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	_, warnings, err := LoadResolved(cfgDir, repoDir)
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+	conflictCount := 0
+	missingCount := 0
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, `template "shared.txt" for "implement_pr" conflicts with "implement_issue"; falling back to built-in default`) {
+			conflictCount++
+		}
+		if strings.Contains(warningText, `template "implement_pr.txt" missing from config storage; using built-in default`) {
+			missingCount++
+		}
+	}
+	if conflictCount != 1 {
+		t.Fatalf("conflict warning count = %d, want 1", conflictCount)
+	}
+	if missingCount != 0 {
+		t.Fatalf("missing warning count = %d, want 0 when conflict warning exists", missingCount)
+	}
+}
+
 func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 	cfgDir := t.TempDir()
 	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
