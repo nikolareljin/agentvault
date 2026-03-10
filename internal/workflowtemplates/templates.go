@@ -443,19 +443,33 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 				}
 			}
 		}
-		path := filepath.Join(configTemplatesDir(configDir), filename)
+		selectedFilename := filename
+		path := filepath.Join(configTemplatesDir(configDir), selectedFilename)
 		content, ok, warn := readTemplateFile(path)
 		if !ok {
 			if warn != "" {
 				warnings = append(warnings, warn)
 			} else if usedMetadataFilename {
-				warnings = append(warnings, fmt.Sprintf("template %q referenced by metadata for %q is missing; falling back", filename, spec.Key))
+				warnings = append(warnings, fmt.Sprintf("template %q referenced by metadata for %q is missing; falling back", selectedFilename, spec.Key))
 			}
+			if usedMetadataFilename {
+				canonicalPath := filepath.Join(configTemplatesDir(configDir), spec.Filename)
+				canonicalContent, canonicalOK, canonicalWarn := readTemplateFile(canonicalPath)
+				if canonicalOK {
+					content = canonicalContent
+					ok = true
+					selectedFilename = spec.Filename
+				} else if canonicalWarn != "" {
+					warnings = append(warnings, canonicalWarn)
+				}
+			}
+		}
+		if !ok {
 			continue
 		}
 		asset := TemplateAsset{
 			Key:       spec.Key,
-			Filename:  filename,
+			Filename:  selectedFilename,
 			Version:   spec.Version,
 			UpdatedAt: time.Time{},
 			Content:   content,
@@ -555,9 +569,6 @@ func sanitizeTemplateFilename(filename string) (string, error) {
 	if name == "" {
 		return "", errors.New("empty filename")
 	}
-	if strings.EqualFold(name, metadataFileName) {
-		return "", fmt.Errorf("reserved filename is not allowed: %q", filename)
-	}
 	cleaned := filepath.Clean(name)
 	if filepath.IsAbs(name) || filepath.IsAbs(cleaned) {
 		return "", fmt.Errorf("absolute paths are not allowed: %q", filename)
@@ -573,6 +584,9 @@ func sanitizeTemplateFilename(filename string) (string, error) {
 	}
 	if strings.Contains(cleaned, "/") || strings.Contains(cleaned, `\`) {
 		return "", fmt.Errorf("path separators are not allowed: %q", filename)
+	}
+	if strings.EqualFold(cleaned, metadataFileName) {
+		return "", fmt.Errorf("reserved filename is not allowed: %q", filename)
 	}
 	return cleaned, nil
 }

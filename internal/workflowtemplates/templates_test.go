@@ -248,6 +248,8 @@ func TestImportBundleRejectsUnsafeFilename(t *testing.T) {
 	}{
 		{name: "path-traversal", filename: "../escape.txt"},
 		{name: "reserved-metadata", filename: "metadata.json"},
+		{name: "reserved-metadata-dot-prefix", filename: "./metadata.json"},
+		{name: "reserved-metadata-collapsed", filename: "foo/../metadata.json"},
 		{name: "windows-volume", filename: "C:escape.txt"},
 	}
 	for _, tc := range testCases {
@@ -471,6 +473,54 @@ func TestLoadResolvedWarnsOnMissingMetadataSelectedFilename(t *testing.T) {
 		t.Fatalf("LoadResolved() error = %v", err)
 	}
 
+	var hasMissingMetadataWarning bool
+	for _, warningText := range warnings {
+		if strings.Contains(warningText, `template "custom-issue-template.txt" referenced by metadata for "implement_issue" is missing; falling back`) {
+			hasMissingMetadataWarning = true
+		}
+	}
+	if !hasMissingMetadataWarning {
+		t.Fatalf("expected missing metadata-selected filename warning, got %v", warnings)
+	}
+}
+
+func TestLoadResolvedFallsBackToCanonicalConfigFileWhenMetadataFileMissing(t *testing.T) {
+	cfgDir := t.TempDir()
+	repoDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates() error = %v", err)
+	}
+	canonicalContent := "canonical issue body\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, "implement_issue.txt"), []byte(canonicalContent), 0600); err != nil {
+		t.Fatalf("WriteFile(canonical): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
+  "schema_version": "1",
+  "filenames": {"implement_issue": "custom-issue-template.txt"}
+}`), 0644); err != nil {
+		t.Fatalf("WriteFile(metadata): %v", err)
+	}
+
+	resolved, warnings, err := LoadResolved(cfgDir, repoDir)
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+	var issue *ResolvedTemplate
+	for i := range resolved {
+		if resolved[i].Key == "implement_issue" {
+			issue = &resolved[i]
+			break
+		}
+	}
+	if issue == nil {
+		t.Fatalf("implement_issue template not resolved")
+	}
+	if issue.Filename != "implement_issue.txt" {
+		t.Fatalf("Filename = %q, want canonical fallback", issue.Filename)
+	}
+	if strings.TrimSpace(issue.Content) != strings.TrimSpace(canonicalContent) {
+		t.Fatalf("content mismatch after canonical fallback")
+	}
 	var hasMissingMetadataWarning bool
 	for _, warningText := range warnings {
 		if strings.Contains(warningText, `template "custom-issue-template.txt" referenced by metadata for "implement_issue" is missing; falling back`) {
