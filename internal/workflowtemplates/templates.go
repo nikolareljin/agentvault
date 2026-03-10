@@ -283,6 +283,7 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		meta.Filenames = make(map[string]string)
 	}
 	importedCount := 0
+	seenKeys := make(map[string]struct{})
 	seenFilenames := make(map[string]string)
 	for _, asset := range bundle.Assets {
 		asset.Key = normalizeTemplateName(asset.Key)
@@ -295,6 +296,10 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 			warnings = append(warnings, fmt.Sprintf("skipped unsupported template key %q", asset.Key))
 			continue
 		}
+		if _, exists := seenKeys[asset.Key]; exists {
+			return 0, nil, fmt.Errorf("duplicate template key %q in bundle", asset.Key)
+		}
+		seenKeys[asset.Key] = struct{}{}
 		filename := asset.Filename
 		if filename == "" {
 			filename = defaultSpec.Filename
@@ -398,6 +403,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 	assets := make([]TemplateAsset, 0, len(defaultSpecs))
 	for _, spec := range defaultSpecs {
 		filename := spec.Filename
+		usedMetadataFilename := false
 		if meta.Filenames != nil {
 			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
 				safeFilename, err := sanitizeTemplateFilename(mfn)
@@ -405,6 +411,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 					warnings = append(warnings, fmt.Sprintf("ignoring unsafe metadata filename for %q: %v", spec.Key, err))
 				} else {
 					filename = safeFilename
+					usedMetadataFilename = safeFilename != spec.Filename
 				}
 			}
 		}
@@ -413,6 +420,8 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 		if !ok {
 			if warn != "" {
 				warnings = append(warnings, warn)
+			} else if usedMetadataFilename {
+				warnings = append(warnings, fmt.Sprintf("template %q referenced by metadata for %q is missing; falling back", filename, spec.Key))
 			}
 			continue
 		}
