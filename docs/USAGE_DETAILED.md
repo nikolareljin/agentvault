@@ -418,6 +418,8 @@ Flags:
 - `--encrypted` (default: `false`)
 - `--plain` (default: `false`)
 
+`setup export` also includes workflow templates from AgentVault config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`) with template version metadata.
+
 ### `agentvault setup import [file]`
 Flags:
 - `--merge` (default: `false`)
@@ -437,7 +439,23 @@ Flags:
 - `--codex` (default: `false`)
 - `--ollama` (default: `false`)
 
-## 3.12 Legacy vault export/import commands
+## 3.12 Workflow templates
+
+Workflow template precedence:
+1. repository-local override (`./implement_issue.txt`, `./implement_pr.txt`, `./add_issue.txt`)
+2. AgentVault config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`)
+3. built-in defaults (safe fallback with warning)
+
+### `agentvault templates list`
+List effective templates and their source.
+
+### `agentvault templates show <name>`
+Show effective template content by key or filename.
+
+### `agentvault templates refresh`
+Initialize or refresh config-stored templates from built-in defaults.
+
+## 3.13 Legacy vault export/import commands
 
 ### `agentvault export [file]`
 Flags:

@@ -367,6 +367,21 @@ Flags:
 - `--codex` (default: `false`)
 - `--ollama` (default: `false`)
 
+## Templates
+
+### `agentvault templates list`
+Flags:
+- `--repo <path>` (default: current directory)
+
+### `agentvault templates show <name>`
+Flags:
+- `--repo <path>` (default: current directory)
+- `--metadata` (default: `false`)
+
+### `agentvault templates refresh`
+Flags:
+- `--force` (default: `false`)
+
 ## Legacy export/import
 
 ### `agentvault export [file]`

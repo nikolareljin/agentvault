@@ -140,6 +140,9 @@ brew install nikolareljin/tap/agentvault
 | `setup export <file>` | Export complete configuration |
 | `setup import <file>` | Import configuration |
 | `setup pull` | Pull provider configs from system |
+| `templates list` | List workflow templates with effective source |
+| `templates show <name>` | Show effective workflow template |
+| `templates refresh` | Initialize/refresh config-stored templates |
 
 ## Provider Usage Status
 
@@ -193,6 +196,11 @@ Runtime value precedence for prompt execution is:
 - local agent setting in vault
 - process environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`)
 - built-in default fallback (for Ollama base URL: `http://localhost:11434`)
+
+Workflow template precedence is:
+- repository-local override (`./implement_issue.txt`, `./implement_pr.txt`, `./add_issue.txt`)
+- config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`)
+- built-in defaults (with warning)
 
 In the TUI Agent detail view, effective values include source tags (`local`, `env`, `default`) for model/API key/base URL.
 

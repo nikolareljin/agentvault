@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- `templates` command group with `list`, `show`, and `refresh` for workflow templates (`implement_issue.txt`, `implement_pr.txt`, `add_issue.txt`).
+- New workflow template storage under AgentVault config (`~/.config/agentvault/templates/`) with metadata (`metadata.json`).
+- Setup bundle (`setup export/import/show`) now includes workflow template assets and metadata for cross-machine portability.
+- Precedence model for workflow templates: repository-local override -> config storage -> built-in default fallback with explicit warnings.
+
+### Tests
+- Added `internal/workflowtemplates` tests for precedence resolution, fallback warnings, import validation, and export/import metadata round-trip.
+
 ## [0.5.0] - 2026-03-08
 
 ### Added
