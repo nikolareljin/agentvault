@@ -642,7 +642,7 @@ func hasSpecificTemplateWarning(warnings []string, key, filename string) bool {
 		"missing",
 	}
 	for _, warningText := range warnings {
-		if !(strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, key)) {
+		if !(strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, filename) || strings.Contains(warningText, key)) {
 			continue
 		}
 		lowered := strings.ToLower(warningText)
