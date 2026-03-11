@@ -99,6 +99,23 @@ func TestResolvePromptWorkflowContextRejectsNonGitRepo(t *testing.T) {
 	}
 }
 
+func TestResolvePromptWorkflowContextRejectsMissingRepoPath(t *testing.T) {
+	cmd := newPromptWorkflowTestCommand()
+	if err := cmd.Flags().Set("workflow", "implement_issue"); err != nil {
+		t.Fatalf("setting workflow flag: %v", err)
+	}
+	if err := cmd.Flags().Set("repo", filepath.Join(t.TempDir(), "missing")); err != nil {
+		t.Fatalf("setting repo flag: %v", err)
+	}
+	if err := cmd.Flags().Set("issue", "16"); err != nil {
+		t.Fatalf("setting issue flag: %v", err)
+	}
+
+	if _, _, err := resolvePromptInput(cmd); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("resolvePromptInput() error = %v, want missing repo path guardrail", err)
+	}
+}
+
 func TestResolvePromptInputRejectsWorkflowOnlyFlagsWithoutWorkflow(t *testing.T) {
 	cmd := newPromptWorkflowTestCommand()
 	if err := cmd.Flags().Set("repo", t.TempDir()); err != nil {
@@ -183,8 +200,10 @@ func initPromptWorkflowGitRepo(t *testing.T) string {
 	t.Helper()
 
 	repoDir := t.TempDir()
-	runPromptWorkflowTestCommand(t, repoDir, "git", "init", "-q", "-b", "main")
-	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
+	initCmd := exec.Command("git", "init", "-q", "-b", "main")
+	initCmd.Dir = repoDir
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Logf("git init -q -b main failed, falling back to init + checkout: %v (%s)", err, strings.TrimSpace(string(out)))
 		runPromptWorkflowTestCommand(t, repoDir, "git", "init", "-q")
 		runPromptWorkflowTestCommand(t, repoDir, "git", "checkout", "-b", "main")
 	}
