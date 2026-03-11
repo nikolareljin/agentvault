@@ -167,6 +167,9 @@ func resolvePromptWorkflowRepoContext(cmd *cobra.Command) (string, string, error
 	if err != nil {
 		return "", "", err
 	}
+	if _, err := promptWorkflowLookPath("git"); err != nil {
+		return "", "", fmt.Errorf("git binary not found in PATH")
+	}
 
 	repoRoot, err := runPromptWorkflowCommand(repoDir, "git", "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -195,7 +198,7 @@ func fetchPromptWorkflowIssue(repoRoot string, ref string) (*promptWorkflowIssue
 	if _, err := promptWorkflowLookPath("gh"); err != nil {
 		return nil, fmt.Errorf("gh binary not found in PATH")
 	}
-	out, err := runPromptWorkflowCommand(repoRoot, "gh", "issue", "view", strings.TrimSpace(ref), "--json", "number,title,body,url")
+	out, err := runPromptWorkflowCommand(repoRoot, "gh", "issue", "view", "--json", "number,title,body,url", "--", strings.TrimSpace(ref))
 	if err != nil {
 		return nil, fmt.Errorf("loading issue %q: %w", strings.TrimSpace(ref), err)
 	}
@@ -210,7 +213,7 @@ func fetchPromptWorkflowPR(repoRoot string, ref string) (*promptWorkflowPR, erro
 	if _, err := promptWorkflowLookPath("gh"); err != nil {
 		return nil, fmt.Errorf("gh binary not found in PATH")
 	}
-	out, err := runPromptWorkflowCommand(repoRoot, "gh", "pr", "view", strings.TrimSpace(ref), "--json", "number,title,body,url,headRefName,baseRefName")
+	out, err := runPromptWorkflowCommand(repoRoot, "gh", "pr", "view", "--json", "number,title,body,url,headRefName,baseRefName", "--", strings.TrimSpace(ref))
 	if err != nil {
 		return nil, fmt.Errorf("loading pull request %q: %w", strings.TrimSpace(ref), err)
 	}

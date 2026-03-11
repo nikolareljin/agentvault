@@ -19,8 +19,8 @@ func TestResolvePromptWorkflowContextForIssueUsesRepoTemplateAndGitHubContext(t 
 
 	binDir := t.TempDir()
 	writePromptWorkflowStub(t, filepath.Join(binDir, "gh"), `#!/bin/sh
-case "$1 $2 $3" in
-  "issue view 16")
+case "$1 $2 $3 $4 $5 $6" in
+  "issue view --json number,title,body,url -- 16")
     printf '%s\n' '{"number":16,"title":"Add guided workflow","body":"Implement issue automation.","url":"https://example.test/issues/16"}'
     ;;
   *)
@@ -94,6 +94,34 @@ func TestResolvePromptWorkflowContextRejectsNonGitRepo(t *testing.T) {
 
 	if _, _, err := resolvePromptInput(cmd); err == nil || !strings.Contains(err.Error(), "is not inside a git repository") {
 		t.Fatalf("resolvePromptInput() error = %v, want non-git repo guardrail", err)
+	}
+}
+
+func TestResolvePromptWorkflowContextRequiresGitBinary(t *testing.T) {
+	cmd := newPromptWorkflowTestCommand()
+	if err := cmd.Flags().Set("workflow", "implement_issue"); err != nil {
+		t.Fatalf("setting workflow flag: %v", err)
+	}
+	if err := cmd.Flags().Set("repo", t.TempDir()); err != nil {
+		t.Fatalf("setting repo flag: %v", err)
+	}
+	if err := cmd.Flags().Set("issue", "16"); err != nil {
+		t.Fatalf("setting issue flag: %v", err)
+	}
+
+	origLookPath := promptWorkflowLookPath
+	promptWorkflowLookPath = func(file string) (string, error) {
+		if file == "git" {
+			return "", exec.ErrNotFound
+		}
+		return origLookPath(file)
+	}
+	defer func() {
+		promptWorkflowLookPath = origLookPath
+	}()
+
+	if _, _, err := resolvePromptInput(cmd); err == nil || !strings.Contains(err.Error(), "git binary not found in PATH") {
+		t.Fatalf("resolvePromptInput() error = %v, want missing git guardrail", err)
 	}
 }
 
