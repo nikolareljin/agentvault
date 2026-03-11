@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,21 +20,27 @@ func TestResolvePromptWorkflowContextForIssueUsesRepoTemplateAndGitHubContext(t 
 		t.Fatalf("WriteFile(implement_issue.txt): %v", err)
 	}
 
-	binDir := t.TempDir()
-	writePromptWorkflowStub(t, filepath.Join(binDir, "gh"), `#!/bin/sh
-case "$1 $2 $3 $4 $5 $6" in
-  "issue view --json number,title,body,url -- 16")
-    printf '%s\n' '{"number":16,"title":"Add guided workflow","body":"Implement issue automation.","url":"https://example.test/issues/16"}'
-    ;;
-  *)
-    echo "unexpected gh invocation: $*" >&2
-    exit 1
-    ;;
-esac
-`)
-
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", binDir+string(os.PathListSeparator)+origPath)
+	origLookPath := promptWorkflowLookPath
+	promptWorkflowLookPath = func(file string) (string, error) {
+		if file == "gh" {
+			return "gh", nil
+		}
+		return origLookPath(file)
+	}
+	origCommandContext := promptWorkflowCommandContext
+	promptWorkflowCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if name == "gh" {
+			if got := strings.Join(args, " "); got != "issue view --json number,title,body,url -- 16" {
+				return exec.CommandContext(ctx, "sh", "-c", "echo 'unexpected gh invocation' >&2; exit 1")
+			}
+			return exec.CommandContext(ctx, "sh", "-c", "printf '%s\\n' '{\"number\":16,\"title\":\"Add guided workflow\",\"body\":\"Implement issue automation.\",\"url\":\"https://example.test/issues/16\"}'")
+		}
+		return origCommandContext(ctx, name, args...)
+	}
+	defer func() {
+		promptWorkflowLookPath = origLookPath
+		promptWorkflowCommandContext = origCommandContext
+	}()
 
 	cmd := newPromptWorkflowTestCommand()
 	if err := cmd.Flags().Set("workflow", "implement_issue"); err != nil {
@@ -124,6 +131,17 @@ func TestResolvePromptInputRejectsWorkflowOnlyFlagsWithoutWorkflow(t *testing.T)
 
 	if _, _, err := resolvePromptInput(cmd); err == nil || !strings.Contains(err.Error(), "--repo, --issue, and --pr can only be used together with --workflow") {
 		t.Fatalf("resolvePromptInput() error = %v, want workflow-only flag guardrail", err)
+	}
+}
+
+func TestResolvePromptInputRejectsEmptyWorkflowValue(t *testing.T) {
+	cmd := newPromptWorkflowTestCommand()
+	if err := cmd.Flags().Set("workflow", ""); err != nil {
+		t.Fatalf("setting workflow flag: %v", err)
+	}
+
+	if _, _, err := resolvePromptInput(cmd); err == nil || !strings.Contains(err.Error(), "--workflow cannot be empty") {
+		t.Fatalf("resolvePromptInput() error = %v, want empty workflow guardrail", err)
 	}
 }
 
