@@ -215,7 +215,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	}
 	bundle.Templates = templateBundle
 	for _, warn := range templateWarnings {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 	}
 
 	// Optionally strip API keys
@@ -476,7 +476,7 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Imported: workflow templates (%d)\n", importedTemplates)
 		}
 		for _, warn := range templateWarnings {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", warn)
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 		}
 	}
 

@@ -808,6 +808,38 @@ func TestRefreshConfigTemplatesPreservesMetadataSelectedFilenameWithoutForce(t *
 	}
 }
 
+func TestRefreshConfigTemplatesDoesNotRewriteMetadataWhenUnchanged(t *testing.T) {
+	cfgDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatalf("RefreshConfigTemplates(force=true) error = %v", err)
+	}
+	beforeMeta, err := readMetadata(cfgDir)
+	if err != nil {
+		t.Fatalf("readMetadata(before) error = %v", err)
+	}
+	if beforeMeta.UpdatedAt.IsZero() {
+		t.Fatalf("expected non-zero UpdatedAt after initial refresh")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	written, err := RefreshConfigTemplates(cfgDir, false)
+	if err != nil {
+		t.Fatalf("RefreshConfigTemplates(force=false) error = %v", err)
+	}
+	if len(written) != 0 {
+		t.Fatalf("RefreshConfigTemplates(force=false) wrote %d templates, want 0", len(written))
+	}
+
+	afterMeta, err := readMetadata(cfgDir)
+	if err != nil {
+		t.Fatalf("readMetadata(after) error = %v", err)
+	}
+	if !afterMeta.UpdatedAt.Equal(beforeMeta.UpdatedAt) {
+		t.Fatalf("UpdatedAt changed unexpectedly: %v -> %v", beforeMeta.UpdatedAt, afterMeta.UpdatedAt)
+	}
+}
+
 func TestImportBundlePreservesMetadataForUntouchedKeys(t *testing.T) {
 	cfgDir := t.TempDir()
 	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
