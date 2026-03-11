@@ -106,10 +106,11 @@ Flags:
 
 ### `agentvault prompt [agent-name]`
 Input:
-- `--text <prompt>` or
-- `--file <path>` or
-- stdin
-- for guided workflows, optional operator notes via `--text`, `--file`, or stdin
+- Without `--workflow` (default), one primary prompt source is required:
+  - `--text <prompt>` or
+  - `--file <path>` or
+  - stdin
+- With `--workflow`, the main task comes from workflow context and `--text`, `--file`, or stdin become optional operator notes.
 
 Flags:
 - `--text <prompt>`

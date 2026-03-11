@@ -97,6 +97,17 @@ func TestResolvePromptWorkflowContextRejectsNonGitRepo(t *testing.T) {
 	}
 }
 
+func TestResolvePromptInputRejectsWorkflowOnlyFlagsWithoutWorkflow(t *testing.T) {
+	cmd := newPromptWorkflowTestCommand()
+	if err := cmd.Flags().Set("repo", t.TempDir()); err != nil {
+		t.Fatalf("setting repo flag: %v", err)
+	}
+
+	if _, _, err := resolvePromptInput(cmd); err == nil || !strings.Contains(err.Error(), "--repo, --issue, and --pr can only be used together with --workflow") {
+		t.Fatalf("resolvePromptInput() error = %v, want workflow-only flag guardrail", err)
+	}
+}
+
 func TestResolvePromptWorkflowContextRequiresGitBinary(t *testing.T) {
 	cmd := newPromptWorkflowTestCommand()
 	if err := cmd.Flags().Set("workflow", "implement_issue"); err != nil {

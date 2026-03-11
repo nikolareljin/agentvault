@@ -58,6 +58,9 @@ type promptWorkflowContext struct {
 func resolvePromptInput(cmd *cobra.Command) (string, []string, error) {
 	workflowName, _ := cmd.Flags().GetString("workflow")
 	if strings.TrimSpace(workflowName) == "" {
+		if workflowOnlyFlagsChanged(cmd) {
+			return "", nil, fmt.Errorf("--repo, --issue, and --pr can only be used together with --workflow")
+		}
 		text, err := readPromptInput(cmd)
 		return text, nil, err
 	}
@@ -72,6 +75,16 @@ func resolvePromptInput(cmd *cobra.Command) (string, []string, error) {
 		return "", nil, err
 	}
 	return buildPromptWorkflow(workflowCtx), workflowCtx.Warnings, nil
+}
+
+func workflowOnlyFlagsChanged(cmd *cobra.Command) bool {
+	for _, name := range []string{"repo", "issue", "pr"} {
+		flag := cmd.Flags().Lookup(name)
+		if flag != nil && flag.Changed {
+			return true
+		}
+	}
+	return false
 }
 
 func resolvePromptWorkflowContext(cmd *cobra.Command, rawWorkflow string, operatorNotes string) (promptWorkflowContext, error) {
