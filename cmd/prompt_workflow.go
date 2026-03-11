@@ -58,6 +58,10 @@ type promptWorkflowContext struct {
 
 func resolvePromptInput(cmd *cobra.Command) (string, []string, error) {
 	workflowName, _ := cmd.Flags().GetString("workflow")
+	workflowFlag := cmd.Flags().Lookup("workflow")
+	if workflowFlag != nil && workflowFlag.Changed && strings.TrimSpace(workflowName) == "" {
+		return "", nil, fmt.Errorf("--workflow cannot be empty")
+	}
 	if strings.TrimSpace(workflowName) == "" {
 		if workflowOnlyFlagsChanged(cmd) {
 			return "", nil, fmt.Errorf("--repo, --issue, and --pr can only be used together with --workflow")
