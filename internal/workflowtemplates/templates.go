@@ -343,24 +343,30 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 		return nil, fmt.Errorf("creating templates directory: %w", err)
 	}
 	now := time.Now().UTC()
+	dirty := false
 	meta, metaErr := readMetadata(configDir)
 	if metaErr != nil {
 		if !errors.Is(metaErr, os.ErrNotExist) {
 			return nil, fmt.Errorf("reading template metadata: %w", metaErr)
 		}
 		meta = metadataFile{}
+		dirty = true
 	}
 	if meta.SchemaVersion == "" {
 		meta.SchemaVersion = DefaultSchemaVersion
+		dirty = true
 	}
 	if meta.Versions == nil {
 		meta.Versions = make(map[string]string)
+		dirty = true
 	}
 	if meta.Updated == nil {
 		meta.Updated = make(map[string]time.Time)
+		dirty = true
 	}
 	if meta.Filenames == nil {
 		meta.Filenames = make(map[string]string)
+		dirty = true
 	}
 
 	written := make([]TemplateAsset, 0, len(defaultSpecs))
@@ -379,12 +385,15 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 			if content, ok, _ := readTemplateFile(path); ok && strings.TrimSpace(content) != "" {
 				if _, ok := meta.Versions[spec.Key]; !ok {
 					meta.Versions[spec.Key] = spec.Version
+					dirty = true
 				}
 				if _, ok := meta.Filenames[spec.Key]; !ok {
 					meta.Filenames[spec.Key] = filename
+					dirty = true
 				}
 				if _, ok := meta.Updated[spec.Key]; !ok {
 					meta.Updated[spec.Key] = now
+					dirty = true
 				}
 				continue
 			}
@@ -393,10 +402,15 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 				if content, ok, _ := readTemplateFile(canonicalPath); ok && strings.TrimSpace(content) != "" {
 					if _, ok := meta.Versions[spec.Key]; !ok {
 						meta.Versions[spec.Key] = spec.Version
+						dirty = true
 					}
-					meta.Filenames[spec.Key] = spec.Filename
+					if meta.Filenames[spec.Key] != spec.Filename {
+						meta.Filenames[spec.Key] = spec.Filename
+						dirty = true
+					}
 					if _, ok := meta.Updated[spec.Key]; !ok {
 						meta.Updated[spec.Key] = now
+						dirty = true
 					}
 					continue
 				}
@@ -408,6 +422,7 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 		meta.Versions[spec.Key] = spec.Version
 		meta.Updated[spec.Key] = now
 		meta.Filenames[spec.Key] = filename
+		dirty = true
 		written = append(written, TemplateAsset{
 			Key:       spec.Key,
 			Filename:  filename,
@@ -415,6 +430,9 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 			UpdatedAt: now,
 			Content:   spec.Content,
 		})
+	}
+	if !dirty {
+		return written, nil
 	}
 	meta.UpdatedAt = now
 	if err := writeMetadata(configDir, meta); err != nil {
