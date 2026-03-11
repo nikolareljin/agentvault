@@ -12,6 +12,8 @@ import (
 )
 
 func TestResolvePromptWorkflowContextForIssueUsesRepoTemplateAndGitHubContext(t *testing.T) {
+	setPromptWorkflowTestConfigDir(t, t.TempDir())
+
 	repoDir := initPromptWorkflowGitRepo(t)
 	if err := os.WriteFile(filepath.Join(repoDir, "implement_issue.txt"), []byte("repo issue workflow\n"), 0644); err != nil {
 		t.Fatalf("WriteFile(implement_issue.txt): %v", err)
@@ -228,4 +230,19 @@ func workflowTemplateForTest(key string, content string) workflowtemplates.Resol
 		},
 		Source: "repo-local",
 	}
+}
+
+func setPromptWorkflowTestConfigDir(t *testing.T, dir string) {
+	t.Helper()
+
+	orig, err := rootCmd.PersistentFlags().GetString("config")
+	if err != nil {
+		t.Fatalf("reading config flag: %v", err)
+	}
+	if err := rootCmd.PersistentFlags().Set("config", dir); err != nil {
+		t.Fatalf("setting config flag: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rootCmd.PersistentFlags().Set("config", orig)
+	})
 }

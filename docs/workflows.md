@@ -49,6 +49,7 @@ agentvault prompt my-codex \
 ```
 
 This resolves the repo root, loads `implement_issue.txt` with template precedence rules, fetches the issue title/body from GitHub, and sends one structured prompt with required progress checkpoints.
+It requires both `git` and `gh` on `PATH`, and `gh` must be authenticated for the target repository.
 
 ## Guided PR fix workflow
 
@@ -60,6 +61,7 @@ agentvault prompt my-codex \
 ```
 
 This resolves the repo context, loads `implement_pr.txt`, fetches PR metadata from GitHub, and tells the agent to report progress through the same auditable checkpoint sequence.
+It requires both `git` and `gh` on `PATH`, and `gh` must be authenticated for the target repository.
 
 ## Status checks for orchestration
 
