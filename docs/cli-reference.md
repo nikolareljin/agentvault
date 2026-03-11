@@ -134,6 +134,8 @@ Workflow behavior:
 - loads the canonical workflow template with precedence `repo-local -> config storage -> built-in`
 - fetches issue or PR metadata with `gh`
 - injects structured progress checkpoints (`Intake`, `Context`, `Implementation`, `Validation`, `Delivery`) into the generated prompt
+- requires `git` and `gh` to be installed and available on `PATH`
+- requires `gh` to be authenticated for the target repository or host
 
 ### `agentvault status`
 Flags:
