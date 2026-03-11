@@ -1,0 +1,697 @@
+package workflowtemplates
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/nikolareljin/agentvault/internal/config"
+)
+
+const (
+	DefaultSchemaVersion = "1"
+	TemplatesDirName     = "templates"
+	metadataFileName     = "metadata.json"
+	RepoLocalVersion     = "repo-local"
+)
+
+// TemplateAsset stores one workflow template body with metadata.
+type TemplateAsset struct {
+	Key       string    `json:"key"`
+	Filename  string    `json:"filename"`
+	Version   string    `json:"version"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	Content   string    `json:"content"`
+}
+
+// Bundle is embedded in setup export/import payloads.
+type Bundle struct {
+	SchemaVersion string          `json:"schema_version"`
+	ExportedAt    time.Time       `json:"exported_at"`
+	Assets        []TemplateAsset `json:"assets"`
+}
+
+// ResolvedTemplate describes one effective template with its source.
+type ResolvedTemplate struct {
+	TemplateAsset
+	Source string `json:"source"`
+	Path   string `json:"path,omitempty"`
+}
+
+type metadataFile struct {
+	SchemaVersion string               `json:"schema_version"`
+	UpdatedAt     time.Time            `json:"updated_at,omitempty"`
+	Versions      map[string]string    `json:"versions,omitempty"`
+	Updated       map[string]time.Time `json:"updated,omitempty"`
+	Filenames     map[string]string    `json:"filenames,omitempty"`
+}
+
+var defaultSpecs = []TemplateAsset{
+	{
+		Key:      "implement_issue",
+		Filename: "implement_issue.txt",
+		Version:  "builtin-1.0",
+		Content: `Implement Issue Template
+
+Metadata:
+- Template Version: 1.0
+- Template Type: Issue Workflow
+
+Inputs:
+- Repository path
+- Issue reference
+- Base branch
+
+Workflow:
+1. Review issue scope and acceptance criteria.
+2. Create a release branch from the selected base branch.
+3. Implement code changes.
+4. Update tests and documentation.
+5. Run validation commands.
+6. Commit, push, and open PR that references the issue.
+
+Notes:
+- Keep changes scoped to the issue.
+- Prefer clear commit messages and explicit test results.
+`,
+	},
+	{
+		Key:      "implement_pr",
+		Filename: "implement_pr.txt",
+		Version:  "builtin-1.0",
+		Content: `Implement PR Review Template
+
+Metadata:
+- Template Version: 1.0
+- Template Type: PR Review Fix Workflow
+
+Inputs:
+- Repository path
+- PR reference
+
+Workflow:
+1. Gather unresolved review comments.
+2. Implement code fixes aligned with reviewer feedback.
+3. Add or update tests for regressions.
+4. Run lint/test/build checks.
+5. Commit, push, and update PR with concise summary.
+6. Re-request review only (do not request automated code fixing).
+`,
+	},
+	{
+		Key:      "add_issue",
+		Filename: "add_issue.txt",
+		Version:  "builtin-1.0",
+		Content: `Add Issue Template
+
+Metadata:
+- Template Version: 1.0
+- Template Type: Issue Creation Workflow
+
+Inputs:
+- Repository path
+- Feature or bug description
+
+Workflow:
+1. Define problem statement and impact.
+2. Add acceptance criteria.
+3. Add implementation notes and validation approach.
+4. Create issue with a clear, actionable title.
+`,
+	},
+}
+
+// SupportedKeys returns sorted known template keys.
+func SupportedKeys() []string {
+	keys := make([]string, 0, len(defaultSpecs))
+	for _, spec := range defaultSpecs {
+		keys = append(keys, spec.Key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// FindTemplateFilename resolves a key or filename into the canonical filename.
+func FindTemplateFilename(name string) (string, bool) {
+	norm := normalizeTemplateName(name)
+	for _, spec := range defaultSpecs {
+		if norm == spec.Key || norm == normalizeTemplateName(spec.Filename) {
+			return spec.Filename, true
+		}
+	}
+	return "", false
+}
+
+// FindTemplateKey resolves a key or filename into the canonical key.
+func FindTemplateKey(name string) (string, bool) {
+	norm := normalizeTemplateName(name)
+	for _, spec := range defaultSpecs {
+		if norm == spec.Key || norm == normalizeTemplateName(spec.Filename) {
+			return spec.Key, true
+		}
+	}
+	return "", false
+}
+
+// LoadResolved loads effective templates with precedence repo-local > config > built-in.
+func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []string, error) {
+	assets, warnings, err := loadConfigAssets(configDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	byKey := make(map[string]TemplateAsset, len(assets))
+	for _, a := range assets {
+		byKey[a.Key] = a
+	}
+
+	resolved := make([]ResolvedTemplate, 0, len(defaultSpecs))
+	for _, spec := range defaultSpecs {
+		if repoDir != "" {
+			repoPath := filepath.Join(repoDir, spec.Filename)
+			if content, ok, warn := readTemplateFile(repoPath); ok {
+				resolved = append(resolved, ResolvedTemplate{
+					TemplateAsset: TemplateAsset{
+						Key:       spec.Key,
+						Filename:  spec.Filename,
+						Version:   RepoLocalVersion,
+						UpdatedAt: time.Time{},
+						Content:   content,
+					},
+					Source: "repo-local",
+					Path:   repoPath,
+				})
+				continue
+			} else if warn != "" {
+				warnings = append(warnings, warn)
+			}
+		}
+
+		if asset, ok := byKey[spec.Key]; ok && strings.TrimSpace(asset.Content) != "" {
+			resolved = append(resolved, ResolvedTemplate{
+				TemplateAsset: asset,
+				Source:        "config",
+				Path:          filepath.Join(configTemplatesDir(configDir), asset.Filename),
+			})
+			continue
+		}
+
+		if !hasSpecificTemplateWarning(warnings, spec.Key, spec.Filename) {
+			warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; using built-in default", spec.Filename))
+		}
+		resolved = append(resolved, ResolvedTemplate{
+			TemplateAsset: spec,
+			Source:        "built-in",
+		})
+	}
+
+	sort.Slice(resolved, func(i, j int) bool { return resolved[i].Filename < resolved[j].Filename })
+	return resolved, dedupeWarnings(warnings), nil
+}
+
+// ExportBundle creates setup-export payload from config storage and defaults.
+func ExportBundle(configDir string) (Bundle, []string, error) {
+	assets, warnings, err := loadConfigAssets(configDir)
+	if err != nil {
+		return Bundle{}, nil, err
+	}
+	if len(assets) == 0 {
+		assets = cloneDefaults()
+		warnings = append(warnings, "no workflow templates found in config storage; exporting built-in defaults")
+	} else {
+		byKey := make(map[string]TemplateAsset, len(assets))
+		for _, asset := range assets {
+			byKey[asset.Key] = asset
+		}
+		merged := make([]TemplateAsset, 0, len(defaultSpecs)+len(assets))
+		for _, spec := range defaultSpecs {
+			if asset, ok := byKey[spec.Key]; ok && strings.TrimSpace(asset.Content) != "" {
+				merged = append(merged, asset)
+				delete(byKey, spec.Key)
+				continue
+			}
+			if !hasSpecificTemplateWarning(warnings, spec.Key, spec.Filename) {
+				warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; exporting built-in default", spec.Filename))
+			}
+			merged = append(merged, spec)
+		}
+		assets = merged
+	}
+	sort.Slice(assets, func(i, j int) bool { return assets[i].Filename < assets[j].Filename })
+	return Bundle{
+		SchemaVersion: DefaultSchemaVersion,
+		ExportedAt:    time.Now().UTC(),
+		Assets:        assets,
+	}, dedupeWarnings(warnings), nil
+}
+
+// ImportBundle writes template assets into config storage and returns imported asset count.
+func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
+	if bundle.SchemaVersion != "" && bundle.SchemaVersion != DefaultSchemaVersion {
+		return 0, nil, fmt.Errorf("unsupported template bundle schema version %q", bundle.SchemaVersion)
+	}
+	if len(bundle.Assets) == 0 {
+		return 0, []string{"bundle did not include workflow templates; nothing imported"}, nil
+	}
+	if err := os.MkdirAll(configTemplatesDir(configDir), 0700); err != nil {
+		return 0, nil, fmt.Errorf("creating templates directory: %w", err)
+	}
+	warnings := make([]string, 0)
+	meta, metaErr := readMetadata(configDir)
+	metadataNeedsRepair := metaErr != nil && !errors.Is(metaErr, os.ErrNotExist)
+	if metaErr != nil {
+		if !errors.Is(metaErr, os.ErrNotExist) {
+			// Allow bundle import to repair corrupted metadata by resetting to defaults.
+			warnings = append(warnings, fmt.Sprintf("existing template metadata invalid; resetting metadata defaults (%v)", metaErr))
+		}
+		meta = metadataFile{
+			SchemaVersion: DefaultSchemaVersion,
+		}
+	}
+	if meta.SchemaVersion == "" {
+		meta.SchemaVersion = DefaultSchemaVersion
+	}
+	if meta.Versions == nil {
+		meta.Versions = make(map[string]string)
+	}
+	if meta.Updated == nil {
+		meta.Updated = make(map[string]time.Time)
+	}
+	if meta.Filenames == nil {
+		meta.Filenames = make(map[string]string)
+	}
+	importedCount := 0
+	seenKeys := make(map[string]struct{})
+	seenFilenames := make(map[string]string)
+	for _, asset := range bundle.Assets {
+		asset.Key = normalizeTemplateName(asset.Key)
+		if asset.Key == "" {
+			warnings = append(warnings, "skipped template with empty key")
+			continue
+		}
+		defaultSpec, supported := findDefaultByKey(asset.Key)
+		if !supported {
+			warnings = append(warnings, fmt.Sprintf("skipped unsupported template key %q", asset.Key))
+			continue
+		}
+		if _, exists := seenKeys[asset.Key]; exists {
+			return 0, nil, fmt.Errorf("duplicate template key %q in bundle", asset.Key)
+		}
+		seenKeys[asset.Key] = struct{}{}
+		filename := asset.Filename
+		if filename == "" {
+			filename = defaultSpec.Filename
+		}
+		filename, err := sanitizeTemplateFilename(filename)
+		if err != nil {
+			return 0, nil, fmt.Errorf("invalid filename for template key %q: %w", asset.Key, err)
+		}
+		if existingKey, exists := seenFilenames[filename]; exists {
+			return 0, nil, fmt.Errorf("duplicate template filename %q for keys %q and %q", filename, existingKey, asset.Key)
+		}
+		seenFilenames[filename] = asset.Key
+		if strings.TrimSpace(asset.Content) == "" {
+			warnings = append(warnings, fmt.Sprintf("skipped empty template %q", filename))
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), filename), []byte(asset.Content), 0600); err != nil {
+			return 0, nil, fmt.Errorf("writing template %s: %w", filename, err)
+		}
+		meta.Versions[asset.Key] = firstNonEmpty(asset.Version, "imported")
+		meta.Updated[asset.Key] = nonZeroTime(asset.UpdatedAt, time.Now().UTC())
+		meta.Filenames[asset.Key] = filename
+		importedCount++
+	}
+	if importedCount == 0 && !metadataNeedsRepair {
+		return 0, dedupeWarnings(warnings), nil
+	}
+	meta.UpdatedAt = time.Now().UTC()
+	if err := writeMetadata(configDir, meta); err != nil {
+		return 0, nil, err
+	}
+	return importedCount, dedupeWarnings(warnings), nil
+}
+
+// RefreshConfigTemplates ensures config storage contains default templates and metadata.
+func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, error) {
+	templatesDir := configTemplatesDir(configDir)
+	if err := os.MkdirAll(templatesDir, 0700); err != nil {
+		return nil, fmt.Errorf("creating templates directory: %w", err)
+	}
+	now := time.Now().UTC()
+	dirty := false
+	meta, metaErr := readMetadata(configDir)
+	if metaErr != nil {
+		if !errors.Is(metaErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("reading template metadata: %w", metaErr)
+		}
+		meta = metadataFile{}
+		dirty = true
+	}
+	if meta.SchemaVersion == "" {
+		meta.SchemaVersion = DefaultSchemaVersion
+		dirty = true
+	}
+	if meta.Versions == nil {
+		meta.Versions = make(map[string]string)
+		dirty = true
+	}
+	if meta.Updated == nil {
+		meta.Updated = make(map[string]time.Time)
+		dirty = true
+	}
+	if meta.Filenames == nil {
+		meta.Filenames = make(map[string]string)
+		dirty = true
+	}
+
+	written := make([]TemplateAsset, 0, len(defaultSpecs))
+	for _, spec := range defaultSpecs {
+		filename := spec.Filename
+		if meta.Filenames != nil {
+			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
+				safeFilename, err := sanitizeTemplateFilename(mfn)
+				if err == nil {
+					filename = safeFilename
+				}
+			}
+		}
+		path := filepath.Join(templatesDir, filename)
+		if !force {
+			if content, ok, _ := readTemplateFile(path); ok && strings.TrimSpace(content) != "" {
+				if _, ok := meta.Versions[spec.Key]; !ok {
+					meta.Versions[spec.Key] = spec.Version
+					dirty = true
+				}
+				if _, ok := meta.Filenames[spec.Key]; !ok {
+					meta.Filenames[spec.Key] = filename
+					dirty = true
+				}
+				if _, ok := meta.Updated[spec.Key]; !ok {
+					meta.Updated[spec.Key] = now
+					dirty = true
+				}
+				continue
+			}
+			if filename != spec.Filename {
+				canonicalPath := filepath.Join(templatesDir, spec.Filename)
+				if content, ok, _ := readTemplateFile(canonicalPath); ok && strings.TrimSpace(content) != "" {
+					if _, ok := meta.Versions[spec.Key]; !ok {
+						meta.Versions[spec.Key] = spec.Version
+						dirty = true
+					}
+					if meta.Filenames[spec.Key] != spec.Filename {
+						meta.Filenames[spec.Key] = spec.Filename
+						dirty = true
+					}
+					if _, ok := meta.Updated[spec.Key]; !ok {
+						meta.Updated[spec.Key] = now
+						dirty = true
+					}
+					continue
+				}
+			}
+		}
+		if err := os.WriteFile(path, []byte(spec.Content), 0600); err != nil {
+			return nil, fmt.Errorf("writing template %s: %w", filename, err)
+		}
+		meta.Versions[spec.Key] = spec.Version
+		meta.Updated[spec.Key] = now
+		meta.Filenames[spec.Key] = filename
+		dirty = true
+		written = append(written, TemplateAsset{
+			Key:       spec.Key,
+			Filename:  filename,
+			Version:   spec.Version,
+			UpdatedAt: now,
+			Content:   spec.Content,
+		})
+	}
+	if !dirty {
+		return written, nil
+	}
+	meta.UpdatedAt = now
+	if err := writeMetadata(configDir, meta); err != nil {
+		return nil, err
+	}
+	return written, nil
+}
+
+func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
+	meta, metaErr := readMetadata(configDir)
+	warnings := make([]string, 0)
+	if metaErr != nil && !errors.Is(metaErr, os.ErrNotExist) {
+		warnings = append(warnings, fmt.Sprintf("template metadata is invalid; using safe fallbacks (%v)", metaErr))
+	}
+
+	assets := make([]TemplateAsset, 0, len(defaultSpecs))
+	seenFilenames := make(map[string]string, len(defaultSpecs))
+	for _, spec := range defaultSpecs {
+		filename := spec.Filename
+		usedMetadataFilename := false
+		if meta.Filenames != nil {
+			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
+				safeFilename, err := sanitizeTemplateFilename(mfn)
+				if err != nil {
+					warnings = append(warnings, fmt.Sprintf("ignoring unsafe metadata filename for %q: %v", spec.Key, err))
+				} else {
+					filename = safeFilename
+					usedMetadataFilename = safeFilename != spec.Filename
+				}
+			}
+		}
+		selectedFilename := filename
+		path := filepath.Join(configTemplatesDir(configDir), selectedFilename)
+		content, ok, warn := readTemplateFile(path)
+		if !ok {
+			fallbackTarget := "built-in default template"
+			if warn != "" {
+				warnings = append(warnings, warn)
+			}
+			if usedMetadataFilename {
+				canonicalPath := filepath.Join(configTemplatesDir(configDir), spec.Filename)
+				canonicalContent, canonicalOK, canonicalWarn := readTemplateFile(canonicalPath)
+				if canonicalOK {
+					content = canonicalContent
+					ok = true
+					selectedFilename = spec.Filename
+					fallbackTarget = fmt.Sprintf("canonical config template %q", spec.Filename)
+				} else if canonicalWarn != "" {
+					warnings = append(warnings, canonicalWarn)
+				}
+				if warn == "" {
+					warnings = append(warnings, fmt.Sprintf("template %q referenced by metadata for %q is missing; falling back to %s", path, spec.Key, fallbackTarget))
+				}
+			}
+		}
+		if !ok {
+			continue
+		}
+		asset := TemplateAsset{
+			Key:       spec.Key,
+			Filename:  selectedFilename,
+			Version:   spec.Version,
+			UpdatedAt: time.Time{},
+			Content:   content,
+		}
+		if meta.Versions != nil {
+			if v := strings.TrimSpace(meta.Versions[spec.Key]); v != "" {
+				asset.Version = v
+			}
+		}
+		if meta.Updated != nil {
+			asset.UpdatedAt = meta.Updated[spec.Key]
+		}
+		if existingKey, exists := seenFilenames[asset.Filename]; exists {
+			warnings = append(warnings, fmt.Sprintf("template %q for %q conflicts with %q; falling back to built-in default", asset.Filename, spec.Key, existingKey))
+			continue
+		}
+		seenFilenames[asset.Filename] = spec.Key
+		assets = append(assets, asset)
+	}
+
+	return assets, dedupeWarnings(warnings), nil
+}
+
+func readTemplateFile(path string) (string, bool, string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", false, ""
+		}
+		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	content := strings.TrimSpace(string(data))
+	if content == "" {
+		return "", false, fmt.Sprintf("template %q is empty; skipping", path)
+	}
+	return string(data), true, ""
+}
+
+func readMetadata(configDir string) (metadataFile, error) {
+	path := filepath.Join(configTemplatesDir(configDir), metadataFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return metadataFile{}, err
+	}
+	var meta metadataFile
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return metadataFile{}, fmt.Errorf("decoding metadata: %w", err)
+	}
+	if meta.SchemaVersion == "" {
+		meta.SchemaVersion = DefaultSchemaVersion
+	}
+	if meta.SchemaVersion != DefaultSchemaVersion {
+		return metadataFile{}, fmt.Errorf("unsupported metadata schema version %q", meta.SchemaVersion)
+	}
+	return meta, nil
+}
+
+func writeMetadata(configDir string, meta metadataFile) error {
+	if meta.SchemaVersion == "" {
+		meta.SchemaVersion = DefaultSchemaVersion
+	}
+	if err := os.MkdirAll(configTemplatesDir(configDir), 0700); err != nil {
+		return fmt.Errorf("creating templates directory: %w", err)
+	}
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding metadata: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), metadataFileName), data, 0600); err != nil {
+		return fmt.Errorf("writing metadata: %w", err)
+	}
+	return nil
+}
+
+func cloneDefaults() []TemplateAsset {
+	cloned := make([]TemplateAsset, len(defaultSpecs))
+	copy(cloned, defaultSpecs)
+	for i := range cloned {
+		cloned[i].UpdatedAt = time.Time{}
+	}
+	return cloned
+}
+
+func findDefaultByKey(key string) (TemplateAsset, bool) {
+	for _, spec := range defaultSpecs {
+		if spec.Key == key {
+			return spec, true
+		}
+	}
+	return TemplateAsset{}, false
+}
+
+func normalizeTemplateName(name string) string {
+	n := strings.TrimSpace(strings.ToLower(name))
+	n = strings.TrimSuffix(n, ".txt")
+	n = strings.ReplaceAll(n, "-", "_")
+	return n
+}
+
+func sanitizeTemplateFilename(filename string) (string, error) {
+	name := strings.TrimSpace(filename)
+	if name == "" {
+		return "", errors.New("empty filename")
+	}
+	cleaned := filepath.Clean(name)
+	if filepath.IsAbs(name) || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("absolute paths are not allowed: %q", filename)
+	}
+	if filepath.VolumeName(name) != "" || filepath.VolumeName(cleaned) != "" || strings.Contains(cleaned, ":") {
+		return "", fmt.Errorf("volume-qualified paths are not allowed: %q", filename)
+	}
+	if cleaned == "." || cleaned == ".." {
+		return "", fmt.Errorf("invalid path: %q", filename)
+	}
+	if filepath.Base(cleaned) != cleaned {
+		return "", fmt.Errorf("path separators are not allowed: %q", filename)
+	}
+	if strings.Contains(cleaned, "/") || strings.Contains(cleaned, `\`) {
+		return "", fmt.Errorf("path separators are not allowed: %q", filename)
+	}
+	if strings.EqualFold(cleaned, metadataFileName) {
+		return "", fmt.Errorf("reserved filename is not allowed: %q", filename)
+	}
+	return cleaned, nil
+}
+
+func dedupeWarnings(warnings []string) []string {
+	if len(warnings) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(warnings))
+	out := make([]string, 0, len(warnings))
+	for _, w := range warnings {
+		w = strings.TrimSpace(w)
+		if w == "" {
+			continue
+		}
+		if _, ok := seen[w]; ok {
+			continue
+		}
+		seen[w] = struct{}{}
+		out = append(out, w)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func hasSpecificTemplateWarning(warnings []string, key, filename string) bool {
+	if len(warnings) == 0 {
+		return false
+	}
+	quotedFilename := fmt.Sprintf("%q", filename)
+	unusableIndicators := []string{
+		"empty",
+		"cannot read",
+		"can't read",
+		"failed to read",
+		"unreadable",
+		"conflict",
+		"conflicts",
+		"corrupt",
+		"invalid",
+		"malformed",
+		"missing",
+	}
+	for _, warningText := range warnings {
+		if !(strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, filename) || strings.Contains(warningText, key)) {
+			continue
+		}
+		lowered := strings.ToLower(warningText)
+		for _, indicator := range unusableIndicators {
+			if strings.Contains(lowered, indicator) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func nonZeroTime(value, fallback time.Time) time.Time {
+	if value.IsZero() {
+		return fallback
+	}
+	return value
+}
+
+func configTemplatesDir(configDir string) string {
+	if strings.TrimSpace(configDir) != "" {
+		return filepath.Join(configDir, TemplatesDirName)
+	}
+	return config.TemplatesDir()
+}

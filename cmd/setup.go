@@ -13,6 +13,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
+	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
 )
 
@@ -21,17 +22,18 @@ import (
 // across machines. It captures everything needed to recreate the environment:
 // agents, sessions, rules, roles, instructions, provider configs, and an installation guide.
 type SetupBundle struct {
-	Version         string               `json:"version"`
-	CreatedAt       time.Time            `json:"created_at"`
-	SourceMachine   string               `json:"source_machine"`
-	SourceOS        string               `json:"source_os"`
-	Agents          []agent.Agent        `json:"agents"`
-	Sessions        agent.SessionConfig  `json:"sessions,omitempty"`
-	SharedConfig    agent.SharedConfig   `json:"shared_config"`
-	ProviderConfigs agent.ProviderConfig `json:"provider_configs"`
-	StatusSnapshot  *statuspkg.Report    `json:"status_snapshot,omitempty"`
-	DetectedAgents  []DetectedAgent      `json:"detected_agents,omitempty"`
-	InstallGuide    InstallGuide         `json:"install_guide"`
+	Version         string                   `json:"version"`
+	CreatedAt       time.Time                `json:"created_at"`
+	SourceMachine   string                   `json:"source_machine"`
+	SourceOS        string                   `json:"source_os"`
+	Agents          []agent.Agent            `json:"agents"`
+	Sessions        agent.SessionConfig      `json:"sessions,omitempty"`
+	SharedConfig    agent.SharedConfig       `json:"shared_config"`
+	ProviderConfigs agent.ProviderConfig     `json:"provider_configs"`
+	Templates       workflowtemplates.Bundle `json:"workflow_templates"`
+	StatusSnapshot  *statuspkg.Report        `json:"status_snapshot,omitempty"`
+	DetectedAgents  []DetectedAgent          `json:"detected_agents,omitempty"`
+	InstallGuide    InstallGuide             `json:"install_guide"`
 }
 
 // InstallGuide contains instructions for setting up agents on a new machine.
@@ -207,6 +209,14 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		SharedConfig:    v.SharedConfig(),
 		ProviderConfigs: v.ProviderConfigs(),
 	}
+	templateBundle, templateWarnings, err := workflowtemplates.ExportBundle(resolveConfigDir())
+	if err != nil {
+		return fmt.Errorf("loading workflow templates for export: %w", err)
+	}
+	bundle.Templates = templateBundle
+	for _, warn := range templateWarnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+	}
 
 	// Optionally strip API keys
 	if !includeKeys {
@@ -274,6 +284,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Agents: %d\n", len(bundle.Agents))
 	fmt.Printf("  Sessions: %d\n", len(bundle.Sessions.Sessions))
 	fmt.Printf("  Instructions: %d\n", len(bundle.SharedConfig.Instructions))
+	fmt.Printf("  Workflow templates: %d\n", len(bundle.Templates.Assets))
 	if includeKeys {
 		fmt.Println("  Warning: API keys are included!")
 	}
@@ -455,6 +466,19 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 	if err := v.SetProviderConfigs(pc); err != nil {
 		return fmt.Errorf("updating provider configs: %w", err)
 	}
+	// Backward compatibility: older bundles may not include workflow templates.
+	if bundle.Templates.SchemaVersion != "" || len(bundle.Templates.Assets) > 0 {
+		importedTemplates, templateWarnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), bundle.Templates)
+		if err != nil {
+			return fmt.Errorf("importing workflow templates: %w", err)
+		}
+		if importedTemplates > 0 {
+			fmt.Printf("  Imported: workflow templates (%d)\n", importedTemplates)
+		}
+		for _, warn := range templateWarnings {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+		}
+	}
 
 	// Import sessions
 	targetSessions := v.Sessions()
@@ -607,6 +631,12 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nInstructions (%d):\n", len(bundle.SharedConfig.Instructions))
 	for _, inst := range bundle.SharedConfig.Instructions {
 		fmt.Printf("  • %s -> %s (%d bytes)\n", inst.Name, inst.Filename, len(inst.Content))
+	}
+	if len(bundle.Templates.Assets) > 0 {
+		fmt.Printf("\nWorkflow Templates (%d):\n", len(bundle.Templates.Assets))
+		for _, tpl := range bundle.Templates.Assets {
+			fmt.Printf("  • %s (%s, version=%s)\n", tpl.Filename, tpl.Key, tpl.Version)
+		}
 	}
 
 	if bundle.SharedConfig.SystemPrompt != "" {
