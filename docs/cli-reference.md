@@ -109,10 +109,15 @@ Input:
 - `--text <prompt>` or
 - `--file <path>` or
 - stdin
+- for guided workflows, optional operator notes via `--text`, `--file`, or stdin
 
 Flags:
 - `--text <prompt>`
 - `--file <path>`
+- `--workflow <name>`: `implement_issue|implement_pr`
+- `--repo <path>`: repository path for workflow context (default: current directory)
+- `--issue <ref>`: required with `--workflow implement_issue`
+- `--pr <ref>`: required with `--workflow implement_pr`
 - `--json` (default: `false`)
 - `--optimize` (default: `true`)
 - `--optimize-profile <profile>` (default: `auto`): `auto|generic|ollama|codex|copilot|claude`
@@ -122,6 +127,12 @@ Flags:
 - `--no-log` (default: `false`)
 - `--history-file <path>`
 - `--timeout <duration>` (default: `5m`)
+
+Workflow behavior:
+- resolves the git repository root and current branch from `--repo`
+- loads the canonical workflow template with precedence `repo-local -> config storage -> built-in`
+- fetches issue or PR metadata with `gh`
+- injects structured progress checkpoints (`Intake`, `Context`, `Implementation`, `Validation`, `Delivery`) into the generated prompt
 
 ### `agentvault status`
 Flags:

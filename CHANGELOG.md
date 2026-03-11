@@ -7,9 +7,11 @@
 - New workflow template storage under AgentVault config (`~/.config/agentvault/templates/`) with metadata (`metadata.json`).
 - Setup bundle (`setup export/import/show`) now includes workflow template assets and metadata for cross-machine portability.
 - Precedence model for workflow templates: repository-local override -> config storage -> built-in default fallback with explicit warnings.
+- `agentvault prompt --workflow implement_issue|implement_pr` for guided repository execution flows that resolve git repo context, fetch GitHub issue/PR metadata, inject the canonical workflow template, and require structured progress checkpoints.
 
 ### Tests
 - Added `internal/workflowtemplates` tests for precedence resolution, fallback warnings, import validation, and export/import metadata round-trip.
+- Added prompt workflow coverage for prompt construction, git repo resolution, GitHub context loading, and missing/invalid workflow guardrails.
 
 ## [0.5.0] - 2026-03-08
 

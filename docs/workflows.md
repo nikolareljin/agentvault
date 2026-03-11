@@ -38,6 +38,29 @@ agentvault add my-copilot --provider custom --model copilot-chat
 agentvault prompt my-copilot --text "write tests for parser edge cases" --optimize-profile copilot
 ```
 
+## Guided issue implementation workflow
+
+```bash
+agentvault prompt my-codex \
+  --workflow implement_issue \
+  --repo /path/to/repo \
+  --issue 16 \
+  --text "Prefer the existing command structure and keep docs concise."
+```
+
+This resolves the repo root, loads `implement_issue.txt` with template precedence rules, fetches the issue title/body from GitHub, and sends one structured prompt with required progress checkpoints.
+
+## Guided PR fix workflow
+
+```bash
+agentvault prompt my-codex \
+  --workflow implement_pr \
+  --repo /path/to/repo \
+  --pr 28
+```
+
+This resolves the repo context, loads `implement_pr.txt`, fetches PR metadata from GitHub, and tells the agent to report progress through the same auditable checkpoint sequence.
+
 ## Status checks for orchestration
 
 ```bash
