@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -182,6 +183,16 @@ func resolvePromptWorkflowRepoContext(cmd *cobra.Command) (string, string, error
 	}
 	if _, err := promptWorkflowLookPath("git"); err != nil {
 		return "", "", fmt.Errorf("git binary not found in PATH")
+	}
+	info, err := os.Stat(repoDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", fmt.Errorf("workflow repository path %q does not exist", repoDir)
+		}
+		return "", "", fmt.Errorf("stat workflow repository path %q: %w", repoDir, err)
+	}
+	if !info.IsDir() {
+		return "", "", fmt.Errorf("workflow repository path %q is not a directory", repoDir)
 	}
 
 	repoRoot, err := runPromptWorkflowCommand(repoDir, "git", "rev-parse", "--show-toplevel")
