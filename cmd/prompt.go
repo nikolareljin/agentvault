@@ -70,6 +70,10 @@ func init() {
 	rootCmd.AddCommand(promptCmd)
 	promptCmd.Flags().String("text", "", "prompt text")
 	promptCmd.Flags().String("file", "", "read prompt text from file")
+	promptCmd.Flags().String("workflow", "", "guided workflow prompt: implement_issue|implement_pr")
+	promptCmd.Flags().String("repo", "", "repository path for workflow context (default: current directory)")
+	promptCmd.Flags().String("issue", "", "issue reference for --workflow implement_issue")
+	promptCmd.Flags().String("pr", "", "pull request reference for --workflow implement_pr")
 	promptCmd.Flags().Bool("json", false, "output machine-readable JSON")
 	promptCmd.Flags().Bool("optimize", true, "rewrite/structure prompt for better execution efficiency")
 	promptCmd.Flags().String("optimize-profile", "auto", "optimization profile: auto|generic|ollama|codex|copilot|claude")
@@ -125,9 +129,12 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	text, err := readPromptInput(cmd)
+	text, workflowWarnings, err := resolvePromptInput(cmd)
 	if err != nil {
 		return err
+	}
+	for _, warningText := range workflowWarnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warningText)
 	}
 	if strings.TrimSpace(text) == "" {
 		return errors.New("prompt is empty")
@@ -239,33 +246,44 @@ func optionalTokenUsage(usage agent.PromptTokenUsage) *agent.PromptTokenUsage {
 }
 
 func readPromptInput(cmd *cobra.Command) (string, error) {
+	text, provided, err := readOptionalPromptInput(cmd)
+	if err != nil {
+		return "", err
+	}
+	if !provided {
+		return "", errors.New("no prompt provided; use --text, --file, or stdin")
+	}
+	return text, nil
+}
+
+func readOptionalPromptInput(cmd *cobra.Command) (string, bool, error) {
 	text, _ := cmd.Flags().GetString("text")
 	file, _ := cmd.Flags().GetString("file")
 
 	if text != "" && file != "" {
-		return "", errors.New("use either --text or --file, not both")
+		return "", false, errors.New("use either --text or --file, not both")
 	}
 	if file != "" {
 		data, err := os.ReadFile(file)
 		if err != nil {
-			return "", fmt.Errorf("reading prompt file: %w", err)
+			return "", false, fmt.Errorf("reading prompt file: %w", err)
 		}
-		return string(data), nil
+		return string(data), true, nil
 	}
 	if text != "" {
-		return text, nil
+		return text, true, nil
 	}
 
 	info, err := os.Stdin.Stat()
 	if err == nil && (info.Mode()&os.ModeCharDevice) == 0 {
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
-			return "", fmt.Errorf("reading stdin prompt: %w", err)
+			return "", false, fmt.Errorf("reading stdin prompt: %w", err)
 		}
-		return string(data), nil
+		return string(data), true, nil
 	}
 
-	return "", errors.New("no prompt provided; use --text, --file, or stdin")
+	return "", false, nil
 }
 
 func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
