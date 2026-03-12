@@ -252,6 +252,18 @@ func TestResolvePromptInputRejectsEmptyWorkflowValue(t *testing.T) {
 	}
 }
 
+func TestParsePromptWorkflowKindListsAliasesInError(t *testing.T) {
+	_, err := parsePromptWorkflowKind("unknown")
+	if err == nil {
+		t.Fatal("parsePromptWorkflowKind() error = nil, want unsupported workflow error")
+	}
+	for _, want := range []string{"implement_issue", "issue", "implement_pr", "fix_pr", "pr"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("parsePromptWorkflowKind() error = %v, want alias %q", err, want)
+		}
+	}
+}
+
 func TestResolvePromptWorkflowContextRequiresGitBinary(t *testing.T) {
 	cmd := newPromptWorkflowTestCommand()
 	if err := cmd.Flags().Set("workflow", "implement_issue"); err != nil {
@@ -313,6 +325,23 @@ func TestRunPromptWorkflowCommandUsesEnvAndIncludesCommandOnFailure(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "simulated helper failure") {
 		t.Fatalf("runPromptWorkflowCommand() error = %v, want stderr text", err)
+	}
+}
+
+func TestPromptWorkflowCommandTimeoutClampsEnvOverride(t *testing.T) {
+	cmd := newPromptWorkflowTestCommand()
+	if err := cmd.Flags().Set("timeout", "5m"); err != nil {
+		t.Fatalf("setting timeout flag: %v", err)
+	}
+
+	t.Setenv("AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT", "10m")
+	if got := promptWorkflowCommandTimeout(cmd); got != maxPromptWorkflowCommandTimeout {
+		t.Fatalf("promptWorkflowCommandTimeout() = %s, want %s for large env override", got, maxPromptWorkflowCommandTimeout)
+	}
+
+	t.Setenv("AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT", "5s")
+	if got := promptWorkflowCommandTimeout(cmd); got != defaultPromptWorkflowCommandTimeout {
+		t.Fatalf("promptWorkflowCommandTimeout() = %s, want %s for small env override", got, defaultPromptWorkflowCommandTimeout)
 	}
 }
 
