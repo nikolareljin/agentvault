@@ -70,7 +70,7 @@ func init() {
 	rootCmd.AddCommand(promptCmd)
 	promptCmd.Flags().String("text", "", "prompt text")
 	promptCmd.Flags().String("file", "", "read prompt text from file")
-	promptCmd.Flags().String("workflow", "", "guided workflow prompt: implement_issue|implement_pr")
+	promptCmd.Flags().String("workflow", "", "guided workflow prompt: implement_issue|issue|implement_pr|pr|fix_pr")
 	promptCmd.Flags().String("repo", "", "repository path for workflow context (default: current directory)")
 	promptCmd.Flags().String("issue", "", "issue reference for --workflow implement_issue")
 	promptCmd.Flags().String("pr", "", "pull request reference for --workflow implement_pr")
