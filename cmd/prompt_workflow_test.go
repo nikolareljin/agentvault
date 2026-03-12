@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +17,7 @@ import (
 func TestResolvePromptWorkflowContextForIssueUsesRepoTemplateAndGitHubContext(t *testing.T) {
 	setPromptWorkflowTestConfigDir(t, t.TempDir())
 
-	repoDir := initPromptWorkflowGitRepo(t)
+	repoDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoDir, "implement_issue.txt"), []byte("repo issue workflow\n"), 0644); err != nil {
 		t.Fatalf("WriteFile(implement_issue.txt): %v", err)
 	}
@@ -29,11 +31,14 @@ func TestResolvePromptWorkflowContextForIssueUsesRepoTemplateAndGitHubContext(t 
 	}
 	origCommandContext := promptWorkflowCommandContext
 	promptWorkflowCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		if name == "gh" {
-			if got := strings.Join(args, " "); got != "issue view --json number,title,body,url -- 16" {
-				return exec.CommandContext(ctx, "sh", "-c", "echo 'unexpected gh invocation' >&2; exit 1")
-			}
-			return exec.CommandContext(ctx, "sh", "-c", "printf '%s\\n' '{\"number\":16,\"title\":\"Add guided workflow\",\"body\":\"Implement issue automation.\",\"url\":\"https://example.test/issues/16\"}'")
+		if name == "git" || name == "gh" {
+			helperArgs := append([]string{"-test.run=TestPromptWorkflowHelperProcess", "--", name}, args...)
+			cmd := exec.CommandContext(ctx, os.Args[0], helperArgs...)
+			cmd.Env = append(os.Environ(),
+				"GO_WANT_HELPER_PROCESS=1",
+				"PROMPT_WORKFLOW_TEST_REPO_DIR="+repoDir,
+			)
+			return cmd
 		}
 		return origCommandContext(ctx, name, args...)
 	}
@@ -76,6 +81,67 @@ func TestResolvePromptWorkflowContextForIssueUsesRepoTemplateAndGitHubContext(t 
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q\n%s", want, prompt)
 		}
+	}
+}
+
+func TestPromptWorkflowHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+
+	args := os.Args
+	sep := -1
+	for i, arg := range args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep == -1 || sep+1 >= len(args) {
+		fmt.Fprintln(os.Stderr, "missing helper command")
+		os.Exit(2)
+	}
+
+	command := args[sep+1]
+	commandArgs := args[sep+2:]
+	repoDir := os.Getenv("PROMPT_WORKFLOW_TEST_REPO_DIR")
+
+	switch command {
+	case "git":
+		if repoDir == "" {
+			fmt.Fprintln(os.Stderr, "missing test repo dir")
+			os.Exit(2)
+		}
+		switch strings.Join(commandArgs, " ") {
+		case "rev-parse --show-toplevel":
+			fmt.Fprintln(os.Stdout, repoDir)
+			os.Exit(0)
+		case "rev-parse --abbrev-ref HEAD":
+			fmt.Fprintln(os.Stdout, "main")
+			os.Exit(0)
+		default:
+			fmt.Fprintf(os.Stderr, "unexpected git invocation: %s\n", strings.Join(commandArgs, " "))
+			os.Exit(1)
+		}
+	case "gh":
+		if got := strings.Join(commandArgs, " "); got != "issue view --json number,title,body,url -- 16" {
+			fmt.Fprintf(os.Stderr, "unexpected gh invocation: %s\n", got)
+			os.Exit(1)
+		}
+		payload := promptWorkflowIssue{
+			Number: 16,
+			Title:  "Add guided workflow",
+			Body:   "Implement issue automation.",
+			URL:    "https://example.test/issues/16",
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(payload); err != nil {
+			fmt.Fprintf(os.Stderr, "encoding helper payload: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	default:
+		fmt.Fprintf(os.Stderr, "unexpected helper command: %s\n", command)
+		os.Exit(1)
 	}
 }
 
@@ -212,45 +278,6 @@ func newPromptWorkflowTestCommand() *cobra.Command {
 	cmd.Flags().String("issue", "", "")
 	cmd.Flags().String("pr", "", "")
 	return cmd
-}
-
-func initPromptWorkflowGitRepo(t *testing.T) string {
-	t.Helper()
-
-	repoDir := t.TempDir()
-	initCmd := exec.Command("git", "init", "-q", "-b", "main")
-	initCmd.Dir = repoDir
-	if out, err := initCmd.CombinedOutput(); err != nil {
-		t.Logf("git init -q -b main failed, falling back to init + checkout: %v (%s)", err, strings.TrimSpace(string(out)))
-		runPromptWorkflowTestCommand(t, repoDir, "git", "init", "-q")
-		runPromptWorkflowTestCommand(t, repoDir, "git", "checkout", "-b", "main")
-	}
-	runPromptWorkflowTestCommand(t, repoDir, "git", "config", "user.email", "test@example.com")
-	runPromptWorkflowTestCommand(t, repoDir, "git", "config", "user.name", "Test User")
-	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("test\n"), 0644); err != nil {
-		t.Fatalf("WriteFile(README.md): %v", err)
-	}
-	runPromptWorkflowTestCommand(t, repoDir, "git", "add", "README.md")
-	runPromptWorkflowTestCommand(t, repoDir, "git", "commit", "-qm", "init")
-	return repoDir
-}
-
-func runPromptWorkflowTestCommand(t *testing.T, dir string, name string, args ...string) {
-	t.Helper()
-
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %v failed: %v (%s)", name, args, err, strings.TrimSpace(string(out)))
-	}
-}
-
-func writePromptWorkflowStub(t *testing.T, path string, body string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
-		t.Fatalf("WriteFile(%s): %v", path, err)
-	}
 }
 
 func workflowTemplateForTest(key string, content string) workflowtemplates.ResolvedTemplate {
