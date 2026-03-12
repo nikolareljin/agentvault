@@ -24,8 +24,8 @@ func TestResolvePromptWorkflowContextForIssueUsesRepoTemplateAndGitHubContext(t 
 
 	origLookPath := promptWorkflowLookPath
 	promptWorkflowLookPath = func(file string) (string, error) {
-		if file == "gh" {
-			return "gh", nil
+		if file == "gh" || file == "git" {
+			return file, nil
 		}
 		return origLookPath(file)
 	}
