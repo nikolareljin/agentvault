@@ -208,7 +208,25 @@ func TestResolvePromptWorkflowContextRejectsNonGitRepo(t *testing.T) {
 		t.Fatalf("setting issue flag: %v", err)
 	}
 
-	if _, _, err := resolvePromptInputWithDeps(cmd, defaultPromptWorkflowDeps()); err == nil || !strings.Contains(err.Error(), "is not inside a git repository") {
+	deps := promptWorkflowDeps{
+		lookPath: func(file string) (string, error) {
+			if file == "git" {
+				return file, nil
+			}
+			return exec.LookPath(file)
+		},
+		commandContext: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			helperArgs := append([]string{"-test.run=TestPromptWorkflowHelperProcess", "--", name}, args...)
+			helper := exec.CommandContext(ctx, os.Args[0], helperArgs...)
+			helper.Env = append(os.Environ(),
+				"GO_WANT_HELPER_PROCESS=1",
+				"PROMPT_WORKFLOW_HELPER_FAIL=1",
+			)
+			return helper
+		},
+	}
+
+	if _, _, err := resolvePromptInputWithDeps(cmd, deps); err == nil || !strings.Contains(err.Error(), "is not inside a git repository") {
 		t.Fatalf("resolvePromptInput() error = %v, want non-git repo guardrail", err)
 	}
 }
@@ -225,7 +243,17 @@ func TestResolvePromptWorkflowContextRejectsMissingRepoPath(t *testing.T) {
 		t.Fatalf("setting issue flag: %v", err)
 	}
 
-	if _, _, err := resolvePromptInputWithDeps(cmd, defaultPromptWorkflowDeps()); err == nil || !strings.Contains(err.Error(), "does not exist") {
+	deps := promptWorkflowDeps{
+		lookPath: func(file string) (string, error) {
+			if file == "git" {
+				return file, nil
+			}
+			return exec.LookPath(file)
+		},
+		commandContext: exec.CommandContext,
+	}
+
+	if _, _, err := resolvePromptInputWithDeps(cmd, deps); err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("resolvePromptInput() error = %v, want missing repo path guardrail", err)
 	}
 }
