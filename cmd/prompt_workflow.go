@@ -373,7 +373,8 @@ func buildPromptWorkflow(ctx promptWorkflowContext) string {
 		fmt.Fprintf(&b, "- Issue Title: %s\n", ctx.Issue.Title)
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "### Issue Description")
-		fmt.Fprintln(&b, strings.TrimSpace(ctx.Issue.Body))
+		fmt.Fprint(&b, strings.TrimRight(ctx.Issue.Body, "\n"))
+		fmt.Fprintln(&b)
 	case promptWorkflowImplementPR:
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "## Pull Request Context")
@@ -383,7 +384,8 @@ func buildPromptWorkflow(ctx promptWorkflowContext) string {
 		fmt.Fprintf(&b, "- PR Branches: %s -> %s\n", ctx.PR.HeadRefName, ctx.PR.BaseRefName)
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "### PR Description")
-		fmt.Fprintln(&b, strings.TrimSpace(ctx.PR.Body))
+		fmt.Fprint(&b, strings.TrimRight(ctx.PR.Body, "\n"))
+		fmt.Fprintln(&b)
 		fmt.Fprintln(&b)
 		fmt.Fprintln(&b, "Review all unresolved PR comments and conversations before changing code.")
 	}
@@ -398,5 +400,5 @@ func buildPromptWorkflow(ctx promptWorkflowContext) string {
 	fmt.Fprintln(&b, "## Canonical Workflow Template")
 	fmt.Fprintln(&b, ctx.Template.Content)
 
-	return strings.TrimSpace(b.String()) + "\n"
+	return b.String()
 }

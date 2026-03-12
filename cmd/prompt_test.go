@@ -143,12 +143,14 @@ func TestShouldSkipOptimizationForWorkflow(t *testing.T) {
 		workflow    string
 		optimizeSet bool
 		optimize    bool
+		profileSet  bool
 		wantSkip    bool
 	}{
 		{name: "non workflow prompt", wantSkip: false},
 		{name: "workflow disables default optimization", workflowSet: true, workflow: "implement_issue", wantSkip: true},
 		{name: "workflow keeps explicit optimize true", workflowSet: true, workflow: "implement_issue", optimizeSet: true, optimize: true, wantSkip: false},
 		{name: "workflow keeps explicit optimize false", workflowSet: true, workflow: "implement_issue", optimizeSet: true, optimize: false, wantSkip: false},
+		{name: "workflow keeps explicit optimize profile", workflowSet: true, workflow: "implement_issue", profileSet: true, wantSkip: false},
 	}
 
 	for _, tt := range tests {
@@ -168,6 +170,11 @@ func TestShouldSkipOptimizationForWorkflow(t *testing.T) {
 					t.Fatalf("setting optimize flag: %v", err)
 				}
 			}
+			if tt.profileSet {
+				if err := cmd.Flags().Set("optimize-profile", "codex"); err != nil {
+					t.Fatalf("setting optimize-profile flag: %v", err)
+				}
+			}
 			if got := shouldSkipOptimizationForWorkflow(cmd); got != tt.wantSkip {
 				t.Fatalf("shouldSkipOptimizationForWorkflow() = %v, want %v", got, tt.wantSkip)
 			}
@@ -179,6 +186,7 @@ func newPromptOptimizationTestCommand() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("workflow", "", "")
 	cmd.Flags().Bool("optimize", true, "")
+	cmd.Flags().String("optimize-profile", "auto", "")
 	cmd.Flags().Duration("timeout", 5*time.Minute, "")
 	return cmd
 }
