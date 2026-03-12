@@ -403,6 +403,52 @@ func TestBuildPromptWorkflowForPRIncludesCanonicalTemplateAndReviewDirective(t *
 	}
 }
 
+func TestBuildPromptWorkflowPreservesLeadingWhitespaceInContextBodies(t *testing.T) {
+	prompt := buildPromptWorkflow(promptWorkflowContext{
+		Kind:          promptWorkflowImplementIssue,
+		RepoRoot:      "/tmp/repo",
+		RepoName:      "repo",
+		CurrentBranch: "main",
+		Template:      workflowTemplateForTest("implement_issue", "Implement Issue Template\n"),
+		Issue: &promptWorkflowIssue{
+			Number: 7,
+			Title:  "Preserve formatting",
+			Body:   "    code block line\n  still indented\n",
+			URL:    "https://example.test/issues/7",
+		},
+	})
+
+	if !strings.Contains(prompt, "### Issue Description\n    code block line\n  still indented\n") {
+		t.Fatalf("prompt did not preserve issue body indentation:\n%s", prompt)
+	}
+}
+
+func TestBuildPromptWorkflowPreservesTemplateTrailingNewline(t *testing.T) {
+	template := "Implement PR Template\nStep A\n"
+	prompt := buildPromptWorkflow(promptWorkflowContext{
+		Kind:          promptWorkflowImplementPR,
+		RepoRoot:      "/tmp/repo",
+		RepoName:      "repo",
+		CurrentBranch: "release/0.5.2",
+		Template:      workflowTemplateForTest("implement_pr", template),
+		PR: &promptWorkflowPR{
+			Number:      28,
+			Title:       "Keep formatting",
+			Body:        "  indented first line\n",
+			URL:         "https://example.test/pr/28",
+			HeadRefName: "release/0.5.2",
+			BaseRefName: "main",
+		},
+	})
+
+	if !strings.Contains(prompt, "### PR Description\n  indented first line\n") {
+		t.Fatalf("prompt did not preserve PR body indentation:\n%s", prompt)
+	}
+	if !strings.HasSuffix(prompt, "## Canonical Workflow Template\n"+template+"\n") {
+		t.Fatalf("prompt did not preserve canonical template spacing:\n%q", prompt)
+	}
+}
+
 func newPromptWorkflowTestCommand() *cobra.Command {
 	cmd := &cobra.Command{}
 	cmd.Flags().String("text", "", "")
