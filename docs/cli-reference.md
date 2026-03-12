@@ -134,7 +134,7 @@ Workflow behavior:
 - loads the canonical workflow template with precedence `repo-local -> config storage -> built-in`
 - fetches issue or PR metadata with `gh`
 - injects structured progress checkpoints (`Intake`, `Context`, `Implementation`, `Validation`, `Delivery`) into the generated prompt
-- disables prompt optimization by default so the canonical workflow checkpoints remain unchanged; pass `--optimize=true` to opt back in explicitly
+- disables prompt optimization by default so the canonical workflow checkpoints remain unchanged; pass `--optimize=true` or set `--optimize-profile` explicitly to opt back in
 - requires `git` and `gh` to be installed and available on `PATH`
 - requires `gh` to be authenticated for the target repository or host
 - uses `AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT` when set; otherwise workflow `git`/`gh` subprocesses derive a bounded timeout from `--timeout`
