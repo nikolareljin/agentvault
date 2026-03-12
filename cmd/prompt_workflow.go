@@ -129,14 +129,14 @@ func resolvePromptWorkflowContext(cmd *cobra.Command, rawWorkflow string, operat
 	switch kind {
 	case promptWorkflowImplementIssue:
 		issueRef, _ := cmd.Flags().GetString("issue")
-		issue, err := fetchPromptWorkflowIssue(repoRoot, issueRef)
+		issue, err := fetchPromptWorkflowIssue(cmd.Context(), repoRoot, issueRef)
 		if err != nil {
 			return promptWorkflowContext{}, err
 		}
 		ctx.Issue = issue
 	case promptWorkflowImplementPR:
 		prRef, _ := cmd.Flags().GetString("pr")
-		pr, err := fetchPromptWorkflowPR(repoRoot, prRef)
+		pr, err := fetchPromptWorkflowPR(cmd.Context(), repoRoot, prRef)
 		if err != nil {
 			return promptWorkflowContext{}, err
 		}
@@ -199,12 +199,12 @@ func resolvePromptWorkflowRepoContext(cmd *cobra.Command) (string, string, error
 		return "", "", fmt.Errorf("workflow repository path %q is not a directory", repoDir)
 	}
 
-	repoRoot, err := runPromptWorkflowCommand(repoDir, "git", "rev-parse", "--show-toplevel")
+	repoRoot, err := runPromptWorkflowCommand(cmd.Context(), repoDir, "git", "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", "", fmt.Errorf("workflow repository %q is not inside a git repository: %w", repoDir, err)
 	}
 
-	branch, err := runPromptWorkflowCommand(strings.TrimSpace(repoRoot), "git", "rev-parse", "--abbrev-ref", "HEAD")
+	branch, err := runPromptWorkflowCommand(cmd.Context(), strings.TrimSpace(repoRoot), "git", "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", "", fmt.Errorf("resolving current git branch for %q: %w", strings.TrimSpace(repoRoot), err)
 	}
@@ -222,11 +222,11 @@ func selectPromptWorkflowTemplate(resolved []workflowtemplates.ResolvedTemplate,
 	return workflowtemplates.ResolvedTemplate{}, fmt.Errorf("workflow template %q is not available", key)
 }
 
-func fetchPromptWorkflowIssue(repoRoot string, ref string) (*promptWorkflowIssue, error) {
+func fetchPromptWorkflowIssue(parent context.Context, repoRoot string, ref string) (*promptWorkflowIssue, error) {
 	if _, err := promptWorkflowLookPath("gh"); err != nil {
 		return nil, fmt.Errorf("gh binary not found in PATH")
 	}
-	out, err := runPromptWorkflowCommand(repoRoot, "gh", "issue", "view", "--json", "number,title,body,url", "--", strings.TrimSpace(ref))
+	out, err := runPromptWorkflowCommand(parent, repoRoot, "gh", "issue", "view", "--json", "number,title,body,url", "--", strings.TrimSpace(ref))
 	if err != nil {
 		return nil, fmt.Errorf("loading issue %q: %w", strings.TrimSpace(ref), err)
 	}
@@ -237,11 +237,11 @@ func fetchPromptWorkflowIssue(repoRoot string, ref string) (*promptWorkflowIssue
 	return &issue, nil
 }
 
-func fetchPromptWorkflowPR(repoRoot string, ref string) (*promptWorkflowPR, error) {
+func fetchPromptWorkflowPR(parent context.Context, repoRoot string, ref string) (*promptWorkflowPR, error) {
 	if _, err := promptWorkflowLookPath("gh"); err != nil {
 		return nil, fmt.Errorf("gh binary not found in PATH")
 	}
-	out, err := runPromptWorkflowCommand(repoRoot, "gh", "pr", "view", "--json", "number,title,body,url,headRefName,baseRefName", "--", strings.TrimSpace(ref))
+	out, err := runPromptWorkflowCommand(parent, repoRoot, "gh", "pr", "view", "--json", "number,title,body,url,headRefName,baseRefName", "--", strings.TrimSpace(ref))
 	if err != nil {
 		return nil, fmt.Errorf("loading pull request %q: %w", strings.TrimSpace(ref), err)
 	}
@@ -252,8 +252,11 @@ func fetchPromptWorkflowPR(repoRoot string, ref string) (*promptWorkflowPR, erro
 	return &pr, nil
 }
 
-func runPromptWorkflowCommand(dir string, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), promptWorkflowCommandTimeout)
+func runPromptWorkflowCommand(parent context.Context, dir string, name string, args ...string) (string, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, promptWorkflowCommandTimeout)
 	defer cancel()
 
 	cmd := promptWorkflowCommandContext(ctx, name, args...)
