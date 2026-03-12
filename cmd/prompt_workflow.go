@@ -22,11 +22,15 @@ const (
 	promptWorkflowImplementPR    promptWorkflowKind = "implement_pr"
 )
 
-var (
-	promptWorkflowLookPath       = exec.LookPath
-	promptWorkflowCommandContext = exec.CommandContext
-	promptWorkflowCommandTimeout = 30 * time.Second
+const (
+	defaultPromptWorkflowCommandTimeout = 30 * time.Second
+	maxPromptWorkflowCommandTimeout     = 2 * time.Minute
 )
+
+type promptWorkflowDeps struct {
+	lookPath       func(string) (string, error)
+	commandContext func(context.Context, string, ...string) *exec.Cmd
+}
 
 type promptWorkflowIssue struct {
 	Number int    `json:"number"`
@@ -57,6 +61,10 @@ type promptWorkflowContext struct {
 }
 
 func resolvePromptInput(cmd *cobra.Command) (string, []string, error) {
+	return resolvePromptInputWithDeps(cmd, defaultPromptWorkflowDeps())
+}
+
+func resolvePromptInputWithDeps(cmd *cobra.Command, deps promptWorkflowDeps) (string, []string, error) {
 	workflowName, _ := cmd.Flags().GetString("workflow")
 	workflowFlag := cmd.Flags().Lookup("workflow")
 	if workflowFlag != nil && workflowFlag.Changed && strings.TrimSpace(workflowName) == "" {
@@ -75,7 +83,7 @@ func resolvePromptInput(cmd *cobra.Command) (string, []string, error) {
 		return "", nil, err
 	}
 
-	workflowCtx, err := resolvePromptWorkflowContext(cmd, workflowName, notes)
+	workflowCtx, err := resolvePromptWorkflowContext(cmd, workflowName, notes, deps)
 	if err != nil {
 		return "", nil, err
 	}
@@ -92,7 +100,25 @@ func workflowOnlyFlagsChanged(cmd *cobra.Command) bool {
 	return false
 }
 
-func resolvePromptWorkflowContext(cmd *cobra.Command, rawWorkflow string, operatorNotes string) (promptWorkflowContext, error) {
+func defaultPromptWorkflowDeps() promptWorkflowDeps {
+	return promptWorkflowDeps{
+		lookPath:       exec.LookPath,
+		commandContext: exec.CommandContext,
+	}
+}
+
+func withDefaultPromptWorkflowDeps(deps promptWorkflowDeps) promptWorkflowDeps {
+	if deps.lookPath == nil {
+		deps.lookPath = exec.LookPath
+	}
+	if deps.commandContext == nil {
+		deps.commandContext = exec.CommandContext
+	}
+	return deps
+}
+
+func resolvePromptWorkflowContext(cmd *cobra.Command, rawWorkflow string, operatorNotes string, deps promptWorkflowDeps) (promptWorkflowContext, error) {
+	deps = withDefaultPromptWorkflowDeps(deps)
 	kind, err := parsePromptWorkflowKind(rawWorkflow)
 	if err != nil {
 		return promptWorkflowContext{}, err
@@ -101,7 +127,7 @@ func resolvePromptWorkflowContext(cmd *cobra.Command, rawWorkflow string, operat
 		return promptWorkflowContext{}, err
 	}
 
-	repoRoot, branch, err := resolvePromptWorkflowRepoContext(cmd)
+	repoRoot, branch, err := resolvePromptWorkflowRepoContext(cmd, deps)
 	if err != nil {
 		return promptWorkflowContext{}, err
 	}
@@ -129,14 +155,14 @@ func resolvePromptWorkflowContext(cmd *cobra.Command, rawWorkflow string, operat
 	switch kind {
 	case promptWorkflowImplementIssue:
 		issueRef, _ := cmd.Flags().GetString("issue")
-		issue, err := fetchPromptWorkflowIssue(cmd.Context(), repoRoot, issueRef)
+		issue, err := fetchPromptWorkflowIssue(cmd.Context(), repoRoot, issueRef, cmd, deps)
 		if err != nil {
 			return promptWorkflowContext{}, err
 		}
 		ctx.Issue = issue
 	case promptWorkflowImplementPR:
 		prRef, _ := cmd.Flags().GetString("pr")
-		pr, err := fetchPromptWorkflowPR(cmd.Context(), repoRoot, prRef)
+		pr, err := fetchPromptWorkflowPR(cmd.Context(), repoRoot, prRef, cmd, deps)
 		if err != nil {
 			return promptWorkflowContext{}, err
 		}
@@ -180,12 +206,12 @@ func validatePromptWorkflowFlags(cmd *cobra.Command, kind promptWorkflowKind) er
 	return nil
 }
 
-func resolvePromptWorkflowRepoContext(cmd *cobra.Command) (string, string, error) {
+func resolvePromptWorkflowRepoContext(cmd *cobra.Command, deps promptWorkflowDeps) (string, string, error) {
 	repoDir, err := resolveRepoDir(cmd)
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := promptWorkflowLookPath("git"); err != nil {
+	if _, err := deps.lookPath("git"); err != nil {
 		return "", "", fmt.Errorf("git binary not found in PATH")
 	}
 	info, err := os.Stat(repoDir)
@@ -199,12 +225,12 @@ func resolvePromptWorkflowRepoContext(cmd *cobra.Command) (string, string, error
 		return "", "", fmt.Errorf("workflow repository path %q is not a directory", repoDir)
 	}
 
-	repoRoot, err := runPromptWorkflowCommand(cmd.Context(), repoDir, "git", "rev-parse", "--show-toplevel")
+	repoRoot, err := runPromptWorkflowCommand(cmd.Context(), repoDir, cmd, deps, "git", "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", "", fmt.Errorf("workflow repository %q is not inside a git repository: %w", repoDir, err)
 	}
 
-	branch, err := runPromptWorkflowCommand(cmd.Context(), strings.TrimSpace(repoRoot), "git", "rev-parse", "--abbrev-ref", "HEAD")
+	branch, err := runPromptWorkflowCommand(cmd.Context(), strings.TrimSpace(repoRoot), cmd, deps, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", "", fmt.Errorf("resolving current git branch for %q: %w", strings.TrimSpace(repoRoot), err)
 	}
@@ -222,11 +248,11 @@ func selectPromptWorkflowTemplate(resolved []workflowtemplates.ResolvedTemplate,
 	return workflowtemplates.ResolvedTemplate{}, fmt.Errorf("workflow template %q is not available", key)
 }
 
-func fetchPromptWorkflowIssue(parent context.Context, repoRoot string, ref string) (*promptWorkflowIssue, error) {
-	if _, err := promptWorkflowLookPath("gh"); err != nil {
+func fetchPromptWorkflowIssue(parent context.Context, repoRoot string, ref string, cmd *cobra.Command, deps promptWorkflowDeps) (*promptWorkflowIssue, error) {
+	if _, err := deps.lookPath("gh"); err != nil {
 		return nil, fmt.Errorf("gh binary not found in PATH")
 	}
-	out, err := runPromptWorkflowCommand(parent, repoRoot, "gh", "issue", "view", "--json", "number,title,body,url", "--", strings.TrimSpace(ref))
+	out, err := runPromptWorkflowCommand(parent, repoRoot, cmd, deps, "gh", "issue", "view", "--json", "number,title,body,url", "--", strings.TrimSpace(ref))
 	if err != nil {
 		return nil, fmt.Errorf("loading issue %q: %w", strings.TrimSpace(ref), err)
 	}
@@ -237,11 +263,11 @@ func fetchPromptWorkflowIssue(parent context.Context, repoRoot string, ref strin
 	return &issue, nil
 }
 
-func fetchPromptWorkflowPR(parent context.Context, repoRoot string, ref string) (*promptWorkflowPR, error) {
-	if _, err := promptWorkflowLookPath("gh"); err != nil {
+func fetchPromptWorkflowPR(parent context.Context, repoRoot string, ref string, cmd *cobra.Command, deps promptWorkflowDeps) (*promptWorkflowPR, error) {
+	if _, err := deps.lookPath("gh"); err != nil {
 		return nil, fmt.Errorf("gh binary not found in PATH")
 	}
-	out, err := runPromptWorkflowCommand(parent, repoRoot, "gh", "pr", "view", "--json", "number,title,body,url,headRefName,baseRefName", "--", strings.TrimSpace(ref))
+	out, err := runPromptWorkflowCommand(parent, repoRoot, cmd, deps, "gh", "pr", "view", "--json", "number,title,body,url,headRefName,baseRefName", "--", strings.TrimSpace(ref))
 	if err != nil {
 		return nil, fmt.Errorf("loading pull request %q: %w", strings.TrimSpace(ref), err)
 	}
@@ -252,30 +278,56 @@ func fetchPromptWorkflowPR(parent context.Context, repoRoot string, ref string) 
 	return &pr, nil
 }
 
-func runPromptWorkflowCommand(parent context.Context, dir string, name string, args ...string) (string, error) {
+func promptWorkflowCommandTimeout(cmd *cobra.Command) time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT")); raw != "" {
+		if timeout, err := time.ParseDuration(raw); err == nil && timeout > 0 {
+			return timeout
+		}
+	}
+
+	if cmd != nil {
+		if timeout, err := cmd.Flags().GetDuration("timeout"); err == nil && timeout > 0 {
+			derived := timeout / 2
+			if derived < defaultPromptWorkflowCommandTimeout {
+				derived = defaultPromptWorkflowCommandTimeout
+			}
+			if derived > maxPromptWorkflowCommandTimeout {
+				derived = maxPromptWorkflowCommandTimeout
+			}
+			return derived
+		}
+	}
+
+	return defaultPromptWorkflowCommandTimeout
+}
+
+func runPromptWorkflowCommand(parent context.Context, dir string, cmd *cobra.Command, deps promptWorkflowDeps, name string, args ...string) (string, error) {
 	if parent == nil {
 		parent = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(parent, promptWorkflowCommandTimeout)
+	deps = withDefaultPromptWorkflowDeps(deps)
+	commandTimeout := promptWorkflowCommandTimeout(cmd)
+	ctx, cancel := context.WithTimeout(parent, commandTimeout)
 	defer cancel()
 
-	cmd := promptWorkflowCommandContext(ctx, name, args...)
-	cmd.Dir = dir
+	command := deps.commandContext(ctx, name, args...)
+	command.Dir = dir
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Run(); err != nil {
+		commandText := strings.TrimSpace(strings.Join(append([]string{name}, args...), " "))
 		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("%s %s timed out after %s", name, strings.Join(args, " "), promptWorkflowCommandTimeout)
+			return "", fmt.Errorf("%s timed out after %s", commandText, commandTimeout)
 		}
 		errText := strings.TrimSpace(stderr.String())
 		if errText == "" {
 			errText = strings.TrimSpace(stdout.String())
 		}
 		if errText == "" {
-			return "", err
+			return "", fmt.Errorf("%s failed: %w", commandText, err)
 		}
-		return "", fmt.Errorf("%v (%s)", err, errText)
+		return "", fmt.Errorf("%s failed: %v (%s)", commandText, err, errText)
 	}
 	return stdout.String(), nil
 }

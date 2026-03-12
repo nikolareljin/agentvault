@@ -115,10 +115,10 @@ Input:
 Flags:
 - `--text <prompt>`
 - `--file <path>`
-- `--workflow <name>`: `implement_issue|implement_pr`
+- `--workflow <name>`: `implement_issue|issue|implement_pr|pr|fix_pr`
 - `--repo <path>`: repository path for workflow context (default: current directory)
-- `--issue <ref>`: required with `--workflow implement_issue`
-- `--pr <ref>`: required with `--workflow implement_pr`
+- `--issue <ref>`: required with `--workflow implement_issue` or `issue`
+- `--pr <ref>`: required with `--workflow implement_pr`, `pr`, or `fix_pr`
 - `--json` (default: `false`)
 - `--optimize` (default: `true`)
 - `--optimize-profile <profile>` (default: `auto`): `auto|generic|ollama|codex|copilot|claude`
@@ -136,6 +136,7 @@ Workflow behavior:
 - injects structured progress checkpoints (`Intake`, `Context`, `Implementation`, `Validation`, `Delivery`) into the generated prompt
 - requires `git` and `gh` to be installed and available on `PATH`
 - requires `gh` to be authenticated for the target repository or host
+- uses `AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT` when set; otherwise workflow `git`/`gh` subprocesses derive a bounded timeout from `--timeout`
 
 ### `agentvault status`
 Flags:
