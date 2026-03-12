@@ -179,7 +179,7 @@ func parsePromptWorkflowKind(value string) (promptWorkflowKind, error) {
 	case "implement_pr", "fix_pr", "pr":
 		return promptWorkflowImplementPR, nil
 	default:
-		return "", fmt.Errorf("unknown workflow %q; supported: implement_issue, implement_pr", value)
+		return "", fmt.Errorf("unknown workflow %q; supported: implement_issue, issue, implement_pr, fix_pr, pr", value)
 	}
 }
 
@@ -281,6 +281,12 @@ func fetchPromptWorkflowPR(parent context.Context, repoRoot string, ref string, 
 func promptWorkflowCommandTimeout(cmd *cobra.Command) time.Duration {
 	if raw := strings.TrimSpace(os.Getenv("AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT")); raw != "" {
 		if timeout, err := time.ParseDuration(raw); err == nil && timeout > 0 {
+			if timeout < defaultPromptWorkflowCommandTimeout {
+				timeout = defaultPromptWorkflowCommandTimeout
+			}
+			if timeout > maxPromptWorkflowCommandTimeout {
+				timeout = maxPromptWorkflowCommandTimeout
+			}
 			return timeout
 		}
 	}
