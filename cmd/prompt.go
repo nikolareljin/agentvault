@@ -147,6 +147,9 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	shared := v.SharedConfig()
 	effectivePrompt := text
 	optimizeEnabled, _ := cmd.Flags().GetBool("optimize")
+	if shouldSkipOptimizationForWorkflow(cmd) {
+		optimizeEnabled = false
+	}
 	optimizeOllamaCompat, _ := cmd.Flags().GetBool("optimize-ollama")
 	profileFlag, _ := cmd.Flags().GetString("optimize-profile")
 	if !optimizeOllamaCompat {
@@ -235,6 +238,19 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
 	}
 	return nil
+}
+
+func shouldSkipOptimizationForWorkflow(cmd *cobra.Command) bool {
+	workflowFlag := cmd.Flags().Lookup("workflow")
+	if workflowFlag == nil || !workflowFlag.Changed {
+		return false
+	}
+	workflowName, _ := cmd.Flags().GetString("workflow")
+	if strings.TrimSpace(workflowName) == "" {
+		return false
+	}
+	optimizeFlag := cmd.Flags().Lookup("optimize")
+	return optimizeFlag == nil || !optimizeFlag.Changed
 }
 
 func optionalTokenUsage(usage agent.PromptTokenUsage) *agent.PromptTokenUsage {
