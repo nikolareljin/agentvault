@@ -51,6 +51,16 @@ func TestParseTUIInvocation_ExplicitTarget(t *testing.T) {
 	}
 }
 
+func TestParseTUIInvocation_ExplicitAboutTarget(t *testing.T) {
+	launch, target, err := parseTUIInvocation([]string{"--tui", "about"})
+	if err != nil {
+		t.Fatalf("parseTUIInvocation(--tui about) error = %v", err)
+	}
+	if !launch || target != "about" {
+		t.Fatalf("launch,target = %v,%q want true,about", launch, target)
+	}
+}
+
 func TestParseTUIInvocation_BareFlagThenCommandInfersTarget(t *testing.T) {
 	launch, target, err := parseTUIInvocation([]string{"-t", "detect", "add"})
 	if err != nil {

@@ -88,7 +88,7 @@ brew install nikolareljin/tap/agentvault
 | `prompt <name>` | Route prompts through AgentVault gateway with usage logging, including guided `implement_issue` / `implement_pr` workflows |
 | `-p, --prompt-mode[=true\|false]` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
 | `status` | Show token usage and quota status (JSON for orchestration) |
-| `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
+| `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`, `about` |
 
 ### Agent Management
 | Command | Description |
@@ -310,7 +310,7 @@ agentvault instructions push /path/to/project
 |-----|--------|
 | `Tab` | Next tab |
 | `Shift+Tab` | Previous tab |
-| `1-7` | Jump to tab |
+| `1-8` | Jump to tab |
 | `j`/`k` | Navigate list |
 | `Enter` | View details |
 | `/` | Search (Agents tab) |
@@ -319,7 +319,7 @@ agentvault instructions push /path/to/project
 | `?` | Help |
 | `q` | Quit |
 
-**Tabs**: Agents, Instructions, Rules, Sessions, Detected, Commands, Status
+**Tabs**: Agents, Instructions, Rules, Sessions, Detected, Commands, Status, About
 
 ## Supported Agents
 

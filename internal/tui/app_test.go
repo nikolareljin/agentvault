@@ -266,6 +266,7 @@ func TestApplyStartTarget(t *testing.T) {
 		{target: "detected", tab: tabDetected, mode: viewDetected},
 		{target: "commands", tab: tabCommands, mode: viewCommands},
 		{target: "status", tab: tabStatus, mode: viewStatus},
+		{target: "about", tab: tabAbout, mode: viewAbout},
 	}
 
 	for _, tc := range cases {
