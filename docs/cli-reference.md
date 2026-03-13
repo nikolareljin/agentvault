@@ -137,7 +137,7 @@ Workflow behavior:
 - disables prompt optimization by default so the canonical workflow checkpoints remain unchanged; pass `--optimize=true` or set `--optimize-profile` explicitly to opt back in
 - requires `git` and `gh` to be installed and available on `PATH`
 - requires `gh` to be authenticated for the target repository or host
-- uses `AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT` when set; otherwise workflow `git`/`gh` subprocesses derive a bounded timeout from `--timeout`
+- uses `AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT` when set; otherwise workflow `git`/`gh` subprocesses derive a bounded timeout from `--timeout`, clamped into the `30s` to `2m` range
 
 ### `agentvault status`
 Flags:
