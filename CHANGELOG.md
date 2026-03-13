@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- TUI About tab with direct profile links for GitHub and LinkedIn.
+- `--tui about` target support and updated tab navigation/help text for the new eighth tab.
+
 ## [0.5.2] - 2026-03-11
 
 ### Added

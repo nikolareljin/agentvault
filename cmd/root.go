@@ -82,6 +82,10 @@ var tuiTargetSpecs = []tuiTargetSpec{
 		canonical: "status",
 		aliases:   []string{"status", "config", "setup", "serve", "version"},
 	},
+	{
+		canonical: "about",
+		aliases:   []string{"about", "info"},
+	},
 }
 
 var (

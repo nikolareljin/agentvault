@@ -14,7 +14,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 
 - `--config <dir>`: Use custom config directory instead of default `~/.config/agentvault`.
 - `-t, --tui [target]`: Launch interactive TUI (also the default when no command is provided).
-  - Supported targets: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`.
+  - Supported targets: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`, `about`.
   - With command routing, `agentvault <command> -t` opens TUI on the command's matching tab and skips direct command execution.
 - `-p, --prompt-mode[=true|false]`: Enter interactive prompt mode directly (submit/cancel/exit loop).
 
@@ -477,6 +477,8 @@ agentvault --tui
 agentvault -t
 # direct target:
 agentvault -t detected
+# about tab:
+agentvault -t about
 # infer target from command:
 agentvault detect add -t
 ```
@@ -489,12 +491,13 @@ Tabs:
 5. Detected
 6. Commands
 7. Status
+8. About
 
 ## 4.1 Global TUI controls
 
 - `Tab`: next tab
 - `Shift+Tab`: previous tab
-- `1-7`: jump to tab
+- `1-8`: jump to tab
 - `j/k` or `Down/Up`: move selection
 - `Enter`: open detail
 - `Esc`: back from detail/modal

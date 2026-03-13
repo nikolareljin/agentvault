@@ -1,6 +1,6 @@
 // Package tui implements the interactive terminal UI for AgentVault.
 //
-// The TUI uses the Bubble Tea framework with seven main tabs:
+// The TUI uses the Bubble Tea framework with eight main tabs:
 //  1. Agents:       List/detail view of configured agents
 //  2. Instructions: Stored instruction files (AGENTS.md, CLAUDE.md, etc.)
 //  3. Rules:        Unified rules that apply across all agents
@@ -8,6 +8,7 @@
 //  5. Detected:     Auto-detected AI CLI tools on the system
 //  6. Commands:     Run any AgentVault CLI command from inside the TUI
 //  7. Status:       Vault info, provider configs, and system overview
+//  8. About:        Project/about information and profile links
 //
 // Navigation follows vim-style keybindings (h/j/k/l) with Tab cycling
 // between tabs and / for search/filter in the Agents tab.
@@ -76,6 +77,7 @@ const (
 	viewDetectedDetail
 	viewCommands
 	viewStatus
+	viewAbout
 	viewHelp
 	viewConfirmDelete
 )
@@ -90,9 +92,10 @@ const (
 	tabDetected
 	tabCommands
 	tabStatus
+	tabAbout
 )
 
-const numTabs = 7
+const numTabs = 8
 
 // DetectedAgentInfo represents a detected agent for display.
 type DetectedAgentInfo struct {
@@ -286,6 +289,9 @@ func applyStartTarget(m *model, target string) {
 	case "status":
 		m.activeTab = tabStatus
 		m.mode = viewStatus
+	case "about":
+		m.activeTab = tabAbout
+		m.mode = viewAbout
 	default:
 		// Fallback to deterministic default for unknown/unsupported targets.
 		m.activeTab = tabAgents
@@ -607,6 +613,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "7":
 			m.activeTab = tabStatus
 			m.mode = viewStatus
+			return m, nil
+		case "8":
+			m.activeTab = tabAbout
+			m.mode = viewAbout
 			return m, nil
 
 		case "?":
@@ -1349,6 +1359,8 @@ func (m *model) getModeForTab() viewMode {
 		return viewCommands
 	case tabStatus:
 		return viewStatus
+	case tabAbout:
+		return viewAbout
 	}
 	return viewAgentList
 }
@@ -1400,6 +1412,8 @@ func (m model) View() string {
 		b.WriteString(m.renderCommands())
 	case viewStatus:
 		b.WriteString(m.renderStatus())
+	case viewAbout:
+		b.WriteString(m.renderAbout())
 	case viewHelp:
 		b.WriteString(m.renderHelp())
 	case viewConfirmDelete:
@@ -1426,7 +1440,7 @@ func (m model) View() string {
 func (m model) renderHeader() string {
 	title := titleStyle.Render("AgentVault")
 
-	tabs := []string{"Agents", "Instructions", "Rules", "Sessions", "Detected", "Commands", "Status"}
+	tabs := []string{"Agents", "Instructions", "Rules", "Sessions", "Detected", "Commands", "Status", "About"}
 	var tabBar strings.Builder
 	for i, t := range tabs {
 		if tab(i) == m.activeTab {
@@ -2226,6 +2240,24 @@ func (m model) renderStatus() string {
 	return b.String()
 }
 
+func (m model) renderAbout() string {
+	var b strings.Builder
+
+	b.WriteString(subtitleStyle.Render("About AgentVault"))
+	b.WriteString("\n\n")
+	b.WriteString("  AgentVault manages local AI agent configuration, instructions, sessions, and provider state.\n")
+	b.WriteString("  This tab provides project identity links that are useful when the TUI is distributed standalone.\n\n")
+	b.WriteString(labelStyle.Render("  Profiles:"))
+	b.WriteString("\n")
+	b.WriteString("    GitHub:   https://github.com/nikolareljin\n")
+	b.WriteString("    LinkedIn: https://www.linkedin.com/in/nikolareljin\n")
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  Tip: use 1-8 to jump between tabs."))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
 func (m model) renderConfirmDelete() string {
 	var b strings.Builder
 	b.WriteString(warnStyle.Render(fmt.Sprintf("  Delete %s %q?", m.deleteType, m.deleteTarget)))
@@ -2264,7 +2296,7 @@ func (m model) renderHelp() string {
 			keys: [][]string{
 				{"Tab", "Next tab"},
 				{"Shift+Tab", "Previous tab"},
-				{"1-7", "Jump to tab"},
+				{"1-8", "Jump to tab"},
 				{"j/k or Up/Down", "Move cursor"},
 				{"Enter", "View details"},
 				{"Esc", "Back / Close"},
@@ -2303,6 +2335,12 @@ func (m model) renderHelp() string {
 				{"g", "Prompt gateway (Commands tab)"},
 				{"r", "Refresh data"},
 				{"?", "Show this help"},
+			},
+		},
+		{
+			title: "About Tab",
+			keys: [][]string{
+				{"8", "Jump to About tab"},
 			},
 		},
 	}
@@ -2374,6 +2412,8 @@ func (m model) renderHelpBar() string {
 				} else {
 					help = "tab: tabs  j/k: select action  enter: run  g: gateway  : custom cmd  r: refresh  ?: help  q: quit"
 				}
+			case tabAbout:
+				help = "tab: tabs  ?: help  q: quit"
 			default:
 				help = "tab: switch tabs  : run cmd  ?: help  q: quit"
 			}
