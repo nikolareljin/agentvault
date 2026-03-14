@@ -2252,7 +2252,7 @@ func (m model) renderAbout() string {
 	b.WriteString("    GitHub:   https://github.com/nikolareljin\n")
 	b.WriteString("    LinkedIn: https://www.linkedin.com/in/nikolareljin\n")
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  Tip: use 1-8 to jump between tabs."))
+	b.WriteString(dimStyle.Render(fmt.Sprintf("  Tip: use 1-%d to jump between tabs.", numTabs)))
 	b.WriteString("\n")
 
 	return b.String()
