@@ -344,7 +344,6 @@ func buildPromptWorkflow(ctx promptWorkflowContext) string {
 	fmt.Fprintln(&b, "## Workflow Request")
 	fmt.Fprintf(&b, "- Workflow: %s\n", ctx.Kind)
 	fmt.Fprintf(&b, "- Repository: %s\n", ctx.RepoName)
-	fmt.Fprintf(&b, "- Repository Path: %s\n", ctx.RepoRoot)
 	fmt.Fprintf(&b, "- Current Branch: %s\n", ctx.CurrentBranch)
 	fmt.Fprintf(&b, "- Template Source: %s\n", ctx.Template.Source)
 	fmt.Fprintf(&b, "- Template Version: %s\n", ctx.Template.Version)
