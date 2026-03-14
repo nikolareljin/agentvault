@@ -3,12 +3,12 @@
 ## [Unreleased]
 
 ### Added
-- TUI About tab with direct profile links for GitHub and LinkedIn.
-- `--tui about` target support and updated tab navigation/help text for the new eighth tab.
 
 ## [0.5.2] - 2026-03-11
 
 ### Added
+- TUI About tab with direct profile links for GitHub and LinkedIn.
+- `--tui about` target support and updated tab navigation/help text for the new eighth tab.
 - `templates` command group with `list`, `show`, and `refresh` for workflow templates (`implement_issue.txt`, `implement_pr.txt`, `add_issue.txt`).
 - New workflow template storage under AgentVault config (`~/.config/agentvault/templates/`) with metadata (`metadata.json`).
 - Setup bundle (`setup export/import/show`) now includes workflow template assets and metadata for cross-machine portability.

@@ -554,6 +554,9 @@ func normalizeTUITarget(raw string) (string, bool) {
 
 func normalizeExplicitTUITarget(raw string) (string, bool) {
 	normalized := strings.ToLower(strings.TrimSpace(raw))
+	if normalized == "info" {
+		return "about", true
+	}
 	if _, ok := canonicalTUISet[normalized]; !ok {
 		return "", false
 	}

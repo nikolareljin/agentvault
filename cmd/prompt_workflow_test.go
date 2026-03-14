@@ -401,6 +401,9 @@ func TestBuildPromptWorkflowForPRIncludesCanonicalTemplateAndReviewDirective(t *
 			t.Fatalf("prompt missing %q\n%s", want, prompt)
 		}
 	}
+	if strings.Contains(prompt, "Repository Path:") {
+		t.Fatalf("prompt leaked repository path:\n%s", prompt)
+	}
 }
 
 func TestBuildPromptWorkflowPreservesLeadingWhitespaceInContextBodies(t *testing.T) {
