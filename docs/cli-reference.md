@@ -14,7 +14,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 
 - `--config <dir>`: custom config dir, default `~/.config/agentvault`
 - `-t, --tui [target]`: launch TUI (also the default when no command is provided)
-  - Supported targets: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`
+  - Supported targets: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`, `about`
   - When `-t` is used with a command (example: `agentvault detect add -t`), AgentVault opens TUI on the inferred matching tab and does not run the command directly
 
 ## Top-level commands
@@ -106,13 +106,19 @@ Flags:
 
 ### `agentvault prompt [agent-name]`
 Input:
-- `--text <prompt>` or
-- `--file <path>` or
-- stdin
+- Without `--workflow` (default), one primary prompt source is required:
+  - `--text <prompt>` or
+  - `--file <path>` or
+  - stdin
+- With `--workflow`, the main task comes from workflow context and `--text`, `--file`, or stdin become optional operator notes.
 
 Flags:
 - `--text <prompt>`
 - `--file <path>`
+- `--workflow <name>`: `implement_issue|issue|implement_pr|pr|fix_pr`
+- `--repo <path>`: repository path for workflow context (default: current directory)
+- `--issue <ref>`: required with `--workflow implement_issue` or `issue`
+- `--pr <ref>`: required with `--workflow implement_pr`, `pr`, or `fix_pr`
 - `--json` (default: `false`)
 - `--optimize` (default: `true`)
 - `--optimize-profile <profile>` (default: `auto`): `auto|generic|ollama|codex|copilot|claude`
@@ -122,6 +128,16 @@ Flags:
 - `--no-log` (default: `false`)
 - `--history-file <path>`
 - `--timeout <duration>` (default: `5m`)
+
+Workflow behavior:
+- resolves the git repository root and current branch from `--repo`
+- loads the canonical workflow template with precedence `repo-local -> config storage -> built-in`
+- fetches issue or PR metadata with `gh`
+- injects structured progress checkpoints (`Intake`, `Context`, `Implementation`, `Validation`, `Delivery`) into the generated prompt
+- disables prompt optimization by default so the canonical workflow checkpoints remain unchanged; pass `--optimize=true` or set `--optimize-profile` explicitly to opt back in
+- requires `git` and `gh` to be installed and available on `PATH`
+- requires `gh` to be authenticated for the target repository or host
+- uses `AGENTVAULT_PROMPT_WORKFLOW_TIMEOUT` when set; otherwise workflow `git`/`gh` subprocesses derive a bounded timeout from `--timeout`, clamped into the `30s` to `2m` range
 
 ### `agentvault status`
 Flags:

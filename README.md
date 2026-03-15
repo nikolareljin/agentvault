@@ -85,10 +85,10 @@ brew install nikolareljin/tap/agentvault
 | `init` | Initialize encrypted vault |
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
-| `prompt <name>` | Route prompts through AgentVault gateway with usage logging (`--validate-only` supported) |
+| `prompt <name>` | Route prompts through AgentVault gateway with usage logging, including guided `implement_issue` / `implement_pr` workflows |
 | `-p, --prompt-mode[=true\|false]` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
 | `status` | Show token usage and quota status (JSON for orchestration) |
-| `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status` |
+| `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`, `about` |
 
 ### Agent Management
 | Command | Description |
@@ -184,6 +184,10 @@ agentvault prompt my-ollama --text "create a demo app in Scala that says 'Hello 
 # optimize for codex/copilot-style coding flows
 agentvault prompt my-codex --text "refactor this endpoint" --optimize-profile codex
 agentvault prompt my-copilot --text "write tests for this function" --optimize-profile copilot
+
+# guided issue/PR execution using repository workflow templates
+agentvault prompt my-codex --workflow implement_issue --repo /path/to/repo --issue 16 --text "Keep the change scoped."
+agentvault prompt my-codex --workflow implement_pr --repo /path/to/repo --pr 28
 
 # JSON output for orchestration systems
 agentvault prompt my-ollama --text "summarize this design" --json
@@ -306,7 +310,7 @@ agentvault instructions push /path/to/project
 |-----|--------|
 | `Tab` | Next tab |
 | `Shift+Tab` | Previous tab |
-| `1-7` | Jump to tab |
+| `1-8` | Jump to tab |
 | `j`/`k` | Navigate list |
 | `Enter` | View details |
 | `/` | Search (Agents tab) |
@@ -315,7 +319,7 @@ agentvault instructions push /path/to/project
 | `?` | Help |
 | `q` | Quit |
 
-**Tabs**: Agents, Instructions, Rules, Sessions, Detected, Commands, Status
+**Tabs**: Agents, Instructions, Rules, Sessions, Detected, Commands, Status, About
 
 ## Supported Agents
 
