@@ -147,6 +147,7 @@ Inputs:
 - Optional policy overrides
 
 Config Defaults (Override Per Team/Repo):
+- DEFAULT_BASE_BRANCH=main|master
 - DEFAULT_UPDATE_DOCS_IF_NEEDED=true
 - DEFAULT_RUN_TESTS=true
 - DEFAULT_RESOLVE_THREADS=true
@@ -204,7 +205,7 @@ Customization Notes:
 
 Profile Example:
 - Profile Name: strict-main-flow
-- BASE_BRANCH=main
+- DEFAULT_BASE_BRANCH=main
 - DEFAULT_UPDATE_DOCS_IF_NEEDED=true
 - DEFAULT_RUN_TESTS=true
 - DEFAULT_RESOLVE_THREADS=true
@@ -212,7 +213,7 @@ Profile Example:
 - Extra Hook: Post-Push Hook posts a checklist summary comment on the PR.
 `
 
-var builtinAddIssueTemplate = `Add TODO Item Template Instructions
+const builtinAddIssueTemplate = `Add TODO Item Template Instructions
 
 Metadata:
 - Template Version: 2.1
