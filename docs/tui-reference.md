@@ -24,12 +24,13 @@ Tabs:
 5. Detected
 6. Commands
 7. Status
+8. About
 
 ## Global keys
 
 - `Tab`: next tab
 - `Shift+Tab`: previous tab
-- `1-7`: jump to tab
+- `1-8`: jump to tab
 - `j/k` or `Down/Up`: move cursor
 - `Enter`: open detail where available
 - `Esc`: back or close modal

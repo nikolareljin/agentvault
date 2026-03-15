@@ -264,8 +264,8 @@ rm ~/.config/agentvault/vault.enc
 ./agentvault --tui
 
 # Test navigation:
-# - Press Tab to cycle through tabs (Agents, Instructions, Rules, Sessions, Detected, Commands, Status)
-# - Press 1-7 to jump to specific tabs
+# - Press Tab to cycle through tabs (Agents, Instructions, Rules, Sessions, Detected, Commands, Status, About)
+# - Press 1-8 to jump to specific tabs
 # - Press j/k or arrow keys to navigate lists
 # - Press Enter to view details
 # - Press Esc to go back
@@ -283,6 +283,7 @@ rm ~/.config/agentvault/vault.enc
 # Tab 5 (Detected): Installed CLI agents with vault status
 # Tab 6 (Commands): CLI parity bridge (run any command)
 # Tab 7 (Status): Vault path, counts, provider config status
+# Tab 8 (About): Profile links and project info
 ```
 
 ### 9. Export/Import (Legacy Commands)
