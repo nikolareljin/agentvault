@@ -335,7 +335,7 @@ var defaultSpecs = []TemplateAsset{
 	{
 		Key:      "add_issue",
 		Filename: "add_issue.txt",
-		Version:  "builtin-2.0",
+		Version:  "builtin-2.1",
 		Content:  builtinAddIssueTemplate,
 	},
 }
