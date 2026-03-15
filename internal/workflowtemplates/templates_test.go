@@ -734,7 +734,7 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
   "versions": {
     "implement_issue": "builtin-2.0",
     "implement_pr": "builtin-2.0",
-    "add_issue": "builtin-2.0"
+    "add_issue": "builtin-2.1"
   },
   "filenames": {
     "implement_issue": "implement_issue.txt",
