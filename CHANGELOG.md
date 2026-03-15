@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-14
+
+### Added
+- Expanded built-in workflow templates to use the current `2.0` issue/PR implementation bodies.
+- Upgraded the built-in `add_issue` template to generate git-lantern-compatible TODO entries with explicit input/output contracts, deterministic ID allocation, and embedded reusable `implement_issue` / `implement_pr` checklists.
+
 ## [0.5.2] - 2026-03-11
 
 ### Added

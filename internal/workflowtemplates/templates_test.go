@@ -732,9 +732,9 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cfgDir, TemplatesDirName, metadataFileName), []byte(`{
   "schema_version": "1",
   "versions": {
-    "implement_issue": "builtin-1.0",
-    "implement_pr": "builtin-1.0",
-    "add_issue": "builtin-1.0"
+    "implement_issue": "builtin-2.0",
+    "implement_pr": "builtin-2.0",
+    "add_issue": "builtin-2.1"
   },
   "filenames": {
     "implement_issue": "implement_issue.txt",
@@ -755,6 +755,35 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 		ts := meta.Updated[key]
 		if ts.IsZero() {
 			t.Fatalf("meta.Updated[%q] should be backfilled", key)
+		}
+	}
+}
+
+func TestBuiltInAddIssueTemplateIncludesReusableImplementationBodies(t *testing.T) {
+	var addIssue TemplateAsset
+	for _, spec := range defaultSpecs {
+		if spec.Key == "add_issue" {
+			addIssue = spec
+			break
+		}
+	}
+	if addIssue.Key == "" {
+		t.Fatalf("add_issue template not found in defaults")
+	}
+	for _, want := range []string{
+		"Input Contract:",
+		"Output Contract:",
+		"Fill-In Entry Template (Canonical):",
+		"ID: <NEXT_ID_3_DIGITS>",
+		"[TODO] ... [/TODO]",
+		"Reusable Implementation Template Bodies:",
+		"Implement Issue Template",
+		"Fix PR Template",
+		"implement_issue.txt",
+		"implement_pr.txt",
+	} {
+		if !strings.Contains(addIssue.Content, want) {
+			t.Fatalf("add_issue template missing %q", want)
 		}
 	}
 }

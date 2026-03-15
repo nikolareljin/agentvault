@@ -51,78 +51,293 @@ type metadataFile struct {
 	Filenames     map[string]string    `json:"filenames,omitempty"`
 }
 
+const builtinImplementIssueTemplate = `Implement Issue Template
+
+Metadata:
+- Template Version: 2.0
+- Template Type: Issue Implementation Workflow
+- Mode: Modular and Extendable
+
+Inputs:
+- Repository path
+- Issue reference (number/url/title)
+- Base branch (default: main or master, override allowed)
+- Release strategy (major/minor/patch, or auto)
+- Optional policy overrides
+
+Config Defaults (Override Per Team/Repo):
+- DEFAULT_BASE_BRANCH=main|master
+- DEFAULT_RELEASE_PREFIX=release/
+- DEFAULT_CHANGE_DOCS=true
+- DEFAULT_RUN_TESTS=true
+- DEFAULT_OPEN_PR=true
+
+Core Workflow (Default Module Set):
+1. Intake Module:
+- Read issue title and description.
+- Confirm scope and acceptance criteria from the issue.
+
+2. Release Module:
+- Classify change as major/minor/patch.
+- Create ` + "`release/X.Y.Z`" + ` from configured base branch using next semver.
+- Extension: teams can swap this with custom branching policy.
+
+3. Implementation Module:
+- Modify codebase according to issue scope.
+- Add concise code comments where important logic changes are introduced.
+- Create/update files as needed.
+
+4. Documentation Module:
+- Update docs/CHANGELOG/README where needed.
+- Keep comments concise and clean; avoid unnecessary special characters.
+- Extension: teams can define doc update policy per repo.
+
+5. Validation Module:
+- Run project test/build/lint workflow before commit.
+- Extension: team-specific quality gates can be inserted here.
+
+6. Delivery Module:
+- Commit with appropriate message.
+- Push branch.
+- Open PR referencing resolved issue.
+- If PR creation fails, output PR create URL.
+
+Output Contract:
+- Branch name created
+- Files changed summary
+- Tests/build/lint results
+- Commit hash
+- PR URL (or fallback create URL)
+
+Extension Points:
+- Pre-Intake Hook: custom issue triage rules
+- Pre-Commit Hook: formatting, security scans, policy checks
+- Post-Push Hook: reviewer assignment, label automation, CI checks
+- If Copilot is requested as reviewer, request review-only and do not ask Copilot to implement/fix code via PR comments.
+- Post-PR Hook: comment templating and release note generation
+
+Customization Notes:
+- Repositories can override any ` + "`Config Defaults`" + ` value.
+- Teams can add/remove modules, but should preserve ordered checkpoints.
+- Keep this template as a base profile and create derived profiles per repo as needed.
+
+Profile Example:
+- Profile Name: legacy-master-flow
+- DEFAULT_BASE_BRANCH=master
+- DEFAULT_RELEASE_PREFIX=release/
+- DEFAULT_CHANGE_DOCS=true
+- DEFAULT_RUN_TESTS=true
+- DEFAULT_OPEN_PR=true
+- Extra Hook: Pre-Commit Hook runs ` + "`make lint && make test`" + ` before commit.
+`
+
+const builtinImplementPRTemplate = `Fix PR Template
+
+Metadata:
+- Template Version: 2.0
+- Template Type: PR Review Remediation Workflow
+- Mode: Modular and Extendable
+
+Inputs:
+- Repository path
+- PR reference (number/url)
+- Base branch context (main or master, inferred or configured)
+- Target branch name
+- Optional reviewer re-request policy
+- Optional policy overrides
+
+Config Defaults (Override Per Team/Repo):
+- DEFAULT_BASE_BRANCH=main|master
+- DEFAULT_UPDATE_DOCS_IF_NEEDED=true
+- DEFAULT_RUN_TESTS=true
+- DEFAULT_RESOLVE_THREADS=true
+- DEFAULT_REREQUEST_REVIEW=true
+
+Core Workflow (Default Module Set):
+1. Review Intake Module:
+- Read all PR review issues and conversations.
+- Build a fix checklist grouped by thread/comment.
+
+2. Remediation Module:
+- Modify code for all confirmed review issues.
+- Add concise comments where important changes are introduced.
+- Create/update files as needed.
+
+3. Documentation Module:
+- Update docs/CHANGELOG/README only when required by the code changes.
+- Keep comments concise and clean; avoid unnecessary special characters.
+
+4. Validation Module:
+- Run project test/build/lint workflow before commit.
+- Extension: allow repo-specific CI dry-run or smoke checks.
+
+5. Delivery Module:
+- Commit with appropriate message.
+- Push code changes.
+
+6. PR Hygiene Module:
+- Resolve all fixed conversations/threads.
+- Re-request review from same reviewer when configured.
+- Re-request review from Copilot on the processed PR after fixes are pushed, but as review-only.
+- If Copilot was not reviewing the PR previously, explicitly request a new Copilot review-only request.
+- Do not ask Copilot to implement/fix code; do not post prompt-like comments that can trigger code-writing behavior.
+- Prefer GitHub reviewer re-request APIs/UI over chat/comment triggers.
+- If re-request fails, report which PR requires re-request and provide PR URL.
+
+Output Contract:
+- Addressed thread list
+- Files changed summary
+- Tests/build/lint results
+- Commit hash
+- Updated PR URL
+- Re-review status
+
+Extension Points:
+- Pre-Remediation Hook: map comments to owners/components
+- Pre-Commit Hook: enforce style/security/release policies
+- Post-Push Hook: auto-resolve eligible threads
+- Post-Hygiene Hook: auto-comment with fix summary
+
+Customization Notes:
+- Teams can change module order if dependencies are preserved.
+- Config defaults can be overridden by repo profile.
+- Keep a shared default and add derived templates per workflow maturity.
+
+Profile Example:
+- Profile Name: strict-main-flow
+- DEFAULT_BASE_BRANCH=main
+- DEFAULT_UPDATE_DOCS_IF_NEEDED=true
+- DEFAULT_RUN_TESTS=true
+- DEFAULT_RESOLVE_THREADS=true
+- DEFAULT_REREQUEST_REVIEW=true
+- Extra Hook: Post-Push Hook posts a checklist summary comment on the PR.
+`
+
+const builtinAddIssueTemplate = `Add TODO Item Template Instructions
+
+Metadata:
+- Template Version: 2.1
+- Template Type: TODO Entry Authoring Workflow
+- Mode: Modular and Extendable
+- Compatible Format: git-lantern TODO structure
+
+Purpose:
+- Generate one or more TODO entries using a deterministic, append-only process.
+- Produce output compatible with TODO files that use [TODO] ... [/TODO] markers.
+
+Input Contract:
+- Target repository path
+- Target TODO file path (default: <repo>/TODO.txt)
+- Number of items to create
+- For each item:
+  - Title
+  - Description
+  - Intent
+  - Implementation Details (required)
+  - Acceptance Criteria list (required)
+
+Config Defaults (Override Per Team/Repo):
+- DEFAULT_TODO_FILENAME=TODO.txt
+- DEFAULT_ID_WIDTH=3
+- DEFAULT_APPEND_BEFORE_CLOSING_MARKER=true
+- DEFAULT_REQUIRE_IMPLEMENTATION_DETAILS=true
+- DEFAULT_REQUIRE_ACCEPTANCE_CRITERIA=true
+
+Core Workflow (Default Module Set):
+1. Discovery Module:
+- Read target TODO file.
+- Validate markers [TODO] and [/TODO].
+- Detect highest existing ID.
+
+2. Allocation Module:
+- Allocate sequential IDs for all new items.
+- Preserve existing IDs without renumbering.
+
+3. Composition Module:
+- Build each entry in canonical field order:
+  1. ID
+  2. Title
+  3. Description
+  4. Intent
+  5. Implementation Details
+  6. Acceptance Criteria
+
+4. Validation Module:
+- Reject missing required fields.
+- Enforce single blank line between items.
+- Enforce - bullets for Implementation Details and Acceptance Criteria.
+- Reject malformed insertion if markers are missing.
+
+5. Write Module:
+- Insert new items before [/TODO].
+- Keep all existing content unchanged outside insertion block.
+
+Output Contract:
+- Updated TODO file path
+- IDs assigned
+- Inserted item count
+- Validation results
+- Append-only TODO entries in canonical field order
+
+Fill-In Entry Template (Canonical):
+
+ID: <NEXT_ID_3_DIGITS>
+Title: <TITLE>
+Description: <DESCRIPTION>
+Intent: <INTENT>
+Implementation Details:
+- <DETAIL_1>
+- <DETAIL_2>
+Acceptance Criteria:
+- <CRITERION_1>
+- <CRITERION_2>
+
+Reusable Implementation Template Bodies:
+- implement_issue.txt embedded checklist:
+` + "\n\n" + builtinImplementIssueTemplate + "\n\n" + `- implement_pr.txt embedded checklist:
+` + "\n\n" + builtinImplementPRTemplate + "\n\n" + `Usage Notes For Reusable Modules:
+- When the TODO item is issue-implementation focused, embed the full implement_issue.txt checklist body into the item's Implementation Details section.
+- When the TODO item is PR-remediation focused, embed the full implement_pr.txt checklist body into the item's Implementation Details section.
+- For multi-item runs, apply deterministic sequential IDs and keep each item self-contained.
+
+Extension Points:
+- Pre-Validation Hook: apply custom schema checks per repository.
+- Pre-Write Hook: enforce label/tag conventions in titles.
+- Post-Write Hook: auto-open related issue/PR links.
+
+Customization Notes:
+- Keep this file as base profile and create team-specific variants.
+- Override only config defaults and hook logic when possible.
+- Preserve canonical output field order for compatibility.
+
+Profile Example:
+- Profile Name: multi-repo-standard
+- DEFAULT_TODO_FILENAME=TODO.txt
+- DEFAULT_ID_WIDTH=3
+- DEFAULT_APPEND_BEFORE_CLOSING_MARKER=true
+- DEFAULT_REQUIRE_IMPLEMENTATION_DETAILS=true
+- DEFAULT_REQUIRE_ACCEPTANCE_CRITERIA=true
+- Repo Policy Note: apply same template for repositories using either main or master base branch naming.
+`
+
 var defaultSpecs = []TemplateAsset{
 	{
 		Key:      "implement_issue",
 		Filename: "implement_issue.txt",
-		Version:  "builtin-1.0",
-		Content: `Implement Issue Template
-
-Metadata:
-- Template Version: 1.0
-- Template Type: Issue Workflow
-
-Inputs:
-- Repository path
-- Issue reference
-- Base branch
-
-Workflow:
-1. Review issue scope and acceptance criteria.
-2. Create a release branch from the selected base branch.
-3. Implement code changes.
-4. Update tests and documentation.
-5. Run validation commands.
-6. Commit, push, and open PR that references the issue.
-
-Notes:
-- Keep changes scoped to the issue.
-- Prefer clear commit messages and explicit test results.
-`,
+		Version:  "builtin-2.0",
+		Content:  builtinImplementIssueTemplate,
 	},
 	{
 		Key:      "implement_pr",
 		Filename: "implement_pr.txt",
-		Version:  "builtin-1.0",
-		Content: `Implement PR Review Template
-
-Metadata:
-- Template Version: 1.0
-- Template Type: PR Review Fix Workflow
-
-Inputs:
-- Repository path
-- PR reference
-
-Workflow:
-1. Gather unresolved review comments.
-2. Implement code fixes aligned with reviewer feedback.
-3. Add or update tests for regressions.
-4. Run lint/test/build checks.
-5. Commit, push, and update PR with concise summary.
-6. Re-request review only (do not request automated code fixing).
-`,
+		Version:  "builtin-2.0",
+		Content:  builtinImplementPRTemplate,
 	},
 	{
 		Key:      "add_issue",
 		Filename: "add_issue.txt",
-		Version:  "builtin-1.0",
-		Content: `Add Issue Template
-
-Metadata:
-- Template Version: 1.0
-- Template Type: Issue Creation Workflow
-
-Inputs:
-- Repository path
-- Feature or bug description
-
-Workflow:
-1. Define problem statement and impact.
-2. Add acceptance criteria.
-3. Add implementation notes and validation approach.
-4. Create issue with a clear, actionable title.
-`,
+		Version:  "builtin-2.1",
+		Content:  builtinAddIssueTemplate,
 	},
 }
 
