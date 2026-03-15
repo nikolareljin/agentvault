@@ -451,6 +451,7 @@ List effective templates and their source.
 
 ### `agentvault templates show <name>`
 Show effective template content by key or filename.
+Use `agentvault templates show add_issue` to inspect the git-lantern-compatible TODO authoring template, including the embedded `implement_issue` and `implement_pr` reusable checklist modules.
 
 ### `agentvault templates refresh`
 Initialize or refresh config-stored templates from built-in defaults.
