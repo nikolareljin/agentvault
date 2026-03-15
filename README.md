@@ -189,6 +189,9 @@ agentvault prompt my-copilot --text "write tests for this function" --optimize-p
 agentvault prompt my-codex --workflow implement_issue --repo /path/to/repo --issue 16 --text "Keep the change scoped."
 agentvault prompt my-codex --workflow implement_pr --repo /path/to/repo --pr 28
 
+# inspect the built-in TODO authoring workflow for git-lantern-style TODO files
+agentvault templates show add_issue
+
 # JSON output for orchestration systems
 agentvault prompt my-ollama --text "summarize this design" --json
 
@@ -205,6 +208,8 @@ Workflow template precedence is:
 - repository-local override (`./implement_issue.txt`, `./implement_pr.txt`, `./add_issue.txt`)
 - config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`)
 - built-in defaults (with warning)
+
+The built-in `add_issue` template emits append-only, git-lantern-compatible TODO entries with deterministic ID allocation and embeds the reusable `implement_issue` / `implement_pr` checklist bodies for issue and PR follow-up tasks.
 
 In the TUI Agent detail view, effective values include source tags (`local`, `env`, `default`) for model/API key/base URL.
 
