@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -459,7 +460,7 @@ func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
 		return 0, nil
 	}
 
-	applied := 0
+	relPaths := make([]string, 0)
 	err = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -467,26 +468,34 @@ func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
 		if d.IsDir() {
 			return nil
 		}
-		rel, err := filepath.Rel(projectRoot, path)
+		if d.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("staged project asset %q must not be a symlink", path)
+		}
+		rel, err := safeSubpath(projectRoot, path)
 		if err != nil {
 			return err
 		}
-		dest := filepath.Join(targetDir, rel)
-		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(dest, data, 0644); err != nil {
-			return err
-		}
-		applied++
+		relPaths = append(relPaths, rel)
 		return nil
 	})
 	if err != nil {
-		return applied, fmt.Errorf("applying staged project assets: %w", err)
+		return 0, fmt.Errorf("applying staged project assets: %w", err)
+	}
+
+	applied := 0
+	for _, rel := range relPaths {
+		srcPath, err := safeJoinUnder(projectRoot, rel)
+		if err != nil {
+			return applied, fmt.Errorf("resolving staged asset path: %w", err)
+		}
+		destPath, err := safeJoinUnder(targetDir, rel)
+		if err != nil {
+			return applied, fmt.Errorf("resolving target asset path: %w", err)
+		}
+		if err := copyRegularFile(srcPath, destPath, 0644); err != nil {
+			return applied, fmt.Errorf("copying staged project asset %q: %w", rel, err)
+		}
+		applied++
 	}
 	return applied, nil
 }
@@ -530,4 +539,60 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+func safeSubpath(root string, path string) (string, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", err
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." || rel == "" {
+		return "", fmt.Errorf("empty relative path for %q", path)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path %q escapes root %q", path, root)
+	}
+	return rel, nil
+}
+
+func safeJoinUnder(root string, rel string) (string, error) {
+	rel = filepath.Clean(rel)
+	if rel == "." || rel == "" {
+		return "", fmt.Errorf("empty relative path")
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("unsafe relative path %q", rel)
+	}
+	return filepath.Join(root, rel), nil
+}
+
+func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	info, err := src.Stat()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("source is not a regular file")
+	}
+
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		return err
+	}
+	dest, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer dest.Close()
+
+	if _, err := io.Copy(dest, src); err != nil {
+		return err
+	}
+	return nil
 }
