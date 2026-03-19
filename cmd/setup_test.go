@@ -47,3 +47,39 @@ func TestSelectAgentsForExportMissing(t *testing.T) {
 		t.Fatalf("selectAgentsForExport() err = %v, want missing agent error", err)
 	}
 }
+
+func TestFilterSessionsForAgents(t *testing.T) {
+	input := agent.SessionConfig{
+		Sessions: []agent.Session{
+			{
+				ID: "s1",
+				Agents: []agent.SessionAgent{
+					{Name: "alpha"},
+					{Name: "beta"},
+				},
+			},
+			{
+				ID: "s2",
+				Agents: []agent.SessionAgent{
+					{Name: "gamma"},
+				},
+			},
+		},
+		ActiveSession: "s2",
+		DefaultAgents: []string{"alpha", "beta"},
+	}
+
+	filtered := filterSessionsForAgents(input, []agent.Agent{{Name: "alpha"}})
+	if len(filtered.Sessions) != 1 {
+		t.Fatalf("filtered sessions = %#v, want one session", filtered.Sessions)
+	}
+	if len(filtered.Sessions[0].Agents) != 1 || filtered.Sessions[0].Agents[0].Name != "alpha" {
+		t.Fatalf("filtered session agents = %#v, want only alpha", filtered.Sessions[0].Agents)
+	}
+	if filtered.ActiveSession != "" {
+		t.Fatalf("filtered active session = %q, want cleared", filtered.ActiveSession)
+	}
+	if len(filtered.DefaultAgents) != 1 || filtered.DefaultAgents[0] != "alpha" {
+		t.Fatalf("filtered default agents = %#v, want only alpha", filtered.DefaultAgents)
+	}
+}
