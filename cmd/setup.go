@@ -459,17 +459,23 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 	}
 	for _, asset := range bundle.InstructionOverrides {
 		name := instructionNameForAsset(asset)
-		if name == "" || len(asset.Content) == 0 {
+		if name == "" || asset.Missing || !asset.ContentPresent {
+			continue
+		}
+		filename := asset.ProjectRelativePath
+		if filename == "" {
+			filename = asset.LogicalPath
+		}
+		filename, err = sanitizeAssetRelativePath(filename)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: skipping instruction override %q due to unsafe filename: %v\n", name, err)
 			continue
 		}
 		inst := agent.InstructionFile{
 			Name:      name,
-			Filename:  asset.ProjectRelativePath,
+			Filename:  filename,
 			Content:   string(asset.Content),
 			UpdatedAt: time.Now(),
-		}
-		if inst.Filename == "" {
-			inst.Filename = asset.LogicalPath
 		}
 		if idx, ok := instIndex[inst.Name]; !ok {
 			sc.Instructions = append(sc.Instructions, inst)

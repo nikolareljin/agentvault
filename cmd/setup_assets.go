@@ -33,6 +33,7 @@ const (
 	setupAssetRootProviderClaudeSkill = "provider_claude_skill"
 	setupAssetRootProviderCodexSkill  = "provider_codex_skill"
 	setupImportedAssetsDirName        = "imported-assets"
+	maxSetupAssetBytes                = 1 << 20
 )
 
 // SetupAsset stores one portable file asset captured during setup export.
@@ -46,6 +47,8 @@ type SetupAsset struct {
 	Sensitive           bool   `json:"sensitive,omitempty"`
 	Missing             bool   `json:"missing,omitempty"`
 	Redacted            bool   `json:"redacted,omitempty"`
+	ContentPresent      bool   `json:"content_present,omitempty"`
+	SizeBytes           int64  `json:"size_bytes,omitempty"`
 	Content             []byte `json:"content,omitempty"`
 	SHA256              string `json:"sha256,omitempty"`
 }
@@ -313,27 +316,51 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 }
 
 func loadSetupAsset(path string, kind string, origin string, logicalRoot string, logicalPath string, projectRelativePath string, sensitive bool, includeSecrets bool, optional bool) (SetupAsset, string, error) {
-	data, err := os.ReadFile(path)
+	safeLogicalPath, err := sanitizeAssetRelativePath(logicalPath)
 	if err != nil {
-		if os.IsNotExist(err) && optional {
-			return SetupAsset{}, "optional asset missing", nil
-		}
-		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
+		return SetupAsset{}, "", fmt.Errorf("sanitizing logical path %q: %w", logicalPath, err)
 	}
+	safeProjectRelativePath := ""
+	if strings.TrimSpace(projectRelativePath) != "" {
+		safeProjectRelativePath, err = sanitizeAssetRelativePath(projectRelativePath)
+		if err != nil {
+			return SetupAsset{}, "", fmt.Errorf("sanitizing project-relative path %q: %w", projectRelativePath, err)
+		}
+	}
+
 	asset := SetupAsset{
 		Kind:                kind,
 		Origin:              origin,
 		LogicalRoot:         logicalRoot,
-		LogicalPath:         filepath.ToSlash(logicalPath),
-		ProjectRelativePath: filepath.ToSlash(projectRelativePath),
+		LogicalPath:         safeLogicalPath,
+		ProjectRelativePath: safeProjectRelativePath,
 		SourcePath:          path,
 		Sensitive:           sensitive,
-		SHA256:              hashSetupAssetContent(data),
 	}
+
+	info, statErr := os.Stat(path)
+	if statErr == nil {
+		asset.SizeBytes = info.Size()
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) && optional {
+			asset.Missing = true
+			return asset, "optional asset missing", nil
+		}
+		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
+	}
+	asset.SizeBytes = int64(len(data))
+	if len(data) > maxSetupAssetBytes {
+		return asset, fmt.Sprintf("asset %q exceeds %d bytes; exporting metadata only", path, maxSetupAssetBytes), nil
+	}
+	asset.SHA256 = hashSetupAssetContent(data)
 	if sensitive && !includeSecrets {
 		asset.Redacted = true
 		return asset, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
 	}
+	asset.ContentPresent = true
 	asset.Content = data
 	return asset, "", nil
 }
@@ -400,13 +427,19 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 	staged := 0
 	var warnings []string
 	for _, asset := range assets {
-		if asset.Redacted || len(asset.Content) == 0 {
+		if asset.Redacted || asset.Missing || !asset.ContentPresent {
 			if asset.Redacted {
 				warnings = append(warnings, fmt.Sprintf("staging skipped redacted asset %q", asset.SourcePath))
 			}
+			if !asset.Redacted && !asset.Missing && !asset.ContentPresent {
+				warnings = append(warnings, fmt.Sprintf("staging skipped asset %q because bundle omitted file content", asset.SourcePath))
+			}
 			continue
 		}
-		stagePath := stagedAssetPath(stageRoot, asset)
+		stagePath, err := stagedAssetPath(stageRoot, asset)
+		if err != nil {
+			return staged, warnings, fmt.Errorf("resolving staged asset path: %w", err)
+		}
 		if stagePath == "" {
 			continue
 		}
@@ -421,16 +454,24 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 	return staged, warnings, nil
 }
 
-func stagedAssetPath(stageRoot string, asset SetupAsset) string {
+func stagedAssetPath(stageRoot string, asset SetupAsset) (string, error) {
 	switch asset.Kind {
 	case setupAssetKindProviderFile:
-		return filepath.Join(stageRoot, "provider", asset.LogicalRoot, filepath.FromSlash(asset.LogicalPath))
+		rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
+		if err != nil {
+			return "", err
+		}
+		return safeJoinUnder(filepath.Join(stageRoot, "provider", asset.LogicalRoot), rel)
 	case setupAssetKindProjectFile:
 		rel := asset.ProjectRelativePath
 		if rel == "" {
 			rel = asset.LogicalPath
 		}
-		return filepath.Join(stageRoot, "project", filepath.FromSlash(rel))
+		rel, err := sanitizeAssetRelativePath(rel)
+		if err != nil {
+			return "", err
+		}
+		return safeJoinUnder(filepath.Join(stageRoot, "project"), rel)
 	case setupAssetKindSkill:
 		switch asset.LogicalRoot {
 		case setupAssetRootProject:
@@ -438,12 +479,20 @@ func stagedAssetPath(stageRoot string, asset SetupAsset) string {
 			if rel == "" {
 				rel = asset.LogicalPath
 			}
-			return filepath.Join(stageRoot, "project", filepath.FromSlash(rel))
+			rel, err := sanitizeAssetRelativePath(rel)
+			if err != nil {
+				return "", err
+			}
+			return safeJoinUnder(filepath.Join(stageRoot, "project"), rel)
 		default:
-			return filepath.Join(stageRoot, "provider", asset.LogicalRoot, filepath.FromSlash(asset.LogicalPath))
+			rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
+			if err != nil {
+				return "", err
+			}
+			return safeJoinUnder(filepath.Join(stageRoot, "provider", asset.LogicalRoot), rel)
 		}
 	default:
-		return ""
+		return "", nil
 	}
 }
 
@@ -504,9 +553,12 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 	applied := 0
 	var warnings []string
 	for _, asset := range assets {
-		if asset.Redacted || len(asset.Content) == 0 {
+		if asset.Redacted || asset.Missing || !asset.ContentPresent {
 			if asset.Redacted {
 				warnings = append(warnings, fmt.Sprintf("provider asset %q is redacted; cannot apply without re-importing with --include-secrets", asset.SourcePath))
+			}
+			if !asset.Redacted && !asset.Missing && !asset.ContentPresent {
+				warnings = append(warnings, fmt.Sprintf("provider asset %q omitted file content in bundle; cannot apply", asset.SourcePath))
 			}
 			continue
 		}
@@ -529,13 +581,17 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 func providerAssetDestination(homeDir string, asset SetupAsset) (string, bool) {
 	switch asset.LogicalRoot {
 	case setupAssetRootProviderClaude:
-		return filepath.Join(homeDir, ".claude", filepath.FromSlash(asset.LogicalPath)), true
+		path, err := safeJoinUnder(filepath.Join(homeDir, ".claude"), asset.LogicalPath)
+		return path, err == nil
 	case setupAssetRootProviderCodex:
-		return filepath.Join(homeDir, ".codex", filepath.FromSlash(asset.LogicalPath)), true
+		path, err := safeJoinUnder(filepath.Join(homeDir, ".codex"), asset.LogicalPath)
+		return path, err == nil
 	case setupAssetRootProviderClaudeSkill:
-		return filepath.Join(homeDir, ".claude", "skills", filepath.FromSlash(asset.LogicalPath)), true
+		path, err := safeJoinUnder(filepath.Join(homeDir, ".claude", "skills"), asset.LogicalPath)
+		return path, err == nil
 	case setupAssetRootProviderCodexSkill:
-		return filepath.Join(homeDir, ".codex", "skills", filepath.FromSlash(asset.LogicalPath)), true
+		path, err := safeJoinUnder(filepath.Join(homeDir, ".codex", "skills"), asset.LogicalPath)
+		return path, err == nil
 	default:
 		return "", false
 	}
@@ -557,14 +613,41 @@ func safeSubpath(root string, path string) (string, error) {
 }
 
 func safeJoinUnder(root string, rel string) (string, error) {
-	rel = filepath.Clean(rel)
-	if rel == "." || rel == "" {
-		return "", fmt.Errorf("empty relative path")
+	rel, err := sanitizeAssetRelativePath(rel)
+	if err != nil {
+		return "", err
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+	root = filepath.Clean(root)
+	joined := filepath.Join(root, rel)
+	relToRoot, err := filepath.Rel(root, joined)
+	if err != nil {
+		return "", err
+	}
+	if relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("unsafe relative path %q", rel)
 	}
-	return filepath.Join(root, rel), nil
+	return joined, nil
+}
+
+func sanitizeAssetRelativePath(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("empty relative path")
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(path))
+	if filepath.IsAbs(path) || filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("absolute path is not allowed: %q", path)
+	}
+	if filepath.VolumeName(path) != "" || filepath.VolumeName(cleaned) != "" || strings.Contains(cleaned, ":") {
+		return "", fmt.Errorf("volume-qualified path is not allowed: %q", path)
+	}
+	if cleaned == "." || cleaned == ".." {
+		return "", fmt.Errorf("invalid relative path: %q", path)
+	}
+	if strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path traversal is not allowed: %q", path)
+	}
+	return filepath.ToSlash(cleaned), nil
 }
 
 func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
