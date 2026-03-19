@@ -189,6 +189,12 @@ agentvault prompt my-copilot --text "write tests for this function" --optimize-p
 agentvault prompt my-codex --workflow implement_issue --repo /path/to/repo --issue 16 --text "Keep the change scoped."
 agentvault prompt my-codex --workflow implement_pr --repo /path/to/repo --pr 28
 
+# export one agent plus project-local instructions and skills
+agentvault setup export my-setup.json --agent my-codex --project .
+
+# include secret-bearing provider files in an encrypted bundle
+agentvault setup export my-setup.bundle --agent my-codex --project . --include-secrets --encrypted
+
 # inspect the built-in TODO authoring workflow for git-lantern-style TODO files
 agentvault templates show add_issue
 
@@ -208,6 +214,14 @@ Workflow template precedence is:
 - repository-local override (`./implement_issue.txt`, `./implement_pr.txt`, `./add_issue.txt`)
 - config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`)
 - built-in defaults (with warning)
+
+Portable setup bundles can additionally include explicit asset manifests for:
+- provider-home files (`provider_files`)
+- project-local files (`project_files`)
+- discovered local instruction overrides (`instruction_overrides`)
+- custom skill trees (`skill_assets`)
+
+Sensitive provider file content is excluded from bundle content by default and can be included explicitly with `agentvault setup export --include-secrets`, ideally together with `--encrypted`.
 
 The built-in `add_issue` template emits append-only, git-lantern-compatible TODO entries with deterministic ID allocation and embeds the reusable `implement_issue` / `implement_pr` checklist bodies for issue and PR follow-up tasks.
 

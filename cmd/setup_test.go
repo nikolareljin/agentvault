@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/nikolareljin/agentvault/internal/agent"
 )
 
 func TestSetupBundleMarshalIncludesWorkflowTemplatesField(t *testing.T) {
@@ -16,5 +19,31 @@ func TestSetupBundleMarshalIncludesWorkflowTemplatesField(t *testing.T) {
 	}
 	if _, ok := payload["workflow_templates"]; !ok {
 		t.Fatalf("marshal output keys = %v, want workflow_templates field present", payload)
+	}
+	for _, key := range []string{"provider_files", "project_files", "instruction_overrides", "skill_assets"} {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("marshal output keys = %v, want %s field present", payload, key)
+		}
+	}
+}
+
+func TestSelectAgentsForExport(t *testing.T) {
+	agents := []agent.Agent{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	selected, err := selectAgentsForExport(agents, "beta")
+	if err != nil {
+		t.Fatalf("selectAgentsForExport() error = %v", err)
+	}
+	if len(selected) != 1 || selected[0].Name != "beta" {
+		t.Fatalf("selectAgentsForExport() = %#v, want only beta", selected)
+	}
+}
+
+func TestSelectAgentsForExportMissing(t *testing.T) {
+	_, err := selectAgentsForExport([]agent.Agent{{Name: "alpha"}}, "beta")
+	if err == nil || !strings.Contains(err.Error(), `agent "beta" not found`) {
+		t.Fatalf("selectAgentsForExport() err = %v, want missing agent error", err)
 	}
 }
