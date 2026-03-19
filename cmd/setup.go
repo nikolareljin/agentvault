@@ -22,18 +22,22 @@ import (
 // across machines. It captures everything needed to recreate the environment:
 // agents, sessions, rules, roles, instructions, provider configs, and an installation guide.
 type SetupBundle struct {
-	Version         string                   `json:"version"`
-	CreatedAt       time.Time                `json:"created_at"`
-	SourceMachine   string                   `json:"source_machine"`
-	SourceOS        string                   `json:"source_os"`
-	Agents          []agent.Agent            `json:"agents"`
-	Sessions        agent.SessionConfig      `json:"sessions,omitempty"`
-	SharedConfig    agent.SharedConfig       `json:"shared_config"`
-	ProviderConfigs agent.ProviderConfig     `json:"provider_configs"`
-	Templates       workflowtemplates.Bundle `json:"workflow_templates"`
-	StatusSnapshot  *statuspkg.Report        `json:"status_snapshot,omitempty"`
-	DetectedAgents  []DetectedAgent          `json:"detected_agents,omitempty"`
-	InstallGuide    InstallGuide             `json:"install_guide"`
+	Version              string                   `json:"version"`
+	CreatedAt            time.Time                `json:"created_at"`
+	SourceMachine        string                   `json:"source_machine"`
+	SourceOS             string                   `json:"source_os"`
+	Agents               []agent.Agent            `json:"agents"`
+	Sessions             agent.SessionConfig      `json:"sessions,omitempty"`
+	SharedConfig         agent.SharedConfig       `json:"shared_config"`
+	ProviderConfigs      agent.ProviderConfig     `json:"provider_configs"`
+	Templates            workflowtemplates.Bundle `json:"workflow_templates"`
+	ProviderFiles        []SetupAsset             `json:"provider_files"`
+	ProjectFiles         []SetupAsset             `json:"project_files"`
+	InstructionOverrides []SetupAsset             `json:"instruction_overrides"`
+	SkillAssets          []SetupAsset             `json:"skill_assets"`
+	StatusSnapshot       *statuspkg.Report        `json:"status_snapshot,omitempty"`
+	DetectedAgents       []DetectedAgent          `json:"detected_agents,omitempty"`
+	InstallGuide         InstallGuide             `json:"install_guide"`
 }
 
 // InstallGuide contains instructions for setting up agents on a new machine.
@@ -92,7 +96,8 @@ Examples:
   agentvault setup export my-setup.bundle         # Export encrypted
   agentvault setup export setup.json --include-keys  # Include API keys
   agentvault setup export setup.json --include-status # Include token/quota snapshot
-  agentvault setup export setup.json --detect     # Include detected agent info`,
+  agentvault setup export setup.json --detect     # Include detected agent info
+  agentvault setup export setup.json --agent my-codex --project .`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSetupExport,
 }
@@ -166,8 +171,11 @@ func init() {
 	setupExportCmd.Flags().Bool("include-keys", false, "include API keys in export (use with caution)")
 	setupExportCmd.Flags().Bool("detect", false, "include detected agent information")
 	setupExportCmd.Flags().Bool("include-status", false, "include provider token/quota status snapshot in bundle")
+	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content")
 	setupExportCmd.Flags().Bool("encrypted", false, "encrypt the bundle (prompted for password)")
 	setupExportCmd.Flags().Bool("plain", false, "force plaintext JSON output")
+	setupExportCmd.Flags().String("agent", "", "export only one named agent")
+	setupExportCmd.Flags().String("project", "", "include project-local instruction, workflow, and skill assets from this directory")
 
 	setupImportCmd.Flags().Bool("merge", false, "merge with existing agents instead of skipping")
 	setupImportCmd.Flags().Bool("apply-provider-configs", false, "apply provider configs to system after import")
@@ -189,8 +197,11 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	includeKeys, _ := cmd.Flags().GetBool("include-keys")
 	detect, _ := cmd.Flags().GetBool("detect")
 	includeStatus, _ := cmd.Flags().GetBool("include-status")
+	includeSecrets, _ := cmd.Flags().GetBool("include-secrets")
 	encrypted, _ := cmd.Flags().GetBool("encrypted")
 	plain, _ := cmd.Flags().GetBool("plain")
+	agentName, _ := cmd.Flags().GetString("agent")
+	projectDir, _ := cmd.Flags().GetString("project")
 
 	// Determine output format from extension
 	outputFile := args[0]
@@ -209,12 +220,34 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		SharedConfig:    v.SharedConfig(),
 		ProviderConfigs: v.ProviderConfigs(),
 	}
+	if strings.TrimSpace(agentName) != "" {
+		selected, err := selectAgentsForExport(bundle.Agents, agentName)
+		if err != nil {
+			return err
+		}
+		bundle.Agents = selected
+	}
 	templateBundle, templateWarnings, err := workflowtemplates.ExportBundle(resolveConfigDir())
 	if err != nil {
 		return fmt.Errorf("loading workflow templates for export: %w", err)
 	}
 	bundle.Templates = templateBundle
 	for _, warn := range templateWarnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+	}
+	collectedAssets, assetWarnings, err := collectSetupAssets(setupAssetOptions{
+		ProjectDir:     projectDir,
+		IncludeSecrets: includeSecrets,
+		ConfigDir:      resolveConfigDir(),
+	})
+	if err != nil {
+		return fmt.Errorf("collecting portable setup assets: %w", err)
+	}
+	bundle.ProviderFiles = collectedAssets.ProviderFiles
+	bundle.ProjectFiles = collectedAssets.ProjectFiles
+	bundle.InstructionOverrides = collectedAssets.InstructionOverrides
+	bundle.SkillAssets = collectedAssets.SkillAssets
+	for _, warn := range assetWarnings {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 	}
 
@@ -293,6 +326,18 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	}
 	if encrypted {
 		fmt.Println("  Encrypted: yes")
+	}
+	if strings.TrimSpace(agentName) != "" {
+		fmt.Printf("  Export mode: single-agent (%s)\n", agentName)
+	} else {
+		fmt.Println("  Export mode: full bundle")
+	}
+	fmt.Printf("  Provider files: %d\n", len(bundle.ProviderFiles))
+	fmt.Printf("  Project files: %d\n", len(bundle.ProjectFiles))
+	fmt.Printf("  Instruction overrides: %d\n", len(bundle.InstructionOverrides))
+	fmt.Printf("  Skill assets: %d\n", len(bundle.SkillAssets))
+	if includeSecrets {
+		fmt.Println("  Includes sensitive asset content: yes")
 	}
 	return nil
 }
@@ -638,6 +683,13 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  • %s (%s, version=%s)\n", tpl.Filename, tpl.Key, tpl.Version)
 		}
 	}
+	if len(bundle.ProviderFiles) > 0 || len(bundle.ProjectFiles) > 0 || len(bundle.InstructionOverrides) > 0 || len(bundle.SkillAssets) > 0 {
+		fmt.Printf("\nPortable Assets:\n")
+		printSetupAssetSummary("Provider Files", bundle.ProviderFiles)
+		printSetupAssetSummary("Project Files", bundle.ProjectFiles)
+		printSetupAssetSummary("Instruction Overrides", bundle.InstructionOverrides)
+		printSetupAssetSummary("Skill Assets", bundle.SkillAssets)
+	}
 
 	if bundle.SharedConfig.SystemPrompt != "" {
 		prompt := bundle.SharedConfig.SystemPrompt
@@ -670,6 +722,40 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func selectAgentsForExport(all []agent.Agent, name string) ([]agent.Agent, error) {
+	for _, item := range all {
+		if item.Name == name {
+			return []agent.Agent{item}, nil
+		}
+	}
+	return nil, fmt.Errorf("agent %q not found", name)
+}
+
+func printSetupAssetSummary(label string, assets []SetupAsset) {
+	if len(assets) == 0 {
+		return
+	}
+	sensitive := 0
+	missing := 0
+	redacted := 0
+	for _, asset := range assets {
+		if asset.Sensitive {
+			sensitive++
+		}
+		if asset.Missing {
+			missing++
+		}
+		if asset.Redacted {
+			redacted++
+		}
+	}
+	fmt.Printf("  %s: %d", label, len(assets))
+	if sensitive > 0 || missing > 0 || redacted > 0 {
+		fmt.Printf(" (sensitive=%d, missing=%d, redacted=%d)", sensitive, missing, redacted)
+	}
+	fmt.Println()
 }
 
 func runSetupApply(cmd *cobra.Command, args []string) error {
