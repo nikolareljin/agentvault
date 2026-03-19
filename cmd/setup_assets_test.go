@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,9 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 	if !settings.Sensitive || !settings.Redacted || len(settings.Content) != 0 || settings.SHA256 == "" {
 		t.Fatalf("claude settings asset = %#v, want sensitive redacted metadata", settings)
 	}
+	if settings.ContentPresent {
+		t.Fatalf("redacted settings asset should not mark content as present: %#v", settings)
+	}
 
 	keybindings := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "keybindings.json")
 	if keybindings == nil || keybindings.Redacted || string(keybindings.Content) != `{"up":"k"}` {
@@ -127,6 +131,7 @@ func TestStageImportedAssetsAndApplyStagedProjectAssets(t *testing.T) {
 			LogicalPath:         "docs/README.md",
 			ProjectRelativePath: "docs/README.md",
 			SourcePath:          "/tmp/source/docs/README.md",
+			ContentPresent:      true,
 			Content:             []byte("doc body"),
 		},
 		{
@@ -135,6 +140,7 @@ func TestStageImportedAssetsAndApplyStagedProjectAssets(t *testing.T) {
 			LogicalPath:         "skills/review/SKILL.md",
 			ProjectRelativePath: "skills/review/SKILL.md",
 			SourcePath:          "/tmp/source/skills/review/SKILL.md",
+			ContentPresent:      true,
 			Content:             []byte("skill body"),
 		},
 	}
@@ -166,18 +172,20 @@ func TestApplyProviderAssetsToSystem(t *testing.T) {
 	homeDir := t.TempDir()
 	assets := []SetupAsset{
 		{
-			Kind:        setupAssetKindProviderFile,
-			LogicalRoot: setupAssetRootProviderClaude,
-			LogicalPath: "settings.json",
-			SourcePath:  "/tmp/source/.claude/settings.json",
-			Content:     []byte(`{"theme":"dark"}`),
+			Kind:           setupAssetKindProviderFile,
+			LogicalRoot:    setupAssetRootProviderClaude,
+			LogicalPath:    "settings.json",
+			SourcePath:     "/tmp/source/.claude/settings.json",
+			ContentPresent: true,
+			Content:        []byte(`{"theme":"dark"}`),
 		},
 		{
-			Kind:        setupAssetKindSkill,
-			LogicalRoot: setupAssetRootProviderCodexSkill,
-			LogicalPath: "review/SKILL.md",
-			SourcePath:  "/tmp/source/.codex/skills/review/SKILL.md",
-			Content:     []byte("skill"),
+			Kind:           setupAssetKindSkill,
+			LogicalRoot:    setupAssetRootProviderCodexSkill,
+			LogicalPath:    "review/SKILL.md",
+			SourcePath:     "/tmp/source/.codex/skills/review/SKILL.md",
+			ContentPresent: true,
+			Content:        []byte("skill"),
 		},
 	}
 
@@ -193,6 +201,70 @@ func TestApplyProviderAssetsToSystem(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(homeDir, ".codex", "skills", "review", "SKILL.md")); err != nil || string(data) != "skill" {
 		t.Fatalf("codex skill = %q, %v", string(data), err)
+	}
+}
+
+func TestLoadSetupAsset_MissingOptionalIncludesMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.txt")
+	asset, warningText, err := loadSetupAsset(path, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, "docs/missing.txt", "docs/missing.txt", false, false, true)
+	if err != nil {
+		t.Fatalf("loadSetupAsset() error = %v", err)
+	}
+	if warningText == "" || !asset.Missing || asset.LogicalPath != "docs/missing.txt" {
+		t.Fatalf("loadSetupAsset() = (%#v, %q), want missing metadata entry", asset, warningText)
+	}
+}
+
+func TestLoadSetupAsset_EmptyFileContentMarkedPresent(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "empty.txt")
+	mustWriteFile(t, file, "")
+	asset, warningText, err := loadSetupAsset(file, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, "empty.txt", "empty.txt", false, false, false)
+	if err != nil {
+		t.Fatalf("loadSetupAsset() error = %v", err)
+	}
+	if warningText != "" || !asset.ContentPresent || len(asset.Content) != 0 {
+		t.Fatalf("loadSetupAsset() = (%#v, %q), want empty file with present content", asset, warningText)
+	}
+}
+
+func TestLoadSetupAsset_OversizedReturnsMetadataOnly(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "large.bin")
+	mustWriteFileBytes(t, file, bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
+	asset, warningText, err := loadSetupAsset(file, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, "large.bin", "large.bin", false, false, false)
+	if err != nil {
+		t.Fatalf("loadSetupAsset() error = %v", err)
+	}
+	if warningText == "" || asset.ContentPresent || len(asset.Content) != 0 || asset.SizeBytes <= maxSetupAssetBytes {
+		t.Fatalf("loadSetupAsset() = (%#v, %q), want metadata-only oversized entry", asset, warningText)
+	}
+}
+
+func TestStageImportedAssetsRejectsUnsafePath(t *testing.T) {
+	_, _, err := stageImportedAssets(t.TempDir(), []SetupAsset{{
+		Kind:           setupAssetKindProjectFile,
+		LogicalRoot:    setupAssetRootProject,
+		LogicalPath:    "../evil.txt",
+		ContentPresent: true,
+		Content:        []byte("x"),
+	}})
+	if err == nil || !strings.Contains(err.Error(), "unsafe") && !strings.Contains(err.Error(), "traversal") {
+		t.Fatalf("stageImportedAssets() err = %v, want unsafe path error", err)
+	}
+}
+
+func TestApplyProviderAssetsToSystemRejectsUnsafePath(t *testing.T) {
+	applied, warnings, err := applyProviderAssetsToSystem(t.TempDir(), []SetupAsset{{
+		Kind:           setupAssetKindProviderFile,
+		LogicalRoot:    setupAssetRootProviderClaude,
+		LogicalPath:    "../evil",
+		ContentPresent: true,
+		Content:        []byte("x"),
+	}})
+	if err != nil {
+		t.Fatalf("applyProviderAssetsToSystem() error = %v, want warning-only skip", err)
+	}
+	if applied != 0 || len(warnings) == 0 {
+		t.Fatalf("applyProviderAssetsToSystem() = (%d, %v), want warning-only skip", applied, warnings)
 	}
 }
 
@@ -220,6 +292,14 @@ func mustWriteFile(t *testing.T, path string, content string) {
 	t.Helper()
 	mustMkdirAll(t, filepath.Dir(path))
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
+}
+
+func mustWriteFileBytes(t *testing.T, path string, content []byte) {
+	t.Helper()
+	mustMkdirAll(t, filepath.Dir(path))
+	if err := os.WriteFile(path, content, 0600); err != nil {
 		t.Fatalf("WriteFile(%s): %v", path, err)
 	}
 }
