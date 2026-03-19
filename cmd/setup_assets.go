@@ -31,6 +31,7 @@ const (
 	setupAssetRootProviderCopilot     = "provider_copilot"
 	setupAssetRootProviderClaudeSkill = "provider_claude_skill"
 	setupAssetRootProviderCodexSkill  = "provider_codex_skill"
+	setupImportedAssetsDirName        = "imported-assets"
 )
 
 // SetupAsset stores one portable file asset captured during setup export.
@@ -58,7 +59,6 @@ type setupAssetCollection struct {
 type setupAssetOptions struct {
 	ProjectDir     string
 	IncludeSecrets bool
-	ConfigDir      string
 }
 
 func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string, error) {
@@ -69,6 +69,10 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 
 	var assets setupAssetCollection
 	var warnings []string
+	projectDir, err := normalizeOptionalDir(opts.ProjectDir)
+	if err != nil {
+		return setupAssetCollection{}, nil, err
+	}
 
 	providerAssets, providerWarnings, err := collectProviderHomeAssets(homeDir, opts.IncludeSecrets)
 	if err != nil {
@@ -77,7 +81,7 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	assets.ProviderFiles = providerAssets
 	warnings = append(warnings, providerWarnings...)
 
-	projectAssets, instructionAssets, projectWarnings, err := collectProjectAssets(opts.ProjectDir, opts.IncludeSecrets)
+	projectAssets, instructionAssets, projectWarnings, err := collectProjectAssets(projectDir, opts.IncludeSecrets)
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
@@ -85,7 +89,7 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	assets.InstructionOverrides = instructionAssets
 	warnings = append(warnings, projectWarnings...)
 
-	skillAssets, skillWarnings, err := collectSkillAssets(homeDir, opts.ProjectDir, opts.IncludeSecrets)
+	skillAssets, skillWarnings, err := collectSkillAssets(homeDir, projectDir, opts.IncludeSecrets)
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
@@ -169,6 +173,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 	var warnings []string
 
 	seen := make(map[string]struct{})
+	missingInstructionFiles := 0
 	for _, filename := range sortedInstructionFilenames() {
 		absPath := filepath.Join(projectDir, filepath.FromSlash(filename))
 		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
@@ -176,7 +181,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 			return nil, nil, warnings, err
 		}
 		if warn != "" {
-			warnings = append(warnings, warn)
+			missingInstructionFiles++
 		}
 		if asset.LogicalPath == "" {
 			continue
@@ -197,7 +202,11 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 			SHA256:              asset.SHA256,
 		})
 	}
+	if missingInstructionFiles > 0 {
+		warnings = append(warnings, fmt.Sprintf("project export skipped %d missing optional instruction file(s)", missingInstructionFiles))
+	}
 
+	missingWorkflowFiles := 0
 	for _, key := range workflowtemplates.SupportedKeys() {
 		filename, ok := workflowtemplates.FindTemplateFilename(key)
 		if !ok {
@@ -209,7 +218,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 			return nil, nil, warnings, err
 		}
 		if warn != "" {
-			warnings = append(warnings, warn)
+			missingWorkflowFiles++
 		}
 		if asset.LogicalPath == "" {
 			continue
@@ -218,6 +227,9 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 			continue
 		}
 		projectFiles = append(projectFiles, asset)
+	}
+	if missingWorkflowFiles > 0 {
+		warnings = append(warnings, fmt.Sprintf("project export skipped %d missing optional workflow template file(s)", missingWorkflowFiles))
 	}
 
 	return projectFiles, instructionOverrides, warnings, nil
@@ -303,7 +315,7 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) && optional {
-			return SetupAsset{}, fmt.Sprintf("optional asset %q not found; skipping", path), nil
+			return SetupAsset{}, "optional asset missing", nil
 		}
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
 	}
@@ -351,4 +363,171 @@ func sortedInstructionFilenames() []string {
 	}
 	sort.Strings(filenames)
 	return filenames
+}
+
+func normalizeOptionalDir(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving directory %q: %w", path, err)
+	}
+	return abs, nil
+}
+
+func instructionNameForAsset(asset SetupAsset) string {
+	needle := filepath.ToSlash(asset.ProjectRelativePath)
+	if needle == "" {
+		needle = filepath.ToSlash(asset.LogicalPath)
+	}
+	for name, filename := range agent.WellKnownInstructions {
+		if filepath.ToSlash(filename) == needle {
+			return name
+		}
+	}
+	base := filepath.Base(needle)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, error) {
+	stageRoot := filepath.Join(configDir, setupImportedAssetsDirName)
+	if err := os.RemoveAll(stageRoot); err != nil && !os.IsNotExist(err) {
+		return 0, nil, fmt.Errorf("resetting staged imported assets: %w", err)
+	}
+
+	staged := 0
+	var warnings []string
+	for _, asset := range assets {
+		if asset.Redacted || len(asset.Content) == 0 {
+			if asset.Redacted {
+				warnings = append(warnings, fmt.Sprintf("staging skipped redacted asset %q", asset.SourcePath))
+			}
+			continue
+		}
+		stagePath := stagedAssetPath(stageRoot, asset)
+		if stagePath == "" {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(stagePath), 0700); err != nil {
+			return staged, warnings, fmt.Errorf("creating staged asset directory: %w", err)
+		}
+		if err := os.WriteFile(stagePath, asset.Content, 0600); err != nil {
+			return staged, warnings, fmt.Errorf("writing staged asset %q: %w", stagePath, err)
+		}
+		staged++
+	}
+	return staged, warnings, nil
+}
+
+func stagedAssetPath(stageRoot string, asset SetupAsset) string {
+	switch asset.Kind {
+	case setupAssetKindProviderFile:
+		return filepath.Join(stageRoot, "provider", asset.LogicalRoot, filepath.FromSlash(asset.LogicalPath))
+	case setupAssetKindProjectFile:
+		rel := asset.ProjectRelativePath
+		if rel == "" {
+			rel = asset.LogicalPath
+		}
+		return filepath.Join(stageRoot, "project", filepath.FromSlash(rel))
+	case setupAssetKindSkill:
+		switch asset.LogicalRoot {
+		case setupAssetRootProject:
+			rel := asset.ProjectRelativePath
+			if rel == "" {
+				rel = asset.LogicalPath
+			}
+			return filepath.Join(stageRoot, "project", filepath.FromSlash(rel))
+		default:
+			return filepath.Join(stageRoot, "provider", asset.LogicalRoot, filepath.FromSlash(asset.LogicalPath))
+		}
+	default:
+		return ""
+	}
+}
+
+func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
+	projectRoot := filepath.Join(configDir, setupImportedAssetsDirName, "project")
+	info, err := os.Stat(projectRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("reading staged project assets: %w", err)
+	}
+	if !info.IsDir() {
+		return 0, nil
+	}
+
+	applied := 0
+	err = filepath.WalkDir(projectRoot, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(projectRoot, path)
+		if err != nil {
+			return err
+		}
+		dest := filepath.Join(targetDir, rel)
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dest, data, 0644); err != nil {
+			return err
+		}
+		applied++
+		return nil
+	})
+	if err != nil {
+		return applied, fmt.Errorf("applying staged project assets: %w", err)
+	}
+	return applied, nil
+}
+
+func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []string, error) {
+	applied := 0
+	var warnings []string
+	for _, asset := range assets {
+		if asset.Redacted || len(asset.Content) == 0 {
+			if asset.Redacted {
+				warnings = append(warnings, fmt.Sprintf("provider asset %q is redacted; cannot apply without re-importing with --include-secrets", asset.SourcePath))
+			}
+			continue
+		}
+		dest, ok := providerAssetDestination(homeDir, asset)
+		if !ok {
+			warnings = append(warnings, fmt.Sprintf("provider asset root %q is not supported for apply; staged only", asset.LogicalRoot))
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+			return applied, warnings, fmt.Errorf("creating provider asset directory: %w", err)
+		}
+		if err := os.WriteFile(dest, asset.Content, 0600); err != nil {
+			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
+		}
+		applied++
+	}
+	return applied, warnings, nil
+}
+
+func providerAssetDestination(homeDir string, asset SetupAsset) (string, bool) {
+	switch asset.LogicalRoot {
+	case setupAssetRootProviderClaude:
+		return filepath.Join(homeDir, ".claude", filepath.FromSlash(asset.LogicalPath)), true
+	case setupAssetRootProviderCodex:
+		return filepath.Join(homeDir, ".codex", filepath.FromSlash(asset.LogicalPath)), true
+	case setupAssetRootProviderClaudeSkill:
+		return filepath.Join(homeDir, ".claude", "skills", filepath.FromSlash(asset.LogicalPath)), true
+	case setupAssetRootProviderCodexSkill:
+		return filepath.Join(homeDir, ".codex", "skills", filepath.FromSlash(asset.LogicalPath)), true
+	default:
+		return "", false
+	}
 }

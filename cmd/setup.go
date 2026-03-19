@@ -208,6 +208,9 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	if strings.HasSuffix(outputFile, ".bundle") && !plain {
 		encrypted = true
 	}
+	if includeSecrets && !encrypted {
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: --include-secrets exports sensitive asset content without bundle encryption")
+	}
 
 	hostname, _ := os.Hostname()
 	bundle := SetupBundle{
@@ -226,6 +229,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		bundle.Agents = selected
+		bundle.Sessions = filterSessionsForAgents(bundle.Sessions, bundle.Agents)
 	}
 	templateBundle, templateWarnings, err := workflowtemplates.ExportBundle(resolveConfigDir())
 	if err != nil {
@@ -238,7 +242,6 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	collectedAssets, assetWarnings, err := collectSetupAssets(setupAssetOptions{
 		ProjectDir:     projectDir,
 		IncludeSecrets: includeSecrets,
-		ConfigDir:      resolveConfigDir(),
 	})
 	if err != nil {
 		return fmt.Errorf("collecting portable setup assets: %w", err)
@@ -454,6 +457,29 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Updated: instruction %s\n", inst.Name)
 		}
 	}
+	for _, asset := range bundle.InstructionOverrides {
+		name := instructionNameForAsset(asset)
+		if name == "" || len(asset.Content) == 0 {
+			continue
+		}
+		inst := agent.InstructionFile{
+			Name:      name,
+			Filename:  asset.ProjectRelativePath,
+			Content:   string(asset.Content),
+			UpdatedAt: time.Now(),
+		}
+		if inst.Filename == "" {
+			inst.Filename = asset.LogicalPath
+		}
+		if idx, ok := instIndex[inst.Name]; !ok {
+			sc.Instructions = append(sc.Instructions, inst)
+			instIndex[inst.Name] = len(sc.Instructions) - 1
+			fmt.Printf("  Imported: instruction override %s\n", inst.Name)
+		} else if merge || sc.Instructions[idx].Content == "" {
+			sc.Instructions[idx] = inst
+			fmt.Printf("  Updated: instruction override %s\n", inst.Name)
+		}
+	}
 
 	// Merge rules
 	ruleIndex := make(map[string]int)
@@ -523,6 +549,16 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 		for _, warn := range templateWarnings {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 		}
+	}
+	stagedAssets, stageWarnings, err := stageImportedAssets(effectiveConfigDir(), append(append(append([]SetupAsset{}, bundle.ProviderFiles...), bundle.ProjectFiles...), bundle.SkillAssets...))
+	if err != nil {
+		return fmt.Errorf("staging imported portable assets: %w", err)
+	}
+	if stagedAssets > 0 {
+		fmt.Printf("  Imported: portable assets (%d staged)\n", stagedAssets)
+	}
+	for _, warn := range stageWarnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 	}
 
 	// Import sessions
@@ -604,6 +640,21 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  Warning: could not apply Codex config: %v\n", err)
 			} else {
 				fmt.Println("  Applied: Codex config to ~/.codex/")
+			}
+		}
+		homeDir, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			fmt.Printf("  Warning: could not resolve home directory for provider asset apply: %v\n", homeErr)
+		} else {
+			appliedAssets, assetWarnings, err := applyProviderAssetsToSystem(homeDir, append(bundle.ProviderFiles, providerSkillAssets(bundle.SkillAssets)...))
+			if err != nil {
+				return fmt.Errorf("applying provider assets: %w", err)
+			}
+			if appliedAssets > 0 {
+				fmt.Printf("  Applied: provider assets (%d)\n", appliedAssets)
+			}
+			for _, warn := range assetWarnings {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 			}
 		}
 	}
@@ -738,24 +789,75 @@ func printSetupAssetSummary(label string, assets []SetupAsset) {
 		return
 	}
 	sensitive := 0
-	missing := 0
 	redacted := 0
 	for _, asset := range assets {
 		if asset.Sensitive {
 			sensitive++
-		}
-		if asset.Missing {
-			missing++
 		}
 		if asset.Redacted {
 			redacted++
 		}
 	}
 	fmt.Printf("  %s: %d", label, len(assets))
-	if sensitive > 0 || missing > 0 || redacted > 0 {
-		fmt.Printf(" (sensitive=%d, missing=%d, redacted=%d)", sensitive, missing, redacted)
+	if sensitive > 0 || redacted > 0 {
+		fmt.Printf(" (sensitive=%d, redacted=%d)", sensitive, redacted)
 	}
 	fmt.Println()
+}
+
+func filterSessionsForAgents(config agent.SessionConfig, selected []agent.Agent) agent.SessionConfig {
+	if len(selected) == 0 {
+		return agent.SessionConfig{}
+	}
+	allowed := make(map[string]struct{}, len(selected))
+	for _, item := range selected {
+		allowed[item.Name] = struct{}{}
+	}
+
+	filtered := config
+	filtered.Sessions = nil
+	activeSessionAllowed := false
+	for _, session := range config.Sessions {
+		keptAgents := make([]agent.SessionAgent, 0, len(session.Agents))
+		for _, sessionAgent := range session.Agents {
+			if _, ok := allowed[sessionAgent.Name]; ok {
+				keptAgents = append(keptAgents, sessionAgent)
+			}
+		}
+		if len(keptAgents) == 0 {
+			continue
+		}
+		session.Agents = keptAgents
+		filtered.Sessions = append(filtered.Sessions, session)
+		if session.ID == config.ActiveSession {
+			activeSessionAllowed = true
+		}
+	}
+	filtered.DefaultAgents = filterStringSet(config.DefaultAgents, allowed)
+	if !activeSessionAllowed {
+		filtered.ActiveSession = ""
+	}
+	return filtered
+}
+
+func filterStringSet(items []string, allowed map[string]struct{}) []string {
+	filtered := make([]string, 0, len(items))
+	for _, item := range items {
+		if _, ok := allowed[item]; ok {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func providerSkillAssets(items []SetupAsset) []SetupAsset {
+	filtered := make([]SetupAsset, 0, len(items))
+	for _, item := range items {
+		if item.LogicalRoot == setupAssetRootProviderClaudeSkill || item.LogicalRoot == setupAssetRootProviderCodexSkill {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func runSetupApply(cmd *cobra.Command, args []string) error {
@@ -798,6 +900,15 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 		pushed++
 	}
 	fmt.Printf("Applied %d instruction file(s) to %s\n", pushed, dir)
+	if len(onlySet) == 0 {
+		stagedApplied, err := applyStagedProjectAssets(effectiveConfigDir(), dir)
+		if err != nil {
+			return err
+		}
+		if stagedApplied > 0 {
+			fmt.Printf("Applied %d staged project asset(s) to %s\n", stagedApplied, dir)
+		}
+	}
 
 	if generate {
 		fmt.Println("\nGenerating configuration files...")
