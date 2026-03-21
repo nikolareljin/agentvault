@@ -202,6 +202,8 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 			Sensitive:           asset.Sensitive,
 			Missing:             asset.Missing,
 			Redacted:            asset.Redacted,
+			ContentPresent:      asset.ContentPresent,
+			SizeBytes:           asset.SizeBytes,
 			Content:             asset.Content,
 			SHA256:              asset.SHA256,
 		})
@@ -282,11 +284,16 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 	}
 
 	var assets []SetupAsset
+	var warnings []string
 	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("walking %q: %w", root, walkErr)
 		}
 		if d.IsDir() {
+			return nil
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			warnings = append(warnings, fmt.Sprintf("skipping symlink asset %q under %q", path, root))
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)
@@ -312,7 +319,7 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 	if err != nil {
 		return nil, nil, err
 	}
-	return assets, nil, nil
+	return assets, warnings, nil
 }
 
 func loadSetupAsset(path string, kind string, origin string, logicalRoot string, logicalPath string, projectRelativePath string, sensitive bool, includeSecrets bool, optional bool) (SetupAsset, string, error) {
@@ -338,23 +345,30 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		Sensitive:           sensitive,
 	}
 
-	info, statErr := os.Stat(path)
-	if statErr == nil {
-		asset.SizeBytes = info.Size()
+	info, statErr := os.Lstat(path)
+	if statErr != nil {
+		if os.IsNotExist(statErr) && optional {
+			asset.Missing = true
+			return asset, fmt.Sprintf("optional asset missing (root=%s, path=%s)", logicalRoot, safeLogicalPath), nil
+		}
+		return SetupAsset{}, "", fmt.Errorf("reading asset metadata %q: %w", path, statErr)
+	}
+	asset.SizeBytes = info.Size()
+	if info.Mode()&os.ModeSymlink != 0 {
+		return SetupAsset{}, "", fmt.Errorf("asset %q must not be a symlink", path)
+	}
+	if !info.Mode().IsRegular() {
+		return SetupAsset{}, "", fmt.Errorf("asset %q is not a regular file", path)
+	}
+	if asset.SizeBytes > maxSetupAssetBytes {
+		return asset, fmt.Sprintf("asset %q exceeds %d bytes; exporting metadata only", path, maxSetupAssetBytes), nil
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) && optional {
-			asset.Missing = true
-			return asset, "optional asset missing", nil
-		}
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
 	}
 	asset.SizeBytes = int64(len(data))
-	if len(data) > maxSetupAssetBytes {
-		return asset, fmt.Sprintf("asset %q exceeds %d bytes; exporting metadata only", path, maxSetupAssetBytes), nil
-	}
 	asset.SHA256 = hashSetupAssetContent(data)
 	if sensitive && !includeSecrets {
 		asset.Redacted = true
