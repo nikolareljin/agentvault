@@ -46,6 +46,10 @@ func TestCollectSetupAssets_ProjectDiscoveryAndInstructionOverrides(t *testing.T
 	if !hasAsset(assets.InstructionOverrides, setupAssetKindInstruction, setupAssetRootProject, "AGENTS.md") {
 		t.Fatalf("instruction overrides missing AGENTS.md")
 	}
+	agentsOverride := findAssetByKind(assets.InstructionOverrides, setupAssetKindInstruction, setupAssetRootProject, "AGENTS.md")
+	if agentsOverride == nil || !agentsOverride.ContentPresent || agentsOverride.SizeBytes == 0 || string(agentsOverride.Content) != "agents\n" {
+		t.Fatalf("instruction override metadata = %#v, want content metadata copied from project asset", agentsOverride)
+	}
 }
 
 func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *testing.T) {
@@ -213,6 +217,9 @@ func TestLoadSetupAsset_MissingOptionalIncludesMetadata(t *testing.T) {
 	if warningText == "" || !asset.Missing || asset.LogicalPath != "docs/missing.txt" {
 		t.Fatalf("loadSetupAsset() = (%#v, %q), want missing metadata entry", asset, warningText)
 	}
+	if !strings.Contains(warningText, "root=project_root") || !strings.Contains(warningText, "path=docs/missing.txt") {
+		t.Fatalf("loadSetupAsset() warning = %q, want root/path context", warningText)
+	}
 }
 
 func TestLoadSetupAsset_EmptyFileContentMarkedPresent(t *testing.T) {
@@ -236,6 +243,42 @@ func TestLoadSetupAsset_OversizedReturnsMetadataOnly(t *testing.T) {
 	}
 	if warningText == "" || asset.ContentPresent || len(asset.Content) != 0 || asset.SizeBytes <= maxSetupAssetBytes {
 		t.Fatalf("loadSetupAsset() = (%#v, %q), want metadata-only oversized entry", asset, warningText)
+	}
+}
+
+func TestCollectDirFiles_SkipsSymlinkAssets(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.txt")
+	mustWriteFile(t, target, "secret")
+	link := filepath.Join(root, "linked.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	assets, warnings, err := collectDirFiles(root, setupAssetKindSkill, setupAssetOriginProjectLocal, setupAssetRootProject, "", "", false, false)
+	if err != nil {
+		t.Fatalf("collectDirFiles() error = %v", err)
+	}
+	if hasAsset(assets, setupAssetKindSkill, setupAssetRootProject, "linked.txt") {
+		t.Fatalf("collectDirFiles() assets = %#v, want symlink skipped", assets)
+	}
+	if len(warnings) == 0 || !strings.Contains(strings.Join(warnings, "\n"), "symlink") {
+		t.Fatalf("collectDirFiles() warnings = %v, want symlink warning", warnings)
+	}
+}
+
+func TestLoadSetupAsset_RejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.txt")
+	mustWriteFile(t, target, "secret")
+	link := filepath.Join(root, "linked.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	_, _, err := loadSetupAsset(link, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, "linked.txt", "linked.txt", false, false, false)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("loadSetupAsset() err = %v, want symlink rejection", err)
 	}
 }
 
