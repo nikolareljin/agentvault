@@ -175,6 +175,8 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 	projectFiles := make([]SetupAsset, 0)
 	instructionOverrides := make([]SetupAsset, 0)
 	var warnings []string
+	var instructionWarnings []string
+	var workflowWarnings []string
 
 	seen := make(map[string]struct{})
 	missingInstructionFiles := 0
@@ -187,7 +189,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 		if asset.Missing {
 			missingInstructionFiles++
 		} else if warn != "" {
-			warnings = append(warnings, warn)
+			instructionWarnings = append(instructionWarnings, warn)
 		}
 		if asset.LogicalPath == "" {
 			continue
@@ -213,6 +215,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 	if missingInstructionFiles > 0 {
 		warnings = append(warnings, fmt.Sprintf("project export skipped %d missing optional instruction file(s)", missingInstructionFiles))
 	}
+	warnings = append(warnings, instructionWarnings...)
 
 	missingWorkflowFiles := 0
 	for _, key := range workflowtemplates.SupportedKeys() {
@@ -228,7 +231,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 		if asset.Missing {
 			missingWorkflowFiles++
 		} else if warn != "" {
-			warnings = append(warnings, warn)
+			workflowWarnings = append(workflowWarnings, warn)
 		}
 		if asset.LogicalPath == "" {
 			continue
@@ -241,6 +244,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 	if missingWorkflowFiles > 0 {
 		warnings = append(warnings, fmt.Sprintf("project export skipped %d missing optional workflow template file(s)", missingWorkflowFiles))
 	}
+	warnings = append(warnings, workflowWarnings...)
 
 	return projectFiles, instructionOverrides, warnings, nil
 }
