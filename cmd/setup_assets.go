@@ -153,6 +153,14 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsse
 		}
 	}
 
+	copilotConfigDir := filepath.Join(homeDir, ".config", "github-copilot")
+	copilotAssets, copilotWarnings, err := collectDirFiles(copilotConfigDir, setupAssetKindProviderFile, setupAssetOriginProviderHome, setupAssetRootProviderCopilot, "", "", true, includeSecrets)
+	if err != nil {
+		return nil, warnings, err
+	}
+	assets = append(assets, copilotAssets...)
+	warnings = append(warnings, copilotWarnings...)
+
 	codexRulesDir := filepath.Join(homeDir, ".codex", "rules")
 	ruleAssets, warningsOut, err := collectDirFiles(codexRulesDir, setupAssetKindProviderFile, setupAssetOriginProviderHome, setupAssetRootProviderCodex, "rules", "", false, includeSecrets)
 	if err != nil {
@@ -463,6 +471,10 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 		}
 		stagePath, err := stagedAssetPath(stageRoot, asset)
 		if err != nil {
+			if strings.Contains(err.Error(), "unsupported provider asset root") {
+				warnings = append(warnings, fmt.Sprintf("staging skipped asset %s because %v", describeSetupAsset(asset), err))
+				continue
+			}
 			return staged, warnings, fmt.Errorf("resolving staged asset path: %w", err)
 		}
 		if stagePath == "" {
@@ -611,6 +623,10 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 			continue
 		}
+		if err := ensureNoSymlinkPath(filepath.Dir(dest)); err != nil {
+			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 			return applied, warnings, fmt.Errorf("creating provider asset directory: %w", err)
 		}
@@ -636,6 +652,8 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) 
 		return safeJoinUnder(filepath.Join(homeDir, ".claude"), asset.LogicalPath)
 	case setupAssetRootProviderCodex:
 		return safeJoinUnder(filepath.Join(homeDir, ".codex"), asset.LogicalPath)
+	case setupAssetRootProviderCopilot:
+		return safeJoinUnder(filepath.Join(homeDir, ".config", "github-copilot"), asset.LogicalPath)
 	case setupAssetRootProviderClaudeSkill:
 		return safeJoinUnder(filepath.Join(homeDir, ".claude", "skills"), asset.LogicalPath)
 	case setupAssetRootProviderCodexSkill:
@@ -651,6 +669,8 @@ func providerStageDirectoryName(logicalRoot string) (string, bool) {
 		return setupAssetRootProviderClaude, true
 	case setupAssetRootProviderCodex:
 		return setupAssetRootProviderCodex, true
+	case setupAssetRootProviderCopilot:
+		return setupAssetRootProviderCopilot, true
 	case setupAssetRootProviderClaudeSkill:
 		return setupAssetRootProviderClaudeSkill, true
 	case setupAssetRootProviderCodexSkill:
@@ -711,6 +731,36 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 		return "", fmt.Errorf("path traversal is not allowed: %q", path)
 	}
 	return filepath.ToSlash(cleaned), nil
+}
+
+func ensureNoSymlinkPath(path string) error {
+	if path == "" {
+		return nil
+	}
+	cleaned := filepath.Clean(path)
+	parts := strings.Split(cleaned, string(filepath.Separator))
+	current := string(filepath.Separator)
+	if !filepath.IsAbs(cleaned) {
+		current = parts[0]
+		parts = parts[1:]
+	}
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("destination directory contains a symlink: %q", current)
+		}
+	}
+	return nil
 }
 
 func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
