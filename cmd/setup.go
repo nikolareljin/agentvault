@@ -140,7 +140,8 @@ By default, existing agents are skipped. Use --merge to update settings.
 Examples:
   agentvault setup import my-setup.json
   agentvault setup import my-setup.bundle    # Encrypted bundle
-  agentvault setup import setup.json --merge # Update existing agents`,
+  agentvault setup import setup.json --merge # Update existing agents
+  agentvault setup import setup.json --apply-provider-configs # Apply provider configs and assets`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSetupImport,
 }
@@ -206,7 +207,7 @@ func init() {
 	setupExportCmd.Flags().String("project", "", "include project-local instruction, workflow, and skill assets from this directory")
 
 	setupImportCmd.Flags().Bool("merge", false, "merge with existing agents instead of skipping")
-	setupImportCmd.Flags().Bool("apply-provider-configs", false, "apply provider configs to system after import")
+	setupImportCmd.Flags().Bool("apply-provider-configs", false, "apply provider configs and provider asset files to system after import")
 
 	setupApplyCmd.Flags().Bool("generate", false, "also generate .env and provider config files")
 	setupApplyCmd.Flags().StringSlice("only", nil, "apply only specific instructions (e.g., --only agents,claude)")
@@ -662,7 +663,7 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 
 	// Apply provider configs to system if requested
 	if applyConfigs {
-		fmt.Println("\nApplying provider configs to system...")
+		fmt.Println("\nApplying provider configs and provider assets to system...")
 		if pc.Claude != nil {
 			if err := agent.SaveClaudeConfig(pc.Claude); err != nil {
 				fmt.Printf("  Warning: could not apply Claude config: %v\n", err)
@@ -1146,7 +1147,7 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 	if bundle.ProviderConfigs.Claude != nil || bundle.ProviderConfigs.Codex != nil {
 		guide.Steps = append(guide.Steps, SetupStep{
 			Name:        "Apply provider configs",
-			Description: "Apply Claude/Codex settings to system",
+			Description: "Apply Claude/Codex settings and provider assets to system",
 			Commands:    []string{"agentvault setup import <file> --apply-provider-configs"},
 		})
 	}

@@ -595,3 +595,23 @@ func TestCopyRegularFileRejectsSymlinkDestination(t *testing.T) {
 		t.Fatalf("symlink target = %q, %v, want untouched target", string(data), err)
 	}
 }
+
+func TestCopyRegularFileRejectsSymlinkDestinationDirectory(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "source.txt")
+	mustWriteFile(t, srcPath, "source")
+	rootDir := t.TempDir()
+	outsideDir := t.TempDir()
+	link := filepath.Join(rootDir, "linked-dir")
+	if err := os.Symlink(outsideDir, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	err := copyRegularFile(srcPath, filepath.Join(link, "dest.txt"), 0644)
+	if err == nil || !strings.Contains(err.Error(), "destination directory contains a symlink") {
+		t.Fatalf("copyRegularFile() err = %v, want symlink directory error", err)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "dest.txt")); !os.IsNotExist(err) {
+		t.Fatalf("symlink target directory should remain untouched, got err=%v", err)
+	}
+}

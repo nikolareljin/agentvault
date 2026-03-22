@@ -638,7 +638,7 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		} else if !os.IsNotExist(err) {
 			return applied, warnings, fmt.Errorf("checking provider asset destination %q: %w", dest, err)
 		}
-		if err := os.WriteFile(dest, asset.Content, 0600); err != nil {
+		if err := writeRegularFileAtomic(dest, asset.Content, 0600); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
 		}
 		applied++
@@ -763,6 +763,49 @@ func ensureNoSymlinkPath(path string) error {
 	return nil
 }
 
+func writeRegularFileAtomic(destPath string, content []byte, perm os.FileMode) error {
+	destDir := filepath.Dir(destPath)
+	if err := ensureNoSymlinkPath(destDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+	if info, err := os.Lstat(destPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("destination path is a symlink and is not allowed: %q", destPath)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	tmpFile, err := os.CreateTemp(destDir, ".asset-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer func() {
+		tmpFile.Close()
+		if tmpPath != "" {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmpFile.Chmod(perm); err != nil {
+		return err
+	}
+	if _, err := tmpFile.Write(content); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		return err
+	}
+	tmpPath = ""
+	return nil
+}
+
 func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
 	src, err := os.Open(srcPath)
 	if err != nil {
@@ -779,6 +822,9 @@ func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
 	}
 
 	destDir := filepath.Dir(destPath)
+	if err := ensureNoSymlinkPath(destDir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}

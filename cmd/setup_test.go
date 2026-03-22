@@ -120,3 +120,33 @@ func TestFilterProjectFilesForStagingSkipsInstructionOverrides(t *testing.T) {
 		t.Fatalf("filterProjectFilesForStaging() = %#v, want docs/guide.md preserved", filtered)
 	}
 }
+
+func TestSetupImportFlagDescribesProviderAssets(t *testing.T) {
+	flag := setupImportCmd.Flags().Lookup("apply-provider-configs")
+	if flag == nil {
+		t.Fatal("apply-provider-configs flag missing")
+	}
+	if !strings.Contains(flag.Usage, "provider asset files") {
+		t.Fatalf("apply-provider-configs usage = %q, want provider asset files mentioned", flag.Usage)
+	}
+}
+
+func TestBuildInstallGuideMentionsProviderAssets(t *testing.T) {
+	guide := generateInstallGuide(SetupBundle{
+		ProviderConfigs: agent.ProviderConfig{
+			Claude: &agent.ClaudeConfig{},
+		},
+	})
+	for _, step := range guide.Steps {
+		if step.Name == "Apply provider configs" {
+			if !strings.Contains(step.Description, "provider assets") {
+				t.Fatalf("provider config step description = %q, want provider assets mentioned", step.Description)
+			}
+			if len(step.Commands) == 0 || !strings.Contains(step.Commands[0], "--apply-provider-configs") {
+				t.Fatalf("provider config step commands = %v, want --apply-provider-configs example", step.Commands)
+			}
+			return
+		}
+	}
+	t.Fatal("provider config install guide step missing")
+}
