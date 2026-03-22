@@ -180,12 +180,14 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 	missingInstructionFiles := 0
 	for _, filename := range sortedInstructionFilenames() {
 		absPath := filepath.Join(projectDir, filepath.FromSlash(filename))
-		asset, _, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
+		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
 			return nil, nil, warnings, err
 		}
 		if asset.Missing {
 			missingInstructionFiles++
+		} else if warn != "" {
+			warnings = append(warnings, warn)
 		}
 		if asset.LogicalPath == "" {
 			continue
@@ -219,12 +221,14 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 			continue
 		}
 		absPath := filepath.Join(projectDir, filename)
-		asset, _, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
+		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
 			return nil, nil, warnings, err
 		}
 		if asset.Missing {
 			missingWorkflowFiles++
+		} else if warn != "" {
+			warnings = append(warnings, warn)
 		}
 		if asset.LogicalPath == "" {
 			continue
@@ -446,10 +450,10 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 	for _, asset := range assets {
 		if asset.Redacted || asset.Missing || !asset.ContentPresent {
 			if asset.Redacted {
-				warnings = append(warnings, fmt.Sprintf("staging skipped redacted asset %q", asset.SourcePath))
+				warnings = append(warnings, fmt.Sprintf("staging skipped redacted asset %s", describeSetupAsset(asset)))
 			}
 			if !asset.Redacted && !asset.Missing && !asset.ContentPresent {
-				warnings = append(warnings, fmt.Sprintf("staging skipped asset %q because bundle omitted file content", asset.SourcePath))
+				warnings = append(warnings, fmt.Sprintf("staging skipped asset %s because bundle omitted file content", describeSetupAsset(asset)))
 			}
 			continue
 		}
@@ -469,6 +473,17 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 		staged++
 	}
 	return staged, warnings, nil
+}
+
+func describeSetupAsset(asset SetupAsset) string {
+	path := asset.ProjectRelativePath
+	if path == "" {
+		path = asset.LogicalPath
+	}
+	if path == "" {
+		path = "<unknown>"
+	}
+	return fmt.Sprintf("(root=%s path=%s)", asset.LogicalRoot, path)
 }
 
 func stagedAssetPath(stageRoot string, asset SetupAsset) (string, error) {
@@ -580,20 +595,28 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 	for _, asset := range assets {
 		if asset.Redacted || asset.Missing || !asset.ContentPresent {
 			if asset.Redacted {
-				warnings = append(warnings, fmt.Sprintf("provider asset %q is redacted; cannot apply without re-importing with --include-secrets", asset.SourcePath))
+				warnings = append(warnings, fmt.Sprintf("provider asset %s is redacted; cannot apply without re-importing with --include-secrets", describeSetupAsset(asset)))
 			}
 			if !asset.Redacted && !asset.Missing && !asset.ContentPresent {
-				warnings = append(warnings, fmt.Sprintf("provider asset %q omitted file content in bundle; cannot apply", asset.SourcePath))
+				warnings = append(warnings, fmt.Sprintf("provider asset %s omitted file content in bundle; cannot apply", describeSetupAsset(asset)))
 			}
 			continue
 		}
 		dest, err := providerAssetDestination(homeDir, asset)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("provider asset %q cannot be applied: %v", asset.SourcePath, err))
+			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 			return applied, warnings, fmt.Errorf("creating provider asset directory: %w", err)
+		}
+		if info, err := os.Lstat(dest); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: destination path is a symlink", describeSetupAsset(asset)))
+				continue
+			}
+		} else if !os.IsNotExist(err) {
+			return applied, warnings, fmt.Errorf("checking provider asset destination %q: %w", dest, err)
 		}
 		if err := os.WriteFile(dest, asset.Content, 0600); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
@@ -701,17 +724,41 @@ func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
 		return fmt.Errorf("source is not a regular file")
 	}
 
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	destDir := filepath.Dir(destPath)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
-	dest, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if info, err := os.Lstat(destPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("destination path is a symlink and is not allowed: %q", destPath)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	tmpFile, err := os.CreateTemp(destDir, ".asset-*")
 	if err != nil {
 		return err
 	}
-	defer dest.Close()
-
-	if _, err := io.Copy(dest, src); err != nil {
+	tmpPath := tmpFile.Name()
+	defer func() {
+		tmpFile.Close()
+		if tmpPath != "" {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmpFile.Chmod(perm); err != nil {
 		return err
 	}
+	if _, err := io.Copy(tmpFile, src); err != nil {
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, destPath); err != nil {
+		return err
+	}
+	tmpPath = ""
 	return nil
 }
