@@ -180,11 +180,11 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 	missingInstructionFiles := 0
 	for _, filename := range sortedInstructionFilenames() {
 		absPath := filepath.Join(projectDir, filepath.FromSlash(filename))
-		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
+		asset, _, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
 			return nil, nil, warnings, err
 		}
-		if warn != "" {
+		if asset.Missing {
 			missingInstructionFiles++
 		}
 		if asset.LogicalPath == "" {
@@ -219,11 +219,11 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 			continue
 		}
 		absPath := filepath.Join(projectDir, filename)
-		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
+		asset, _, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
 			return nil, nil, warnings, err
 		}
-		if warn != "" {
+		if asset.Missing {
 			missingWorkflowFiles++
 		}
 		if asset.LogicalPath == "" {
@@ -587,9 +587,9 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			}
 			continue
 		}
-		dest, ok := providerAssetDestination(homeDir, asset)
-		if !ok {
-			warnings = append(warnings, fmt.Sprintf("provider asset root %q is not supported for apply; staged only", asset.LogicalRoot))
+		dest, err := providerAssetDestination(homeDir, asset)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("provider asset %q cannot be applied: %v", asset.SourcePath, err))
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
@@ -603,22 +603,18 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 	return applied, warnings, nil
 }
 
-func providerAssetDestination(homeDir string, asset SetupAsset) (string, bool) {
+func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) {
 	switch asset.LogicalRoot {
 	case setupAssetRootProviderClaude:
-		path, err := safeJoinUnder(filepath.Join(homeDir, ".claude"), asset.LogicalPath)
-		return path, err == nil
+		return safeJoinUnder(filepath.Join(homeDir, ".claude"), asset.LogicalPath)
 	case setupAssetRootProviderCodex:
-		path, err := safeJoinUnder(filepath.Join(homeDir, ".codex"), asset.LogicalPath)
-		return path, err == nil
+		return safeJoinUnder(filepath.Join(homeDir, ".codex"), asset.LogicalPath)
 	case setupAssetRootProviderClaudeSkill:
-		path, err := safeJoinUnder(filepath.Join(homeDir, ".claude", "skills"), asset.LogicalPath)
-		return path, err == nil
+		return safeJoinUnder(filepath.Join(homeDir, ".claude", "skills"), asset.LogicalPath)
 	case setupAssetRootProviderCodexSkill:
-		path, err := safeJoinUnder(filepath.Join(homeDir, ".codex", "skills"), asset.LogicalPath)
-		return path, err == nil
+		return safeJoinUnder(filepath.Join(homeDir, ".codex", "skills"), asset.LogicalPath)
 	default:
-		return "", false
+		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
 	}
 }
 

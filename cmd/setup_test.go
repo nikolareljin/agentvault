@@ -22,8 +22,13 @@ func TestSetupBundleMarshalIncludesWorkflowTemplatesField(t *testing.T) {
 		t.Fatalf("marshal output keys = %v, want workflow_templates field present", payload)
 	}
 	for _, key := range []string{"provider_files", "project_files", "instruction_overrides", "skill_assets"} {
-		if _, ok := payload[key]; !ok {
+		value, ok := payload[key]
+		if !ok {
 			t.Fatalf("marshal output keys = %v, want %s field present", payload, key)
+		}
+		items, ok := value.([]any)
+		if !ok || len(items) != 0 {
+			t.Fatalf("marshal output field %s = %#v, want empty array", key, value)
 		}
 	}
 }
