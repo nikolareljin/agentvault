@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -316,6 +317,23 @@ func TestCollectDirFiles_SkipsSymlinkRoot(t *testing.T) {
 	}
 }
 
+func TestCollectDirFiles_SurfacesLoadSetupAssetWarnings(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFileBytes(t, filepath.Join(root, "oversized.txt"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
+
+	assets, warnings, err := collectDirFiles(root, setupAssetKindSkill, setupAssetOriginProjectLocal, setupAssetRootProject, "", "", false, false)
+	if err != nil {
+		t.Fatalf("collectDirFiles() error = %v", err)
+	}
+	if !hasAsset(assets, setupAssetKindSkill, setupAssetRootProject, "oversized.txt") {
+		t.Fatalf("collectDirFiles() assets = %#v, want oversized asset metadata entry", assets)
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "oversized.txt") || !strings.Contains(joined, "metadata only") {
+		t.Fatalf("collectDirFiles() warnings = %v, want oversized warning surfaced", warnings)
+	}
+}
+
 func TestStageImportedAssetsRejectsUnsafePath(t *testing.T) {
 	_, _, err := stageImportedAssets(t.TempDir(), []SetupAsset{{
 		Kind:           setupAssetKindProjectFile,
@@ -343,6 +361,16 @@ func TestStageImportedAssetsWarnsOnUnsupportedProviderRoot(t *testing.T) {
 	joined := strings.Join(warnings, "\n")
 	if staged != 0 || !strings.Contains(joined, "unsupported provider asset root") {
 		t.Fatalf("stageImportedAssets() = (%d, %v), want unsupported-root warning", staged, warnings)
+	}
+	stagePath, err := stagedAssetPath(t.TempDir(), SetupAsset{
+		Kind:           setupAssetKindProviderFile,
+		LogicalRoot:    "../../.ssh",
+		LogicalPath:    "config",
+		ContentPresent: true,
+		Content:        []byte("x"),
+	})
+	if stagePath != "" || !errors.Is(err, errUnsupportedProviderAssetRoot) {
+		t.Fatalf("stagedAssetPath() = (%q, %v), want unsupported-provider-root sentinel", stagePath, err)
 	}
 }
 

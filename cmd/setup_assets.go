@@ -3,6 +3,7 @@ package cmd
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,6 +36,8 @@ const (
 	setupImportedAssetsDirName        = "imported-assets"
 	maxSetupAssetBytes                = 1 << 20
 )
+
+var errUnsupportedProviderAssetRoot = errors.New("unsupported provider asset root")
 
 // SetupAsset stores one portable file asset captured during setup export.
 type SetupAsset struct {
@@ -328,9 +331,12 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		if projectPrefix != "" {
 			projectRelative = filepath.ToSlash(filepath.Join(projectPrefix, rel))
 		}
-		asset, _, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, sensitive, includeSecrets, false)
+		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, sensitive, includeSecrets, false)
 		if err != nil {
 			return err
+		}
+		if warn != "" {
+			warnings = append(warnings, warn)
 		}
 		assets = append(assets, asset)
 		return nil
@@ -471,7 +477,7 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 		}
 		stagePath, err := stagedAssetPath(stageRoot, asset)
 		if err != nil {
-			if strings.Contains(err.Error(), "unsupported provider asset root") {
+			if errors.Is(err, errUnsupportedProviderAssetRoot) {
 				warnings = append(warnings, fmt.Sprintf("staging skipped asset %s because %v", describeSetupAsset(asset), err))
 				continue
 			}
@@ -507,7 +513,7 @@ func stagedAssetPath(stageRoot string, asset SetupAsset) (string, error) {
 	case setupAssetKindProviderFile:
 		providerStageRoot, ok := providerStageDirectoryName(asset.LogicalRoot)
 		if !ok {
-			return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
+			return "", fmt.Errorf("%w %q", errUnsupportedProviderAssetRoot, asset.LogicalRoot)
 		}
 		rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
 		if err != nil {
@@ -539,7 +545,7 @@ func stagedAssetPath(stageRoot string, asset SetupAsset) (string, error) {
 		default:
 			providerStageRoot, ok := providerStageDirectoryName(asset.LogicalRoot)
 			if !ok {
-				return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
+				return "", fmt.Errorf("%w %q", errUnsupportedProviderAssetRoot, asset.LogicalRoot)
 			}
 			rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
 			if err != nil {
@@ -738,12 +744,37 @@ func ensureNoSymlinkPath(path string) error {
 		return nil
 	}
 	cleaned := filepath.Clean(path)
-	parts := strings.Split(cleaned, string(filepath.Separator))
-	current := string(filepath.Separator)
-	if !filepath.IsAbs(cleaned) {
+	sep := string(filepath.Separator)
+	volume := filepath.VolumeName(cleaned)
+
+	var parts []string
+	var current string
+
+	if filepath.IsAbs(cleaned) {
+		if volume != "" {
+			current = volume + sep
+			rest := strings.TrimPrefix(cleaned[len(volume):], sep)
+			if rest == "" {
+				return nil
+			}
+			parts = strings.Split(rest, sep)
+		} else {
+			current = sep
+			rest := strings.TrimPrefix(cleaned, sep)
+			if rest == "" {
+				return nil
+			}
+			parts = strings.Split(rest, sep)
+		}
+	} else {
+		parts = strings.Split(cleaned, sep)
+		if len(parts) == 0 {
+			return nil
+		}
 		current = parts[0]
 		parts = parts[1:]
 	}
+
 	for _, part := range parts {
 		if part == "" {
 			continue
