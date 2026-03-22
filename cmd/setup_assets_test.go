@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -385,5 +386,61 @@ func mustMkdirAll(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0700); err != nil {
 		t.Fatalf("MkdirAll(%s): %v", path, err)
+	}
+}
+
+func TestCollectProjectAssets_DoesNotCountOversizedWarningsAsMissing(t *testing.T) {
+	baselineDir := t.TempDir()
+	_, _, baselineWarnings, err := collectProjectAssets(baselineDir, false)
+	if err != nil {
+		t.Fatalf("collectProjectAssets() baseline error = %v", err)
+	}
+
+	projectDir := t.TempDir()
+	mustWriteFileBytes(t, filepath.Join(projectDir, "AGENTS.md"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
+
+	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	if err != nil {
+		t.Fatalf("collectProjectAssets() error = %v", err)
+	}
+	if len(baselineWarnings) == 0 || len(warnings) == 0 {
+		t.Fatalf("collectProjectAssets() warnings = %v baseline = %v, want missing-file warnings", warnings, baselineWarnings)
+	}
+	baselineFields := strings.Fields(baselineWarnings[0])
+	fields := strings.Fields(warnings[0])
+	if len(baselineFields) < 4 || len(fields) < 4 {
+		t.Fatalf("collectProjectAssets() warnings = %v baseline = %v, want parseable missing-file warnings", warnings, baselineWarnings)
+	}
+	baselineMissing, err := strconv.Atoi(baselineFields[3])
+	if err != nil {
+		t.Fatalf("collectProjectAssets() baseline warning = %q, want numeric missing count: %v", baselineWarnings[0], err)
+	}
+	missing, err := strconv.Atoi(fields[3])
+	if err != nil {
+		t.Fatalf("collectProjectAssets() warning = %q, want numeric missing count: %v", warnings[0], err)
+	}
+	if baselineMissing-missing != 1 {
+		t.Fatalf("collectProjectAssets() warnings = %v baseline = %v, want oversized instruction file to reduce the missing count by one", warnings, baselineWarnings)
+	}
+}
+
+func TestApplyProviderAssetsToSystemWarnsOnUnsafePath(t *testing.T) {
+	applied, warnings, err := applyProviderAssetsToSystem(t.TempDir(), []SetupAsset{{
+		Kind:           setupAssetKindProviderFile,
+		LogicalRoot:    setupAssetRootProviderClaude,
+		LogicalPath:    "../evil",
+		SourcePath:     "/tmp/source/.claude/evil",
+		ContentPresent: true,
+		Content:        []byte("x"),
+	}})
+	if err != nil {
+		t.Fatalf("applyProviderAssetsToSystem() error = %v, want warning-only skip", err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if applied != 0 || len(warnings) == 0 || !strings.Contains(joined, "path traversal") {
+		t.Fatalf("applyProviderAssetsToSystem() = (%d, %v), want path-traversal warning", applied, warnings)
+	}
+	if strings.Contains(joined, "unsupported") {
+		t.Fatalf("applyProviderAssetsToSystem() warnings = %v, want real error instead of unsupported-root warning", warnings)
 	}
 }

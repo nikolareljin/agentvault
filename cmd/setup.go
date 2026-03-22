@@ -40,6 +40,34 @@ type SetupBundle struct {
 	InstallGuide         InstallGuide             `json:"install_guide"`
 }
 
+// MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.
+func (s SetupBundle) MarshalJSON() ([]byte, error) {
+	type alias SetupBundle
+	copy := s
+	if copy.ProviderFiles == nil {
+		copy.ProviderFiles = []SetupAsset{}
+	}
+	if copy.ProjectFiles == nil {
+		copy.ProjectFiles = []SetupAsset{}
+	}
+	if copy.InstructionOverrides == nil {
+		copy.InstructionOverrides = []SetupAsset{}
+	}
+	if copy.SkillAssets == nil {
+		copy.SkillAssets = []SetupAsset{}
+	}
+	if copy.InstallGuide.Requirements == nil {
+		copy.InstallGuide.Requirements = []Requirement{}
+	}
+	if copy.InstallGuide.Steps == nil {
+		copy.InstallGuide.Steps = []SetupStep{}
+	}
+	if copy.InstallGuide.PostSetup == nil {
+		copy.InstallGuide.PostSetup = []string{}
+	}
+	return json.Marshal(alias(copy))
+}
+
 // InstallGuide contains instructions for setting up agents on a new machine.
 type InstallGuide struct {
 	Requirements []Requirement `json:"requirements"`
