@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 )
 
 func TestCollectSetupAssets_ProjectDiscoveryAndInstructionOverrides(t *testing.T) {
@@ -442,5 +444,112 @@ func TestApplyProviderAssetsToSystemWarnsOnUnsafePath(t *testing.T) {
 	}
 	if strings.Contains(joined, "unsupported") {
 		t.Fatalf("applyProviderAssetsToSystem() warnings = %v, want real error instead of unsupported-root warning", warnings)
+	}
+}
+
+func TestCollectProjectAssets_SurfacesOversizedInstructionWarnings(t *testing.T) {
+	projectDir := t.TempDir()
+	mustWriteFileBytes(t, filepath.Join(projectDir, "AGENTS.md"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
+
+	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	if err != nil {
+		t.Fatalf("collectProjectAssets() error = %v", err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "AGENTS.md") || !strings.Contains(joined, "metadata only") {
+		t.Fatalf("collectProjectAssets() warnings = %v, want oversized instruction warning", warnings)
+	}
+}
+
+func TestCollectProjectAssets_SurfacesOversizedWorkflowWarnings(t *testing.T) {
+	projectDir := t.TempDir()
+	keys := workflowtemplates.SupportedKeys()
+	if len(keys) == 0 {
+		t.Fatal("workflowtemplates.SupportedKeys() = none, want at least one template")
+	}
+	filename, ok := workflowtemplates.FindTemplateFilename(keys[0])
+	if !ok {
+		t.Fatalf("FindTemplateFilename(%q) = false, want filename", keys[0])
+	}
+	mustWriteFileBytes(t, filepath.Join(projectDir, filename), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
+
+	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	if err != nil {
+		t.Fatalf("collectProjectAssets() error = %v", err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, filepath.ToSlash(filename)) || !strings.Contains(joined, "metadata only") {
+		t.Fatalf("collectProjectAssets() warnings = %v, want oversized workflow warning", warnings)
+	}
+}
+
+func TestStageImportedAssetsWarningsUseLogicalPaths(t *testing.T) {
+	_, warnings, err := stageImportedAssets(t.TempDir(), []SetupAsset{{
+		Kind:                setupAssetKindProjectFile,
+		LogicalRoot:         setupAssetRootProject,
+		LogicalPath:         "docs/README.md",
+		ProjectRelativePath: "docs/README.md",
+		SourcePath:          "/tmp/exporter-machine/docs/README.md",
+		ContentPresent:      false,
+	}})
+	if err != nil {
+		t.Fatalf("stageImportedAssets() error = %v", err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "root=project_root") || !strings.Contains(joined, "path=docs/README.md") {
+		t.Fatalf("stageImportedAssets() warnings = %v, want logical asset identifier", warnings)
+	}
+	if strings.Contains(joined, "/tmp/exporter-machine/") {
+		t.Fatalf("stageImportedAssets() warnings = %v, want source path omitted", warnings)
+	}
+}
+
+func TestApplyProviderAssetsToSystemRejectsSymlinkDestination(t *testing.T) {
+	homeDir := t.TempDir()
+	mustMkdirAll(t, filepath.Join(homeDir, ".claude"))
+	target := filepath.Join(homeDir, "target.txt")
+	mustWriteFile(t, target, "target")
+	link := filepath.Join(homeDir, ".claude", "settings.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	applied, warnings, err := applyProviderAssetsToSystem(homeDir, []SetupAsset{{
+		Kind:           setupAssetKindProviderFile,
+		LogicalRoot:    setupAssetRootProviderClaude,
+		LogicalPath:    "settings.json",
+		ContentPresent: true,
+		Content:        []byte(`{"theme":"dark"}`),
+	}})
+	if err != nil {
+		t.Fatalf("applyProviderAssetsToSystem() error = %v", err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if applied != 0 || !strings.Contains(joined, "destination path is a symlink") {
+		t.Fatalf("applyProviderAssetsToSystem() = (%d, %v), want symlink warning", applied, warnings)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "target" {
+		t.Fatalf("symlink target = %q, %v, want untouched target", string(data), err)
+	}
+}
+
+func TestCopyRegularFileRejectsSymlinkDestination(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "source.txt")
+	mustWriteFile(t, srcPath, "source")
+	destDir := t.TempDir()
+	target := filepath.Join(destDir, "target.txt")
+	mustWriteFile(t, target, "target")
+	link := filepath.Join(destDir, "dest.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	err := copyRegularFile(srcPath, link, 0644)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("copyRegularFile() err = %v, want symlink destination error", err)
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "target" {
+		t.Fatalf("symlink target = %q, %v, want untouched target", string(data), err)
 	}
 }
