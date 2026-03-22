@@ -61,10 +61,12 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 
 	mustMkdirAll(t, filepath.Join(homeDir, ".claude"))
 	mustMkdirAll(t, filepath.Join(homeDir, ".codex", "rules"))
+	mustMkdirAll(t, filepath.Join(homeDir, ".config", "github-copilot"))
 	mustWriteFile(t, filepath.Join(homeDir, ".claude", "settings.json"), `{"apiKey":"secret"}`)
 	mustWriteFile(t, filepath.Join(homeDir, ".claude", "keybindings.json"), `{"up":"k"}`)
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "config.toml"), `model = "gpt"`)
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "rules", "review.md"), "review rules")
+	mustWriteFile(t, filepath.Join(homeDir, ".config", "github-copilot", "hosts.json"), `{"github.com":{"oauth_token":"secret"}}`)
 
 	assets, _, err := collectSetupAssets(setupAssetOptions{})
 	if err != nil {
@@ -77,6 +79,14 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 	}
 	if !settings.Sensitive || !settings.Redacted || len(settings.Content) != 0 || settings.SHA256 == "" {
 		t.Fatalf("claude settings asset = %#v, want sensitive redacted metadata", settings)
+	}
+
+	copilotHosts := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilot, "hosts.json")
+	if copilotHosts == nil {
+		t.Fatalf("provider files missing copilot config")
+	}
+	if !copilotHosts.Sensitive || !copilotHosts.Redacted || len(copilotHosts.Content) != 0 || copilotHosts.SHA256 == "" {
+		t.Fatalf("copilot config asset = %#v, want sensitive redacted metadata", copilotHosts)
 	}
 	if settings.ContentPresent {
 		t.Fatalf("redacted settings asset should not mark content as present: %#v", settings)
@@ -319,16 +329,20 @@ func TestStageImportedAssetsRejectsUnsafePath(t *testing.T) {
 	}
 }
 
-func TestStageImportedAssetsRejectsUnsafeProviderRoot(t *testing.T) {
-	_, _, err := stageImportedAssets(t.TempDir(), []SetupAsset{{
+func TestStageImportedAssetsWarnsOnUnsupportedProviderRoot(t *testing.T) {
+	staged, warnings, err := stageImportedAssets(t.TempDir(), []SetupAsset{{
 		Kind:           setupAssetKindProviderFile,
 		LogicalRoot:    "../../.ssh",
 		LogicalPath:    "config",
 		ContentPresent: true,
 		Content:        []byte("x"),
 	}})
-	if err == nil || !strings.Contains(err.Error(), "unsupported provider asset root") {
-		t.Fatalf("stageImportedAssets() err = %v, want unsupported provider root error", err)
+	if err != nil {
+		t.Fatalf("stageImportedAssets() error = %v, want warning-only skip", err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if staged != 0 || !strings.Contains(joined, "unsupported provider asset root") {
+		t.Fatalf("stageImportedAssets() = (%d, %v), want unsupported-root warning", staged, warnings)
 	}
 }
 
@@ -480,6 +494,34 @@ func TestCollectProjectAssets_SurfacesOversizedWorkflowWarnings(t *testing.T) {
 	joined := strings.Join(warnings, "\n")
 	if !strings.Contains(joined, filepath.ToSlash(filename)) || !strings.Contains(joined, "metadata only") {
 		t.Fatalf("collectProjectAssets() warnings = %v, want oversized workflow warning", warnings)
+	}
+}
+
+func TestApplyProviderAssetsToSystemRejectsSymlinkProviderDirectory(t *testing.T) {
+	homeDir := t.TempDir()
+	mustMkdirAll(t, filepath.Join(homeDir, ".config"))
+	outsideDir := t.TempDir()
+	link := filepath.Join(homeDir, ".config", "github-copilot")
+	if err := os.Symlink(outsideDir, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	applied, warnings, err := applyProviderAssetsToSystem(homeDir, []SetupAsset{{
+		Kind:           setupAssetKindProviderFile,
+		LogicalRoot:    setupAssetRootProviderCopilot,
+		LogicalPath:    "hosts.json",
+		ContentPresent: true,
+		Content:        []byte(`{"github.com":{"oauth_token":"secret"}}`),
+	}})
+	if err != nil {
+		t.Fatalf("applyProviderAssetsToSystem() error = %v", err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if applied != 0 || !strings.Contains(joined, "destination directory contains a symlink") {
+		t.Fatalf("applyProviderAssetsToSystem() = (%d, %v), want provider-dir symlink warning", applied, warnings)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "hosts.json")); !os.IsNotExist(err) {
+		t.Fatalf("copilot provider symlink target should remain untouched, got err=%v", err)
 	}
 }
 
