@@ -272,12 +272,15 @@ func collectSkillAssets(homeDir string, projectDir string, includeSecrets bool) 
 }
 
 func collectDirFiles(root string, kind string, origin string, logicalRoot string, logicalPrefix string, projectPrefix string, sensitive bool, includeSecrets bool) ([]SetupAsset, []string, error) {
-	info, err := os.Stat(root)
+	info, err := os.Lstat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, []string{fmt.Sprintf("optional asset root %q not found; skipping", root)}, nil
 		}
 		return nil, nil, fmt.Errorf("reading asset root %q: %w", root, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, []string{fmt.Sprintf("skipping symlink asset root %q; not following symlinks", root)}, nil
 	}
 	if !info.IsDir() {
 		return nil, []string{fmt.Sprintf("asset root %q is not a directory; skipping", root)}, nil
@@ -471,11 +474,15 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 func stagedAssetPath(stageRoot string, asset SetupAsset) (string, error) {
 	switch asset.Kind {
 	case setupAssetKindProviderFile:
+		providerStageRoot, ok := providerStageDirectoryName(asset.LogicalRoot)
+		if !ok {
+			return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
+		}
 		rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
 		if err != nil {
 			return "", err
 		}
-		return safeJoinUnder(filepath.Join(stageRoot, "provider", asset.LogicalRoot), rel)
+		return safeJoinUnder(filepath.Join(stageRoot, "provider", providerStageRoot), rel)
 	case setupAssetKindProjectFile:
 		rel := asset.ProjectRelativePath
 		if rel == "" {
@@ -499,11 +506,15 @@ func stagedAssetPath(stageRoot string, asset SetupAsset) (string, error) {
 			}
 			return safeJoinUnder(filepath.Join(stageRoot, "project"), rel)
 		default:
+			providerStageRoot, ok := providerStageDirectoryName(asset.LogicalRoot)
+			if !ok {
+				return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
+			}
 			rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
 			if err != nil {
 				return "", err
 			}
-			return safeJoinUnder(filepath.Join(stageRoot, "provider", asset.LogicalRoot), rel)
+			return safeJoinUnder(filepath.Join(stageRoot, "provider", providerStageRoot), rel)
 		}
 	default:
 		return "", nil
@@ -606,6 +617,21 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, bool) {
 	case setupAssetRootProviderCodexSkill:
 		path, err := safeJoinUnder(filepath.Join(homeDir, ".codex", "skills"), asset.LogicalPath)
 		return path, err == nil
+	default:
+		return "", false
+	}
+}
+
+func providerStageDirectoryName(logicalRoot string) (string, bool) {
+	switch logicalRoot {
+	case setupAssetRootProviderClaude:
+		return setupAssetRootProviderClaude, true
+	case setupAssetRootProviderCodex:
+		return setupAssetRootProviderCodex, true
+	case setupAssetRootProviderClaudeSkill:
+		return setupAssetRootProviderClaudeSkill, true
+	case setupAssetRootProviderCodexSkill:
+		return setupAssetRootProviderCodexSkill, true
 	default:
 		return "", false
 	}
