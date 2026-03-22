@@ -794,6 +794,23 @@ func ensureNoSymlinkPath(path string) error {
 	return nil
 }
 
+func replaceRegularFile(tmpPath string, destPath string) error {
+	if err := os.Rename(tmpPath, destPath); err == nil {
+		return nil
+	} else {
+		if removeErr := os.Remove(destPath); removeErr != nil {
+			if os.IsNotExist(removeErr) {
+				return err
+			}
+			return removeErr
+		}
+		if retryErr := os.Rename(tmpPath, destPath); retryErr != nil {
+			return retryErr
+		}
+	}
+	return nil
+}
+
 func writeRegularFileAtomic(destPath string, content []byte, perm os.FileMode) error {
 	destDir := filepath.Dir(destPath)
 	if err := ensureNoSymlinkPath(destDir); err != nil {
@@ -830,7 +847,7 @@ func writeRegularFileAtomic(destPath string, content []byte, perm os.FileMode) e
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, destPath); err != nil {
+	if err := replaceRegularFile(tmpPath, destPath); err != nil {
 		return err
 	}
 	tmpPath = ""
@@ -887,7 +904,7 @@ func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, destPath); err != nil {
+	if err := replaceRegularFile(tmpPath, destPath); err != nil {
 		return err
 	}
 	tmpPath = ""

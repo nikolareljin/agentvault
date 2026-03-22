@@ -603,6 +603,36 @@ func TestApplyProviderAssetsToSystemRejectsSymlinkDestination(t *testing.T) {
 	}
 }
 
+func TestWriteRegularFileAtomicOverwritesExistingFile(t *testing.T) {
+	destDir := t.TempDir()
+	destPath := filepath.Join(destDir, "settings.json")
+	mustWriteFile(t, destPath, `old`)
+
+	if err := writeRegularFileAtomic(destPath, []byte(`new`), 0600); err != nil {
+		t.Fatalf("writeRegularFileAtomic() error = %v", err)
+	}
+	if data, err := os.ReadFile(destPath); err != nil || string(data) != "new" {
+		t.Fatalf("destination = %q, %v, want overwritten file", string(data), err)
+	}
+}
+
+func TestCopyRegularFileOverwritesExistingFile(t *testing.T) {
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "source.txt")
+	mustWriteFile(t, srcPath, "source")
+	destDir := t.TempDir()
+	destPath := filepath.Join(destDir, "dest.txt")
+	mustWriteFile(t, destPath, "old")
+
+	err := copyRegularFile(srcPath, destPath, 0644)
+	if err != nil {
+		t.Fatalf("copyRegularFile() error = %v", err)
+	}
+	if data, err := os.ReadFile(destPath); err != nil || string(data) != "source" {
+		t.Fatalf("destination = %q, %v, want overwritten file", string(data), err)
+	}
+}
+
 func TestCopyRegularFileRejectsSymlinkDestination(t *testing.T) {
 	srcDir := t.TempDir()
 	srcPath := filepath.Join(srcDir, "source.txt")
