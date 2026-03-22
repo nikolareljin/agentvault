@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -81,5 +82,36 @@ func TestFilterSessionsForAgents(t *testing.T) {
 	}
 	if len(filtered.DefaultAgents) != 1 || filtered.DefaultAgents[0] != "alpha" {
 		t.Fatalf("filtered default agents = %#v, want only alpha", filtered.DefaultAgents)
+	}
+}
+
+func TestFilterProjectFilesForStagingSkipsInstructionOverrides(t *testing.T) {
+	projectFiles := []SetupAsset{
+		{
+			Kind:                setupAssetKindProjectFile,
+			LogicalRoot:         setupAssetRootProject,
+			LogicalPath:         "AGENTS.md",
+			ProjectRelativePath: "AGENTS.md",
+		},
+		{
+			Kind:                setupAssetKindProjectFile,
+			LogicalRoot:         setupAssetRootProject,
+			LogicalPath:         filepath.ToSlash(filepath.Join("docs", "guide.md")),
+			ProjectRelativePath: filepath.ToSlash(filepath.Join("docs", "guide.md")),
+		},
+	}
+	instructionOverrides := []SetupAsset{{
+		Kind:                setupAssetKindInstruction,
+		LogicalRoot:         setupAssetRootProject,
+		LogicalPath:         "AGENTS.md",
+		ProjectRelativePath: "AGENTS.md",
+	}}
+
+	filtered := filterProjectFilesForStaging(projectFiles, instructionOverrides)
+	if len(filtered) != 1 {
+		t.Fatalf("filterProjectFilesForStaging() = %#v, want one non-instruction project file", filtered)
+	}
+	if filtered[0].LogicalPath != filepath.ToSlash(filepath.Join("docs", "guide.md")) {
+		t.Fatalf("filterProjectFilesForStaging() = %#v, want docs/guide.md preserved", filtered)
 	}
 }

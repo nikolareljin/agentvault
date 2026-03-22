@@ -282,6 +282,27 @@ func TestLoadSetupAsset_RejectsSymlink(t *testing.T) {
 	}
 }
 
+func TestCollectDirFiles_SkipsSymlinkRoot(t *testing.T) {
+	root := t.TempDir()
+	targetDir := filepath.Join(root, "target")
+	mustMkdirAll(t, targetDir)
+	link := filepath.Join(root, "linked-root")
+	if err := os.Symlink(targetDir, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	assets, warnings, err := collectDirFiles(link, setupAssetKindSkill, setupAssetOriginProjectLocal, setupAssetRootProject, "", "", false, false)
+	if err != nil {
+		t.Fatalf("collectDirFiles() error = %v", err)
+	}
+	if len(assets) != 0 {
+		t.Fatalf("collectDirFiles() assets = %#v, want symlink root skipped", assets)
+	}
+	if len(warnings) == 0 || !strings.Contains(strings.Join(warnings, "\n"), "symlink asset root") {
+		t.Fatalf("collectDirFiles() warnings = %v, want symlink root warning", warnings)
+	}
+}
+
 func TestStageImportedAssetsRejectsUnsafePath(t *testing.T) {
 	_, _, err := stageImportedAssets(t.TempDir(), []SetupAsset{{
 		Kind:           setupAssetKindProjectFile,
@@ -292,6 +313,19 @@ func TestStageImportedAssetsRejectsUnsafePath(t *testing.T) {
 	}})
 	if err == nil || !strings.Contains(err.Error(), "unsafe") && !strings.Contains(err.Error(), "traversal") {
 		t.Fatalf("stageImportedAssets() err = %v, want unsafe path error", err)
+	}
+}
+
+func TestStageImportedAssetsRejectsUnsafeProviderRoot(t *testing.T) {
+	_, _, err := stageImportedAssets(t.TempDir(), []SetupAsset{{
+		Kind:           setupAssetKindProviderFile,
+		LogicalRoot:    "../../.ssh",
+		LogicalPath:    "config",
+		ContentPresent: true,
+		Content:        []byte("x"),
+	}})
+	if err == nil || !strings.Contains(err.Error(), "unsupported provider asset root") {
+		t.Fatalf("stageImportedAssets() err = %v, want unsupported provider root error", err)
 	}
 }
 

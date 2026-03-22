@@ -556,7 +556,8 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 		}
 	}
-	stagedAssets, stageWarnings, err := stageImportedAssets(effectiveConfigDir(), append(append(append([]SetupAsset{}, bundle.ProviderFiles...), bundle.ProjectFiles...), bundle.SkillAssets...))
+	filteredProjectFiles := filterProjectFilesForStaging(bundle.ProjectFiles, bundle.InstructionOverrides)
+	stagedAssets, stageWarnings, err := stageImportedAssets(effectiveConfigDir(), append(append(append([]SetupAsset{}, bundle.ProviderFiles...), filteredProjectFiles...), bundle.SkillAssets...))
 	if err != nil {
 		return fmt.Errorf("staging imported portable assets: %w", err)
 	}
@@ -788,6 +789,35 @@ func selectAgentsForExport(all []agent.Agent, name string) ([]agent.Agent, error
 		}
 	}
 	return nil, fmt.Errorf("agent %q not found", name)
+}
+
+func filterProjectFilesForStaging(projectFiles []SetupAsset, instructionOverrides []SetupAsset) []SetupAsset {
+	if len(projectFiles) == 0 || len(instructionOverrides) == 0 {
+		return append([]SetupAsset{}, projectFiles...)
+	}
+	overridePaths := make(map[string]struct{}, len(instructionOverrides))
+	for _, asset := range instructionOverrides {
+		path := asset.ProjectRelativePath
+		if path == "" {
+			path = asset.LogicalPath
+		}
+		if path == "" {
+			continue
+		}
+		overridePaths[filepath.ToSlash(path)] = struct{}{}
+	}
+	filtered := make([]SetupAsset, 0, len(projectFiles))
+	for _, asset := range projectFiles {
+		path := asset.ProjectRelativePath
+		if path == "" {
+			path = asset.LogicalPath
+		}
+		if _, exists := overridePaths[filepath.ToSlash(path)]; exists {
+			continue
+		}
+		filtered = append(filtered, asset)
+	}
+	return filtered
 }
 
 func printSetupAssetSummary(label string, assets []SetupAsset) {
