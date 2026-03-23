@@ -39,6 +39,9 @@ const (
 
 var errUnsupportedProviderAssetRoot = errors.New("unsupported provider asset root")
 
+var renameFile = os.Rename
+var removeFile = os.Remove
+
 // SetupAsset stores one portable file asset captured during setup export.
 type SetupAsset struct {
 	Kind                string `json:"kind"`
@@ -794,18 +797,21 @@ func ensureNoSymlinkPath(path string) error {
 }
 
 func replaceRegularFile(tmpPath string, destPath string) error {
-	if err := os.Rename(tmpPath, destPath); err == nil {
+	err := renameFile(tmpPath, destPath)
+	if err == nil {
 		return nil
-	} else {
-		if removeErr := os.Remove(destPath); removeErr != nil {
-			if os.IsNotExist(removeErr) {
-				return err
-			}
-			return removeErr
+	}
+	if !os.IsExist(err) {
+		return err
+	}
+	if removeErr := removeFile(destPath); removeErr != nil {
+		if os.IsNotExist(removeErr) {
+			return err
 		}
-		if retryErr := os.Rename(tmpPath, destPath); retryErr != nil {
-			return retryErr
-		}
+		return removeErr
+	}
+	if retryErr := renameFile(tmpPath, destPath); retryErr != nil {
+		return retryErr
 	}
 	return nil
 }
