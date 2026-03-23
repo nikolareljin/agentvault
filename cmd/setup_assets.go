@@ -198,6 +198,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 		}
 		if asset.Missing {
 			missingInstructionFiles++
+			continue
 		} else if warn != "" {
 			instructionWarnings = append(instructionWarnings, warn)
 		}
@@ -240,6 +241,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 		}
 		if asset.Missing {
 			missingWorkflowFiles++
+			continue
 		} else if warn != "" {
 			workflowWarnings = append(workflowWarnings, warn)
 		}
