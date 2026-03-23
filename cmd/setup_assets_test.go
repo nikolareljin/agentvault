@@ -519,6 +519,30 @@ func TestCollectProjectAssets_SurfacesOversizedInstructionWarnings(t *testing.T)
 	}
 }
 
+func TestCollectProjectAssets_SkipsMissingOptionalFilesFromManifests(t *testing.T) {
+	projectDir := t.TempDir()
+
+	projectFiles, instructionOverrides, warnings, err := collectProjectAssets(projectDir, false)
+	if err != nil {
+		t.Fatalf("collectProjectAssets() error = %v", err)
+	}
+
+	if len(projectFiles) != 0 {
+		t.Fatalf("collectProjectAssets() projectFiles = %v, want no missing optional files in manifest", projectFiles)
+	}
+	if len(instructionOverrides) != 0 {
+		t.Fatalf("collectProjectAssets() instructionOverrides = %v, want no missing optional files in manifest", instructionOverrides)
+	}
+
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "missing optional instruction file(s)") {
+		t.Fatalf("collectProjectAssets() warnings = %v, want aggregated missing instruction warning", warnings)
+	}
+	if !strings.Contains(joined, "missing optional workflow template file(s)") {
+		t.Fatalf("collectProjectAssets() warnings = %v, want aggregated missing workflow warning", warnings)
+	}
+}
+
 func TestCollectProjectAssets_SurfacesOversizedWorkflowWarnings(t *testing.T) {
 	projectDir := t.TempDir()
 	keys := workflowtemplates.SupportedKeys()
