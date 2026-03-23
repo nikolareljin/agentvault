@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,10 +13,25 @@ import (
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 )
 
+func setTestHomeDir(t *testing.T, homeDir string) {
+	t.Helper()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
+	if runtime.GOOS == "windows" {
+		volume := filepath.VolumeName(homeDir)
+		pathPart := strings.TrimPrefix(homeDir, volume)
+		if pathPart == "" {
+			pathPart = string(filepath.Separator)
+		}
+		t.Setenv("HOMEDRIVE", volume)
+		t.Setenv("HOMEPATH", pathPart)
+	}
+}
+
 func TestCollectSetupAssets_ProjectDiscoveryAndInstructionOverrides(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustMkdirAll(t, filepath.Join(projectDir, ".github"))
 	mustWriteFile(t, filepath.Join(projectDir, "AGENTS.md"), "agents\n")
@@ -58,7 +74,7 @@ func TestCollectSetupAssets_ProjectDiscoveryAndInstructionOverrides(t *testing.T
 
 func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *testing.T) {
 	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustMkdirAll(t, filepath.Join(homeDir, ".claude"))
 	mustMkdirAll(t, filepath.Join(homeDir, ".codex", "rules"))
