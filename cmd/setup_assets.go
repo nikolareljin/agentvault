@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -20,13 +21,8 @@ const (
 	setupAssetKindProjectFile         = "project_file"
 	setupAssetKindInstruction         = "instruction_override"
 	setupAssetKindSkill               = "skill_asset"
-	setupAssetOriginVaultManaged      = "vault-managed"
 	setupAssetOriginProviderHome      = "provider-home"
 	setupAssetOriginProjectLocal      = "project-local"
-	setupAssetOriginGenerated         = "generated"
-	setupAssetOriginDetected          = "detected"
-	setupAssetRootHome                = "home"
-	setupAssetRootConfig              = "config"
 	setupAssetRootProject             = "project_root"
 	setupAssetRootProviderClaude      = "provider_claude"
 	setupAssetRootProviderCodex       = "provider_codex"
@@ -801,18 +797,26 @@ func replaceRegularFile(tmpPath string, destPath string) error {
 	if err == nil {
 		return nil
 	}
-	if !os.IsExist(err) {
+
+	if runtime.GOOS != "windows" {
 		return err
 	}
-	if removeErr := removeFile(destPath); removeErr != nil {
-		if os.IsNotExist(removeErr) {
+
+	backupPath := destPath + ".bak"
+	_ = removeFile(backupPath)
+	if backupErr := renameFile(destPath, backupPath); backupErr != nil {
+		if os.IsNotExist(backupErr) {
 			return err
 		}
-		return removeErr
+		return backupErr
 	}
 	if retryErr := renameFile(tmpPath, destPath); retryErr != nil {
+		if restoreErr := renameFile(backupPath, destPath); restoreErr != nil && !os.IsNotExist(restoreErr) {
+			return fmt.Errorf("renaming replacement failed: %v; restoring original failed: %v", retryErr, restoreErr)
+		}
 		return retryErr
 	}
+	_ = removeFile(backupPath)
 	return nil
 }
 
