@@ -459,6 +459,10 @@ func instructionNameForAsset(asset SetupAsset) string {
 }
 
 func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, error) {
+	if len(assets) == 0 {
+		return 0, nil, nil
+	}
+
 	stageRoot := filepath.Join(configDir, setupImportedAssetsDirName)
 	if err := os.RemoveAll(stageRoot); err != nil && !os.IsNotExist(err) {
 		return 0, nil, fmt.Errorf("resetting staged imported assets: %w", err)
