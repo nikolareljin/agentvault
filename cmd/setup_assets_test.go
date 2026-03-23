@@ -654,6 +654,28 @@ func TestCopyRegularFileRejectsSymlinkDestination(t *testing.T) {
 	}
 }
 
+func TestEnsureNoSymlinkPathRejectsRelativeFirstComponent(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd() error = %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("os.Chdir() error = %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	outsideDir := t.TempDir()
+	if err := os.Symlink(outsideDir, filepath.Join(tmpDir, "docs")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	err = ensureNoSymlinkPath(filepath.Join("docs", "nested", "file.txt"))
+	if err == nil || !strings.Contains(err.Error(), "destination directory contains a symlink") {
+		t.Fatalf("ensureNoSymlinkPath() err = %v, want first relative component symlink error", err)
+	}
+}
+
 func TestCopyRegularFileRejectsSymlinkDestinationDirectory(t *testing.T) {
 	srcDir := t.TempDir()
 	srcPath := filepath.Join(srcDir, "source.txt")
