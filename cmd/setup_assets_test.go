@@ -225,6 +225,24 @@ func TestStageImportedAssetsAndApplyStagedProjectAssets(t *testing.T) {
 	}
 }
 
+func TestStageImportedAssets_EmptyBundlePreservesExistingStage(t *testing.T) {
+	configDir := t.TempDir()
+	stageRoot := filepath.Join(configDir, setupImportedAssetsDirName)
+	existingPath := filepath.Join(stageRoot, "project", "docs", "README.md")
+	mustWriteFile(t, existingPath, "existing staged content")
+
+	staged, warnings, err := stageImportedAssets(configDir, nil)
+	if err != nil {
+		t.Fatalf("stageImportedAssets() error = %v", err)
+	}
+	if staged != 0 || len(warnings) != 0 {
+		t.Fatalf("stageImportedAssets() = (%d, %v), want (0, none)", staged, warnings)
+	}
+	if data, err := os.ReadFile(existingPath); err != nil || string(data) != "existing staged content" {
+		t.Fatalf("existing staged asset = %q, %v, want preserved content", string(data), err)
+	}
+}
+
 func TestApplyProviderAssetsToSystem(t *testing.T) {
 	homeDir := t.TempDir()
 	assets := []SetupAsset{
