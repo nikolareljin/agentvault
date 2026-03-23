@@ -22,18 +22,50 @@ import (
 // across machines. It captures everything needed to recreate the environment:
 // agents, sessions, rules, roles, instructions, provider configs, and an installation guide.
 type SetupBundle struct {
-	Version         string                   `json:"version"`
-	CreatedAt       time.Time                `json:"created_at"`
-	SourceMachine   string                   `json:"source_machine"`
-	SourceOS        string                   `json:"source_os"`
-	Agents          []agent.Agent            `json:"agents"`
-	Sessions        agent.SessionConfig      `json:"sessions,omitempty"`
-	SharedConfig    agent.SharedConfig       `json:"shared_config"`
-	ProviderConfigs agent.ProviderConfig     `json:"provider_configs"`
-	Templates       workflowtemplates.Bundle `json:"workflow_templates"`
-	StatusSnapshot  *statuspkg.Report        `json:"status_snapshot,omitempty"`
-	DetectedAgents  []DetectedAgent          `json:"detected_agents,omitempty"`
-	InstallGuide    InstallGuide             `json:"install_guide"`
+	Version              string                   `json:"version"`
+	CreatedAt            time.Time                `json:"created_at"`
+	SourceMachine        string                   `json:"source_machine"`
+	SourceOS             string                   `json:"source_os"`
+	Agents               []agent.Agent            `json:"agents"`
+	Sessions             agent.SessionConfig      `json:"sessions,omitempty"`
+	SharedConfig         agent.SharedConfig       `json:"shared_config"`
+	ProviderConfigs      agent.ProviderConfig     `json:"provider_configs"`
+	Templates            workflowtemplates.Bundle `json:"workflow_templates"`
+	ProviderFiles        []SetupAsset             `json:"provider_files"`
+	ProjectFiles         []SetupAsset             `json:"project_files"`
+	InstructionOverrides []SetupAsset             `json:"instruction_overrides"`
+	SkillAssets          []SetupAsset             `json:"skill_assets"`
+	StatusSnapshot       *statuspkg.Report        `json:"status_snapshot,omitempty"`
+	DetectedAgents       []DetectedAgent          `json:"detected_agents,omitempty"`
+	InstallGuide         InstallGuide             `json:"install_guide"`
+}
+
+// MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.
+func (s SetupBundle) MarshalJSON() ([]byte, error) {
+	type alias SetupBundle
+	copy := s
+	if copy.ProviderFiles == nil {
+		copy.ProviderFiles = []SetupAsset{}
+	}
+	if copy.ProjectFiles == nil {
+		copy.ProjectFiles = []SetupAsset{}
+	}
+	if copy.InstructionOverrides == nil {
+		copy.InstructionOverrides = []SetupAsset{}
+	}
+	if copy.SkillAssets == nil {
+		copy.SkillAssets = []SetupAsset{}
+	}
+	if copy.InstallGuide.Requirements == nil {
+		copy.InstallGuide.Requirements = []Requirement{}
+	}
+	if copy.InstallGuide.Steps == nil {
+		copy.InstallGuide.Steps = []SetupStep{}
+	}
+	if copy.InstallGuide.PostSetup == nil {
+		copy.InstallGuide.PostSetup = []string{}
+	}
+	return json.Marshal(alias(copy))
 }
 
 // InstallGuide contains instructions for setting up agents on a new machine.
@@ -92,7 +124,8 @@ Examples:
   agentvault setup export my-setup.bundle         # Export encrypted
   agentvault setup export setup.json --include-keys  # Include API keys
   agentvault setup export setup.json --include-status # Include token/quota snapshot
-  agentvault setup export setup.json --detect     # Include detected agent info`,
+  agentvault setup export setup.json --detect     # Include detected agent info
+  agentvault setup export setup.json --agent my-codex --project .`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSetupExport,
 }
@@ -107,7 +140,8 @@ By default, existing agents are skipped. Use --merge to update settings.
 Examples:
   agentvault setup import my-setup.json
   agentvault setup import my-setup.bundle    # Encrypted bundle
-  agentvault setup import setup.json --merge # Update existing agents`,
+  agentvault setup import setup.json --merge # Update existing agents
+  agentvault setup import setup.json --apply-provider-configs # Apply provider configs and assets`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSetupImport,
 }
@@ -166,11 +200,14 @@ func init() {
 	setupExportCmd.Flags().Bool("include-keys", false, "include API keys in export (use with caution)")
 	setupExportCmd.Flags().Bool("detect", false, "include detected agent information")
 	setupExportCmd.Flags().Bool("include-status", false, "include provider token/quota status snapshot in bundle")
+	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content")
 	setupExportCmd.Flags().Bool("encrypted", false, "encrypt the bundle (prompted for password)")
 	setupExportCmd.Flags().Bool("plain", false, "force plaintext JSON output")
+	setupExportCmd.Flags().String("agent", "", "export only one named agent")
+	setupExportCmd.Flags().String("project", "", "include project-local instruction, workflow, and skill assets from this directory")
 
 	setupImportCmd.Flags().Bool("merge", false, "merge with existing agents instead of skipping")
-	setupImportCmd.Flags().Bool("apply-provider-configs", false, "apply provider configs to system after import")
+	setupImportCmd.Flags().Bool("apply-provider-configs", false, "apply provider configs and provider asset files to system after import")
 
 	setupApplyCmd.Flags().Bool("generate", false, "also generate .env and provider config files")
 	setupApplyCmd.Flags().StringSlice("only", nil, "apply only specific instructions (e.g., --only agents,claude)")
@@ -189,13 +226,19 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	includeKeys, _ := cmd.Flags().GetBool("include-keys")
 	detect, _ := cmd.Flags().GetBool("detect")
 	includeStatus, _ := cmd.Flags().GetBool("include-status")
+	includeSecrets, _ := cmd.Flags().GetBool("include-secrets")
 	encrypted, _ := cmd.Flags().GetBool("encrypted")
 	plain, _ := cmd.Flags().GetBool("plain")
+	agentName, _ := cmd.Flags().GetString("agent")
+	projectDir, _ := cmd.Flags().GetString("project")
 
 	// Determine output format from extension
 	outputFile := args[0]
 	if strings.HasSuffix(outputFile, ".bundle") && !plain {
 		encrypted = true
+	}
+	if includeSecrets && !encrypted {
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: --include-secrets exports sensitive asset content without bundle encryption")
 	}
 
 	hostname, _ := os.Hostname()
@@ -209,12 +252,34 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		SharedConfig:    v.SharedConfig(),
 		ProviderConfigs: v.ProviderConfigs(),
 	}
+	if strings.TrimSpace(agentName) != "" {
+		selected, err := selectAgentsForExport(bundle.Agents, agentName)
+		if err != nil {
+			return err
+		}
+		bundle.Agents = selected
+		bundle.Sessions = filterSessionsForAgents(bundle.Sessions, bundle.Agents)
+	}
 	templateBundle, templateWarnings, err := workflowtemplates.ExportBundle(resolveConfigDir())
 	if err != nil {
 		return fmt.Errorf("loading workflow templates for export: %w", err)
 	}
 	bundle.Templates = templateBundle
 	for _, warn := range templateWarnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+	}
+	collectedAssets, assetWarnings, err := collectSetupAssets(setupAssetOptions{
+		ProjectDir:     projectDir,
+		IncludeSecrets: includeSecrets,
+	})
+	if err != nil {
+		return fmt.Errorf("collecting portable setup assets: %w", err)
+	}
+	bundle.ProviderFiles = collectedAssets.ProviderFiles
+	bundle.ProjectFiles = collectedAssets.ProjectFiles
+	bundle.InstructionOverrides = collectedAssets.InstructionOverrides
+	bundle.SkillAssets = collectedAssets.SkillAssets
+	for _, warn := range assetWarnings {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 	}
 
@@ -293,6 +358,18 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	}
 	if encrypted {
 		fmt.Println("  Encrypted: yes")
+	}
+	if strings.TrimSpace(agentName) != "" {
+		fmt.Printf("  Export mode: single-agent (%s)\n", agentName)
+	} else {
+		fmt.Println("  Export mode: full bundle")
+	}
+	fmt.Printf("  Provider files: %d\n", len(bundle.ProviderFiles))
+	fmt.Printf("  Project files: %d\n", len(bundle.ProjectFiles))
+	fmt.Printf("  Instruction overrides: %d\n", len(bundle.InstructionOverrides))
+	fmt.Printf("  Skill assets: %d\n", len(bundle.SkillAssets))
+	if includeSecrets {
+		fmt.Println("  Includes sensitive asset content: yes")
 	}
 	return nil
 }
@@ -409,6 +486,35 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Updated: instruction %s\n", inst.Name)
 		}
 	}
+	for _, asset := range bundle.InstructionOverrides {
+		name := instructionNameForAsset(asset)
+		if name == "" || asset.Missing || !asset.ContentPresent {
+			continue
+		}
+		filename := asset.ProjectRelativePath
+		if filename == "" {
+			filename = asset.LogicalPath
+		}
+		filename, err = sanitizeAssetRelativePath(filename)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: skipping instruction override %q due to unsafe filename: %v\n", name, err)
+			continue
+		}
+		inst := agent.InstructionFile{
+			Name:      name,
+			Filename:  filename,
+			Content:   string(asset.Content),
+			UpdatedAt: time.Now(),
+		}
+		if idx, ok := instIndex[inst.Name]; !ok {
+			sc.Instructions = append(sc.Instructions, inst)
+			instIndex[inst.Name] = len(sc.Instructions) - 1
+			fmt.Printf("  Imported: instruction override %s\n", inst.Name)
+		} else if merge || sc.Instructions[idx].Content == "" {
+			sc.Instructions[idx] = inst
+			fmt.Printf("  Updated: instruction override %s\n", inst.Name)
+		}
+	}
 
 	// Merge rules
 	ruleIndex := make(map[string]int)
@@ -479,6 +585,17 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 		}
 	}
+	filteredProjectFiles := filterProjectFilesForStaging(bundle.ProjectFiles, bundle.InstructionOverrides)
+	stagedAssets, stageWarnings, err := stageImportedAssets(effectiveConfigDir(), append(append(append([]SetupAsset{}, bundle.ProviderFiles...), filteredProjectFiles...), bundle.SkillAssets...))
+	if err != nil {
+		return fmt.Errorf("staging imported portable assets: %w", err)
+	}
+	if stagedAssets > 0 {
+		fmt.Printf("  Imported: portable assets (%d staged)\n", stagedAssets)
+	}
+	for _, warn := range stageWarnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+	}
 
 	// Import sessions
 	targetSessions := v.Sessions()
@@ -546,7 +663,7 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 
 	// Apply provider configs to system if requested
 	if applyConfigs {
-		fmt.Println("\nApplying provider configs to system...")
+		fmt.Println("\nApplying provider configs and provider assets to system...")
 		if pc.Claude != nil {
 			if err := agent.SaveClaudeConfig(pc.Claude); err != nil {
 				fmt.Printf("  Warning: could not apply Claude config: %v\n", err)
@@ -559,6 +676,21 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 				fmt.Printf("  Warning: could not apply Codex config: %v\n", err)
 			} else {
 				fmt.Println("  Applied: Codex config to ~/.codex/")
+			}
+		}
+		homeDir, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			fmt.Printf("  Warning: could not resolve home directory for provider asset apply: %v\n", homeErr)
+		} else {
+			appliedAssets, assetWarnings, err := applyProviderAssetsToSystem(homeDir, append(bundle.ProviderFiles, providerSkillAssets(bundle.SkillAssets)...))
+			if err != nil {
+				return fmt.Errorf("applying provider assets: %w", err)
+			}
+			if appliedAssets > 0 {
+				fmt.Printf("  Applied: provider assets (%d)\n", appliedAssets)
+			}
+			for _, warn := range assetWarnings {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 			}
 		}
 	}
@@ -638,6 +770,13 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  • %s (%s, version=%s)\n", tpl.Filename, tpl.Key, tpl.Version)
 		}
 	}
+	if len(bundle.ProviderFiles) > 0 || len(bundle.ProjectFiles) > 0 || len(bundle.InstructionOverrides) > 0 || len(bundle.SkillAssets) > 0 {
+		fmt.Printf("\nPortable Assets:\n")
+		printSetupAssetSummary("Provider Files", bundle.ProviderFiles)
+		printSetupAssetSummary("Project Files", bundle.ProjectFiles)
+		printSetupAssetSummary("Instruction Overrides", bundle.InstructionOverrides)
+		printSetupAssetSummary("Skill Assets", bundle.SkillAssets)
+	}
 
 	if bundle.SharedConfig.SystemPrompt != "" {
 		prompt := bundle.SharedConfig.SystemPrompt
@@ -670,6 +809,120 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func selectAgentsForExport(all []agent.Agent, name string) ([]agent.Agent, error) {
+	for _, item := range all {
+		if item.Name == name {
+			return []agent.Agent{item}, nil
+		}
+	}
+	return nil, fmt.Errorf("agent %q not found", name)
+}
+
+func filterProjectFilesForStaging(projectFiles []SetupAsset, instructionOverrides []SetupAsset) []SetupAsset {
+	if len(projectFiles) == 0 || len(instructionOverrides) == 0 {
+		return append([]SetupAsset{}, projectFiles...)
+	}
+	overridePaths := make(map[string]struct{}, len(instructionOverrides))
+	for _, asset := range instructionOverrides {
+		path := asset.ProjectRelativePath
+		if path == "" {
+			path = asset.LogicalPath
+		}
+		if path == "" {
+			continue
+		}
+		overridePaths[filepath.ToSlash(path)] = struct{}{}
+	}
+	filtered := make([]SetupAsset, 0, len(projectFiles))
+	for _, asset := range projectFiles {
+		path := asset.ProjectRelativePath
+		if path == "" {
+			path = asset.LogicalPath
+		}
+		if _, exists := overridePaths[filepath.ToSlash(path)]; exists {
+			continue
+		}
+		filtered = append(filtered, asset)
+	}
+	return filtered
+}
+
+func printSetupAssetSummary(label string, assets []SetupAsset) {
+	if len(assets) == 0 {
+		return
+	}
+	sensitive := 0
+	redacted := 0
+	for _, asset := range assets {
+		if asset.Sensitive {
+			sensitive++
+		}
+		if asset.Redacted {
+			redacted++
+		}
+	}
+	fmt.Printf("  %s: %d", label, len(assets))
+	if sensitive > 0 || redacted > 0 {
+		fmt.Printf(" (sensitive=%d, redacted=%d)", sensitive, redacted)
+	}
+	fmt.Println()
+}
+
+func filterSessionsForAgents(config agent.SessionConfig, selected []agent.Agent) agent.SessionConfig {
+	if len(selected) == 0 {
+		return agent.SessionConfig{}
+	}
+	allowed := make(map[string]struct{}, len(selected))
+	for _, item := range selected {
+		allowed[item.Name] = struct{}{}
+	}
+
+	filtered := config
+	filtered.Sessions = nil
+	activeSessionAllowed := false
+	for _, session := range config.Sessions {
+		keptAgents := make([]agent.SessionAgent, 0, len(session.Agents))
+		for _, sessionAgent := range session.Agents {
+			if _, ok := allowed[sessionAgent.Name]; ok {
+				keptAgents = append(keptAgents, sessionAgent)
+			}
+		}
+		if len(keptAgents) == 0 {
+			continue
+		}
+		session.Agents = keptAgents
+		filtered.Sessions = append(filtered.Sessions, session)
+		if session.ID == config.ActiveSession {
+			activeSessionAllowed = true
+		}
+	}
+	filtered.DefaultAgents = filterStringSet(config.DefaultAgents, allowed)
+	if !activeSessionAllowed {
+		filtered.ActiveSession = ""
+	}
+	return filtered
+}
+
+func filterStringSet(items []string, allowed map[string]struct{}) []string {
+	filtered := make([]string, 0, len(items))
+	for _, item := range items {
+		if _, ok := allowed[item]; ok {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func providerSkillAssets(items []SetupAsset) []SetupAsset {
+	filtered := make([]SetupAsset, 0, len(items))
+	for _, item := range items {
+		if item.LogicalRoot == setupAssetRootProviderClaudeSkill || item.LogicalRoot == setupAssetRootProviderCodexSkill {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func runSetupApply(cmd *cobra.Command, args []string) error {
@@ -712,6 +965,15 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 		pushed++
 	}
 	fmt.Printf("Applied %d instruction file(s) to %s\n", pushed, dir)
+	if len(onlySet) == 0 {
+		stagedApplied, err := applyStagedProjectAssets(effectiveConfigDir(), dir)
+		if err != nil {
+			return err
+		}
+		if stagedApplied > 0 {
+			fmt.Printf("Applied %d staged project asset(s) to %s\n", stagedApplied, dir)
+		}
+	}
 
 	if generate {
 		fmt.Println("\nGenerating configuration files...")
@@ -885,7 +1147,7 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 	if bundle.ProviderConfigs.Claude != nil || bundle.ProviderConfigs.Codex != nil {
 		guide.Steps = append(guide.Steps, SetupStep{
 			Name:        "Apply provider configs",
-			Description: "Apply Claude/Codex settings to system",
+			Description: "Apply Claude/Codex settings and provider assets to system",
 			Commands:    []string{"agentvault setup import <file> --apply-provider-configs"},
 		})
 	}

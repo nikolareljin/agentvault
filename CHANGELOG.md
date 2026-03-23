@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- `agentvault setup export` now supports `--agent`, `--project`, and `--include-secrets` for portable single-agent bundles with project-local instructions, workflow templates, and skill assets.
+- Setup bundles now carry explicit `provider_files`, `project_files`, `instruction_overrides`, and `skill_assets` sections with relocatable path metadata and redaction markers for sensitive content.
+
+### Changed
+- `agentvault setup show` now summarizes portable asset sections and reports sensitive or redacted bundle content.
+
 ## [0.6.0] - 2026-03-14
 
 ### Added
