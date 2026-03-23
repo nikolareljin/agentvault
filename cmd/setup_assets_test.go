@@ -78,7 +78,7 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 	if settings == nil {
 		t.Fatalf("provider files missing claude settings")
 	}
-	if !settings.Sensitive || !settings.Redacted || len(settings.Content) != 0 || settings.SHA256 == "" {
+	if !settings.Sensitive || !settings.Redacted || len(settings.Content) != 0 || settings.SHA256 != "" {
 		t.Fatalf("claude settings asset = %#v, want sensitive redacted metadata", settings)
 	}
 
@@ -86,7 +86,7 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 	if copilotHosts == nil {
 		t.Fatalf("provider files missing copilot config")
 	}
-	if !copilotHosts.Sensitive || !copilotHosts.Redacted || len(copilotHosts.Content) != 0 || copilotHosts.SHA256 == "" {
+	if !copilotHosts.Sensitive || !copilotHosts.Redacted || len(copilotHosts.Content) != 0 || copilotHosts.SHA256 != "" {
 		t.Fatalf("copilot config asset = %#v, want sensitive redacted metadata", copilotHosts)
 	}
 	if settings.ContentPresent {
@@ -124,7 +124,7 @@ func TestCollectSetupAssets_IncludeSecretsAndSkills(t *testing.T) {
 	}
 
 	configAsset := findAsset(assets.ProviderFiles, setupAssetRootProviderCodex, "config.toml")
-	if configAsset == nil || configAsset.Redacted || string(configAsset.Content) != `token = "secret"` {
+	if configAsset == nil || configAsset.Redacted || string(configAsset.Content) != `token = "secret"` || configAsset.SHA256 == "" {
 		t.Fatalf("codex config asset = %#v, want full content", configAsset)
 	}
 	if !hasAsset(assets.SkillAssets, setupAssetKindSkill, setupAssetRootProviderCodexSkill, "reviewer/SKILL.md") {

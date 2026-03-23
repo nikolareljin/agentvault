@@ -394,11 +394,11 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
 	}
 	asset.SizeBytes = int64(len(data))
-	asset.SHA256 = hashSetupAssetContent(data)
 	if sensitive && !includeSecrets {
 		asset.Redacted = true
 		return asset, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
 	}
+	asset.SHA256 = hashSetupAssetContent(data)
 	asset.ContentPresent = true
 	asset.Content = data
 	return asset, "", nil
