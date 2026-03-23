@@ -771,8 +771,7 @@ func ensureNoSymlinkPath(path string) error {
 		if len(parts) == 0 {
 			return nil
 		}
-		current = parts[0]
-		parts = parts[1:]
+		current = "."
 	}
 
 	for _, part := range parts {
