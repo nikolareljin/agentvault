@@ -120,6 +120,29 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 	}
 }
 
+func TestCollectSetupAssets_SkipsMissingOptionalProviderFilesFromManifest(t *testing.T) {
+	homeDir := t.TempDir()
+	setTestHomeDir(t, homeDir)
+
+	mustMkdirAll(t, filepath.Join(homeDir, ".claude"))
+
+	assets, warnings, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+
+	for _, asset := range assets.ProviderFiles {
+		if asset.Missing {
+			t.Fatalf("collectSetupAssets() provider file manifest contains missing entry: %#v", asset)
+		}
+	}
+
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "optional asset missing") {
+		t.Fatalf("collectSetupAssets() warnings = %v, want provider missing-asset warning", warnings)
+	}
+}
+
 func TestCollectSetupAssets_IncludeSecretsAndSkills(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
