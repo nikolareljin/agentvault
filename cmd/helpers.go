@@ -41,6 +41,14 @@ func resolveConfigDir() string {
 	return ""
 }
 
+func effectiveConfigDir() string {
+	cfgDir := resolveConfigDir()
+	if cfgDir != "" {
+		return cfgDir
+	}
+	return config.Dir()
+}
+
 // readPassword prompts for a password from the terminal without echo.
 // Uses golang.org/x/term to suppress input display for security.
 func readPassword(prompt string) (string, error) {
