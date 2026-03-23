@@ -616,6 +616,37 @@ func TestWriteRegularFileAtomicOverwritesExistingFile(t *testing.T) {
 	}
 }
 
+func TestReplaceRegularFileDoesNotRemoveDestinationOnNonExistRenameError(t *testing.T) {
+	origRename := renameFile
+	origRemove := removeFile
+	t.Cleanup(func() {
+		renameFile = origRename
+		removeFile = origRemove
+	})
+
+	renameCalls := 0
+	removeCalls := 0
+	renameFile = func(_ string, _ string) error {
+		renameCalls++
+		return os.ErrPermission
+	}
+	removeFile = func(_ string) error {
+		removeCalls++
+		return nil
+	}
+
+	err := replaceRegularFile("/tmp/source", "/tmp/dest")
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("replaceRegularFile() err = %v, want permission error", err)
+	}
+	if renameCalls != 1 {
+		t.Fatalf("renameFile calls = %d, want 1", renameCalls)
+	}
+	if removeCalls != 0 {
+		t.Fatalf("removeFile calls = %d, want 0", removeCalls)
+	}
+}
+
 func TestCopyRegularFileOverwritesExistingFile(t *testing.T) {
 	srcDir := t.TempDir()
 	srcPath := filepath.Join(srcDir, "source.txt")
