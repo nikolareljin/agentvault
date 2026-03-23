@@ -150,7 +150,7 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsse
 		if warn != "" {
 			warnings = append(warnings, warn)
 		}
-		if asset.LogicalPath != "" {
+		if !asset.Missing && asset.LogicalPath != "" {
 			assets = append(assets, asset)
 		}
 	}
