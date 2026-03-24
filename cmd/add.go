@@ -61,6 +61,7 @@ Example:
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
+		applyRouteConfigFlags(cmd, &a.Route)
 		if err := a.Validate(); err != nil {
 			return err
 		}
@@ -82,5 +83,6 @@ func init() {
 	addCmd.Flags().String("system-prompt", "", "system prompt")
 	addCmd.Flags().String("task-desc", "", "task description")
 	addCmd.Flags().String("tags", "", "comma-separated tags")
+	registerRouteConfigFlags(addCmd.Flags())
 	_ = addCmd.MarkFlagRequired("provider")
 }
