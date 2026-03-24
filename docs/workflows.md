@@ -20,8 +20,20 @@ Then:
 ## Add agent and use prompt gateway from CLI
 
 ```bash
-agentvault add my-codex --provider codex --model gpt-5
+agentvault add my-codex --provider codex --model gpt-5 --route-capabilities coding,review --latency-tier medium --cost-tier medium
 agentvault prompt my-codex --text "review this endpoint" --optimize-profile codex
+```
+
+## Automatic routing workflow
+
+```bash
+agentvault add local-ollama --provider ollama --model llama3.1 --base-url http://localhost:11434 \
+  --route-capabilities general,coding,analysis --latency-tier low --cost-tier low --privacy-tier local
+agentvault add my-codex --provider codex --model gpt-5-codex \
+  --route-capabilities coding,review,analysis --latency-tier medium --cost-tier medium
+
+agentvault route --text "summarize this design and keep everything local"
+agentvault prompt --auto --text "implement and test this Go refactor"
 ```
 
 ## Local Ollama optimization workflow
@@ -85,3 +97,13 @@ Target machine:
 agentvault init
 agentvault setup import team.bundle --merge --apply-provider-configs
 ```
+
+## LangGraph sidecar routing
+
+```bash
+export AGENTVAULT_LANGGRAPH_ROUTER_CMD="python3 ./python/langgraph_router.py"
+agentvault route --router langgraph --text "choose the best target for this coding task"
+agentvault prompt --auto --router langgraph --text "implement this feature with tests"
+```
+
+The Python router is optional. If LangGraph is installed, the sidecar uses a small `StateGraph`; otherwise the script falls back to a Python-only ranking path and still returns a valid routing decision.
