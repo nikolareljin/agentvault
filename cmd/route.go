@@ -18,6 +18,7 @@ var routeCmd = &cobra.Command{
 
 This command uses the same routing logic as 'agentvault prompt --auto' and is
 useful for inspecting why AgentVault prefers a given agent, runner, and model.`,
+	Args: cobra.NoArgs,
 	RunE: runRoute,
 }
 

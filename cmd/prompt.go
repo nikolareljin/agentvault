@@ -571,7 +571,10 @@ func executeOpenAIPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 			"content": prompt,
 		}},
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return promptResult{}, fmt.Errorf("marshalling openai request payload: %w", err)
+	}
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
