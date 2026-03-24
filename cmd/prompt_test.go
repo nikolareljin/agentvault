@@ -190,3 +190,45 @@ func newPromptOptimizationTestCommand() *cobra.Command {
 	cmd.Flags().Duration("timeout", 5*time.Minute, "")
 	return cmd
 }
+
+type stubPromptVault struct {
+	agents []agent.Agent
+	shared agent.SharedConfig
+}
+
+func (s stubPromptVault) Get(name string) (agent.Agent, bool) {
+	for _, a := range s.agents {
+		if a.Name == name {
+			return a, true
+		}
+	}
+	return agent.Agent{}, false
+}
+
+func (s stubPromptVault) List() []agent.Agent { return append([]agent.Agent(nil), s.agents...) }
+
+func (s stubPromptVault) SharedConfig() agent.SharedConfig { return s.shared }
+
+func TestResolvePromptAgentAutoUsesProvidedPromptText(t *testing.T) {
+	cmd := newPromptOptimizationTestCommand()
+	cmd.Flags().Bool("auto", false, "")
+	if err := cmd.Flags().Set("auto", "true"); err != nil {
+		t.Fatalf("setting auto flag: %v", err)
+	}
+
+	vault := stubPromptVault{agents: []agent.Agent{
+		{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+		{Name: "codex", Provider: agent.ProviderCodex, Model: "gpt-5-codex"},
+	}}
+
+	got, decision, _, err := resolvePromptAgent(cmd, vault, nil, "Implement and test this Go refactor.")
+	if err != nil {
+		t.Fatalf("resolvePromptAgent() error = %v", err)
+	}
+	if got.Name != "codex" {
+		t.Fatalf("selected agent = %q, want codex", got.Name)
+	}
+	if decision == nil || decision.Selected.Agent.Name != "codex" {
+		t.Fatalf("routing decision = %#v, want codex selection", decision)
+	}
+}

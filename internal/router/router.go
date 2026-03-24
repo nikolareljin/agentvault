@@ -34,13 +34,29 @@ type Intent struct {
 	PrivacySensitive bool   `json:"privacy_sensitive"`
 }
 
+// AgentView is the redacted agent metadata exposed by routing outputs.
+type AgentView struct {
+	Name     string         `json:"name"`
+	Provider agent.Provider `json:"provider"`
+	Model    string         `json:"model,omitempty"`
+	Backend  string         `json:"backend,omitempty"`
+	Role     string         `json:"role,omitempty"`
+	Tags     []string       `json:"tags,omitempty"`
+}
+
 // Candidate captures one scored routing option.
 type Candidate struct {
-	Agent   agent.Agent           `json:"agent"`
+	Agent   AgentView             `json:"agent"`
 	Target  agent.ExecutionTarget `json:"target"`
 	Route   agent.RouteConfig     `json:"route"`
 	Score   int                   `json:"score"`
 	Reasons []string              `json:"reasons,omitempty"`
+
+	resolvedAgent agent.Agent `json:"-"`
+}
+
+func (c Candidate) AgentConfig() agent.Agent {
+	return c.resolvedAgent
 }
 
 // Decision captures the selected route plus alternatives.
@@ -126,7 +142,7 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	selectedIdx := -1
 	for i, candidate := range candidates {
-		if candidate.Target.Supported && candidate.Score > -1000 {
+		if candidateAllowed(candidate, cfg) && candidate.Score > -1000 {
 			selectedIdx = i
 			break
 		}
@@ -139,7 +155,7 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 	fallbacks := make([]Candidate, 0, 3)
 	if cfg.AllowFallbacks {
 		for i, candidate := range candidates {
-			if i == selectedIdx || !candidate.Target.Supported || candidate.Score <= -1000 {
+			if i == selectedIdx || !candidateAllowed(candidate, cfg) || candidate.Score <= -1000 {
 				continue
 			}
 			fallbacks = append(fallbacks, candidate)
@@ -168,14 +184,32 @@ func buildCandidates(agents []agent.Agent, intent Intent, cfg agent.RouterConfig
 		target := agent.ResolveExecutionTarget(a)
 		score, reasons := scoreCandidate(a, profile, target, intent, cfg, prompt)
 		candidates = append(candidates, Candidate{
-			Agent:   a,
-			Target:  target,
-			Route:   profile,
-			Score:   score,
-			Reasons: reasons,
+			Agent: AgentView{
+				Name:     a.Name,
+				Provider: a.Provider,
+				Model:    a.Model,
+				Backend:  a.Backend,
+				Role:     a.Role,
+				Tags:     append([]string(nil), a.Tags...),
+			},
+			Target:        target,
+			Route:         profile,
+			Score:         score,
+			Reasons:       reasons,
+			resolvedAgent: a,
 		})
 	}
 	return candidates
+}
+
+func candidateAllowed(candidate Candidate, cfg agent.RouterConfig) bool {
+	if !candidate.Target.Supported {
+		return false
+	}
+	if cfg.LocalOnly && !candidate.Target.Local {
+		return false
+	}
+	return true
 }
 
 func scoreCandidate(a agent.Agent, profile agent.RouteConfig, target agent.ExecutionTarget, intent Intent, cfg agent.RouterConfig, prompt string) (int, []string) {
@@ -391,10 +425,13 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if !ok {
 		return Decision{}, fmt.Errorf("langgraph router selected unknown agent %q", out.SelectedAgent)
 	}
+	if !candidateAllowed(selected, cfg) {
+		return Decision{}, fmt.Errorf("langgraph router selected disallowed agent %q", out.SelectedAgent)
+	}
 	fallbacks := make([]Candidate, 0, len(out.Fallbacks))
 	for _, name := range out.Fallbacks {
 		candidate, ok := findCandidate(candidates, name)
-		if ok && candidate.Agent.Name != selected.Agent.Name {
+		if ok && candidate.Agent.Name != selected.Agent.Name && candidateAllowed(candidate, cfg) {
 			fallbacks = append(fallbacks, candidate)
 		}
 	}

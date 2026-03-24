@@ -58,13 +58,6 @@ No flags.
 ### `agentvault detect`
 Flags:
 - `--json` (default: `false`)
-- `--auto` (default: `false`)
-- `--router <mode>`: `heuristic|langgraph`
-- `--langgraph-cmd <path-to-python-script>`
-- `--prefer-local` (default: `false`)
-- `--prefer-fast` (default: `false`)
-- `--prefer-low-cost` (default: `false`)
-- `--local-only` (default: `false`)
 - `--verbose` (default: `false`)
 
 ### `agentvault detect add`
@@ -112,7 +105,7 @@ Flags:
 - `--cost-tier <tier>`: `low|medium|high`
 - `--privacy-tier <tier>`: `local|restricted|remote`
 - `--route-priority <int>`
-- `--disable-routing <bool>`
+- `--disable-routing` (default: `false`)
 
 ### `agentvault remove [name]`
 Flags:

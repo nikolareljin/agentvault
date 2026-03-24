@@ -9,6 +9,16 @@ func TestRouteConfigValidateRejectsUnknownCapability(t *testing.T) {
 	}
 }
 
+func TestRouterConfigWithDefaultsDoesNotForceAllowFallbacks(t *testing.T) {
+	cfg := (RouterConfig{}).WithDefaults()
+	if !cfg.PreferLocal {
+		t.Fatalf("PreferLocal = false, want true default")
+	}
+	if cfg.AllowFallbacks {
+		t.Fatalf("AllowFallbacks = true, want false when unset")
+	}
+}
+
 func TestResolveExecutionTarget(t *testing.T) {
 	tests := []struct {
 		name      string

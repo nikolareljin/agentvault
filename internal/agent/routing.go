@@ -115,9 +115,6 @@ func (cfg RouterConfig) WithDefaults() RouterConfig {
 	if !out.PreferLocal && !out.PreferFast && !out.PreferLowCost && !out.LocalOnly {
 		out.PreferLocal = true
 	}
-	if !out.AllowFallbacks {
-		out.AllowFallbacks = true
-	}
 	return out
 }
 
