@@ -27,7 +27,7 @@ func init() {
 	routeCmd.Flags().String("file", "", "read prompt text from file")
 	routeCmd.Flags().Bool("json", false, "output machine-readable JSON")
 	routeCmd.Flags().String("router", "", "router mode override: heuristic|langgraph")
-	routeCmd.Flags().String("langgraph-cmd", "", "langgraph router command override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
+	routeCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
 	routeCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing")
 	routeCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
 	routeCmd.Flags().Bool("prefer-low-cost", false, "prefer lower-cost targets during routing")

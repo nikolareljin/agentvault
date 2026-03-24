@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -349,20 +350,20 @@ type langGraphOutput struct {
 }
 
 func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
-	cmdText := strings.TrimSpace(cfg.LangGraphCmd)
-	if cmdText == "" {
-		cmdText = strings.TrimSpace(os.Getenv("AGENTVAULT_LANGGRAPH_ROUTER_CMD"))
+	scriptPath := strings.TrimSpace(cfg.LangGraphCmd)
+	if scriptPath == "" {
+		scriptPath = strings.TrimSpace(os.Getenv("AGENTVAULT_LANGGRAPH_ROUTER_CMD"))
 	}
-	if cmdText == "" {
-		return Decision{}, errors.New("langgraph mode requires router command or AGENTVAULT_LANGGRAPH_ROUTER_CMD")
+	if scriptPath == "" {
+		return Decision{}, errors.New("langgraph mode requires a router script path or AGENTVAULT_LANGGRAPH_ROUTER_CMD")
 	}
 	candidates := buildCandidates(req.Agents, classifyPrompt(req.Prompt), cfg, req.Prompt)
 	if len(candidates) == 0 {
 		return Decision{}, errors.New("no routing candidates available")
 	}
-	parts := strings.Fields(cmdText)
-	if len(parts) == 0 {
-		return Decision{}, errors.New("langgraph router command is empty")
+	resolvedScriptPath, err := resolveLangGraphScriptPath(scriptPath)
+	if err != nil {
+		return Decision{}, err
 	}
 
 	payload := langGraphInput{Prompt: req.Prompt, Config: cfg, Candidates: candidates}
@@ -373,7 +374,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	cmd := exec.CommandContext(ctx, "python3", resolvedScriptPath)
 	cmd.Stdin = bytes.NewReader(body)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -407,6 +408,28 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 		Fallbacks:  fallbacks,
 		Candidates: candidates,
 	}, nil
+}
+
+func resolveLangGraphScriptPath(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", errors.New("langgraph router script path is empty")
+	}
+	if strings.ContainsAny(trimmed, "\n\r\t") {
+		return "", errors.New("langgraph router script path contains invalid whitespace")
+	}
+	cleaned := filepath.Clean(trimmed)
+	info, err := os.Stat(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("stat langgraph router script: %w", err)
+	}
+	if info.IsDir() {
+		return "", errors.New("langgraph router path must point to a Python file, not a directory")
+	}
+	if strings.ToLower(filepath.Ext(cleaned)) != ".py" {
+		return "", errors.New("langgraph router path must point to a .py file")
+	}
+	return cleaned, nil
 }
 
 func findCandidate(candidates []Candidate, name string) (Candidate, bool) {

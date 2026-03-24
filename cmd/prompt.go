@@ -82,7 +82,7 @@ func init() {
 	promptCmd.Flags().Bool("json", false, "output machine-readable JSON")
 	promptCmd.Flags().Bool("auto", false, "route the prompt automatically instead of selecting an agent manually")
 	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph")
-	promptCmd.Flags().String("langgraph-cmd", "", "langgraph router command override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
+	promptCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
 	promptCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing")
 	promptCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
 	promptCmd.Flags().Bool("prefer-low-cost", false, "prefer lower-cost targets during routing")
