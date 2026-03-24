@@ -32,3 +32,6 @@ go[1-9]*.*.gz
 /ignore/
 examples/
 TODO.txt
+
+# Python
+python/__pycache__/
