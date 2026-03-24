@@ -336,7 +336,7 @@ func requiredCapability(intent Intent) string {
 func classifyPrompt(prompt string) Intent {
 	lower := strings.ToLower(strings.TrimSpace(prompt))
 	intent := Intent{TaskClass: "general"}
-	codingTerms := []string{"code", "coding", "implement", "bug", "fix", "refactor", "test", "function", "compile", "build", "pr", "issue", "repository", "repo", "golang", "python", "javascript", "rust"}
+	codingTerms := []string{"code", "coding", "implement", "bug", "fix", "refactor", "test", "function", "compile", "build", "issue", "repository", "repo", "golang", "python", "javascript", "rust"}
 	reviewTerms := []string{"review", "diff", "pull request", "regression", "risk", "bug", "edge case"}
 	analysisTerms := []string{"analyze", "investigate", "compare", "architecture", "design", "tradeoff", "strategy"}
 	latencyTerms := []string{"urgent", "asap", "quickly", "immediately", "fast", "time-sensitive"}
@@ -408,6 +408,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	// #nosec G702 -- the interpreter is fixed to python3 and the script path is validated to an existing local .py file.
 	cmd := exec.CommandContext(ctx, "python3", resolvedScriptPath)
 	cmd.Stdin = bytes.NewReader(body)
 	var stdout, stderr bytes.Buffer

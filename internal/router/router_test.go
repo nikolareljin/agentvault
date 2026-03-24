@@ -101,3 +101,10 @@ func TestRouteDecisionJSONDoesNotLeakSecrets(t *testing.T) {
 		t.Fatalf("routing decision missing agent metadata: %s", string(raw))
 	}
 }
+
+func TestClassifyPromptDoesNotTreatPleaseAsCoding(t *testing.T) {
+	intent := classifyPrompt("Please summarize this design doc.")
+	if intent.Coding {
+		t.Fatalf("intent.Coding = true, want false for non-code prompt")
+	}
+}
