@@ -126,20 +126,24 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	a, decision, runtimeCfg, err := resolvePromptAgent(cmd, v, args)
-	if err != nil {
-		return err
-	}
-	a.Model = runtimeCfg.Model.Value
-	a.APIKey = runtimeCfg.APIKey.Value
-	a.BaseURL = runtimeCfg.BaseURL.Value
-	target := agent.ResolveExecutionTarget(a)
-
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	validateOnly, _ := cmd.Flags().GetBool("validate-only")
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
+	autoRoute, _ := cmd.Flags().GetBool("auto")
+	if validateOnly && autoRoute {
+		return errors.New("prompt --auto does not support --validate-only; select an agent explicitly")
+	}
+
 	if validateOnly {
+		a, _, runtimeCfg, err := resolvePromptAgent(cmd, v, args, "")
+		if err != nil {
+			return err
+		}
+		a.Model = runtimeCfg.Model.Value
+		a.APIKey = runtimeCfg.APIKey.Value
+		a.BaseURL = runtimeCfg.BaseURL.Value
+		target := agent.ResolveExecutionTarget(a)
 		if err := validatePromptTarget(target, a, timeout); err != nil {
 			return err
 		}
@@ -167,6 +171,15 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(text) == "" {
 		return errors.New("prompt is empty")
 	}
+
+	a, decision, runtimeCfg, err := resolvePromptAgent(cmd, v, args, text)
+	if err != nil {
+		return err
+	}
+	a.Model = runtimeCfg.Model.Value
+	a.APIKey = runtimeCfg.APIKey.Value
+	a.BaseURL = runtimeCfg.BaseURL.Value
+	target := agent.ResolveExecutionTarget(a)
 
 	shared := v.SharedConfig()
 	effectivePrompt := text
@@ -290,7 +303,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string) (agent.Agent, *routerpkg.Decision, agent.PromptRuntimeConfig, error) {
+func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptText string) (agent.Agent, *routerpkg.Decision, agent.PromptRuntimeConfig, error) {
 	autoRoute, _ := cmd.Flags().GetBool("auto")
 	if !autoRoute {
 		a, ok := v.Get(args[0])
@@ -300,15 +313,11 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string) (agent.A
 		return a, nil, agent.ResolvePromptRuntimeConfig(a), nil
 	}
 
-	text, _, err := readOptionalPromptInput(cmd)
-	if err != nil {
-		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, err
-	}
-	if strings.TrimSpace(text) == "" {
+	if strings.TrimSpace(promptText) == "" {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, errors.New("prompt is empty")
 	}
 	decision, err := routerpkg.Route(routerpkg.Request{
-		Prompt: text,
+		Prompt: promptText,
 		Agents: v.List(),
 		Shared: v.SharedConfig(),
 		Config: promptRouterOverride(cmd),
@@ -316,7 +325,7 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string) (agent.A
 	if err != nil {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, err
 	}
-	a := decision.Selected.Agent
+	a := decision.Selected.AgentConfig()
 	return a, &decision, agent.ResolvePromptRuntimeConfig(a), nil
 }
 

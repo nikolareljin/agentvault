@@ -91,7 +91,7 @@ def main() -> int:
     payload = json.load(sys.stdin)
     try:
         result = _run_with_langgraph(payload)
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         result = _run_without_langgraph(payload)
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")
