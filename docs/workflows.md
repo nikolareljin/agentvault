@@ -101,7 +101,7 @@ agentvault setup import team.bundle --merge --apply-provider-configs
 ## LangGraph sidecar routing
 
 ```bash
-export AGENTVAULT_LANGGRAPH_ROUTER_CMD="python3 ./python/langgraph_router.py"
+export AGENTVAULT_LANGGRAPH_ROUTER_CMD="./python/langgraph_router.py"
 agentvault route --router langgraph --text "choose the best target for this coding task"
 agentvault prompt --auto --router langgraph --text "implement this feature with tests"
 ```

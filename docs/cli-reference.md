@@ -60,7 +60,7 @@ Flags:
 - `--json` (default: `false`)
 - `--auto` (default: `false`)
 - `--router <mode>`: `heuristic|langgraph`
-- `--langgraph-cmd <command>`
+- `--langgraph-cmd <path-to-python-script>`
 - `--prefer-local` (default: `false`)
 - `--prefer-fast` (default: `false`)
 - `--prefer-low-cost` (default: `false`)
@@ -181,7 +181,7 @@ Flags:
 - `--file <path>`
 - `--json` (default: `false`)
 - `--router <mode>`: `heuristic|langgraph`
-- `--langgraph-cmd <command>`
+- `--langgraph-cmd <path-to-python-script>`
 - `--prefer-local` (default: `false`)
 - `--prefer-fast` (default: `false`)
 - `--prefer-low-cost` (default: `false`)
