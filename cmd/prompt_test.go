@@ -233,6 +233,39 @@ func TestResolvePromptAgentAutoUsesProvidedPromptText(t *testing.T) {
 	}
 }
 
+func TestResolvePromptAgentAutoKeepsRuntimeValueSourcesFromOriginalAgent(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "https://remote.example")
+
+	cmd := newPromptOptimizationTestCommand()
+	cmd.Flags().Bool("auto", false, "")
+	if err := cmd.Flags().Set("auto", "true"); err != nil {
+		t.Fatalf("setting auto flag: %v", err)
+	}
+
+	vault := stubPromptVault{agents: []agent.Agent{{
+		Name:     "local",
+		Provider: agent.ProviderOllama,
+		Model:    "llama3.2",
+	}}}
+
+	got, decision, runtimeCfg, err := resolvePromptAgent(cmd, vault, nil, "Summarize this issue.")
+	if err != nil {
+		t.Fatalf("resolvePromptAgent() error = %v", err)
+	}
+	if got.BaseURL != "" {
+		t.Fatalf("returned agent base URL = %q, want original local config", got.BaseURL)
+	}
+	if runtimeCfg.BaseURL.Value != "https://remote.example" {
+		t.Fatalf("runtime base URL = %q, want env override", runtimeCfg.BaseURL.Value)
+	}
+	if runtimeCfg.BaseURL.Source != agent.ValueSourceEnv {
+		t.Fatalf("runtime base URL source = %q, want %q", runtimeCfg.BaseURL.Source, agent.ValueSourceEnv)
+	}
+	if decision == nil || decision.Selected.Target.AgentName != "local" {
+		t.Fatalf("routing decision = %#v, want local selection", decision)
+	}
+}
+
 func TestResolvePromptAgentAutoRejectsRemoteResolvedTargetForLocalOnly(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", "https://remote.example")
 

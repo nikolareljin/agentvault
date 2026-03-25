@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestRouteConfigValidateRejectsUnknownCapability(t *testing.T) {
 	cfg := RouteConfig{Capabilities: []string{"coding", "unknown"}}
@@ -41,5 +45,23 @@ func TestResolveExecutionTarget(t *testing.T) {
 				t.Fatalf("ResolveExecutionTarget() = %#v", got)
 			}
 		})
+	}
+}
+
+func TestExecutionTargetJSONOmitsBaseURL(t *testing.T) {
+	target := ExecutionTarget{
+		AgentName: "openai",
+		Provider:  ProviderOpenAI,
+		Runner:    RunnerOpenAIHTTP,
+		BaseURL:   "https://user:secret@example.com/v1?token=secret",
+		Local:     false,
+		Supported: true,
+	}
+	raw, err := json.Marshal(target)
+	if err != nil {
+		t.Fatalf("json.Marshal(target) error = %v", err)
+	}
+	if strings.Contains(string(raw), "base_url") || strings.Contains(string(raw), "secret") {
+		t.Fatalf("expected marshaled target to omit base_url secrets, got: %s", string(raw))
 	}
 }
