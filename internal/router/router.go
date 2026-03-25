@@ -422,10 +422,11 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		return Decision{}, fmt.Errorf("decoding langgraph router output: %w", err)
 	}
-	selected, ok := findCandidate(candidates, out.SelectedAgent)
-	if !ok {
+	selectedIdx := findCandidateIndex(candidates, out.SelectedAgent)
+	if selectedIdx == -1 {
 		return Decision{}, fmt.Errorf("langgraph router selected unknown agent %q", out.SelectedAgent)
 	}
+	selected := candidates[selectedIdx]
 	if !candidateAllowed(selected, cfg) {
 		return Decision{}, fmt.Errorf("langgraph router selected disallowed agent %q", out.SelectedAgent)
 	}
@@ -437,7 +438,8 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 		}
 	}
 	if len(out.Reasons) > 0 {
-		selected.Reasons = append(selected.Reasons, out.Reasons...)
+		candidates[selectedIdx].Reasons = append(candidates[selectedIdx].Reasons, out.Reasons...)
+		selected = candidates[selectedIdx]
 	}
 	return Decision{
 		Mode:       chooseNonEmpty(out.Mode, "langgraph"),
@@ -471,12 +473,20 @@ func resolveLangGraphScriptPath(raw string) (string, error) {
 }
 
 func findCandidate(candidates []Candidate, name string) (Candidate, bool) {
-	for _, candidate := range candidates {
+	idx := findCandidateIndex(candidates, name)
+	if idx == -1 {
+		return Candidate{}, false
+	}
+	return candidates[idx], true
+}
+
+func findCandidateIndex(candidates []Candidate, name string) int {
+	for i, candidate := range candidates {
 		if candidate.Agent.Name == name {
-			return candidate, true
+			return i
 		}
 	}
-	return Candidate{}, false
+	return -1
 }
 
 func chooseNonEmpty(value, fallback string) string {

@@ -47,9 +47,10 @@ func runRoute(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(text) == "" {
 		return errors.New("prompt is empty")
 	}
+	routingAgents := resolvedRoutingAgents(v.List())
 	decision, err := routerpkg.Route(routerpkg.Request{
 		Prompt: text,
-		Agents: v.List(),
+		Agents: routingAgents,
 		Shared: v.SharedConfig(),
 		Config: promptRouterOverride(cmd),
 	})

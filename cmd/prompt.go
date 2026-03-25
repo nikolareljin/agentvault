@@ -316,17 +316,24 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptTe
 	if strings.TrimSpace(promptText) == "" {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, errors.New("prompt is empty")
 	}
+	routerCfg := promptRouterOverride(cmd)
+	routingAgents := resolvedRoutingAgents(v.List())
 	decision, err := routerpkg.Route(routerpkg.Request{
 		Prompt: promptText,
-		Agents: v.List(),
+		Agents: routingAgents,
 		Shared: v.SharedConfig(),
-		Config: promptRouterOverride(cmd),
+		Config: routerCfg,
 	})
 	if err != nil {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, err
 	}
 	a := decision.Selected.AgentConfig()
-	return a, &decision, agent.ResolvePromptRuntimeConfig(a), nil
+	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
+	target := agent.ResolveExecutionTarget(a)
+	if routerCfg.LocalOnly && !target.Local {
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q does not satisfy local-only policy after runtime resolution", a.Name)
+	}
+	return a, &decision, runtimeCfg, nil
 }
 
 func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {

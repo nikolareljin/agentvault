@@ -2,6 +2,8 @@ package router
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -106,5 +108,32 @@ func TestClassifyPromptDoesNotTreatPleaseAsCoding(t *testing.T) {
 	intent := classifyPrompt("Please summarize this design doc.")
 	if intent.Coding {
 		t.Fatalf("intent.Coding = true, want false for non-code prompt")
+	}
+}
+
+func TestRouteWithLangGraphKeepsSelectedAndCandidatesReasonsInSync(t *testing.T) {
+	scriptPath := filepath.Join(t.TempDir(), "router.py")
+	script := `import json, sys
+json.load(sys.stdin)
+json.dump({"mode": "langgraph", "selected_agent": "local", "reasons": ["langgraph picked local"]}, sys.stdout)
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("WriteFile(scriptPath) error = %v", err)
+	}
+
+	decision, err := Route(Request{
+		Prompt: "Summarize this design document.",
+		Agents: []agent.Agent{{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"}},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{Mode: "langgraph", LangGraphCmd: scriptPath},
+	})
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if got := decision.Selected.Reasons; len(got) == 0 || got[len(got)-1] != "langgraph picked local" {
+		t.Fatalf("selected reasons = %#v, want appended langgraph reason", got)
+	}
+	if got := decision.Candidates[0].Reasons; len(got) == 0 || got[len(got)-1] != "langgraph picked local" {
+		t.Fatalf("candidate reasons = %#v, want appended langgraph reason", got)
 	}
 }
