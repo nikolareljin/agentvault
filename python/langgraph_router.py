@@ -57,13 +57,23 @@ def _render_output(state: Dict[str, Any]) -> Dict[str, Any]:
     if not candidates:
         raise SystemExit("no candidates provided")
     selected = candidates[0]
-    fallbacks = [c["agent"]["name"] for c in candidates[1:4] if c.get("target", {}).get("supported", False)]
+    selected_agent_name = selected.get("agent", {}).get("name")
+    if not selected_agent_name:
+        raise SystemExit("invalid candidate payload: missing agent.name for selected candidate")
+    fallbacks: List[str] = []
+    for candidate in candidates[1:4]:
+        if not candidate.get("target", {}).get("supported", False):
+            continue
+        agent_payload = candidate.get("agent")
+        if not isinstance(agent_payload, dict) or not agent_payload.get("name"):
+            raise SystemExit("invalid candidate payload: missing agent.name for fallback candidate")
+        fallbacks.append(str(agent_payload["name"]))
     reasons = list(selected.get("reasons", []))
     if selected.get("langgraph_score") != selected.get("score"):
         reasons.append("LangGraph provider/model bias adjusted the final ranking.")
     return {
         "mode": state.get("mode", "langgraph"),
-        "selected_agent": selected["agent"]["name"],
+        "selected_agent": selected_agent_name,
         "fallbacks": fallbacks,
         "reasons": reasons,
     }

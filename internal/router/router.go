@@ -70,6 +70,9 @@ type Decision struct {
 
 // Route chooses an execution target using either heuristic or LangGraph mode.
 func Route(req Request) (Decision, error) {
+	if strings.TrimSpace(req.Prompt) == "" {
+		return Decision{}, errors.New("routing requires non-empty prompt")
+	}
 	cfg := mergeRouterConfig(req.Shared.Router, req.Config).WithDefaults()
 	mode := cfg.EffectiveMode()
 	if mode == "langgraph" {

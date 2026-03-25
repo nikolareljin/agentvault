@@ -137,3 +137,27 @@ json.dump({"mode": "langgraph", "selected_agent": "local", "reasons": ["langgrap
 		t.Fatalf("candidate reasons = %#v, want appended langgraph reason", got)
 	}
 }
+
+func TestRouteRejectsEmptyPromptBeforeLangGraph(t *testing.T) {
+	scriptPath := filepath.Join(t.TempDir(), "router.py")
+	script := `import json, sys
+json.load(sys.stdin)
+json.dump({"mode": "langgraph", "selected_agent": "local"}, sys.stdout)
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("WriteFile(scriptPath) error = %v", err)
+	}
+
+	_, err := Route(Request{
+		Prompt: "   ",
+		Agents: []agent.Agent{{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"}},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{Mode: "langgraph", LangGraphCmd: scriptPath},
+	})
+	if err == nil {
+		t.Fatalf("expected empty-prompt routing error")
+	}
+	if !strings.Contains(err.Error(), "non-empty prompt") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

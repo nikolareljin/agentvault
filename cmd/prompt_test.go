@@ -265,3 +265,23 @@ func TestResolvePromptAgentAutoRejectsRemoteResolvedTargetForLocalOnly(t *testin
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestExecutePromptTargetUnsupportedRunnerMentionsRunner(t *testing.T) {
+	_, err := executePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, "hello", time.Second)
+	if err == nil {
+		t.Fatalf("expected unsupported runner error")
+	}
+	if !strings.Contains(err.Error(), string(agent.RunnerUnknown)) {
+		t.Fatalf("error = %q, want runner name", err.Error())
+	}
+}
+
+func TestValidatePromptTargetUnsupportedRunnerMentionsRunner(t *testing.T) {
+	err := validatePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, time.Second)
+	if err == nil {
+		t.Fatalf("expected unsupported runner validation error")
+	}
+	if !strings.Contains(err.Error(), string(agent.RunnerUnknown)) {
+		t.Fatalf("error = %q, want runner name", err.Error())
+	}
+}

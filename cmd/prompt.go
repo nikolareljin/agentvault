@@ -80,10 +80,10 @@ func init() {
 	promptCmd.Flags().String("issue", "", "issue reference for --workflow implement_issue")
 	promptCmd.Flags().String("pr", "", "pull request reference for --workflow implement_pr")
 	promptCmd.Flags().Bool("json", false, "output machine-readable JSON")
-	promptCmd.Flags().Bool("auto", false, "route the prompt automatically instead of selecting an agent manually")
+	promptCmd.Flags().Bool("auto", false, "route the prompt automatically instead of selecting an agent manually (defaults to local-first routing when no other preferences are set)")
 	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph")
 	promptCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
-	promptCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing")
+	promptCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing (effective default when no other routing preferences are set)")
 	promptCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
 	promptCmd.Flags().Bool("prefer-low-cost", false, "prefer lower-cost targets during routing")
 	promptCmd.Flags().Bool("local-only", false, "restrict routing to local execution targets only")
@@ -448,7 +448,7 @@ func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt str
 	case agent.RunnerBedrockAPI:
 		return promptResult{}, errors.New("bedrock backend execution is not supported yet")
 	default:
-		return promptResult{}, fmt.Errorf("provider %q is not supported by prompt gateway yet", a.Provider)
+		return promptResult{}, fmt.Errorf("runner %q (provider %q) is not supported by prompt gateway yet", target.Runner, a.Provider)
 	}
 }
 
@@ -486,7 +486,7 @@ func validatePromptTarget(target agent.ExecutionTarget, a agent.Agent, timeout t
 	case agent.RunnerBedrockAPI:
 		return errors.New("bedrock backend validation is not supported yet; validate AWS credentials manually")
 	default:
-		return fmt.Errorf("provider %q is not supported for validate-only", a.Provider)
+		return fmt.Errorf("runner %q (provider %q) is not supported for validate-only", target.Runner, a.Provider)
 	}
 }
 
