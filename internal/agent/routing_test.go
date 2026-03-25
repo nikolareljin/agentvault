@@ -31,7 +31,12 @@ func TestResolveExecutionTarget(t *testing.T) {
 		local     bool
 		supported bool
 	}{
-		{name: "ollama local", agent: Agent{Name: "ollama", Provider: ProviderOllama}, runner: RunnerOllamaHTTP, local: true, supported: true},
+		{name: "ollama implicit local default", agent: Agent{Name: "ollama", Provider: ProviderOllama}, runner: RunnerOllamaHTTP, local: true, supported: true},
+		{name: "ollama explicit localhost", agent: Agent{Name: "ollama-local", Provider: ProviderOllama, BaseURL: "http://localhost:11434"}, runner: RunnerOllamaHTTP, local: true, supported: true},
+		{name: "ollama explicit loopback", agent: Agent{Name: "ollama-loopback", Provider: ProviderOllama, BaseURL: "http://127.0.0.1:11434"}, runner: RunnerOllamaHTTP, local: true, supported: true},
+		{name: "ollama remote https", agent: Agent{Name: "ollama-remote", Provider: ProviderOllama, BaseURL: "https://remote.example"}, runner: RunnerOllamaHTTP, local: false, supported: true},
+		{name: "ollama hostname without scheme is not local", agent: Agent{Name: "ollama-noscheme-remote", Provider: ProviderOllama, BaseURL: "remote.example:443"}, runner: RunnerOllamaHTTP, local: false, supported: true},
+		{name: "ollama localhost without scheme is not local", agent: Agent{Name: "ollama-noscheme-localhost", Provider: ProviderOllama, BaseURL: "localhost:11434"}, runner: RunnerOllamaHTTP, local: false, supported: true},
 		{name: "codex cli", agent: Agent{Name: "codex", Provider: ProviderCodex}, runner: RunnerCodexCLI, local: false, supported: true},
 		{name: "openai http", agent: Agent{Name: "openai", Provider: ProviderOpenAI}, runner: RunnerOpenAIHTTP, local: false, supported: true},
 		{name: "claude cli", agent: Agent{Name: "claude", Provider: ProviderClaude}, runner: RunnerClaudeCLI, local: false, supported: true},

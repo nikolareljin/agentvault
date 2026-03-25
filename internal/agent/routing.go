@@ -297,9 +297,12 @@ func isExplicitLocalEndpoint(raw string) bool {
 	if err != nil {
 		return false
 	}
+	if parsed.Scheme == "" || parsed.Hostname() == "" {
+		return false
+	}
 	host := strings.ToLower(parsed.Hostname())
 	switch host {
-	case "", "localhost", "127.0.0.1", "::1":
+	case "localhost", "127.0.0.1", "::1":
 		return true
 	default:
 		return false
