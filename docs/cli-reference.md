@@ -175,7 +175,7 @@ Flags:
 - `--json` (default: `false`)
 - `--router <mode>`: `heuristic|langgraph`
 - `--langgraph-cmd <path-to-python-script>`
-- `--prefer-local` (default: `false`)
+- `--prefer-local` (default flag value: `false`; effective default policy is local-first when no preference flags are set)
 - `--prefer-fast` (default: `false`)
 - `--prefer-low-cost` (default: `false`)
 - `--local-only` (default: `false`)
@@ -183,6 +183,7 @@ Flags:
 Behavior:
 - inspects all configured agents and their inferred or explicit routing metadata
 - selects the best agent/runner/model combination without executing the prompt
+- defaults to a local-first routing policy when none of `--prefer-local`, `--prefer-fast`, or `--prefer-low-cost` are set
 - returns fallback candidates when available
 
 ## Rules (`rules` alias: `rule`)
