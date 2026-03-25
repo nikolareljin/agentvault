@@ -75,7 +75,7 @@ type ExecutionTarget struct {
 	Runner    RunnerKind `json:"runner"`
 	Model     string     `json:"model,omitempty"`
 	Backend   string     `json:"backend,omitempty"`
-	BaseURL   string     `json:"base_url,omitempty"`
+	BaseURL   string     `json:"-"`
 	Local     bool       `json:"local"`
 	Supported bool       `json:"supported"`
 }

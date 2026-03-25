@@ -327,13 +327,27 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptTe
 	if err != nil {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, err
 	}
-	a := decision.Selected.AgentConfig()
-	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
-	target := agent.ResolveExecutionTarget(a)
-	if routerCfg.LocalOnly && !target.Local {
-		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q does not satisfy local-only policy after runtime resolution", a.Name)
+	selected := decision.Selected.AgentConfig()
+	original, ok := v.Get(selected.Name)
+	if !ok {
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q not found", selected.Name)
 	}
-	return a, &decision, runtimeCfg, nil
+	runtimeCfg := agent.ResolvePromptRuntimeConfig(original)
+	resolved := original
+	if runtimeCfg.Model.Value != "" {
+		resolved.Model = runtimeCfg.Model.Value
+	}
+	if runtimeCfg.APIKey.Value != "" {
+		resolved.APIKey = runtimeCfg.APIKey.Value
+	}
+	if runtimeCfg.BaseURL.Value != "" {
+		resolved.BaseURL = runtimeCfg.BaseURL.Value
+	}
+	target := agent.ResolveExecutionTarget(resolved)
+	if routerCfg.LocalOnly && !target.Local {
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q does not satisfy local-only policy after runtime resolution", resolved.Name)
+	}
+	return original, &decision, runtimeCfg, nil
 }
 
 func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
