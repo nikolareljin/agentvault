@@ -54,3 +54,22 @@ func splitCommaList(raw string) []string {
 	}
 	return out
 }
+
+func resolvedRoutingAgents(agents []agent.Agent) []agent.Agent {
+	resolved := make([]agent.Agent, len(agents))
+	for i, original := range agents {
+		copyAgent := original
+		runtimeCfg := agent.ResolvePromptRuntimeConfig(original)
+		if runtimeCfg.Model.Value != "" {
+			copyAgent.Model = runtimeCfg.Model.Value
+		}
+		if runtimeCfg.APIKey.Value != "" {
+			copyAgent.APIKey = runtimeCfg.APIKey.Value
+		}
+		if runtimeCfg.BaseURL.Value != "" {
+			copyAgent.BaseURL = runtimeCfg.BaseURL.Value
+		}
+		resolved[i] = copyAgent
+	}
+	return resolved
+}

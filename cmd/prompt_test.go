@@ -232,3 +232,36 @@ func TestResolvePromptAgentAutoUsesProvidedPromptText(t *testing.T) {
 		t.Fatalf("routing decision = %#v, want codex selection", decision)
 	}
 }
+
+func TestResolvePromptAgentAutoRejectsRemoteResolvedTargetForLocalOnly(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "https://remote.example")
+
+	cmd := newPromptOptimizationTestCommand()
+	cmd.Flags().Bool("auto", false, "")
+	cmd.Flags().String("router", "", "")
+	cmd.Flags().String("langgraph-cmd", "", "")
+	cmd.Flags().Bool("prefer-local", false, "")
+	cmd.Flags().Bool("prefer-fast", false, "")
+	cmd.Flags().Bool("prefer-low-cost", false, "")
+	cmd.Flags().Bool("local-only", false, "")
+	if err := cmd.Flags().Set("auto", "true"); err != nil {
+		t.Fatalf("setting auto flag: %v", err)
+	}
+	if err := cmd.Flags().Set("local-only", "true"); err != nil {
+		t.Fatalf("setting local-only flag: %v", err)
+	}
+
+	vault := stubPromptVault{agents: []agent.Agent{{
+		Name:     "local",
+		Provider: agent.ProviderOllama,
+		Model:    "llama3.2",
+	}}}
+
+	_, _, _, err := resolvePromptAgent(cmd, vault, nil, "Private local only code review.")
+	if err == nil {
+		t.Fatalf("expected local-only routing error for remotely resolved target")
+	}
+	if !strings.Contains(err.Error(), "current policy") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
