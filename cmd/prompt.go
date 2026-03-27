@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -581,9 +583,9 @@ func executeOpenAIPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	if strings.TrimSpace(a.Model) == "" {
 		return promptResult{}, errors.New("openai agent requires model")
 	}
-	baseURL := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+	endpointURL, err := openAIEndpointURL(a.BaseURL, "chat/completions")
+	if err != nil {
+		return promptResult{}, err
 	}
 	payload := map[string]any{
 		"model": a.Model,
@@ -597,7 +599,7 @@ func executeOpenAIPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		return promptResult{}, fmt.Errorf("marshalling openai request payload: %w", err)
 	}
 	client := &http.Client{Timeout: timeout}
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, endpointURL, bytes.NewReader(body))
 	if err != nil {
 		return promptResult{}, err
 	}
@@ -642,12 +644,12 @@ func executeOpenAIPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 }
 
 func validateOpenAIEndpoint(baseURL, apiKey string, timeout time.Duration) error {
-	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+	endpointURL, err := openAIEndpointURL(baseURL, "models")
+	if err != nil {
+		return err
 	}
 	client := &http.Client{Timeout: timeout}
-	req, err := http.NewRequest(http.MethodGet, baseURL+"/v1/models", nil)
+	req, err := http.NewRequest(http.MethodGet, endpointURL, nil)
 	if err != nil {
 		return err
 	}
@@ -664,6 +666,29 @@ func validateOpenAIEndpoint(baseURL, apiKey string, timeout time.Duration) error
 		return fmt.Errorf("openai validation failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return nil
+}
+
+func openAIEndpointURL(baseURL, endpoint string) (string, error) {
+	normalized := strings.TrimSpace(baseURL)
+	if normalized == "" {
+		normalized = "https://api.openai.com"
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return "", fmt.Errorf("parsing openai base URL: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("openai base URL must include scheme and host")
+	}
+	basePath := strings.TrimRight(parsed.Path, "/")
+	if basePath == "" {
+		basePath = "/v1"
+	} else if basePath != "/v1" && !strings.HasSuffix(basePath, "/v1") {
+		basePath = path.Join(basePath, "v1")
+	}
+	parsed.Path = path.Join(basePath, endpoint)
+	parsed.RawPath = ""
+	return parsed.String(), nil
 }
 
 func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
