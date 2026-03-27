@@ -183,6 +183,67 @@ json.dump({"mode": "langgraph", "selected_agent": "local"}, sys.stdout)
 	}
 }
 
+func TestRouteRejectsUnknownRouterMode(t *testing.T) {
+	_, err := Route(Request{
+		Prompt: "Summarize this design document.",
+		Agents: []agent.Agent{{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"}},
+		Config: agent.RouterConfig{Mode: "langgrpah"},
+	})
+	if err == nil {
+		t.Fatalf("expected router mode validation error")
+	}
+	if !strings.Contains(err.Error(), "unknown router mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRouteWithLangGraphRejectsEmptySelectedAgent(t *testing.T) {
+	scriptPath := filepath.Join(t.TempDir(), "router.py")
+	script := `import json, sys
+json.load(sys.stdin)
+json.dump({"mode": "langgraph", "selected_agent": "   "}, sys.stdout)
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("WriteFile(scriptPath) error = %v", err)
+	}
+
+	_, err := Route(Request{
+		Prompt: "Summarize this design document.",
+		Agents: []agent.Agent{{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"}},
+		Config: agent.RouterConfig{Mode: "langgraph", LangGraphCmd: scriptPath},
+	})
+	if err == nil {
+		t.Fatalf("expected empty selected_agent error")
+	}
+	if !strings.Contains(err.Error(), "selected_agent is empty or whitespace") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRouteWithLangGraphSupportsDashPrefixedScriptPath(t *testing.T) {
+	tempDir := t.TempDir()
+	scriptPath := filepath.Join(tempDir, "-router.py")
+	script := `import json, sys
+json.load(sys.stdin)
+json.dump({"mode": "langgraph", "selected_agent": "local"}, sys.stdout)
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("WriteFile(scriptPath) error = %v", err)
+	}
+
+	decision, err := Route(Request{
+		Prompt: "Summarize this design document.",
+		Agents: []agent.Agent{{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"}},
+		Config: agent.RouterConfig{Mode: "langgraph", LangGraphCmd: scriptPath},
+	})
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if decision.Selected.Agent.Name != "local" {
+		t.Fatalf("selected agent = %q, want local", decision.Selected.Agent.Name)
+	}
+}
+
 func TestRouteWithLangGraphPythonRouterSkipsUnsupportedAndLocalOnlyViolations(t *testing.T) {
 	scriptPath := filepath.Join("..", "..", "python", "langgraph_router.py")
 

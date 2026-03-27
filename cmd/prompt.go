@@ -692,6 +692,8 @@ func openAIEndpointURL(baseURL, endpoint string) (string, error) {
 	basePath := strings.TrimRight(parsed.Path, "/")
 	if basePath == "" {
 		basePath = "/v1"
+	} else if idx := strings.Index(basePath, "/v1"); idx != -1 && (len(basePath) == idx+3 || basePath[idx+3] == '/') {
+		basePath = basePath[:idx+3]
 	} else if basePath != "/v1" && !strings.HasSuffix(basePath, "/v1") {
 		basePath = path.Join(basePath, "v1")
 	}

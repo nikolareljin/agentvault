@@ -192,6 +192,29 @@ func TestExecuteOpenAIPrompt(t *testing.T) {
 	}
 }
 
+func TestOpenAIEndpointURLTrimsEndpointSuffixAfterV1(t *testing.T) {
+	tests := []struct {
+		baseURL  string
+		endpoint string
+		wantPath string
+	}{
+		{baseURL: "https://proxy.example/v1/chat/completions", endpoint: "chat/completions", wantPath: "/v1/chat/completions"},
+		{baseURL: "https://proxy.example/v1/models", endpoint: "models", wantPath: "/v1/models"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.baseURL+"|"+tt.endpoint, func(t *testing.T) {
+			got, err := openAIEndpointURL(tt.baseURL, tt.endpoint)
+			if err != nil {
+				t.Fatalf("openAIEndpointURL() error = %v", err)
+			}
+			if !strings.HasSuffix(got, tt.wantPath) {
+				t.Fatalf("openAIEndpointURL() = %q, want path suffix %q", got, tt.wantPath)
+			}
+		})
+	}
+}
+
 func TestExecuteOpenAIPromptReturnsStatusError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)

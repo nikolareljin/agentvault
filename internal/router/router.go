@@ -74,6 +74,9 @@ func Route(req Request) (Decision, error) {
 		return Decision{}, errors.New("routing requires non-empty prompt")
 	}
 	cfg := mergeRouterConfig(req.Shared.Router, req.Config).WithDefaults()
+	if err := cfg.Validate(); err != nil {
+		return Decision{}, err
+	}
 	mode := cfg.EffectiveMode()
 	if mode == "langgraph" {
 		decision, err := routeWithLangGraph(req, cfg)
@@ -414,7 +417,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	// #nosec G702 -- the interpreter is fixed to python3 and the script path is validated to an existing local .py file.
-	cmd := exec.CommandContext(ctx, "python3", resolvedScriptPath)
+	cmd := exec.CommandContext(ctx, "python3", "--", resolvedScriptPath)
 	cmd.Stdin = bytes.NewReader(body)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -427,13 +430,17 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		return Decision{}, fmt.Errorf("decoding langgraph router output: %w", err)
 	}
-	selectedIdx := findCandidateIndex(candidates, out.SelectedAgent)
+	trimmedSelected := strings.TrimSpace(out.SelectedAgent)
+	if trimmedSelected == "" {
+		return Decision{}, errors.New("decoding langgraph router output: selected_agent is empty or whitespace")
+	}
+	selectedIdx := findCandidateIndex(candidates, trimmedSelected)
 	if selectedIdx == -1 {
-		return Decision{}, fmt.Errorf("langgraph router selected unknown agent %q", out.SelectedAgent)
+		return Decision{}, fmt.Errorf("langgraph router selected unknown agent %q", trimmedSelected)
 	}
 	selected := candidates[selectedIdx]
 	if !candidateAllowed(selected, cfg) {
-		return Decision{}, fmt.Errorf("langgraph router selected disallowed agent %q", out.SelectedAgent)
+		return Decision{}, fmt.Errorf("langgraph router selected disallowed agent %q", trimmedSelected)
 	}
 	fallbacks := make([]Candidate, 0, len(out.Fallbacks))
 	for _, name := range out.Fallbacks {

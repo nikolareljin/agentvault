@@ -1,0 +1,19 @@
+import io
+import contextlib
+import unittest
+from unittest import mock
+
+import langgraph_router
+
+
+class LangGraphRouterMainTests(unittest.TestCase):
+    def test_main_returns_clean_error_on_invalid_json_stdin(self) -> None:
+        stderr = io.StringIO()
+        with mock.patch("sys.stdin", io.StringIO("{")), contextlib.redirect_stderr(stderr):
+            rc = langgraph_router.main()
+        self.assertEqual(rc, 1)
+        self.assertIn("Failed to read JSON payload from stdin", stderr.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main()
