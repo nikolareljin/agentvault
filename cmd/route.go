@@ -40,7 +40,7 @@ func runRoute(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	text, _, err := readOptionalPromptInput(cmd)
+	text, err := readPromptInput(cmd)
 	if err != nil {
 		return err
 	}

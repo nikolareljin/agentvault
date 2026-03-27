@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
@@ -25,5 +28,19 @@ func TestResolvedRoutingAgentsAppliesRuntimeBaseURL(t *testing.T) {
 	}
 	if resolved[0].BaseURL != "https://remote.example" {
 		t.Fatalf("resolved base URL = %q, want env override", resolved[0].BaseURL)
+	}
+}
+
+func TestReadPromptInputReturnsHelpfulNoPromptError(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("text", "", "")
+	cmd.Flags().String("file", "", "")
+
+	_, err := readPromptInput(cmd)
+	if err == nil {
+		t.Fatalf("expected missing prompt error")
+	}
+	if !strings.Contains(err.Error(), "no prompt provided") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

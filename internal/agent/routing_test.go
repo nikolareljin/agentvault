@@ -23,6 +23,17 @@ func TestRouterConfigWithDefaultsDoesNotForceAllowFallbacks(t *testing.T) {
 	}
 }
 
+func TestRouterConfigValidateRejectsUnknownMode(t *testing.T) {
+	cfg := RouterConfig{Mode: "langgrpah"}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatalf("expected validation error for unknown mode")
+	}
+	if !strings.Contains(err.Error(), "unknown router mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestResolveExecutionTarget(t *testing.T) {
 	tests := []struct {
 		name      string

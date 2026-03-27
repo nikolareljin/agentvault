@@ -119,7 +119,11 @@ def _run_with_langgraph(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def main() -> int:
-    payload = json.load(sys.stdin)
+    try:
+        payload = json.load(sys.stdin)
+    except Exception as exc:
+        print(f"Failed to read JSON payload from stdin: {exc}", file=sys.stderr)
+        return 1
     try:
         result = _run_with_langgraph(payload)
     except (ImportError, ModuleNotFoundError):

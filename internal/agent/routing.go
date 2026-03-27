@@ -68,6 +68,19 @@ type RouterConfig struct {
 	RequireApproval bool   `json:"require_approval,omitempty"`
 }
 
+func (cfg RouterConfig) Validate() error {
+	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
+	if mode == "" {
+		return nil
+	}
+	switch mode {
+	case "heuristic", "langgraph":
+		return nil
+	default:
+		return fmt.Errorf("unknown router mode: %s", cfg.Mode)
+	}
+}
+
 // ExecutionTarget is a normalized execution descriptor derived from an agent.
 type ExecutionTarget struct {
 	AgentName string     `json:"agent_name"`
