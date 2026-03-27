@@ -54,7 +54,7 @@ def _select_candidates(state: Dict[str, Any]) -> Dict[str, Any]:
 def _render_output(state: Dict[str, Any]) -> Dict[str, Any]:
     candidates = list(state.get("candidates", []))
     if not candidates:
-        raise SystemExit("no candidates provided")
+        raise ValueError("no candidates provided")
     config = state.get("config", {})
     local_only = bool(config.get("local_only", False))
     allowed_candidates: List[Dict[str, Any]] = []
@@ -66,16 +66,16 @@ def _render_output(state: Dict[str, Any]) -> Dict[str, Any]:
             continue
         allowed_candidates.append(candidate)
     if not allowed_candidates:
-        raise SystemExit("no allowed candidates available")
+        raise ValueError("no allowed candidates available")
     selected = allowed_candidates[0]
     selected_agent_name = selected.get("agent", {}).get("name")
     if not selected_agent_name:
-        raise SystemExit("invalid candidate payload: missing agent.name for selected candidate")
+        raise ValueError("invalid candidate payload: missing agent.name for selected candidate")
     fallbacks: List[str] = []
     for candidate in allowed_candidates[1:4]:
         agent_payload = candidate.get("agent")
         if not isinstance(agent_payload, dict) or not agent_payload.get("name"):
-            raise SystemExit("invalid candidate payload: missing agent.name for fallback candidate")
+            raise ValueError("invalid candidate payload: missing agent.name for fallback candidate")
         fallbacks.append(str(agent_payload["name"]))
     reasons = list(selected.get("reasons", []))
     if selected.get("langgraph_score") != selected.get("score"):
