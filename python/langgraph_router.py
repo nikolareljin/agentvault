@@ -56,14 +56,24 @@ def _render_output(state: Dict[str, Any]) -> Dict[str, Any]:
     candidates = list(state.get("candidates", []))
     if not candidates:
         raise SystemExit("no candidates provided")
-    selected = candidates[0]
+    config = state.get("config", {})
+    local_only = bool(config.get("local_only", False))
+    allowed_candidates: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        target = candidate.get("target", {})
+        if not target.get("supported", False):
+            continue
+        if local_only and not target.get("local", False):
+            continue
+        allowed_candidates.append(candidate)
+    if not allowed_candidates:
+        raise SystemExit("no allowed candidates available")
+    selected = allowed_candidates[0]
     selected_agent_name = selected.get("agent", {}).get("name")
     if not selected_agent_name:
         raise SystemExit("invalid candidate payload: missing agent.name for selected candidate")
     fallbacks: List[str] = []
-    for candidate in candidates[1:4]:
-        if not candidate.get("target", {}).get("supported", False):
-            continue
+    for candidate in allowed_candidates[1:4]:
         agent_payload = candidate.get("agent")
         if not isinstance(agent_payload, dict) or not agent_payload.get("name"):
             raise SystemExit("invalid candidate payload: missing agent.name for fallback candidate")
@@ -80,7 +90,12 @@ def _render_output(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _run_without_langgraph(payload: Dict[str, Any]) -> Dict[str, Any]:
-    state = {"prompt": payload.get("prompt", ""), "candidates": payload.get("candidates", []), "mode": "python-fallback"}
+    state = {
+        "prompt": payload.get("prompt", ""),
+        "config": payload.get("config", {}),
+        "candidates": payload.get("candidates", []),
+        "mode": "python-fallback",
+    }
     state.update(_select_candidates(state))
     return _render_output(state)
 
@@ -93,7 +108,14 @@ def _run_with_langgraph(payload: Dict[str, Any]) -> Dict[str, Any]:
     graph.add_edge(START, "select_candidates")
     graph.add_edge("select_candidates", END)
     app = graph.compile()
-    state = app.invoke({"prompt": payload.get("prompt", ""), "candidates": payload.get("candidates", []), "mode": "langgraph"})
+    state = app.invoke(
+        {
+            "prompt": payload.get("prompt", ""),
+            "config": payload.get("config", {}),
+            "candidates": payload.get("candidates", []),
+            "mode": "langgraph",
+        }
+    )
     return _render_output(state)
 
 
