@@ -360,13 +360,12 @@ func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
 	preferLowCost, _ := cmd.Flags().GetBool("prefer-low-cost")
 	localOnly, _ := cmd.Flags().GetBool("local-only")
 	return agent.RouterConfig{
-		Mode:           mode,
-		LangGraphCmd:   langGraphCmd,
-		PreferLocal:    preferLocal,
-		PreferFast:     preferFast,
-		PreferLowCost:  preferLowCost,
-		LocalOnly:      localOnly,
-		AllowFallbacks: true,
+		Mode:          mode,
+		LangGraphCmd:  langGraphCmd,
+		PreferLocal:   preferLocal,
+		PreferFast:    preferFast,
+		PreferLowCost: preferLowCost,
+		LocalOnly:     localOnly,
 	}
 }
 

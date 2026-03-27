@@ -145,7 +145,7 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	selectedIdx := -1
 	for i, candidate := range candidates {
-		if candidateAllowed(candidate, cfg) && candidate.Score > -1000 {
+		if candidateAllowed(candidate, cfg) {
 			selectedIdx = i
 			break
 		}
@@ -158,7 +158,7 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 	fallbacks := make([]Candidate, 0, 3)
 	if cfg.AllowFallbacks {
 		for i, candidate := range candidates {
-			if i == selectedIdx || !candidateAllowed(candidate, cfg) || candidate.Score <= -1000 {
+			if i == selectedIdx || !candidateAllowed(candidate, cfg) {
 				continue
 			}
 			fallbacks = append(fallbacks, candidate)

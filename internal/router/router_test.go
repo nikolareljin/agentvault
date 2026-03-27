@@ -77,6 +77,27 @@ func TestRouteLocalOnlyErrorsWithoutSupportedLocalTarget(t *testing.T) {
 	}
 }
 
+func TestRouteDoesNotRejectSupportedCandidatesForVeryLowPriority(t *testing.T) {
+	decision, err := Route(Request{
+		Prompt: "Summarize this design document.",
+		Agents: []agent.Agent{
+			{
+				Name:     "local",
+				Provider: agent.ProviderOllama,
+				Model:    "llama3.2",
+				Route:    agent.RouteConfig{Priority: -5000},
+			},
+		},
+		Shared: agent.SharedConfig{},
+	})
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if decision.Selected.Agent.Name != "local" {
+		t.Fatalf("selected agent = %q, want local", decision.Selected.Agent.Name)
+	}
+}
+
 func TestRouteDecisionJSONDoesNotLeakSecrets(t *testing.T) {
 	decision, err := Route(Request{
 		Prompt: "Implement and test this Go refactor.",
@@ -159,5 +180,25 @@ json.dump({"mode": "langgraph", "selected_agent": "local"}, sys.stdout)
 	}
 	if !strings.Contains(err.Error(), "non-empty prompt") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRouteWithLangGraphPythonRouterSkipsUnsupportedAndLocalOnlyViolations(t *testing.T) {
+	scriptPath := filepath.Join("..", "..", "python", "langgraph_router.py")
+
+	decision, err := Route(Request{
+		Prompt: "Private local only code review.",
+		Agents: []agent.Agent{
+			{Name: "remote", Provider: agent.ProviderCodex, Model: "gpt-5-codex"},
+			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2", Route: agent.RouteConfig{Priority: -50}},
+		},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{Mode: "langgraph", LangGraphCmd: scriptPath, LocalOnly: true},
+	})
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if decision.Selected.Agent.Name != "local" {
+		t.Fatalf("selected agent = %q, want local", decision.Selected.Agent.Name)
 	}
 }

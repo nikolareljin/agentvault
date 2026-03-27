@@ -318,3 +318,18 @@ func TestValidatePromptTargetUnsupportedRunnerMentionsRunner(t *testing.T) {
 		t.Fatalf("error = %q, want runner name", err.Error())
 	}
 }
+
+func TestPromptRouterOverrideDoesNotForceAllowFallbacks(t *testing.T) {
+	cmd := &cobra.Command{Use: "prompt"}
+	cmd.Flags().String("router", "", "")
+	cmd.Flags().String("langgraph-cmd", "", "")
+	cmd.Flags().Bool("prefer-local", false, "")
+	cmd.Flags().Bool("prefer-fast", false, "")
+	cmd.Flags().Bool("prefer-low-cost", false, "")
+	cmd.Flags().Bool("local-only", false, "")
+
+	cfg := promptRouterOverride(cmd)
+	if cfg.AllowFallbacks {
+		t.Fatalf("AllowFallbacks = true, want false when not explicitly requested")
+	}
+}
