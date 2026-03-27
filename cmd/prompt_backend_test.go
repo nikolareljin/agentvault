@@ -85,11 +85,19 @@ func TestValidateOpenAIEndpoint(t *testing.T) {
 	}))
 	defer okServer.Close()
 
-	if err := validateOpenAIEndpoint(okServer.URL, apiKey, time.Second); err != nil {
-		t.Fatalf("validateOpenAIEndpoint() error = %v", err)
+	for _, baseURL := range []string{okServer.URL, okServer.URL + "/v1"} {
+		baseURL := baseURL
+		t.Run("ok:"+baseURL, func(t *testing.T) {
+			if err := validateOpenAIEndpoint(baseURL, apiKey, time.Second); err != nil {
+				t.Fatalf("validateOpenAIEndpoint() error = %v", err)
+			}
+		})
 	}
 
 	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte("invalid auth"))
 	}))
@@ -137,20 +145,25 @@ func TestExecuteOpenAIPrompt(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := executeOpenAIPrompt(agent.Agent{
-		Provider: agent.ProviderOpenAI,
-		Model:    "gpt-5",
-		APIKey:   apiKey,
-		BaseURL:  server.URL,
-	}, "hello", time.Second)
-	if err != nil {
-		t.Fatalf("executeOpenAIPrompt() error = %v", err)
-	}
-	if result.Response != "done" {
-		t.Fatalf("response = %q, want done", result.Response)
-	}
-	if result.Usage.InputTokens != 7 || result.Usage.OutputTokens != 5 || result.Usage.TotalTokens != 12 {
-		t.Fatalf("unexpected usage: %#v", result.Usage)
+	for _, baseURL := range []string{server.URL, server.URL + "/v1"} {
+		baseURL := baseURL
+		t.Run("ok:"+baseURL, func(t *testing.T) {
+			result, err := executeOpenAIPrompt(agent.Agent{
+				Provider: agent.ProviderOpenAI,
+				Model:    "gpt-5",
+				APIKey:   apiKey,
+				BaseURL:  baseURL,
+			}, "hello", time.Second)
+			if err != nil {
+				t.Fatalf("executeOpenAIPrompt() error = %v", err)
+			}
+			if result.Response != "done" {
+				t.Fatalf("response = %q, want done", result.Response)
+			}
+			if result.Usage.InputTokens != 7 || result.Usage.OutputTokens != 5 || result.Usage.TotalTokens != 12 {
+				t.Fatalf("unexpected usage: %#v", result.Usage)
+			}
+		})
 	}
 }
 
