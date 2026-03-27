@@ -202,3 +202,47 @@ func TestRouteWithLangGraphPythonRouterSkipsUnsupportedAndLocalOnlyViolations(t 
 		t.Fatalf("selected agent = %q, want local", decision.Selected.Agent.Name)
 	}
 }
+
+func TestRouteWithLangGraphFallsBackWhenLangGraphRuntimeFails(t *testing.T) {
+	tempDir := t.TempDir()
+	langGraphDir := filepath.Join(tempDir, "langgraph")
+	if err := os.MkdirAll(langGraphDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(langGraphDir) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(langGraphDir, "__init__.py"), []byte(""), 0o600); err != nil {
+		t.Fatalf("WriteFile(__init__.py) error = %v", err)
+	}
+	graphPy := `START = "start"
+END = "end"
+class StateGraph:
+    def __init__(self, _state):
+        pass
+    def add_node(self, *_args, **_kwargs):
+        pass
+    def add_edge(self, *_args, **_kwargs):
+        pass
+    def compile(self):
+        raise RuntimeError("boom")
+`
+	if err := os.WriteFile(filepath.Join(langGraphDir, "graph.py"), []byte(graphPy), 0o600); err != nil {
+		t.Fatalf("WriteFile(graph.py) error = %v", err)
+	}
+	t.Setenv("PYTHONPATH", tempDir)
+
+	scriptPath := filepath.Join("..", "..", "python", "langgraph_router.py")
+	decision, err := Route(Request{
+		Prompt: "Summarize this design document.",
+		Agents: []agent.Agent{{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"}},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{Mode: "langgraph", LangGraphCmd: scriptPath, AllowFallbacks: true},
+	})
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if decision.Mode != "langgraph" && decision.Mode != "python-fallback" {
+		t.Fatalf("decision.Mode = %q, want python-fallback-compatible mode", decision.Mode)
+	}
+	if decision.Selected.Agent.Name != "local" {
+		t.Fatalf("selected agent = %q, want local", decision.Selected.Agent.Name)
+	}
+}
