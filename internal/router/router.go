@@ -422,7 +422,6 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if err != nil {
 		return Decision{}, err
 	}
-	// #nosec G204 -- the interpreter is resolved from PATH and the script path is validated to an existing local .py file.
 	cmd := exec.CommandContext(ctx, pythonCmd, "--", resolvedScriptPath)
 	cmd.Stdin = bytes.NewReader(body)
 	var stdout, stderr bytes.Buffer
@@ -470,9 +469,8 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 func resolvePythonInterpreter() (string, error) {
 	for _, name := range []string{"python3", "python"} {
-		path, err := execLookPath(name)
-		if err == nil {
-			return path, nil
+		if _, err := execLookPath(name); err == nil {
+			return name, nil
 		}
 	}
 	return "", errors.New("langgraph mode requires python3 or python on PATH")
