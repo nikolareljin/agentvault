@@ -15,7 +15,14 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, TypedDict
+
+
+class RouterState(TypedDict, total=False):
+    prompt: str
+    config: Dict[str, Any]
+    candidates: List[Dict[str, Any]]
+    mode: str
 
 
 def _provider_bias(prompt: str, candidate: Dict[str, Any]) -> int:
@@ -102,7 +109,7 @@ def _run_without_langgraph(payload: Dict[str, Any]) -> Dict[str, Any]:
 def _run_with_langgraph(payload: Dict[str, Any]) -> Dict[str, Any]:
     from langgraph.graph import END, START, StateGraph
 
-    graph = StateGraph(dict)
+    graph = StateGraph(RouterState)
     graph.add_node("select_candidates", _select_candidates)
     graph.add_edge(START, "select_candidates")
     graph.add_edge("select_candidates", END)

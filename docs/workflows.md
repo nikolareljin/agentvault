@@ -98,7 +98,7 @@ agentvault init
 agentvault setup import team.bundle --merge --apply-provider-configs
 ```
 
-`setup import` also restores shared router settings from the bundle, so imported prompt-routing policy survives cross-machine setup replication.
+With `--merge`, `setup import` also restores and merges shared router settings from the bundle, so imported prompt-routing policy survives cross-machine setup replication; existing router configuration is otherwise preserved unless the current router config is empty.
 
 ## LangGraph sidecar routing
 

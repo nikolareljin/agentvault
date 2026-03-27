@@ -18,6 +18,14 @@ import (
 
 var execLookPath = exec.LookPath
 
+var (
+	codingTerms   = []string{"code", "coding", "implement", "bug", "fix", "refactor", "test", "function", "compile", "build", "issue", "repository", "repo", "golang", "python", "javascript", "rust"}
+	reviewTerms   = []string{"review", "diff", "pull request", "regression", "risk", "bug", "edge case"}
+	analysisTerms = []string{"analyze", "investigate", "compare", "architecture", "design", "tradeoff", "strategy"}
+	latencyTerms  = []string{"urgent", "asap", "quickly", "immediately", "fast", "time-sensitive"}
+	privacyTerms  = []string{"private", "confidential", "local only", "offline", "air-gapped", "airgapped", "no network"}
+)
+
 // Request captures one routing decision request.
 type Request struct {
 	Prompt string
@@ -223,6 +231,7 @@ func candidateAllowed(candidate Candidate, cfg agent.RouterConfig) bool {
 func scoreCandidate(a agent.Agent, profile agent.RouteConfig, target agent.ExecutionTarget, intent Intent, cfg agent.RouterConfig, prompt string) (int, []string) {
 	score := profile.Priority
 	reasons := []string{fmt.Sprintf("base priority %d", profile.Priority)}
+	promptLower := strings.ToLower(prompt)
 	caps := make(map[string]struct{}, len(profile.Capabilities))
 	for _, capability := range profile.Capabilities {
 		caps[capability] = struct{}{}
@@ -262,6 +271,7 @@ func scoreCandidate(a agent.Agent, profile agent.RouteConfig, target agent.Execu
 	}
 	if target.Local && !intent.LatencySensitive && cfg.PreferLocal {
 		score += 5
+		reasons = append(reasons, "non-latency-sensitive local target (+5)")
 	}
 
 	wanted := requiredCapability(intent)
@@ -277,13 +287,17 @@ func scoreCandidate(a agent.Agent, profile agent.RouteConfig, target agent.Execu
 	if _, ok := caps[agent.RouteCapabilityGeneral]; ok {
 		score += 5
 	}
-	if strings.Contains(strings.ToLower(prompt), strings.ToLower(string(a.Provider))) {
+	providerLower := strings.ToLower(string(a.Provider))
+	if providerLower != "" && strings.Contains(promptLower, providerLower) {
 		score += 8
 		reasons = append(reasons, fmt.Sprintf("prompt explicitly references provider %s", a.Provider))
 	}
-	if a.Model != "" && strings.Contains(strings.ToLower(prompt), strings.ToLower(a.Model)) {
-		score += 10
-		reasons = append(reasons, fmt.Sprintf("prompt explicitly references model %s", a.Model))
+	if a.Model != "" {
+		modelLower := strings.ToLower(a.Model)
+		if strings.Contains(promptLower, modelLower) {
+			score += 10
+			reasons = append(reasons, fmt.Sprintf("prompt explicitly references model %s", a.Model))
+		}
 	}
 	if intent.Coding {
 		switch target.Runner {
@@ -344,12 +358,6 @@ func requiredCapability(intent Intent) string {
 func classifyPrompt(prompt string) Intent {
 	lower := strings.ToLower(strings.TrimSpace(prompt))
 	intent := Intent{TaskClass: "general"}
-	codingTerms := []string{"code", "coding", "implement", "bug", "fix", "refactor", "test", "function", "compile", "build", "issue", "repository", "repo", "golang", "python", "javascript", "rust"}
-	reviewTerms := []string{"review", "diff", "pull request", "regression", "risk", "bug", "edge case"}
-	analysisTerms := []string{"analyze", "investigate", "compare", "architecture", "design", "tradeoff", "strategy"}
-	latencyTerms := []string{"urgent", "asap", "quickly", "immediately", "fast", "time-sensitive"}
-	privacyTerms := []string{"private", "confidential", "local only", "offline", "air-gapped", "airgapped", "no network"}
-
 	intent.Coding = containsAny(lower, codingTerms)
 	intent.Review = containsAny(lower, reviewTerms)
 	intent.Analysis = containsAny(lower, analysisTerms)
@@ -450,7 +458,11 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	}
 	fallbacks := make([]Candidate, 0, len(out.Fallbacks))
 	for _, name := range out.Fallbacks {
-		candidate, ok := findCandidate(candidates, name)
+		trimmedName := strings.TrimSpace(name)
+		if trimmedName == "" {
+			continue
+		}
+		candidate, ok := findCandidate(candidates, trimmedName)
 		if ok && candidate.Agent.Name != selected.Agent.Name && candidateAllowed(candidate, cfg) {
 			fallbacks = append(fallbacks, candidate)
 		}
