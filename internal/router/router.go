@@ -422,6 +422,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if err != nil {
 		return Decision{}, err
 	}
+	// #nosec G204,G702 -- pythonCmd is selected from the fixed python3/python allowlist after a Python 3 version check, and resolvedScriptPath is a canonicalized local .py file.
 	cmd := exec.CommandContext(ctx, pythonCmd, "--", resolvedScriptPath)
 	cmd.Stdin = bytes.NewReader(body)
 	var stdout, stderr bytes.Buffer
@@ -468,12 +469,51 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 }
 
 func resolvePythonInterpreter() (string, error) {
-	for _, name := range []string{"python3", "python"} {
-		if _, err := execLookPath(name); err == nil {
-			return name, nil
+	candidates := []string{"python3", "python"}
+	var lastErr error
+	for _, name := range candidates {
+		path, err := execLookPath(name)
+		if err != nil {
+			lastErr = err
+			continue
 		}
+
+		if err := validatePython3Interpreter(path); err != nil {
+			lastErr = fmt.Errorf("%s is not a supported Python 3 interpreter: %w", name, err)
+			continue
+		}
+
+		return name, nil
 	}
-	return "", errors.New("langgraph mode requires python3 or python on PATH")
+	if lastErr != nil {
+		return "", fmt.Errorf("langgraph mode requires a Python 3 interpreter on PATH (checked %s): %w", strings.Join(candidates, ", "), lastErr)
+	}
+	return "", errors.New("langgraph mode requires python3 or python (Python 3) on PATH")
+}
+
+func validatePython3Interpreter(path string) error {
+	if strings.ContainsAny(path, "\n\r\t") {
+		return errors.New("interpreter path contains invalid whitespace")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, path, "-c", "import sys; raise SystemExit(0 if sys.version_info[0] >= 3 else 1)")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		return errors.New("timeout while checking interpreter version")
+	}
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, msg)
+	}
+	return nil
 }
 
 func resolveLangGraphScriptPath(raw string) (string, error) {
@@ -484,18 +524,30 @@ func resolveLangGraphScriptPath(raw string) (string, error) {
 	if strings.ContainsAny(trimmed, "\n\r\t") {
 		return "", errors.New("langgraph router script path contains invalid whitespace")
 	}
-	cleaned := filepath.Clean(trimmed)
-	info, err := os.Stat(cleaned)
+	absolute, err := filepath.Abs(filepath.Clean(trimmed))
+	if err != nil {
+		return "", fmt.Errorf("resolve langgraph router script path: %w", err)
+	}
+	resolved := absolute
+	if symlinkTarget, err := filepath.EvalSymlinks(absolute); err == nil {
+		resolved = symlinkTarget
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("resolve langgraph router symlink: %w", err)
+	}
+	info, err := os.Stat(resolved)
 	if err != nil {
 		return "", fmt.Errorf("stat langgraph router script: %w", err)
 	}
 	if info.IsDir() {
 		return "", errors.New("langgraph router path must point to a Python file, not a directory")
 	}
-	if strings.ToLower(filepath.Ext(cleaned)) != ".py" {
+	if !info.Mode().IsRegular() {
+		return "", errors.New("langgraph router path must point to a regular file")
+	}
+	if strings.ToLower(filepath.Ext(resolved)) != ".py" {
 		return "", errors.New("langgraph router path must point to a .py file")
 	}
-	return cleaned, nil
+	return resolved, nil
 }
 
 func findCandidate(candidates []Candidate, name string) (Candidate, bool) {

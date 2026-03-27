@@ -335,6 +335,26 @@ func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
 	}
 }
 
+func TestResolveLangGraphScriptPathReturnsCanonicalAbsolutePath(t *testing.T) {
+	tempDir := t.TempDir()
+	targetPath := filepath.Join(tempDir, "router.py")
+	if err := os.WriteFile(targetPath, []byte("print('ok')\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(targetPath) error = %v", err)
+	}
+	linkPath := filepath.Join(tempDir, "link.py")
+	if err := os.Symlink(targetPath, linkPath); err != nil {
+		t.Fatalf("Symlink(linkPath) error = %v", err)
+	}
+
+	got, err := resolveLangGraphScriptPath(linkPath)
+	if err != nil {
+		t.Fatalf("resolveLangGraphScriptPath() error = %v", err)
+	}
+	if got != targetPath {
+		t.Fatalf("resolveLangGraphScriptPath() = %q, want %q", got, targetPath)
+	}
+}
+
 func TestResolvePythonInterpreterErrorsWithoutSupportedExecutable(t *testing.T) {
 	original := execLookPath
 	execLookPath = func(file string) (string, error) {
@@ -348,7 +368,72 @@ func TestResolvePythonInterpreterErrorsWithoutSupportedExecutable(t *testing.T) 
 	if err == nil {
 		t.Fatal("expected missing interpreter error")
 	}
-	if !strings.Contains(err.Error(), "python3 or python") {
+	if !strings.Contains(err.Error(), "Python 3 interpreter") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolvePythonInterpreterSkipsPython2Fallback(t *testing.T) {
+	tempDir := t.TempDir()
+	python2Path := filepath.Join(tempDir, "python")
+	python3Path := filepath.Join(tempDir, "python3")
+
+	if err := os.WriteFile(python2Path, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(python2Path) error = %v", err)
+	}
+	if err := os.WriteFile(python3Path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(python3Path) error = %v", err)
+	}
+
+	original := execLookPath
+	execLookPath = func(file string) (string, error) {
+		switch file {
+		case "python3":
+			return python3Path, nil
+		case "python":
+			return python2Path, nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	t.Cleanup(func() {
+		execLookPath = original
+	})
+
+	got, err := resolvePythonInterpreter()
+	if err != nil {
+		t.Fatalf("resolvePythonInterpreter() error = %v", err)
+	}
+	if got != "python3" {
+		t.Fatalf("resolvePythonInterpreter() = %q, want python3", got)
+	}
+}
+
+func TestResolvePythonInterpreterErrorsWhenOnlyPython2IsAvailable(t *testing.T) {
+	tempDir := t.TempDir()
+	python2Path := filepath.Join(tempDir, "python")
+	if err := os.WriteFile(python2Path, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(python2Path) error = %v", err)
+	}
+
+	original := execLookPath
+	execLookPath = func(file string) (string, error) {
+		switch file {
+		case "python":
+			return python2Path, nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	t.Cleanup(func() {
+		execLookPath = original
+	})
+
+	_, err := resolvePythonInterpreter()
+	if err == nil {
+		t.Fatal("expected unsupported Python 2 error")
+	}
+	if !strings.Contains(err.Error(), "Python 3 interpreter") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
