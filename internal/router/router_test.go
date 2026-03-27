@@ -323,15 +323,15 @@ class StateGraph:
 }
 
 func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
-	name, err := resolvePythonInterpreter()
+	path, err := resolvePythonInterpreter()
 	if err != nil {
 		t.Fatalf("resolvePythonInterpreter() error = %v", err)
 	}
-	if name == "" {
+	if path == "" {
 		t.Fatal("resolvePythonInterpreter() returned empty path")
 	}
-	if name != "python3" && name != "python" {
-		t.Fatalf("resolvePythonInterpreter() = %q, want supported interpreter name", name)
+	if !filepath.IsAbs(path) {
+		t.Fatalf("resolvePythonInterpreter() = %q, want absolute path", path)
 	}
 }
 
@@ -404,8 +404,8 @@ func TestResolvePythonInterpreterSkipsPython2Fallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolvePythonInterpreter() error = %v", err)
 	}
-	if got != "python3" {
-		t.Fatalf("resolvePythonInterpreter() = %q, want python3", got)
+	if got != python3Path {
+		t.Fatalf("resolvePythonInterpreter() = %q, want %q", got, python3Path)
 	}
 }
 

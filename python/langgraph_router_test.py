@@ -1,7 +1,11 @@
 import io
 import contextlib
+import os
+import sys
 import unittest
 from unittest import mock
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 import langgraph_router
 

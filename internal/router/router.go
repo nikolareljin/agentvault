@@ -422,8 +422,8 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if err != nil {
 		return Decision{}, err
 	}
-	// #nosec G204,G702 -- pythonCmd is selected from the fixed python3/python allowlist after a Python 3 version check, and resolvedScriptPath is a canonicalized local .py file.
-	cmd := exec.CommandContext(ctx, pythonCmd, "--", resolvedScriptPath)
+	// #nosec G204,G702 -- pythonCmd is the exact validated Python 3 interpreter path, and resolvedScriptPath is a canonicalized local .py file.
+	cmd := exec.CommandContext(ctx, pythonCmd, resolvedScriptPath)
 	cmd.Stdin = bytes.NewReader(body)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -483,7 +483,7 @@ func resolvePythonInterpreter() (string, error) {
 			continue
 		}
 
-		return name, nil
+		return path, nil
 	}
 	if lastErr != nil {
 		return "", fmt.Errorf("langgraph mode requires a Python 3 interpreter on PATH (checked %s): %w", strings.Join(candidates, ", "), lastErr)
