@@ -126,7 +126,7 @@ def main() -> int:
         return 1
     try:
         result = _run_with_langgraph(payload)
-    except (ImportError, ModuleNotFoundError):
+    except ImportError:
         result = _run_without_langgraph(payload)
     except Exception as exc:
         print(

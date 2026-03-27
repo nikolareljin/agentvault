@@ -68,6 +68,10 @@ type RouterConfig struct {
 	RequireApproval bool   `json:"require_approval,omitempty"`
 }
 
+func (cfg RouterConfig) IsZero() bool {
+	return cfg == RouterConfig{}
+}
+
 func (cfg RouterConfig) Validate() error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 	if mode == "" {
