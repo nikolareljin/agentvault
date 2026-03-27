@@ -446,6 +446,16 @@ func readOptionalPromptInput(cmd *cobra.Command) (string, bool, error) {
 }
 
 func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
+	if runtimeCfg.Model.Value != "" {
+		a.Model = runtimeCfg.Model.Value
+	}
+	if runtimeCfg.APIKey.Value != "" {
+		a.APIKey = runtimeCfg.APIKey.Value
+	}
+	if runtimeCfg.BaseURL.Value != "" {
+		a.BaseURL = runtimeCfg.BaseURL.Value
+	}
 	target := agent.ResolveExecutionTarget(a)
 	return executePromptTarget(target, a, prompt, timeout)
 }

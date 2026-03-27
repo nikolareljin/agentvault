@@ -43,6 +43,31 @@ func TestExecutePrompt_BedrockReturnsExplicitError(t *testing.T) {
 	}
 }
 
+func TestExecutePromptAppliesRuntimeConfig(t *testing.T) {
+	const apiKey = "env-openai-key"
+	t.Setenv("OPENAI_API_KEY", apiKey)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+			t.Fatalf("authorization header = %q, want bearer token from env", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"done"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer server.Close()
+
+	result, err := executePrompt(agent.Agent{
+		Provider: agent.ProviderOpenAI,
+		Model:    "gpt-5",
+		BaseURL:  server.URL,
+	}, "hello", time.Second)
+	if err != nil {
+		t.Fatalf("executePrompt() error = %v", err)
+	}
+	if result.Response != "done" {
+		t.Fatalf("response = %q, want done", result.Response)
+	}
+}
+
 func TestValidateOllamaEndpoint(t *testing.T) {
 	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/tags" {

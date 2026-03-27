@@ -43,11 +43,10 @@ def _select_candidates(state: Dict[str, Any]) -> Dict[str, Any]:
         candidate["langgraph_score"] = int(candidate.get("score", 0)) + _provider_bias(prompt, candidate)
     candidates.sort(
         key=lambda item: (
-            int(item.get("langgraph_score", 0)),
-            bool(item.get("target", {}).get("local", False)),
+            -int(item.get("langgraph_score", 0)),
+            not bool(item.get("target", {}).get("local", False)),
             str(item.get("agent", {}).get("name", "")),
         ),
-        reverse=True,
     )
     return {"candidates": candidates}
 
@@ -136,5 +135,21 @@ def main() -> int:
     return 0
 
 
+def _self_test() -> None:
+    state = {
+        "prompt": "general request",
+        "candidates": [
+            {"score": 10, "agent": {"name": "zeta", "provider": "codex"}, "target": {"local": True, "supported": True}},
+            {"score": 10, "agent": {"name": "alpha", "provider": "codex"}, "target": {"local": True, "supported": True}},
+        ],
+    }
+    ranked = _select_candidates(state)["candidates"]
+    if ranked[0].get("agent", {}).get("name") != "alpha":
+        raise SystemExit("langgraph candidate ordering should break ties by agent name ascending")
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
+        _self_test()
+        raise SystemExit(0)
     raise SystemExit(main())
