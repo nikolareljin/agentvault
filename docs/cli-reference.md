@@ -184,7 +184,7 @@ Behavior:
 - inspects all configured agents and their inferred or explicit routing metadata
 - selects the best agent/runner/model combination without executing the prompt
 - defaults to a local-first routing policy when none of `--prefer-local`, `--prefer-fast`, or `--prefer-low-cost` are set
-- returns fallback candidates when available
+- returns fallback candidates when available and when enabled in the router configuration
 
 ## Rules (`rules` alias: `rule`)
 

@@ -387,6 +387,8 @@ type langGraphOutput struct {
 }
 
 func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
+	trimmedPrompt := strings.TrimSpace(req.Prompt)
+	intent := classifyPrompt(trimmedPrompt)
 	scriptPath := strings.TrimSpace(cfg.LangGraphCmd)
 	if scriptPath == "" {
 		scriptPath = strings.TrimSpace(os.Getenv("AGENTVAULT_LANGGRAPH_ROUTER_CMD"))
@@ -394,7 +396,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if scriptPath == "" {
 		return Decision{}, errors.New("langgraph mode requires a router script path or AGENTVAULT_LANGGRAPH_ROUTER_CMD")
 	}
-	candidates := buildCandidates(req.Agents, classifyPrompt(req.Prompt), cfg, req.Prompt)
+	candidates := buildCandidates(req.Agents, intent, cfg, trimmedPrompt)
 	if len(candidates) == 0 {
 		return Decision{}, errors.New("no routing candidates available")
 	}
@@ -403,7 +405,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 		return Decision{}, err
 	}
 
-	payload := langGraphInput{Prompt: req.Prompt, Config: cfg, Candidates: candidates}
+	payload := langGraphInput{Prompt: trimmedPrompt, Config: cfg, Candidates: candidates}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return Decision{}, err
@@ -446,7 +448,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	}
 	return Decision{
 		Mode:       chooseNonEmpty(out.Mode, "langgraph"),
-		Intent:     classifyPrompt(req.Prompt),
+		Intent:     intent,
 		Selected:   selected,
 		Fallbacks:  fallbacks,
 		Candidates: candidates,

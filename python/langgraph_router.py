@@ -125,6 +125,12 @@ def main() -> int:
         result = _run_with_langgraph(payload)
     except (ImportError, ModuleNotFoundError):
         result = _run_without_langgraph(payload)
+    except Exception as exc:
+        print(
+            f"LangGraph routing failed, falling back to pure-Python router: {exc}",
+            file=sys.stderr,
+        )
+        result = _run_without_langgraph(payload)
     json.dump(result, sys.stdout)
     sys.stdout.write("\n")
     return 0
