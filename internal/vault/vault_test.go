@@ -420,6 +420,50 @@ func TestImportDataMergesSharedRulesAndRolesWithoutOverwrite(t *testing.T) {
 	}
 }
 
+func TestImportDataImportsSharedRouterWithoutOverwritingExistingConfig(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		Router: agent.RouterConfig{Mode: "heuristic", PreferLocal: true},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	importJSON := `{
+		"agents": [],
+		"shared": {
+			"router": {
+				"mode": "langgraph",
+				"langgraph_command": "./python/langgraph_router.py",
+				"allow_fallbacks": true
+			}
+		}
+	}`
+	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+
+	if got := v.SharedConfig().Router; got.Mode != "heuristic" || !got.PreferLocal {
+		t.Fatalf("existing router config was overwritten: %#v", got)
+	}
+
+	emptyPath := tempVaultPath(t)
+	emptyVault := New(emptyPath)
+	if err := emptyVault.Init("master"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if _, _, err := emptyVault.ImportData([]byte(importJSON)); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+	got := emptyVault.SharedConfig().Router
+	if got.Mode != "langgraph" || got.LangGraphCmd != "./python/langgraph_router.py" || !got.AllowFallbacks {
+		t.Fatalf("imported router config = %#v, want imported router preserved", got)
+	}
+}
+
 func TestImportDataMergesPromptSessionsWithoutOverwrite(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)

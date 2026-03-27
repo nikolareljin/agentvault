@@ -2,6 +2,7 @@ package router
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,13 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
+
+func requirePythonInterpreter(t *testing.T) {
+	t.Helper()
+	if _, err := resolvePythonInterpreter(); err != nil {
+		t.Skipf("skipping LangGraph test: %v", err)
+	}
+}
 
 func TestRoutePrefersLocalOllamaForGeneralPrompt(t *testing.T) {
 	decision, err := Route(Request{
@@ -133,6 +141,7 @@ func TestClassifyPromptDoesNotTreatPleaseAsCoding(t *testing.T) {
 }
 
 func TestRouteWithLangGraphKeepsSelectedAndCandidatesReasonsInSync(t *testing.T) {
+	requirePythonInterpreter(t)
 	scriptPath := filepath.Join(t.TempDir(), "router.py")
 	script := `import json, sys
 json.load(sys.stdin)
@@ -160,6 +169,7 @@ json.dump({"mode": "langgraph", "selected_agent": "local", "reasons": ["langgrap
 }
 
 func TestRouteRejectsEmptyPromptBeforeLangGraph(t *testing.T) {
+	requirePythonInterpreter(t)
 	scriptPath := filepath.Join(t.TempDir(), "router.py")
 	script := `import json, sys
 json.load(sys.stdin)
@@ -198,6 +208,7 @@ func TestRouteRejectsUnknownRouterMode(t *testing.T) {
 }
 
 func TestRouteWithLangGraphRejectsEmptySelectedAgent(t *testing.T) {
+	requirePythonInterpreter(t)
 	scriptPath := filepath.Join(t.TempDir(), "router.py")
 	script := `import json, sys
 json.load(sys.stdin)
@@ -221,6 +232,7 @@ json.dump({"mode": "langgraph", "selected_agent": "   "}, sys.stdout)
 }
 
 func TestRouteWithLangGraphSupportsDashPrefixedScriptPath(t *testing.T) {
+	requirePythonInterpreter(t)
 	tempDir := t.TempDir()
 	scriptPath := filepath.Join(tempDir, "-router.py")
 	script := `import json, sys
@@ -245,6 +257,7 @@ json.dump({"mode": "langgraph", "selected_agent": "local"}, sys.stdout)
 }
 
 func TestRouteWithLangGraphPythonRouterSkipsUnsupportedAndLocalOnlyViolations(t *testing.T) {
+	requirePythonInterpreter(t)
 	scriptPath := filepath.Join("..", "..", "python", "langgraph_router.py")
 
 	decision, err := Route(Request{
@@ -265,6 +278,7 @@ func TestRouteWithLangGraphPythonRouterSkipsUnsupportedAndLocalOnlyViolations(t 
 }
 
 func TestRouteWithLangGraphFallsBackWhenLangGraphRuntimeFails(t *testing.T) {
+	requirePythonInterpreter(t)
 	tempDir := t.TempDir()
 	langGraphDir := filepath.Join(tempDir, "langgraph")
 	if err := os.MkdirAll(langGraphDir, 0o755); err != nil {
@@ -305,5 +319,33 @@ class StateGraph:
 	}
 	if decision.Selected.Agent.Name != "local" {
 		t.Fatalf("selected agent = %q, want local", decision.Selected.Agent.Name)
+	}
+}
+
+func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
+	path, err := resolvePythonInterpreter()
+	if err != nil {
+		t.Fatalf("resolvePythonInterpreter() error = %v", err)
+	}
+	if path == "" {
+		t.Fatal("resolvePythonInterpreter() returned empty path")
+	}
+}
+
+func TestResolvePythonInterpreterErrorsWithoutSupportedExecutable(t *testing.T) {
+	original := execLookPath
+	execLookPath = func(file string) (string, error) {
+		return "", errors.New("missing")
+	}
+	t.Cleanup(func() {
+		execLookPath = original
+	})
+
+	_, err := resolvePythonInterpreter()
+	if err == nil {
+		t.Fatal("expected missing interpreter error")
+	}
+	if !strings.Contains(err.Error(), "python3 or python") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -438,6 +438,9 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 	for _, s := range importedPromptSessions {
 		v.shared.PromptSessions = append(v.shared.PromptSessions, sanitizeImportedPromptSession(s))
 	}
+	if !vd.Shared.Router.IsZero() && v.shared.Router.IsZero() {
+		v.shared.Router = vd.Shared.Router
+	}
 	if len(v.shared.PromptSessions) > agent.PromptSessionRetentionLimit {
 		sort.SliceStable(v.shared.PromptSessions, func(i, j int) bool {
 			return promptSessionTimestamp(v.shared.PromptSessions[i]).Before(promptSessionTimestamp(v.shared.PromptSessions[j]))

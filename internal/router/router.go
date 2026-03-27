@@ -16,6 +16,8 @@ import (
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
 
+var execLookPath = exec.LookPath
+
 // Request captures one routing decision request.
 type Request struct {
 	Prompt string
@@ -416,8 +418,12 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	// #nosec G702 -- the interpreter is fixed to python3 and the script path is validated to an existing local .py file.
-	cmd := exec.CommandContext(ctx, "python3", "--", resolvedScriptPath)
+	pythonCmd, err := resolvePythonInterpreter()
+	if err != nil {
+		return Decision{}, err
+	}
+	// #nosec G204 -- the interpreter is resolved from PATH and the script path is validated to an existing local .py file.
+	cmd := exec.CommandContext(ctx, pythonCmd, "--", resolvedScriptPath)
 	cmd.Stdin = bytes.NewReader(body)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -460,6 +466,16 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 		Fallbacks:  fallbacks,
 		Candidates: candidates,
 	}, nil
+}
+
+func resolvePythonInterpreter() (string, error) {
+	for _, name := range []string{"python3", "python"} {
+		path, err := execLookPath(name)
+		if err == nil {
+			return path, nil
+		}
+	}
+	return "", errors.New("langgraph mode requires python3 or python on PATH")
 }
 
 func resolveLangGraphScriptPath(raw string) (string, error) {
