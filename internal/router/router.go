@@ -20,7 +20,7 @@ var execLookPath = exec.LookPath
 
 var (
 	codingTerms   = []string{"code", "coding", "implement", "bug", "fix", "refactor", "test", "function", "compile", "build", "issue", "repository", "repo", "golang", "python", "javascript", "rust"}
-	reviewTerms   = []string{"review", "diff", "pull request", "regression", "risk", "bug", "edge case"}
+	reviewTerms   = []string{"review", "diff", "pull request", "regression", "risk", "edge case"}
 	analysisTerms = []string{"analyze", "investigate", "compare", "architecture", "design", "tradeoff", "strategy"}
 	latencyTerms  = []string{"urgent", "asap", "quickly", "immediately", "fast", "time-sensitive"}
 	privacyTerms  = []string{"private", "confidential", "local only", "offline", "air-gapped", "airgapped", "no network"}
@@ -357,12 +357,14 @@ func requiredCapability(intent Intent) string {
 
 func classifyPrompt(prompt string) Intent {
 	lower := strings.ToLower(strings.TrimSpace(prompt))
+	normalized := normalizePromptText(lower)
+	tokens := tokenizePrompt(normalized)
 	intent := Intent{TaskClass: "general"}
-	intent.Coding = containsAny(lower, codingTerms)
-	intent.Review = containsAny(lower, reviewTerms)
-	intent.Analysis = containsAny(lower, analysisTerms)
-	intent.LatencySensitive = containsAny(lower, latencyTerms)
-	intent.PrivacySensitive = containsAny(lower, privacyTerms)
+	intent.Coding = containsAnyTerm(normalized, tokens, codingTerms)
+	intent.Review = containsAnyTerm(normalized, tokens, reviewTerms)
+	intent.Analysis = containsAnyTerm(normalized, tokens, analysisTerms)
+	intent.LatencySensitive = containsAnyTerm(normalized, tokens, latencyTerms)
+	intent.PrivacySensitive = containsAnyTerm(normalized, tokens, privacyTerms)
 
 	switch {
 	case intent.Review:
@@ -375,6 +377,60 @@ func classifyPrompt(prompt string) Intent {
 		intent.TaskClass = "general"
 	}
 	return intent
+}
+
+func containsAnyTerm(prompt string, tokens map[string]struct{}, terms []string) bool {
+	if prompt == "" {
+		return false
+	}
+	if len(tokens) == 0 {
+		tokens = tokenizePrompt(prompt)
+	}
+	for _, term := range terms {
+		normalizedTerm := normalizePromptText(strings.ToLower(term))
+		if normalizedTerm == "" {
+			continue
+		}
+		if strings.Contains(normalizedTerm, " ") {
+			if strings.Contains(prompt, normalizedTerm) {
+				return true
+			}
+			continue
+		}
+		if _, ok := tokens[normalizedTerm]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizePromptText(prompt string) string {
+	return strings.Join(strings.FieldsFunc(prompt, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	}), " ")
+}
+
+func tokenizePrompt(prompt string) map[string]struct{} {
+	tokens := make(map[string]struct{})
+	for _, token := range strings.Fields(prompt) {
+		tokens[token] = struct{}{}
+	}
+	return tokens
+}
+
+func canonicalizeExecutablePath(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolving absolute executable path: %w", err)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err == nil {
+		return resolvedPath, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return absPath, nil
 }
 
 func containsAny(haystack string, needles []string) bool {
@@ -487,6 +543,12 @@ func resolvePythonInterpreter() (string, error) {
 		path, err := execLookPath(name)
 		if err != nil {
 			lastErr = err
+			continue
+		}
+
+		path, err = canonicalizeExecutablePath(path)
+		if err != nil {
+			lastErr = fmt.Errorf("%s path could not be canonicalized: %w", name, err)
 			continue
 		}
 
