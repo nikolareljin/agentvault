@@ -150,3 +150,37 @@ func TestBuildInstallGuideMentionsProviderAssets(t *testing.T) {
 	}
 	t.Fatal("provider config install guide step missing")
 }
+
+func TestSetupImportMergesSharedRouterConfig(t *testing.T) {
+	imported := agent.SharedConfig{
+		Router: agent.RouterConfig{Mode: "langgraph", LangGraphCmd: "./python/langgraph_router.py", AllowFallbacks: true},
+	}
+
+	current := agent.SharedConfig{
+		Router: agent.RouterConfig{Mode: "heuristic", PreferLocal: true},
+	}
+
+	withoutMerge := current
+	if action := mergeSharedRouterConfig(&withoutMerge, imported, false); action != "" {
+		t.Fatalf("mergeSharedRouterConfig() action = %q, want empty action without merge", action)
+	}
+	if withoutMerge.Router.Mode != "heuristic" || !withoutMerge.Router.PreferLocal {
+		t.Fatalf("router config changed without merge: %#v", withoutMerge.Router)
+	}
+
+	withMerge := current
+	if action := mergeSharedRouterConfig(&withMerge, imported, true); action != "Updated" {
+		t.Fatalf("mergeSharedRouterConfig() action = %q, want Updated", action)
+	}
+	if withMerge.Router.Mode != "langgraph" || withMerge.Router.LangGraphCmd != "./python/langgraph_router.py" || !withMerge.Router.AllowFallbacks {
+		t.Fatalf("router config after merge = %#v, want imported router", withMerge.Router)
+	}
+
+	empty := agent.SharedConfig{}
+	if action := mergeSharedRouterConfig(&empty, imported, false); action != "Imported" {
+		t.Fatalf("mergeSharedRouterConfig() action = %q, want Imported", action)
+	}
+	if empty.Router.Mode != "langgraph" {
+		t.Fatalf("router config for empty shared config = %#v, want imported router", empty.Router)
+	}
+}

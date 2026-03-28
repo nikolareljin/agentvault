@@ -2,12 +2,18 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-24
+
 ### Added
 - `agentvault setup export` now supports `--agent`, `--project`, and `--include-secrets` for portable single-agent bundles with project-local instructions, workflow templates, and skill assets.
 - Setup bundles now carry explicit `provider_files`, `project_files`, `instruction_overrides`, and `skill_assets` sections with relocatable path metadata and redaction markers for sensitive content.
+- Added an intelligent prompt router with new `agentvault route` inspection command and `agentvault prompt --auto` execution path.
+- Added per-agent routing metadata for capabilities, latency/cost/privacy tiers, and routing priority.
+- Added optional Python LangGraph sidecar support via `python/langgraph_router.py` and `AGENTVAULT_LANGGRAPH_ROUTER_CMD`.
 
 ### Changed
 - `agentvault setup show` now summarizes portable asset sections and reports sensitive or redacted bundle content.
+- Prompt execution now resolves provider-agnostic runner targets before execution, including OpenAI HTTP support alongside existing Ollama, Codex, and Claude paths.
 
 ## [0.6.0] - 2026-03-14
 

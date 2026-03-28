@@ -83,6 +83,7 @@ Example:
 			}
 			a.DisabledRules = rules
 		}
+		applyRouteConfigFlags(cmd, &a.Route)
 
 		if err := a.Validate(); err != nil {
 			return err
@@ -108,4 +109,5 @@ func init() {
 	editCmd.Flags().String("tags", "", "comma-separated tags")
 	editCmd.Flags().String("role", "", "role to apply (e.g., lead-engineer)")
 	editCmd.Flags().String("disable-rules", "", "comma-separated rules to disable for this agent")
+	registerRouteConfigFlags(editCmd.Flags())
 }

@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/envutil"
+	routerpkg "github.com/nikolareljin/agentvault/internal/router"
 	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/spf13/cobra"
 )
@@ -28,6 +31,10 @@ type PromptRecord struct {
 	Timestamp           time.Time               `json:"timestamp"`
 	AgentName           string                  `json:"agent_name"`
 	Provider            string                  `json:"provider"`
+	Runner              string                  `json:"runner,omitempty"`
+	RouterMode          string                  `json:"router_mode,omitempty"`
+	RouteClass          string                  `json:"route_class,omitempty"`
+	RouteReasons        []string                `json:"route_reasons,omitempty"`
 	Model               string                  `json:"model,omitempty"`
 	Optimized           bool                    `json:"optimized"`
 	OptimizationProfile string                  `json:"optimization_profile,omitempty"`
@@ -62,7 +69,7 @@ Examples:
   agentvault prompt my-codex --text "review this diff"
   agentvault prompt my-ollama --text "build a parser" --json
   cat prompt.txt | agentvault prompt my-ollama --optimize-ollama`,
-	Args: cobra.ExactArgs(1),
+	Args: validatePromptArgs,
 	RunE: runPrompt,
 }
 
@@ -75,6 +82,13 @@ func init() {
 	promptCmd.Flags().String("issue", "", "issue reference for --workflow implement_issue")
 	promptCmd.Flags().String("pr", "", "pull request reference for --workflow implement_pr")
 	promptCmd.Flags().Bool("json", false, "output machine-readable JSON")
+	promptCmd.Flags().Bool("auto", false, "route the prompt automatically instead of selecting an agent manually (defaults to local-first routing when no other preferences are set)")
+	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph")
+	promptCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
+	promptCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing (effective default when no other routing preferences are set)")
+	promptCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
+	promptCmd.Flags().Bool("prefer-low-cost", false, "prefer lower-cost targets during routing")
+	promptCmd.Flags().Bool("local-only", false, "restrict routing to local execution targets only")
 	promptCmd.Flags().Bool("optimize", true, "rewrite/structure prompt for better execution efficiency")
 	promptCmd.Flags().String("optimize-profile", "auto", "optimization profile: auto|generic|ollama|codex|copilot|claude")
 	promptCmd.Flags().Bool("optimize-ollama", true, "deprecated: kept for compatibility; use --optimize/--optimize-profile")
@@ -97,39 +111,55 @@ func init() {
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "history-file")
 }
 
+func validatePromptArgs(cmd *cobra.Command, args []string) error {
+	autoRoute, _ := cmd.Flags().GetBool("auto")
+	if autoRoute {
+		if len(args) != 0 {
+			return errors.New("prompt --auto does not accept an agent name")
+		}
+		return nil
+	}
+	return cobra.ExactArgs(1)(cmd, args)
+}
+
 func runPrompt(cmd *cobra.Command, args []string) error {
 	v, err := openVault()
 	if err != nil {
 		return err
 	}
 
-	a, ok := v.Get(args[0])
-	if !ok {
-		return fmt.Errorf("agent %q not found", args[0])
-	}
-	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
-	a.Model = runtimeCfg.Model.Value
-	a.APIKey = runtimeCfg.APIKey.Value
-	a.BaseURL = runtimeCfg.BaseURL.Value
-
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	validateOnly, _ := cmd.Flags().GetBool("validate-only")
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
+	autoRoute, _ := cmd.Flags().GetBool("auto")
+	if validateOnly && autoRoute {
+		return errors.New("prompt --auto does not support --validate-only; select an agent explicitly")
+	}
+
 	if validateOnly {
-		if err := validatePromptBackend(a, timeout); err != nil {
+		a, _, runtimeCfg, err := resolvePromptAgent(cmd, v, args, "")
+		if err != nil {
+			return err
+		}
+		a.Model = runtimeCfg.Model.Value
+		a.APIKey = runtimeCfg.APIKey.Value
+		a.BaseURL = runtimeCfg.BaseURL.Value
+		target := agent.ResolveExecutionTarget(a)
+		if err := validatePromptTarget(target, a, timeout); err != nil {
 			return err
 		}
 		if jsonOut {
 			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
 				"agent":    a.Name,
 				"provider": a.Provider,
+				"runner":   target.Runner,
 				"backend":  effectivePromptBackend(a),
 				"status":   "ok",
 			})
 			return nil
 		}
-		fmt.Printf("Backend validation OK (%s)\n", effectivePromptBackend(a))
+		fmt.Printf("Backend validation OK (%s via %s)\n", effectivePromptBackend(a), target.Runner)
 		return nil
 	}
 
@@ -143,6 +173,15 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(text) == "" {
 		return errors.New("prompt is empty")
 	}
+
+	a, decision, runtimeCfg, err := resolvePromptAgent(cmd, v, args, text)
+	if err != nil {
+		return err
+	}
+	a.Model = runtimeCfg.Model.Value
+	a.APIKey = runtimeCfg.APIKey.Value
+	a.BaseURL = runtimeCfg.BaseURL.Value
+	target := agent.ResolveExecutionTarget(a)
 
 	shared := v.SharedConfig()
 	effectivePrompt := text
@@ -164,9 +203,10 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 
 	if dryRun {
 		if jsonOut {
-			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			payload := map[string]any{
 				"agent":            a.Name,
 				"provider":         a.Provider,
+				"runner":           target.Runner,
 				"optimized":        optimized,
 				"profile":          optimizationProfile,
 				"effective_prompt": effectivePrompt,
@@ -175,25 +215,42 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 					"api_key":  string(runtimeCfg.APIKey.Source),
 					"base_url": string(runtimeCfg.BaseURL.Source),
 				},
-			})
+			}
+			if decision != nil {
+				payload["route"] = decision
+			}
+			_ = json.NewEncoder(os.Stdout).Encode(payload)
 			return nil
+		}
+		if decision != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "routed to %q via %s (%s)\n", a.Name, target.Runner, decision.Intent.TaskClass)
 		}
 		fmt.Println(effectivePrompt)
 		return nil
 	}
-	result, execErr := executePrompt(a, effectivePrompt, timeout)
+
+	if decision != nil && !jsonOut {
+		fmt.Fprintf(cmd.ErrOrStderr(), "routed to %q via %s (%s)\n", a.Name, target.Runner, decision.Intent.TaskClass)
+	}
+	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout)
 
 	record := PromptRecord{
 		ID:                  fmt.Sprintf("prompt-%d", time.Now().UnixNano()),
 		Timestamp:           time.Now().UTC(),
 		AgentName:           a.Name,
 		Provider:            string(a.Provider),
+		Runner:              string(target.Runner),
 		Model:               a.Model,
 		Optimized:           optimized,
 		OptimizationProfile: optimizationProfile,
 		OriginalPrompt:      text,
 		EffectivePrompt:     effectivePrompt,
 		Success:             execErr == nil,
+	}
+	if decision != nil {
+		record.RouterMode = decision.Mode
+		record.RouteClass = decision.Intent.TaskClass
+		record.RouteReasons = append([]string(nil), decision.Selected.Reasons...)
 	}
 	if execErr == nil {
 		record.TokenUsage = optionalTokenUsage(result.Usage)
@@ -215,20 +272,28 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 
 	if execErr != nil {
 		if jsonOut {
-			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			payload := map[string]any{
 				"record": record,
 				"error":  execErr.Error(),
-			})
+			}
+			if decision != nil {
+				payload["route"] = decision
+			}
+			_ = json.NewEncoder(os.Stdout).Encode(payload)
 			return nil
 		}
 		return execErr
 	}
 
 	if jsonOut {
-		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		payload := map[string]any{
 			"record":   record,
 			"response": result.Response,
-		})
+		}
+		if decision != nil {
+			payload["route"] = decision
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(payload)
 		return nil
 	}
 
@@ -238,6 +303,76 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
 	}
 	return nil
+}
+
+func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptText string) (agent.Agent, *routerpkg.Decision, agent.PromptRuntimeConfig, error) {
+	autoRoute, _ := cmd.Flags().GetBool("auto")
+	if !autoRoute {
+		a, ok := v.Get(args[0])
+		if !ok {
+			return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("agent %q not found", args[0])
+		}
+		return a, nil, agent.ResolvePromptRuntimeConfig(a), nil
+	}
+
+	if strings.TrimSpace(promptText) == "" {
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, errors.New("prompt is empty")
+	}
+	routerCfg := promptRouterOverride(cmd)
+	routingAgents := resolvedRoutingAgents(v.List())
+	decision, err := routerpkg.Route(routerpkg.Request{
+		Prompt: promptText,
+		Agents: routingAgents,
+		Shared: v.SharedConfig(),
+		Config: routerCfg,
+	})
+	if err != nil {
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, err
+	}
+	selected := decision.Selected.AgentConfig()
+	original, ok := v.Get(selected.Name)
+	if !ok {
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q not found", selected.Name)
+	}
+	runtimeCfg := agent.ResolvePromptRuntimeConfig(original)
+	resolved := original
+	if runtimeCfg.Model.Value != "" {
+		resolved.Model = runtimeCfg.Model.Value
+	}
+	if runtimeCfg.APIKey.Value != "" {
+		resolved.APIKey = runtimeCfg.APIKey.Value
+	}
+	if runtimeCfg.BaseURL.Value != "" {
+		resolved.BaseURL = runtimeCfg.BaseURL.Value
+	}
+	target := agent.ResolveExecutionTarget(resolved)
+	if routerCfg.LocalOnly && !target.Local {
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q does not satisfy local-only policy after runtime resolution", resolved.Name)
+	}
+	return original, &decision, runtimeCfg, nil
+}
+
+func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
+	mode, _ := cmd.Flags().GetString("router")
+	langGraphCmd, _ := cmd.Flags().GetString("langgraph-cmd")
+	preferLocal, _ := cmd.Flags().GetBool("prefer-local")
+	preferFast, _ := cmd.Flags().GetBool("prefer-fast")
+	preferLowCost, _ := cmd.Flags().GetBool("prefer-low-cost")
+	localOnly, _ := cmd.Flags().GetBool("local-only")
+	return agent.RouterConfig{
+		Mode:          mode,
+		LangGraphCmd:  langGraphCmd,
+		PreferLocal:   preferLocal,
+		PreferFast:    preferFast,
+		PreferLowCost: preferLowCost,
+		LocalOnly:     localOnly,
+	}
+}
+
+type vaultLike interface {
+	Get(name string) (agent.Agent, bool)
+	List() []agent.Agent
+	SharedConfig() agent.SharedConfig
 }
 
 func shouldSkipOptimizationForWorkflow(cmd *cobra.Command) bool {
@@ -311,26 +446,34 @@ func readOptionalPromptInput(cmd *cobra.Command) (string, bool, error) {
 }
 
 func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
-	switch a.Provider {
-	case agent.ProviderOllama:
+	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
+	if runtimeCfg.Model.Value != "" {
+		a.Model = runtimeCfg.Model.Value
+	}
+	if runtimeCfg.APIKey.Value != "" {
+		a.APIKey = runtimeCfg.APIKey.Value
+	}
+	if runtimeCfg.BaseURL.Value != "" {
+		a.BaseURL = runtimeCfg.BaseURL.Value
+	}
+	target := agent.ResolveExecutionTarget(a)
+	return executePromptTarget(target, a, prompt, timeout)
+}
+
+func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+	switch target.Runner {
+	case agent.RunnerOllamaHTTP:
 		return executeOllamaPrompt(a, prompt, timeout)
-	case agent.ProviderCodex:
+	case agent.RunnerCodexCLI:
 		return executeCodexPrompt(a, prompt, timeout)
-	case agent.ProviderClaude:
-		backend, err := agent.ParseClaudeBackend(a.Backend)
-		if err != nil {
-			return promptResult{}, err
-		}
-		switch backend {
-		case agent.ClaudeBackendOllama:
-			return executeOllamaPrompt(a, prompt, timeout)
-		case agent.ClaudeBackendBedrock:
-			return promptResult{}, errors.New("bedrock backend execution is not supported yet")
-		default:
-			return executeClaudePrompt(a, prompt, timeout)
-		}
+	case agent.RunnerClaudeCLI:
+		return executeClaudePrompt(a, prompt, timeout)
+	case agent.RunnerOpenAIHTTP:
+		return executeOpenAIPrompt(a, prompt, timeout)
+	case agent.RunnerBedrockAPI:
+		return promptResult{}, errors.New("bedrock backend execution is not supported yet")
 	default:
-		return promptResult{}, fmt.Errorf("provider %q is not supported by prompt gateway yet", a.Provider)
+		return promptResult{}, fmt.Errorf("runner %q (provider %q) is not supported by prompt gateway yet", target.Runner, a.Provider)
 	}
 }
 
@@ -342,32 +485,33 @@ func effectivePromptBackend(a agent.Agent) string {
 }
 
 func validatePromptBackend(a agent.Agent, timeout time.Duration) error {
-	switch a.Provider {
-	case agent.ProviderClaude:
-		backend, err := agent.ParseClaudeBackend(a.Backend)
-		if err != nil {
-			return err
+	return validatePromptTarget(agent.ResolveExecutionTarget(a), a, timeout)
+}
+
+func validatePromptTarget(target agent.ExecutionTarget, a agent.Agent, timeout time.Duration) error {
+	switch target.Runner {
+	case agent.RunnerOllamaHTTP:
+		name := "ollama validation"
+		if a.Provider == agent.ProviderClaude {
+			name = "ollama backend validation"
 		}
-		switch backend {
-		case agent.ClaudeBackendOllama:
-			return validateOllamaEndpoint(a.BaseURL, timeout, "ollama backend validation")
-		case agent.ClaudeBackendBedrock:
-			return errors.New("bedrock backend validation is not supported yet; validate AWS credentials manually")
-		default:
-			if _, err := exec.LookPath("claude"); err != nil {
-				return errors.New("claude binary not found in PATH")
-			}
-			return nil
-		}
-	case agent.ProviderOllama:
-		return validateOllamaEndpoint(a.BaseURL, timeout, "ollama validation")
-	case agent.ProviderCodex:
+		return validateOllamaEndpoint(a.BaseURL, timeout, name)
+	case agent.RunnerCodexCLI:
 		if _, err := exec.LookPath("codex"); err != nil {
 			return errors.New("codex binary not found in PATH")
 		}
 		return nil
+	case agent.RunnerClaudeCLI:
+		if _, err := exec.LookPath("claude"); err != nil {
+			return errors.New("claude binary not found in PATH")
+		}
+		return nil
+	case agent.RunnerOpenAIHTTP:
+		return validateOpenAIEndpoint(a.BaseURL, a.APIKey, timeout)
+	case agent.RunnerBedrockAPI:
+		return errors.New("bedrock backend validation is not supported yet; validate AWS credentials manually")
 	default:
-		return fmt.Errorf("provider %q is not supported for validate-only", a.Provider)
+		return fmt.Errorf("runner %q (provider %q) is not supported for validate-only", target.Runner, a.Provider)
 	}
 }
 
@@ -442,6 +586,120 @@ func executeOllamaPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		TotalTokens:  out.PromptEvalCount + out.EvalCount,
 	}
 	return promptResult{Response: strings.TrimSpace(out.Response), Usage: usage}, nil
+}
+
+func executeOpenAIPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+	if strings.TrimSpace(a.Model) == "" {
+		return promptResult{}, errors.New("openai agent requires model")
+	}
+	endpointURL, err := openAIEndpointURL(a.BaseURL, "chat/completions")
+	if err != nil {
+		return promptResult{}, err
+	}
+	payload := map[string]any{
+		"model": a.Model,
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": prompt,
+		}},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return promptResult{}, fmt.Errorf("marshalling openai request payload: %w", err)
+	}
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest(http.MethodPost, endpointURL, bytes.NewReader(body))
+	if err != nil {
+		return promptResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := strings.TrimSpace(a.APIKey); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return promptResult{}, fmt.Errorf("calling openai: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		return promptResult{}, fmt.Errorf("openai error %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int64 `json:"prompt_tokens"`
+			CompletionTokens int64 `json:"completion_tokens"`
+			TotalTokens      int64 `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return promptResult{}, fmt.Errorf("decoding openai response: %w", err)
+	}
+	response := ""
+	if len(out.Choices) > 0 {
+		response = strings.TrimSpace(out.Choices[0].Message.Content)
+	}
+	usage := agent.PromptTokenUsage{
+		InputTokens:  out.Usage.PromptTokens,
+		OutputTokens: out.Usage.CompletionTokens,
+		TotalTokens:  out.Usage.TotalTokens,
+	}
+	return promptResult{Response: response, Usage: usage}, nil
+}
+
+func validateOpenAIEndpoint(baseURL, apiKey string, timeout time.Duration) error {
+	endpointURL, err := openAIEndpointURL(baseURL, "models")
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: timeout}
+	req, err := http.NewRequest(http.MethodGet, endpointURL, nil)
+	if err != nil {
+		return err
+	}
+	if key := strings.TrimSpace(apiKey); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("openai validation failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("openai validation failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
+}
+
+func openAIEndpointURL(baseURL, endpoint string) (string, error) {
+	normalized := strings.TrimSpace(baseURL)
+	if normalized == "" {
+		normalized = "https://api.openai.com"
+	}
+	parsed, err := url.Parse(normalized)
+	if err != nil {
+		return "", fmt.Errorf("parsing openai base URL: %w", err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("openai base URL must include scheme and host")
+	}
+	basePath := strings.TrimRight(parsed.Path, "/")
+	if basePath == "" {
+		basePath = "/v1"
+	} else if idx := strings.Index(basePath, "/v1"); idx != -1 && (len(basePath) == idx+3 || basePath[idx+3] == '/') {
+		basePath = basePath[:idx+3]
+	} else if basePath != "/v1" && !strings.HasSuffix(basePath, "/v1") {
+		basePath = path.Join(basePath, "v1")
+	}
+	parsed.Path = path.Join(basePath, endpoint)
+	parsed.RawPath = ""
+	return parsed.String(), nil
 }
 
 func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
