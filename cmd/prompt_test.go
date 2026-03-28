@@ -190,3 +190,146 @@ func newPromptOptimizationTestCommand() *cobra.Command {
 	cmd.Flags().Duration("timeout", 5*time.Minute, "")
 	return cmd
 }
+
+type stubPromptVault struct {
+	agents []agent.Agent
+	shared agent.SharedConfig
+}
+
+func (s stubPromptVault) Get(name string) (agent.Agent, bool) {
+	for _, a := range s.agents {
+		if a.Name == name {
+			return a, true
+		}
+	}
+	return agent.Agent{}, false
+}
+
+func (s stubPromptVault) List() []agent.Agent { return append([]agent.Agent(nil), s.agents...) }
+
+func (s stubPromptVault) SharedConfig() agent.SharedConfig { return s.shared }
+
+func TestResolvePromptAgentAutoUsesProvidedPromptText(t *testing.T) {
+	cmd := newPromptOptimizationTestCommand()
+	cmd.Flags().Bool("auto", false, "")
+	if err := cmd.Flags().Set("auto", "true"); err != nil {
+		t.Fatalf("setting auto flag: %v", err)
+	}
+
+	vault := stubPromptVault{agents: []agent.Agent{
+		{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+		{Name: "codex", Provider: agent.ProviderCodex, Model: "gpt-5-codex"},
+	}}
+
+	got, decision, _, err := resolvePromptAgent(cmd, vault, nil, "Implement and test this Go refactor.")
+	if err != nil {
+		t.Fatalf("resolvePromptAgent() error = %v", err)
+	}
+	if got.Name != "codex" {
+		t.Fatalf("selected agent = %q, want codex", got.Name)
+	}
+	if decision == nil || decision.Selected.Agent.Name != "codex" {
+		t.Fatalf("routing decision = %#v, want codex selection", decision)
+	}
+}
+
+func TestResolvePromptAgentAutoKeepsRuntimeValueSourcesFromOriginalAgent(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "https://remote.example")
+
+	cmd := newPromptOptimizationTestCommand()
+	cmd.Flags().Bool("auto", false, "")
+	if err := cmd.Flags().Set("auto", "true"); err != nil {
+		t.Fatalf("setting auto flag: %v", err)
+	}
+
+	vault := stubPromptVault{agents: []agent.Agent{{
+		Name:     "local",
+		Provider: agent.ProviderOllama,
+		Model:    "llama3.2",
+	}}}
+
+	got, decision, runtimeCfg, err := resolvePromptAgent(cmd, vault, nil, "Summarize this issue.")
+	if err != nil {
+		t.Fatalf("resolvePromptAgent() error = %v", err)
+	}
+	if got.BaseURL != "" {
+		t.Fatalf("returned agent base URL = %q, want original local config", got.BaseURL)
+	}
+	if runtimeCfg.BaseURL.Value != "https://remote.example" {
+		t.Fatalf("runtime base URL = %q, want env override", runtimeCfg.BaseURL.Value)
+	}
+	if runtimeCfg.BaseURL.Source != agent.ValueSourceEnv {
+		t.Fatalf("runtime base URL source = %q, want %q", runtimeCfg.BaseURL.Source, agent.ValueSourceEnv)
+	}
+	if decision == nil || decision.Selected.Target.AgentName != "local" {
+		t.Fatalf("routing decision = %#v, want local selection", decision)
+	}
+}
+
+func TestResolvePromptAgentAutoRejectsRemoteResolvedTargetForLocalOnly(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "https://remote.example")
+
+	cmd := newPromptOptimizationTestCommand()
+	cmd.Flags().Bool("auto", false, "")
+	cmd.Flags().String("router", "", "")
+	cmd.Flags().String("langgraph-cmd", "", "")
+	cmd.Flags().Bool("prefer-local", false, "")
+	cmd.Flags().Bool("prefer-fast", false, "")
+	cmd.Flags().Bool("prefer-low-cost", false, "")
+	cmd.Flags().Bool("local-only", false, "")
+	if err := cmd.Flags().Set("auto", "true"); err != nil {
+		t.Fatalf("setting auto flag: %v", err)
+	}
+	if err := cmd.Flags().Set("local-only", "true"); err != nil {
+		t.Fatalf("setting local-only flag: %v", err)
+	}
+
+	vault := stubPromptVault{agents: []agent.Agent{{
+		Name:     "local",
+		Provider: agent.ProviderOllama,
+		Model:    "llama3.2",
+	}}}
+
+	_, _, _, err := resolvePromptAgent(cmd, vault, nil, "Private local only code review.")
+	if err == nil {
+		t.Fatalf("expected local-only routing error for remotely resolved target")
+	}
+	if !strings.Contains(err.Error(), "current policy") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecutePromptTargetUnsupportedRunnerMentionsRunner(t *testing.T) {
+	_, err := executePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, "hello", time.Second)
+	if err == nil {
+		t.Fatalf("expected unsupported runner error")
+	}
+	if !strings.Contains(err.Error(), string(agent.RunnerUnknown)) {
+		t.Fatalf("error = %q, want runner name", err.Error())
+	}
+}
+
+func TestValidatePromptTargetUnsupportedRunnerMentionsRunner(t *testing.T) {
+	err := validatePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, time.Second)
+	if err == nil {
+		t.Fatalf("expected unsupported runner validation error")
+	}
+	if !strings.Contains(err.Error(), string(agent.RunnerUnknown)) {
+		t.Fatalf("error = %q, want runner name", err.Error())
+	}
+}
+
+func TestPromptRouterOverrideDoesNotForceAllowFallbacks(t *testing.T) {
+	cmd := &cobra.Command{Use: "prompt"}
+	cmd.Flags().String("router", "", "")
+	cmd.Flags().String("langgraph-cmd", "", "")
+	cmd.Flags().Bool("prefer-local", false, "")
+	cmd.Flags().Bool("prefer-fast", false, "")
+	cmd.Flags().Bool("prefer-low-cost", false, "")
+	cmd.Flags().Bool("local-only", false, "")
+
+	cfg := promptRouterOverride(cmd)
+	if cfg.AllowFallbacks {
+		t.Fatalf("AllowFallbacks = true, want false when not explicitly requested")
+	}
+}

@@ -15,6 +15,7 @@ Detailed command and TUI references: `docs/README.md`.
 - **Agent Detection**: Auto-detect installed CLI agents
 - **Unified Instructions**: Sync AGENTS.md, CLAUDE.md, codex.md, etc. across projects
 - **Prompt Mode**: Start a focused interactive loop with `agentvault -p`
+- **Intelligent Routing**: Route prompts to the best configured agent/runner/model, with local-first and LangGraph sidecar support
 - **Interactive TUI**: Multi-tab interface with search, filtering, and status views
 - **MCP Server Support**: Configure Model Context Protocol servers per agent
 
@@ -85,7 +86,8 @@ brew install nikolareljin/tap/agentvault
 | `init` | Initialize encrypted vault |
 | `detect` | Detect installed AI agents |
 | `detect add` | Auto-add detected agents |
-| `prompt <name>` | Route prompts through AgentVault gateway with usage logging, including guided `implement_issue` / `implement_pr` workflows |
+| `prompt <name>` / `prompt --auto` | Route prompts through AgentVault gateway with usage logging, including guided `implement_issue` / `implement_pr` workflows |
+| `route` | Explain which configured agent/runner/model would handle a prompt |
 | `-p, --prompt-mode[=true\|false]` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
 | `status` | Show token usage and quota status (JSON for orchestration) |
 | `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`, `about` |
@@ -174,6 +176,12 @@ agentvault list
 # direct prompt through configured agent
 agentvault prompt my-codex --text "review this implementation"
 
+# let AgentVault choose the best configured target automatically
+agentvault prompt --auto --text "implement and test this Go refactor"
+
+# inspect the routing decision without executing anything
+agentvault route --text "summarize this design and keep data local"
+
 # optimize prompt shape for local Ollama models
 agentvault prompt my-ollama --text "build auth middleware"
 
@@ -200,6 +208,12 @@ agentvault templates show add_issue
 
 # JSON output for orchestration systems
 agentvault prompt my-ollama --text "summarize this design" --json
+
+# route automatically using the configured policy and available targets
+agentvault prompt --auto --text "implement and test this Go refactor"
+
+# inspect the routing decision without executing
+agentvault route --text "summarize this design and keep it local"
 
 # interactive prompt loop with submit/cancel/exit actions
 agentvault -p

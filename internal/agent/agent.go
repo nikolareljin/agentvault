@@ -62,6 +62,7 @@ type Agent struct {
 	SystemPrompt  string      `json:"system_prompt,omitempty"`
 	TaskDesc      string      `json:"task_description,omitempty"`
 	Tags          []string    `json:"tags,omitempty"`
+	Route         RouteConfig `json:"route,omitempty"`
 	MCPServers    []MCPServer `json:"mcp_servers,omitempty"`
 	Role          string      `json:"role,omitempty"`           // Role name to apply (e.g., "lead-engineer")
 	DisabledRules []string    `json:"disabled_rules,omitempty"` // Rules to skip for this agent
@@ -212,6 +213,7 @@ type SharedConfig struct {
 	Rules          []UnifiedRule     `json:"rules,omitempty"`
 	Roles          []Role            `json:"roles,omitempty"`
 	PromptSessions []PromptSession   `json:"prompt_sessions,omitempty"`
+	Router         RouterConfig      `json:"router,omitempty"`
 }
 
 // ValidProviders returns all known provider values.
@@ -429,6 +431,9 @@ func (a *Agent) Validate() error {
 		}
 	} else if backendRaw != "" {
 		return errors.New("backend is only supported for claude agents")
+	}
+	if err := a.Route.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

@@ -425,6 +425,8 @@ Flags:
 - `--merge` (default: `false`)
 - `--apply-provider-configs` (default: `false`)
 
+`setup import` restores shared router settings from exported bundles. Without `--merge`, an existing router config is preserved; with `--merge`, the imported router config replaces it.
+
 ### `agentvault setup show [file]`
 No flags.
 

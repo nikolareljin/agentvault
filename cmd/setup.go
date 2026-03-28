@@ -454,6 +454,10 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 		sc.SystemPrompt = bundle.SharedConfig.SystemPrompt
 		fmt.Println("  Imported: shared system prompt")
 	}
+	routerAction := mergeSharedRouterConfig(&sc, bundle.SharedConfig, merge)
+	if routerAction != "" {
+		fmt.Printf("  %s: shared router config\n", routerAction)
+	}
 
 	// Merge MCP servers
 	mcpIndex := make(map[string]int)
@@ -712,6 +716,21 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func mergeSharedRouterConfig(dst *agent.SharedConfig, src agent.SharedConfig, merge bool) string {
+	if dst == nil || src.Router.IsZero() {
+		return ""
+	}
+	if dst.Router.IsZero() {
+		dst.Router = src.Router
+		return "Imported"
+	}
+	if merge {
+		dst.Router = src.Router
+		return "Updated"
+	}
+	return ""
 }
 
 func runSetupShow(cmd *cobra.Command, args []string) error {

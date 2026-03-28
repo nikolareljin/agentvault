@@ -29,6 +29,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `remove`
 - `run`
 - `prompt`
+- `route`
 - `status`
 - `rules`
 - `roles`
@@ -75,6 +76,12 @@ Optional:
 - `--system-prompt <text>`
 - `--task-desc <text>`
 - `--tags <comma-separated>`
+- `--route-capabilities <comma-separated>`
+- `--latency-tier <tier>`: `low|medium|high`
+- `--cost-tier <tier>`: `low|medium|high`
+- `--privacy-tier <tier>`: `local|restricted|remote`
+- `--route-priority <int>`
+- `--disable-routing` (default: `false`)
 
 ### `agentvault list`
 Flags:
@@ -93,6 +100,12 @@ Flags:
 - `--tags <comma-separated>`
 - `--role <role-name>`
 - `--disable-rules <comma-separated-rule-names>`
+- `--route-capabilities <comma-separated>`
+- `--latency-tier <tier>`: `low|medium|high`
+- `--cost-tier <tier>`: `low|medium|high`
+- `--privacy-tier <tier>`: `local|restricted|remote`
+- `--route-priority <int>`
+- `--disable-routing` (default: `false`)
 
 ### `agentvault remove [name]`
 Flags:
@@ -105,6 +118,10 @@ Flags:
 ## Prompt and status
 
 ### `agentvault prompt [agent-name]`
+
+Argument rules:
+- default mode requires exactly one `agent-name`
+- `--auto` requires no positional agent argument and lets AgentVault choose the target
 Input:
 - Without `--workflow` (default), one primary prompt source is required:
   - `--text <prompt>` or
@@ -144,6 +161,30 @@ Flags:
 - `--json` (default: `true`)
 - `--no-vault` (default: `false`)
 - `--vault-password-env <ENV_VAR>` (default: `AGENTVAULT_PASSWORD`)
+
+### `agentvault route`
+Input:
+- one prompt source is required:
+  - `--text <prompt>` or
+  - `--file <path>` or
+  - stdin
+
+Flags:
+- `--text <prompt>`
+- `--file <path>`
+- `--json` (default: `false`)
+- `--router <mode>`: `heuristic|langgraph`
+- `--langgraph-cmd <path-to-python-script>`
+- `--prefer-local` (default flag value: `false`; effective default policy is local-first when no preference flags are set)
+- `--prefer-fast` (default: `false`)
+- `--prefer-low-cost` (default: `false`)
+- `--local-only` (default: `false`)
+
+Behavior:
+- inspects all configured agents and their inferred or explicit routing metadata
+- selects the best agent/runner/model combination without executing the prompt
+- defaults to a local-first routing policy when none of `--prefer-local`, `--prefer-fast`, or `--prefer-low-cost` are set
+- returns fallback candidates when available and when enabled in the router configuration
 
 ## Rules (`rules` alias: `rule`)
 

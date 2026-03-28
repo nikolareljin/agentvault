@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,6 +43,31 @@ func TestExecutePrompt_BedrockReturnsExplicitError(t *testing.T) {
 	}
 }
 
+func TestExecutePromptAppliesRuntimeConfig(t *testing.T) {
+	const apiKey = "env-openai-key"
+	t.Setenv("OPENAI_API_KEY", apiKey)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+			t.Fatalf("authorization header = %q, want bearer token from env", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"done"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+	}))
+	defer server.Close()
+
+	result, err := executePrompt(agent.Agent{
+		Provider: agent.ProviderOpenAI,
+		Model:    "gpt-5",
+		BaseURL:  server.URL,
+	}, "hello", time.Second)
+	if err != nil {
+		t.Fatalf("executePrompt() error = %v", err)
+	}
+	if result.Response != "done" {
+		t.Fatalf("response = %q, want done", result.Response)
+	}
+}
+
 func TestValidateOllamaEndpoint(t *testing.T) {
 	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/tags" {
@@ -67,6 +93,145 @@ func TestValidateOllamaEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ollama validation failed (400): bad request") {
 		t.Fatalf("unexpected status error: %v", err)
+	}
+}
+
+func TestValidateOpenAIEndpoint(t *testing.T) {
+	const apiKey = "sk-test-key"
+	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+			t.Fatalf("authorization header = %q, want bearer token", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer okServer.Close()
+
+	for _, baseURL := range []string{okServer.URL, okServer.URL + "/v1"} {
+		baseURL := baseURL
+		t.Run("ok:"+baseURL, func(t *testing.T) {
+			if err := validateOpenAIEndpoint(baseURL, apiKey, time.Second); err != nil {
+				t.Fatalf("validateOpenAIEndpoint() error = %v", err)
+			}
+		})
+	}
+
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("invalid auth"))
+	}))
+	defer failServer.Close()
+
+	err := validateOpenAIEndpoint(failServer.URL, apiKey, time.Second)
+	if err == nil {
+		t.Fatalf("expected status error")
+	}
+	if !strings.Contains(err.Error(), "openai validation failed (401): invalid auth") {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
+func TestExecuteOpenAIPrompt(t *testing.T) {
+	const apiKey = "sk-test-key"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+apiKey {
+			t.Fatalf("authorization header = %q, want bearer token", got)
+		}
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decoding request body: %v", err)
+		}
+		if body.Model != "gpt-5" {
+			t.Fatalf("model = %q, want gpt-5", body.Model)
+		}
+		if len(body.Messages) != 1 || body.Messages[0].Content != "hello" {
+			t.Fatalf("unexpected messages payload: %#v", body.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":" done "}}],"usage":{"prompt_tokens":7,"completion_tokens":5,"total_tokens":12}}`))
+	}))
+	defer server.Close()
+
+	for _, baseURL := range []string{server.URL, server.URL + "/v1"} {
+		baseURL := baseURL
+		t.Run("ok:"+baseURL, func(t *testing.T) {
+			result, err := executeOpenAIPrompt(agent.Agent{
+				Provider: agent.ProviderOpenAI,
+				Model:    "gpt-5",
+				APIKey:   apiKey,
+				BaseURL:  baseURL,
+			}, "hello", time.Second)
+			if err != nil {
+				t.Fatalf("executeOpenAIPrompt() error = %v", err)
+			}
+			if result.Response != "done" {
+				t.Fatalf("response = %q, want done", result.Response)
+			}
+			if result.Usage.InputTokens != 7 || result.Usage.OutputTokens != 5 || result.Usage.TotalTokens != 12 {
+				t.Fatalf("unexpected usage: %#v", result.Usage)
+			}
+		})
+	}
+}
+
+func TestOpenAIEndpointURLTrimsEndpointSuffixAfterV1(t *testing.T) {
+	tests := []struct {
+		baseURL  string
+		endpoint string
+		wantPath string
+	}{
+		{baseURL: "https://proxy.example/v1/chat/completions", endpoint: "chat/completions", wantPath: "/v1/chat/completions"},
+		{baseURL: "https://proxy.example/v1/models", endpoint: "models", wantPath: "/v1/models"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.baseURL+"|"+tt.endpoint, func(t *testing.T) {
+			got, err := openAIEndpointURL(tt.baseURL, tt.endpoint)
+			if err != nil {
+				t.Fatalf("openAIEndpointURL() error = %v", err)
+			}
+			if !strings.HasSuffix(got, tt.wantPath) {
+				t.Fatalf("openAIEndpointURL() = %q, want path suffix %q", got, tt.wantPath)
+			}
+		})
+	}
+}
+
+func TestExecuteOpenAIPromptReturnsStatusError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("rate limit"))
+	}))
+	defer server.Close()
+
+	_, err := executeOpenAIPrompt(agent.Agent{
+		Provider: agent.ProviderOpenAI,
+		Model:    "gpt-5",
+		BaseURL:  server.URL,
+	}, "hello", time.Second)
+	if err == nil {
+		t.Fatalf("expected status error")
+	}
+	if !strings.Contains(err.Error(), "openai error 429: rate limit") {
+		t.Fatalf("unexpected execute error: %v", err)
 	}
 }
 
