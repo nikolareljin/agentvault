@@ -140,6 +140,23 @@ func TestClassifyPromptDoesNotTreatPleaseAsCoding(t *testing.T) {
 	}
 }
 
+func TestClassifyPromptTreatsRepoAsWholeWord(t *testing.T) {
+	intent := classifyPrompt("Please send a report tomorrow.")
+	if intent.Coding {
+		t.Fatalf("intent.Coding = true, want false when repo appears only inside another word")
+	}
+}
+
+func TestClassifyPromptPrefersCodingForBugFixRequest(t *testing.T) {
+	intent := classifyPrompt("Please fix this bug in the router.")
+	if !intent.Coding {
+		t.Fatalf("intent.Coding = false, want true for bug-fix prompt")
+	}
+	if intent.TaskClass != "coding" {
+		t.Fatalf("intent.TaskClass = %q, want coding", intent.TaskClass)
+	}
+}
+
 func TestRouteWithLangGraphKeepsSelectedAndCandidatesReasonsInSync(t *testing.T) {
 	requirePythonInterpreter(t)
 	scriptPath := filepath.Join(t.TempDir(), "router.py")
@@ -323,6 +340,39 @@ class StateGraph:
 }
 
 func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
+	tempDir := t.TempDir()
+	python3Path := filepath.Join(tempDir, "bin", "python3")
+	if err := os.MkdirAll(filepath.Dir(python3Path), 0o755); err != nil {
+		t.Fatalf("MkdirAll(filepath.Dir(python3Path)) error = %v", err)
+	}
+	if err := os.WriteFile(python3Path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("WriteFile(python3Path) error = %v", err)
+	}
+
+	original := execLookPath
+	execLookPath = func(file string) (string, error) {
+		switch file {
+		case "python3":
+			return filepath.Join("bin", "python3"), nil
+		default:
+			return "", errors.New("missing")
+		}
+	}
+	t.Cleanup(func() {
+		execLookPath = original
+	})
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd() error = %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("os.Chdir(tempDir) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
 	path, err := resolvePythonInterpreter()
 	if err != nil {
 		t.Fatalf("resolvePythonInterpreter() error = %v", err)
@@ -332,6 +382,9 @@ func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
 	}
 	if !filepath.IsAbs(path) {
 		t.Fatalf("resolvePythonInterpreter() = %q, want absolute path", path)
+	}
+	if path != python3Path {
+		t.Fatalf("resolvePythonInterpreter() = %q, want %q", path, python3Path)
 	}
 }
 
