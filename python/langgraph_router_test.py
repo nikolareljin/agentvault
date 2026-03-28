@@ -18,6 +18,18 @@ class LangGraphRouterMainTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("Failed to read JSON payload from stdin", stderr.getvalue())
 
+    def test_main_returns_clean_error_on_routing_failure(self) -> None:
+        stderr = io.StringIO()
+        payload = io.StringIO('{"prompt":"hi","config":{},"candidates":[]}')
+        with (
+            mock.patch("sys.stdin", payload),
+            mock.patch("langgraph_router._run_with_langgraph", side_effect=ImportError("missing langgraph")),
+            contextlib.redirect_stderr(stderr),
+        ):
+            rc = langgraph_router.main()
+        self.assertEqual(rc, 1)
+        self.assertIn("Routing failed: no candidates provided", stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

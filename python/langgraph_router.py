@@ -132,18 +132,22 @@ def main() -> int:
         print(f"Failed to read JSON payload from stdin: {exc}", file=sys.stderr)
         return 1
     try:
-        result = _run_with_langgraph(payload)
-    except ImportError:
-        result = _run_without_langgraph(payload)
+        try:
+            result = _run_with_langgraph(payload)
+        except ImportError:
+            result = _run_without_langgraph(payload)
+        except Exception as exc:
+            print(
+                f"LangGraph routing failed, falling back to pure-Python router: {exc}",
+                file=sys.stderr,
+            )
+            result = _run_without_langgraph(payload)
+        json.dump(result, sys.stdout)
+        sys.stdout.write("\n")
+        return 0
     except Exception as exc:
-        print(
-            f"LangGraph routing failed, falling back to pure-Python router: {exc}",
-            file=sys.stderr,
-        )
-        result = _run_without_langgraph(payload)
-    json.dump(result, sys.stdout)
-    sys.stdout.write("\n")
-    return 0
+        print(f"Routing failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def _self_test() -> None:
