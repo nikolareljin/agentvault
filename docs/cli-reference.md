@@ -146,6 +146,13 @@ Flags:
 - `--history-file <path>`
 - `--timeout <duration>` (default: `5m`)
 
+Execution behavior:
+- Codex launches in agentic workspace-write mode (`--full-auto`).
+- Claude launches with `--permission-mode auto`.
+- Gemini launches with `--approval-mode auto_edit`.
+- Ollama and OpenAI runners use their HTTP execution paths.
+- Prompt text does not implicitly switch repositories; use `--workflow` with `--repo` for repository-aware issue/PR work.
+
 Workflow behavior:
 - resolves the git repository root and current branch from `--repo`
 - loads the canonical workflow template with precedence `repo-local -> config storage -> built-in`

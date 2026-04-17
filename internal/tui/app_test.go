@@ -296,3 +296,27 @@ func TestExecuteGatewayPrompt_BedrockReturnsExplicitError(t *testing.T) {
 		t.Fatalf("unexpected bedrock gateway execution error: %v", err)
 	}
 }
+
+func TestRenderPromptGatewayRunningShowsElapsedStatus(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewayRunning
+	m.gatewayRunning = true
+	m.gatewayStartedAt = time.Now().Add(-3 * time.Second)
+	m.gatewayTick = 1
+	m.gatewayAgentCursor = 0
+
+	view := m.renderCommands()
+	for _, want := range []string{
+		"Step 4: Running prompt...",
+		"Waiting for agent response. Elapsed:",
+		"Final response will appear here when the provider process exits.",
+		"Agent: claude-main (claude)",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("renderCommands() missing %q:\n%s", want, view)
+		}
+	}
+}

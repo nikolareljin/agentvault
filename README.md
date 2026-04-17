@@ -187,6 +187,8 @@ agentvault prompt my-ollama --text "build auth middleware"
 
 # concrete "Hello World" style examples
 agentvault prompt my-codex --text "create a demo app in Scala that says 'Hello World'"
+agentvault prompt my-claude --text "refactor this endpoint safely"
+agentvault prompt my-gemini --text "implement this feature and add tests"
 agentvault prompt my-ollama --text "create a demo app in Scala that says 'Hello World'" --optimize-profile ollama
 
 # optimize for codex/copilot-style coding flows
@@ -218,6 +220,16 @@ agentvault route --text "summarize this design and keep it local"
 # interactive prompt loop with submit/cancel/exit actions
 agentvault -p
 ```
+
+Execution behavior:
+- Codex runs in agentic workspace-write mode.
+- Claude runs with `--permission-mode auto`.
+- Gemini runs with `--approval-mode auto_edit`.
+- Ollama remains a plain HTTP prompt execution path and does not have CLI tool-use semantics.
+
+Current limitation:
+- Prompt text alone does not switch repositories or instruction scope. If you start from `~/Projects`, AgentVault uses that current directory for local instruction discovery.
+- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/Projects/scholar-path --pr 27`.
 
 Runtime value precedence for prompt execution is:
 - local agent setting in vault

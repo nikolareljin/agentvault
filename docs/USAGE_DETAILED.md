@@ -152,6 +152,13 @@ Runtime value precedence:
 - environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`)
 - default fallback (`http://localhost:11434` for Ollama base URL)
 
+Execution behavior:
+- Codex runs in agentic workspace-write mode.
+- Claude runs with `--permission-mode auto`.
+- Gemini runs with `--approval-mode auto_edit`.
+- Ollama stays on the HTTP prompt path.
+- Prompt text alone does not change repository context; for repo-aware issue/PR work, use `--workflow ... --repo ...`.
+
 TUI agent detail renders effective model/API key/base URL with source tags (`local`, `env`, `default`).
 
 Examples:
@@ -161,6 +168,12 @@ agentvault list
 
 # codex example
 agentvault prompt my-codex --text "create a demo app in Scala that says 'Hello World'"
+
+# claude example
+agentvault prompt my-claude --text "refactor this service safely"
+
+# gemini example
+agentvault prompt my-gemini --text "implement this feature and add tests"
 
 # ollama example
 agentvault prompt my-ollama --text "create a demo app in Scala that says 'Hello World'" --optimize-profile ollama
@@ -624,6 +637,10 @@ agentvault prompt local-ollama --text "Implement JWT middleware" --optimize --op
 agentvault prompt my-codex --text "Refactor this service safely" --optimize-profile codex
 agentvault prompt my-copilot --text "Add tests for these edge cases" --optimize-profile copilot
 ```
+
+Provider note:
+- The optimization profile influences prompt shape.
+- Execution mode is provider-specific: Codex uses workspace-write auto mode, Claude uses `permission-mode auto`, and Gemini uses `approval-mode auto_edit`.
 
 ## 5.4 Machine-readable orchestration checks
 

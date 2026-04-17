@@ -176,7 +176,14 @@ Gateway stages and keys:
 Supported providers in TUI gateway execution:
 - `claude` (when backend is `ollama`, executes via Ollama gateway route)
 - `codex`
+- `gemini`
 - `ollama`
+
+Execution notes:
+- Codex runs in agentic workspace-write mode.
+- Claude runs with auto permission mode.
+- Gemini runs with auto-edit approval mode.
+- The gateway does not infer repository context from prompt text alone; start it in the target repo or use the CLI workflow path with `--repo`.
 
 ## Tab 7: Status
 

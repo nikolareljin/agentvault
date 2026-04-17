@@ -468,6 +468,8 @@ func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt str
 		return executeCodexPrompt(a, prompt, timeout)
 	case agent.RunnerClaudeCLI:
 		return executeClaudePrompt(a, prompt, timeout)
+	case agent.RunnerGeminiCLI:
+		return executeGeminiPrompt(a, prompt, timeout)
 	case agent.RunnerOpenAIHTTP:
 		return executeOpenAIPrompt(a, prompt, timeout)
 	case agent.RunnerBedrockAPI:
@@ -504,6 +506,11 @@ func validatePromptTarget(target agent.ExecutionTarget, a agent.Agent, timeout t
 	case agent.RunnerClaudeCLI:
 		if _, err := exec.LookPath("claude"); err != nil {
 			return errors.New("claude binary not found in PATH")
+		}
+		return nil
+	case agent.RunnerGeminiCLI:
+		if _, err := exec.LookPath("gemini"); err != nil {
+			return errors.New("gemini binary not found in PATH")
 		}
 		return nil
 	case agent.RunnerOpenAIHTTP:
@@ -714,11 +721,8 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	_ = tmp.Close()
 	defer os.Remove(tmp.Name())
 
-	args := []string{"exec", "--json", "--output-last-message", tmp.Name()}
-	if strings.TrimSpace(a.Model) != "" {
-		args = append(args, "--model", a.Model)
-	}
-	args = append(args, prompt)
+	cwd, _ := os.Getwd()
+	args := agent.BuildCodexExecArgs(a.Model, tmp.Name(), cwd, prompt)
 
 	runCtx := context.Background()
 	cancel := func() {}
@@ -801,11 +805,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		return promptResult{}, errors.New("claude binary not found in PATH")
 	}
 
-	args := []string{"-p", "--output-format", "json"}
-	if strings.TrimSpace(a.Model) != "" {
-		args = append(args, "--model", a.Model)
-	}
-	args = append(args, prompt)
+	args := agent.BuildClaudeExecArgs(a.Model, prompt)
 
 	runCtx := context.Background()
 	cancel := func() {}
@@ -848,6 +848,62 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		InputTokens:  extractInt64(decoded, []string{"input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens"}),
 		OutputTokens: extractInt64(decoded, []string{"output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens"}),
 		TotalTokens:  extractInt64(decoded, []string{"total_tokens", "usage.total_tokens"}),
+	}
+	if usage.TotalTokens == 0 && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	}
+
+	return promptResult{Response: strings.TrimSpace(response), Usage: usage}, nil
+}
+
+func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+	if _, err := exec.LookPath("gemini"); err != nil {
+		return promptResult{}, errors.New("gemini binary not found in PATH")
+	}
+
+	args := agent.BuildGeminiExecArgs(a.Model, prompt)
+
+	runCtx := context.Background()
+	cancel := func() {}
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(context.Background(), timeout)
+	}
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, "gemini", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return promptResult{}, fmt.Errorf("gemini timed out after %s", timeout)
+		}
+		return promptResult{}, fmt.Errorf("gemini failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+
+	raw := strings.TrimSpace(stdout.String())
+	if raw == "" {
+		return promptResult{}, errors.New("gemini returned empty output")
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return promptResult{Response: raw}, nil
+	}
+
+	response := extractString(decoded, []string{
+		"result", "response", "output", "content", "text",
+		"candidates.0.content.parts.0.text",
+	})
+	if response == "" {
+		response = raw
+	}
+
+	usage := agent.PromptTokenUsage{
+		InputTokens:  extractInt64(decoded, []string{"input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens", "usageMetadata.promptTokenCount"}),
+		OutputTokens: extractInt64(decoded, []string{"output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens", "usageMetadata.candidatesTokenCount"}),
+		TotalTokens:  extractInt64(decoded, []string{"total_tokens", "usage.total_tokens", "usageMetadata.totalTokenCount"}),
 	}
 	if usage.TotalTokens == 0 && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
 		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
