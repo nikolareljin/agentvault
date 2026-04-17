@@ -3,6 +3,8 @@ package agent
 import (
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -15,6 +17,7 @@ const (
 	RunnerOllamaHTTP RunnerKind = "ollama_http"
 	RunnerCodexCLI   RunnerKind = "codex_cli"
 	RunnerClaudeCLI  RunnerKind = "claude_cli"
+	RunnerGeminiCLI  RunnerKind = "gemini_cli"
 	RunnerOpenAIHTTP RunnerKind = "openai_http"
 	RunnerBedrockAPI RunnerKind = "bedrock_api"
 )
@@ -193,6 +196,10 @@ func ResolveExecutionTarget(a Agent) ExecutionTarget {
 		target.Runner = RunnerCodexCLI
 		target.Local = false
 		target.Supported = true
+	case ProviderGemini:
+		target.Runner = RunnerGeminiCLI
+		target.Local = false
+		target.Supported = true
 	case ProviderOpenAI:
 		target.Runner = RunnerOpenAIHTTP
 		target.Local = isExplicitLocalEndpoint(target.BaseURL)
@@ -218,6 +225,71 @@ func ResolveExecutionTarget(a Agent) ExecutionTarget {
 	}
 
 	return target
+}
+
+// IsGitWorktree reports whether dir is inside a Git worktree by walking parent
+// directories and checking for a .git directory or file.
+func IsGitWorktree(dir string) bool {
+	current := strings.TrimSpace(dir)
+	if current == "" {
+		return false
+	}
+
+	abs, err := filepath.Abs(current)
+	if err != nil {
+		return false
+	}
+
+	for {
+		gitPath := filepath.Join(abs, ".git")
+		if info, err := os.Stat(gitPath); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+			return true
+		}
+
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return false
+		}
+		abs = parent
+	}
+}
+
+// BuildCodexExecArgs returns the standard non-interactive Codex invocation used
+// by AgentVault. Prompt gateway flows are intended to be agentic, so Codex is
+// launched in low-friction workspace-write mode.
+func BuildCodexExecArgs(model, outputPath, cwd, prompt string) []string {
+	args := []string{"exec", "--json", "--output-last-message", outputPath, "--full-auto"}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	if strings.TrimSpace(cwd) != "" && !IsGitWorktree(cwd) {
+		args = append(args, "--skip-git-repo-check")
+	}
+	args = append(args, prompt)
+	return args
+}
+
+// BuildClaudeExecArgs returns the standard non-interactive Claude invocation
+// used by AgentVault. It prefers the built-in auto permission mode so Claude
+// can act on the workspace instead of only describing changes.
+func BuildClaudeExecArgs(model, prompt string) []string {
+	args := []string{"-p", "--output-format", "json", "--permission-mode", "auto"}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	args = append(args, prompt)
+	return args
+}
+
+// BuildGeminiExecArgs returns the standard non-interactive Gemini invocation
+// used by AgentVault. auto_edit enables editing tools without dropping into a
+// read-only planning/chat-only flow.
+func BuildGeminiExecArgs(model, prompt string) []string {
+	args := []string{"--prompt", prompt, "--output-format", "json", "--approval-mode", "auto_edit"}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	return args
 }
 
 func normalizeRouteCapabilities(values []string) []string {

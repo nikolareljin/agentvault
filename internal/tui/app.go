@@ -162,6 +162,10 @@ type gatewayFinishedMsg struct {
 	err      error
 }
 
+type gatewayPulseMsg struct {
+	at time.Time
+}
+
 // model is the Bubble Tea application state.
 // It holds all data loaded from the vault plus UI state (cursor, tabs, search).
 type model struct {
@@ -215,6 +219,8 @@ type model struct {
 	gatewayResponse    string
 	gatewayErr         string
 	gatewayUsage       gatewayUsage
+	gatewayStartedAt   time.Time
+	gatewayTick        int
 
 	// Delete confirmation state
 	deleteTarget string // name of item to delete
@@ -513,6 +519,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gatewayFinishedMsg:
 		m.gatewayRunning = false
 		m.gatewayStage = gatewayResult
+		m.gatewayTick = 0
 		if msg.err != nil {
 			m.gatewayErr = msg.err.Error()
 			m.gatewayResponse = ""
@@ -523,6 +530,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.gatewayResponse = msg.response
 			m.gatewayUsage = msg.usage
 			m.setStatus("Gateway execution completed", false)
+		}
+		return m, nil
+
+	case gatewayPulseMsg:
+		if m.gatewayStage == gatewayRunning && m.gatewayRunning {
+			m.gatewayTick++
+			return m, gatewayPulseCmd()
 		}
 		return m, nil
 
@@ -894,9 +908,11 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gatewayResponse = ""
 			m.gatewayErr = ""
 			m.gatewayUsage = gatewayUsage{}
+			m.gatewayStartedAt = time.Now()
+			m.gatewayTick = 0
 			m.gatewayStage = gatewayRunning
 			a := m.agents[m.gatewayAgentCursor]
-			return m, runGatewayPromptCmd(a, m.gatewayEffective, 5*time.Minute)
+			return m, tea.Batch(runGatewayPromptCmd(a, m.gatewayEffective, 5*time.Minute), gatewayPulseCmd())
 		}
 	case gatewayRunning:
 		if msg.String() == "esc" {
@@ -2133,7 +2149,20 @@ func (m model) renderGatewayFlow() string {
 	case gatewayRunning:
 		b.WriteString(warnStyle.Render("  Step 4: Running prompt..."))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  Waiting for agent response."))
+		spinnerFrames := []string{"-", "\\", "|", "/"}
+		frame := spinnerFrames[m.gatewayTick%len(spinnerFrames)]
+		elapsed := time.Duration(0)
+		if !m.gatewayStartedAt.IsZero() {
+			elapsed = time.Since(m.gatewayStartedAt).Round(time.Second)
+		}
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  %s Waiting for agent response. Elapsed: %s", frame, elapsed)))
+		b.WriteString("\n")
+		if len(m.agents) > 0 && m.gatewayAgentCursor < len(m.agents) {
+			a := m.agents[m.gatewayAgentCursor]
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  Agent: %s (%s)", a.Name, a.Provider)))
+			b.WriteString("\n")
+		}
+		b.WriteString(dimStyle.Render("  Final response will appear here when the provider process exits."))
 		b.WriteString("\n")
 	case gatewayResult:
 		b.WriteString(labelStyle.Render("  Step 5: Response"))
@@ -2436,6 +2465,12 @@ func runGatewayPromptCmd(a agent.Agent, prompt string, timeout time.Duration) te
 	}
 }
 
+func gatewayPulseCmd() tea.Cmd {
+	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg {
+		return gatewayPulseMsg{at: t}
+	})
+}
+
 func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
 	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
 	a.Model = runtimeCfg.Model.Value
@@ -2447,6 +2482,8 @@ func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (
 		return executeGatewayOllama(a, prompt, timeout)
 	case agent.ProviderCodex:
 		return executeGatewayCodex(a, prompt, timeout)
+	case agent.ProviderGemini:
+		return executeGatewayGemini(a, prompt, timeout)
 	case agent.ProviderClaude:
 		backend, err := agent.ParseClaudeBackend(a.Backend)
 		if err != nil {
@@ -2536,11 +2573,8 @@ func executeGatewayCodex(a agent.Agent, prompt string, timeout time.Duration) (s
 	_ = tmp.Close()
 	defer os.Remove(tmp.Name())
 
-	args := []string{"exec", "--json", "--output-last-message", tmp.Name()}
-	if strings.TrimSpace(a.Model) != "" {
-		args = append(args, "--model", a.Model)
-	}
-	args = append(args, prompt)
+	cwd, _ := os.Getwd()
+	args := agent.BuildCodexExecArgs(a.Model, tmp.Name(), cwd, prompt)
 
 	cmd := exec.Command("codex", args...)
 	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
@@ -2566,11 +2600,7 @@ func executeGatewayClaude(a agent.Agent, prompt string, timeout time.Duration) (
 		return "", gatewayUsage{}, errors.New("claude binary not found in PATH")
 	}
 
-	args := []string{"-p", "--output-format", "json"}
-	if strings.TrimSpace(a.Model) != "" {
-		args = append(args, "--model", a.Model)
-	}
-	args = append(args, prompt)
+	args := agent.BuildClaudeExecArgs(a.Model, prompt)
 
 	cmd := exec.Command("claude", args...)
 	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
@@ -2597,6 +2627,50 @@ func executeGatewayClaude(a agent.Agent, prompt string, timeout time.Duration) (
 	input := extractGatewayInt64(decoded, []string{"input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens"})
 	output := extractGatewayInt64(decoded, []string{"output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens"})
 	total := extractGatewayInt64(decoded, []string{"total_tokens", "usage.total_tokens"})
+	if total == 0 && (input > 0 || output > 0) {
+		total = input + output
+	}
+	return strings.TrimSpace(response), gatewayUsage{
+		InputTokens:  input,
+		OutputTokens: output,
+		TotalTokens:  total,
+	}, nil
+}
+
+func executeGatewayGemini(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+	if _, err := exec.LookPath("gemini"); err != nil {
+		return "", gatewayUsage{}, errors.New("gemini binary not found in PATH")
+	}
+
+	args := agent.BuildGeminiExecArgs(a.Model, prompt)
+
+	cmd := exec.Command("gemini", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := runCommandWithTimeout(cmd, timeout); err != nil {
+		return "", gatewayUsage{}, fmt.Errorf("gemini failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+
+	raw := strings.TrimSpace(stdout.String())
+	if raw == "" {
+		return "", gatewayUsage{}, errors.New("gemini returned empty output")
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return raw, gatewayUsage{}, nil
+	}
+	response := extractGatewayString(decoded, []string{
+		"result", "response", "output", "content", "text",
+		"candidates.0.content.parts.0.text",
+	})
+	if response == "" {
+		response = raw
+	}
+	input := extractGatewayInt64(decoded, []string{"input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens", "usageMetadata.promptTokenCount"})
+	output := extractGatewayInt64(decoded, []string{"output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens", "usageMetadata.candidatesTokenCount"})
+	total := extractGatewayInt64(decoded, []string{"total_tokens", "usage.total_tokens", "usageMetadata.totalTokenCount"})
 	if total == 0 && (input > 0 || output > 0) {
 		total = input + output
 	}

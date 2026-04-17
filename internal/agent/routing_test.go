@@ -2,6 +2,8 @@ package agent
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -49,6 +51,7 @@ func TestResolveExecutionTarget(t *testing.T) {
 		{name: "ollama hostname without scheme is not local", agent: Agent{Name: "ollama-noscheme-remote", Provider: ProviderOllama, BaseURL: "remote.example:443"}, runner: RunnerOllamaHTTP, local: false, supported: true},
 		{name: "ollama localhost without scheme is not local", agent: Agent{Name: "ollama-noscheme-localhost", Provider: ProviderOllama, BaseURL: "localhost:11434"}, runner: RunnerOllamaHTTP, local: false, supported: true},
 		{name: "codex cli", agent: Agent{Name: "codex", Provider: ProviderCodex}, runner: RunnerCodexCLI, local: false, supported: true},
+		{name: "gemini cli", agent: Agent{Name: "gemini", Provider: ProviderGemini}, runner: RunnerGeminiCLI, local: false, supported: true},
 		{name: "openai http", agent: Agent{Name: "openai", Provider: ProviderOpenAI}, runner: RunnerOpenAIHTTP, local: false, supported: true},
 		{name: "claude cli", agent: Agent{Name: "claude", Provider: ProviderClaude}, runner: RunnerClaudeCLI, local: false, supported: true},
 		{name: "claude ollama", agent: Agent{Name: "claude-local", Provider: ProviderClaude, Backend: ClaudeBackendOllama}, runner: RunnerOllamaHTTP, local: true, supported: true},
@@ -79,5 +82,89 @@ func TestExecutionTargetJSONOmitsBaseURL(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "base_url") || strings.Contains(string(raw), "secret") {
 		t.Fatalf("expected marshaled target to omit base_url secrets, got: %s", string(raw))
+	}
+}
+
+func TestIsGitWorktree(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	nested := filepath.Join(repo, "nested", "deeper")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("creating .git dir: %v", err)
+	}
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("creating nested repo dir: %v", err)
+	}
+
+	if !IsGitWorktree(repo) {
+		t.Fatalf("IsGitWorktree(%q) = false, want true", repo)
+	}
+	if !IsGitWorktree(nested) {
+		t.Fatalf("IsGitWorktree(%q) = false, want true", nested)
+	}
+
+	plain := filepath.Join(root, "plain")
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatalf("creating plain dir: %v", err)
+	}
+	if IsGitWorktree(plain) {
+		t.Fatalf("IsGitWorktree(%q) = true, want false", plain)
+	}
+
+	worktreeRoot := filepath.Join(root, "worktree")
+	worktreeNested := filepath.Join(worktreeRoot, "child")
+	if err := os.MkdirAll(worktreeNested, 0o755); err != nil {
+		t.Fatalf("creating worktree dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreeRoot, ".git"), []byte("gitdir: /tmp/example"), 0o644); err != nil {
+		t.Fatalf("creating .git file: %v", err)
+	}
+	if !IsGitWorktree(worktreeNested) {
+		t.Fatalf("IsGitWorktree(%q) = false, want true for .git file", worktreeNested)
+	}
+}
+
+func TestBuildCodexExecArgs(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("creating .git dir: %v", err)
+	}
+
+	args := BuildCodexExecArgs("gpt-5", "/tmp/out.txt", repo, "fix the bug")
+	want := []string{"exec", "--json", "--output-last-message", "/tmp/out.txt", "--full-auto", "--model", "gpt-5", "fix the bug"}
+	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("BuildCodexExecArgs() = %#v, want %#v", args, want)
+	}
+}
+
+func TestBuildCodexExecArgsAddsSkipGitCheckOutsideRepo(t *testing.T) {
+	dir := t.TempDir()
+	args := BuildCodexExecArgs("", "/tmp/out.txt", dir, "fix the bug")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--full-auto") {
+		t.Fatalf("expected --full-auto in args: %#v", args)
+	}
+	if !strings.Contains(joined, "--skip-git-repo-check") {
+		t.Fatalf("expected --skip-git-repo-check in args: %#v", args)
+	}
+}
+
+func TestBuildClaudeExecArgs(t *testing.T) {
+	args := BuildClaudeExecArgs("sonnet", "fix the bug")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"-p", "--output-format json", "--permission-mode auto", "--model sonnet", "fix the bug"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in args: %#v", want, args)
+		}
+	}
+}
+
+func TestBuildGeminiExecArgs(t *testing.T) {
+	args := BuildGeminiExecArgs("gemini-2.5-pro", "fix the bug")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--prompt fix the bug", "--output-format json", "--approval-mode auto_edit", "--model gemini-2.5-pro"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in args: %#v", want, args)
+		}
 	}
 }
