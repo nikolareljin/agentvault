@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- `agentvault prompt` now separates workflow metadata repo selection from actual execution workspace, adds `--workspace`, and runs Codex, Claude, and Gemini subprocesses from resolved target directory instead of always using caller shell cwd.
+- Prompt Gateway now includes explicit execution workspace selection and preview, so agentic runs show exact writable path before provider execution.
+- Gemini prompt execution now exports both `GEMINI_API_KEY` and `GOOGLE_API_KEY` from AgentVault runtime config in both CLI and TUI gateway paths.
+
 ## [0.8.1] - 2026-04-17
 
 ### Fixed

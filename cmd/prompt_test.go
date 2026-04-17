@@ -300,7 +300,7 @@ func TestResolvePromptAgentAutoRejectsRemoteResolvedTargetForLocalOnly(t *testin
 }
 
 func TestExecutePromptTargetUnsupportedRunnerMentionsRunner(t *testing.T) {
-	_, err := executePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, "hello", time.Second)
+	_, err := executePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, "hello", time.Second, t.TempDir())
 	if err == nil {
 		t.Fatalf("expected unsupported runner error")
 	}

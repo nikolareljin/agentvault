@@ -225,11 +225,13 @@ Execution behavior:
 - Codex runs in agentic workspace-write mode.
 - Claude runs with `--permission-mode auto`.
 - Gemini runs with `--approval-mode auto_edit`.
+- Gemini reuses AgentVault-stored API keys by exporting both `GEMINI_API_KEY` and `GOOGLE_API_KEY` for CLI execution.
 - Ollama remains a plain HTTP prompt execution path and does not have CLI tool-use semantics.
 
 Current limitation:
 - Prompt text alone does not switch repositories or instruction scope. If you start from `~/Projects`, AgentVault uses that current directory for local instruction discovery.
-- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/Projects/scholar-path --pr 27`.
+- Agentic prompt runs now use explicit execution workspace selection. CLI defaults to workflow repo root when `--workflow ... --repo ...` is used, otherwise current directory. Override with `--workspace`.
+- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/Projects/scholar-path --workspace ~/Projects/scholar-path --pr 27`.
 
 Runtime value precedence for prompt execution is:
 - local agent setting in vault
