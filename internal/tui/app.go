@@ -35,6 +35,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -166,6 +167,17 @@ type gatewayFinishedMsg struct {
 
 type gatewayPulseMsg struct {
 	at time.Time
+}
+
+func trimLastRune(value string) string {
+	if value == "" {
+		return value
+	}
+	_, size := utf8.DecodeLastRuneInString(value)
+	if size <= 0 {
+		return ""
+	}
+	return value[:len(value)-size]
 }
 
 // model is the Bubble Tea application state.
@@ -873,9 +885,7 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gatewayStage = gatewaySelectAgent
 			return m, nil
 		case "backspace":
-			if len(m.gatewayPrompt) > 0 {
-				m.gatewayPrompt = m.gatewayPrompt[:len(m.gatewayPrompt)-1]
-			}
+			m.gatewayPrompt = trimLastRune(m.gatewayPrompt)
 			return m, nil
 		case "enter":
 			if strings.TrimSpace(m.gatewayPrompt) == "" {
@@ -902,8 +912,8 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gatewayStage = gatewaySelectWorkspace
 			return m, nil
 		default:
-			if len(msg.String()) == 1 {
-				m.gatewayPrompt += msg.String()
+			if len(msg.Runes) > 0 {
+				m.gatewayPrompt += string(msg.Runes)
 			}
 			return m, nil
 		}
@@ -913,9 +923,7 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gatewayStage = gatewayInputPrompt
 			return m, nil
 		case "backspace":
-			if len(m.gatewayWorkspace) > 0 {
-				m.gatewayWorkspace = m.gatewayWorkspace[:len(m.gatewayWorkspace)-1]
-			}
+			m.gatewayWorkspace = trimLastRune(m.gatewayWorkspace)
 			return m, nil
 		case "enter":
 			resolved, err := workspace.Resolve(m.gatewayWorkspace, "", m.cwd)
@@ -929,8 +937,8 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gatewayStage = gatewayPreview
 			return m, nil
 		default:
-			if len(msg.String()) == 1 {
-				m.gatewayWorkspace += msg.String()
+			if len(msg.Runes) > 0 {
+				m.gatewayWorkspace += string(msg.Runes)
 			}
 			return m, nil
 		}

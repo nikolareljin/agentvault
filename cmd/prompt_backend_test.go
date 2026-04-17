@@ -73,6 +73,10 @@ func TestExecutePromptAppliesRuntimeConfig(t *testing.T) {
 }
 
 func TestResolvePromptExecutionWorkspaceUsesWorkflowRepoWhenWorkspaceUnset(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+
 	repoRoot := t.TempDir()
 	if out, err := exec.Command("git", "init", repoRoot).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v (%s)", err, strings.TrimSpace(string(out)))
