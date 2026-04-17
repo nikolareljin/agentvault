@@ -156,8 +156,11 @@ Execution behavior:
 - Codex runs in agentic workspace-write mode.
 - Claude runs with `--permission-mode auto`.
 - Gemini runs with `--approval-mode auto_edit`.
+- Gemini receives both `GEMINI_API_KEY` and `GOOGLE_API_KEY` from AgentVault runtime config.
 - Ollama stays on the HTTP prompt path.
-- Prompt text alone does not change repository context; for repo-aware issue/PR work, use `--workflow ... --repo ...`.
+- Prompt text alone does not change repository context.
+- Use `--workflow ... --repo ...` for repo-aware context generation.
+- Use `--workspace ...` when you need agentic edits to target specific directory explicitly.
 
 TUI agent detail renders effective model/API key/base URL with source tags (`local`, `env`, `default`).
 

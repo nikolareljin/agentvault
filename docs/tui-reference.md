@@ -159,15 +159,21 @@ Gateway stages and keys:
 - `Enter`: rewrite prompt and continue
 - `Esc`: back to agent selection
 
-3. Preview rewritten prompt
-- `y` or `Enter`: confirm and run
-- `n`: return to prompt edit
+3. Select execution workspace
+- type or edit workspace path
+- `Backspace`: edit
+- `Enter`: validate and continue
 - `Esc`: return to prompt edit
 
-4. Running
+4. Preview rewritten prompt
+- `y` or `Enter`: confirm and run
+- `n`: return to workspace edit
+- `Esc`: return to workspace edit
+
+5. Running
 - waits for execution completion
 
-5. Result
+6. Result
 - shows response and token usage when available
 - `s`: switch agent and start another interaction
 - `e`: edit/retry prompt
@@ -183,7 +189,9 @@ Execution notes:
 - Codex runs in agentic workspace-write mode.
 - Claude runs with auto permission mode.
 - Gemini runs with auto-edit approval mode.
-- The gateway does not infer repository context from prompt text alone; start it in the target repo or use the CLI workflow path with `--repo`.
+- Gemini receives both supported API key aliases from AgentVault runtime config.
+- Gateway preview shows exact execution workspace before run.
+- Prompt text still does not infer repository context. Choose target workspace explicitly in gateway.
 
 ## Tab 7: Status
 

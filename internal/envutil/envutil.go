@@ -26,6 +26,15 @@ func SetValueWithPrecedence(baseEnv []string, key string, value string) []string
 	return out
 }
 
+// SetValuesWithPrecedence applies SetValueWithPrecedence for multiple keys.
+func SetValuesWithPrecedence(baseEnv []string, value string, keys ...string) []string {
+	out := baseEnv
+	for _, key := range keys {
+		out = SetValueWithPrecedence(out, key, value)
+	}
+	return out
+}
+
 func envKeyEquals(left, right string) bool {
 	return envKeyEqualsForOS(runtime.GOOS, left, right)
 }

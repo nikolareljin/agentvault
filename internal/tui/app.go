@@ -42,6 +42,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/envutil"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/vault"
+	"github.com/nikolareljin/agentvault/internal/workspace"
 )
 
 // Lipgloss styles for consistent TUI rendering.
@@ -145,6 +146,7 @@ const (
 	gatewayOff gatewayStage = iota
 	gatewaySelectAgent
 	gatewayInputPrompt
+	gatewaySelectWorkspace
 	gatewayPreview
 	gatewayRunning
 	gatewayResult
@@ -212,6 +214,9 @@ type model struct {
 	gatewayStage       gatewayStage
 	gatewayAgentCursor int
 	gatewayPrompt      string
+	gatewayWorkspace   string
+	gatewayWorkSource  string
+	gatewayWorkGitRepo bool
 	gatewayEffective   string
 	gatewayProfile     string
 	gatewayOptimized   bool
@@ -654,6 +659,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.gatewayStage = gatewaySelectAgent
 				m.gatewayAgentCursor = 0
 				m.gatewayPrompt = ""
+				m.gatewayWorkspace = ""
+				m.gatewayWorkSource = ""
+				m.gatewayWorkGitRepo = false
 				m.gatewayEffective = ""
 				m.gatewayProfile = ""
 				m.gatewayOptimized = false
@@ -883,7 +891,15 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gatewayEffective = effective
 			m.gatewayProfile = profile
 			m.gatewayOptimized = true
-			m.gatewayStage = gatewayPreview
+			resolved, err := workspace.ResolveCurrentDirDefault(m.cwd)
+			if err != nil {
+				m.setStatus(err.Error(), true)
+				return m, nil
+			}
+			m.gatewayWorkspace = resolved.Path
+			m.gatewayWorkSource = string(resolved.Source)
+			m.gatewayWorkGitRepo = resolved.IsGitRepo
+			m.gatewayStage = gatewaySelectWorkspace
 			return m, nil
 		default:
 			if len(msg.String()) == 1 {
@@ -891,13 +907,40 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-	case gatewayPreview:
+	case gatewaySelectWorkspace:
 		switch msg.String() {
 		case "esc":
 			m.gatewayStage = gatewayInputPrompt
 			return m, nil
+		case "backspace":
+			if len(m.gatewayWorkspace) > 0 {
+				m.gatewayWorkspace = m.gatewayWorkspace[:len(m.gatewayWorkspace)-1]
+			}
+			return m, nil
+		case "enter":
+			resolved, err := workspace.Resolve(m.gatewayWorkspace, "", m.cwd)
+			if err != nil {
+				m.setStatus(err.Error(), true)
+				return m, nil
+			}
+			m.gatewayWorkspace = resolved.Path
+			m.gatewayWorkSource = string(resolved.Source)
+			m.gatewayWorkGitRepo = resolved.IsGitRepo
+			m.gatewayStage = gatewayPreview
+			return m, nil
+		default:
+			if len(msg.String()) == 1 {
+				m.gatewayWorkspace += msg.String()
+			}
+			return m, nil
+		}
+	case gatewayPreview:
+		switch msg.String() {
+		case "esc":
+			m.gatewayStage = gatewaySelectWorkspace
+			return m, nil
 		case "n", "N":
-			m.gatewayStage = gatewayInputPrompt
+			m.gatewayStage = gatewaySelectWorkspace
 			return m, nil
 		case "y", "Y", "enter":
 			if len(m.agents) == 0 || m.gatewayAgentCursor >= len(m.agents) {
@@ -912,7 +955,7 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gatewayTick = 0
 			m.gatewayStage = gatewayRunning
 			a := m.agents[m.gatewayAgentCursor]
-			return m, tea.Batch(runGatewayPromptCmd(a, m.gatewayEffective, 5*time.Minute), gatewayPulseCmd())
+			return m, tea.Batch(runGatewayPromptCmd(a, m.gatewayEffective, m.gatewayWorkspace, 5*time.Minute), gatewayPulseCmd())
 		}
 	case gatewayRunning:
 		if msg.String() == "esc" {
@@ -1336,6 +1379,9 @@ func (m *model) handleConnectDetected() (tea.Model, tea.Cmd) {
 	m.gatewayStage = gatewaySelectAgent
 	m.gatewayAgentCursor = idx
 	m.gatewayPrompt = ""
+	m.gatewayWorkspace = ""
+	m.gatewayWorkSource = ""
+	m.gatewayWorkGitRepo = false
 	m.gatewayEffective = ""
 	m.gatewayResponse = ""
 	m.gatewayErr = ""
@@ -2132,12 +2178,40 @@ func (m model) renderGatewayFlow() string {
 		b.WriteString("  ")
 		b.WriteString(m.gatewayPrompt)
 		b.WriteString("_\n")
+	case gatewaySelectWorkspace:
+		a := m.agents[m.gatewayAgentCursor]
+		b.WriteString(labelStyle.Render("  Step 3: Select execution workspace"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render(fmt.Sprintf("  Agent: %s (%s)", a.Name, a.Provider)))
+		b.WriteString("\n")
+		if m.gatewayWorkSource != "" {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  Default source: %s", m.gatewayWorkSource)))
+			b.WriteString("\n")
+		}
+		if m.gatewayWorkGitRepo {
+			b.WriteString(dimStyle.Render("  Git repository detected for selected workspace."))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		b.WriteString("  ")
+		b.WriteString(m.gatewayWorkspace)
+		b.WriteString("_\n")
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  Enter confirms workspace. Esc returns to prompt edit."))
+		b.WriteString("\n")
 	case gatewayPreview:
 		a := m.agents[m.gatewayAgentCursor]
-		b.WriteString(labelStyle.Render("  Step 3: Review rewritten prompt"))
+		b.WriteString(labelStyle.Render("  Step 4: Review rewritten prompt"))
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render(fmt.Sprintf("  Agent: %s (%s), profile: %s", a.Name, a.Provider, m.gatewayProfile)))
 		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("  Agent will run in: " + m.gatewayWorkspace))
+		b.WriteString("\n")
+		if m.gatewayWorkGitRepo {
+			b.WriteString(dimStyle.Render("  Workspace is inside git repository."))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
 		for _, line := range strings.Split(m.gatewayEffective, "\n") {
 			b.WriteString("  ")
 			b.WriteString(truncate(line, 110))
@@ -2147,7 +2221,7 @@ func (m model) renderGatewayFlow() string {
 		b.WriteString(dimStyle.Render("  Confirm with y/enter, or n to edit prompt."))
 		b.WriteString("\n")
 	case gatewayRunning:
-		b.WriteString(warnStyle.Render("  Step 4: Running prompt..."))
+		b.WriteString(warnStyle.Render("  Step 5: Running prompt..."))
 		b.WriteString("\n")
 		spinnerFrames := []string{"-", "\\", "|", "/"}
 		frame := spinnerFrames[m.gatewayTick%len(spinnerFrames)]
@@ -2162,11 +2236,19 @@ func (m model) renderGatewayFlow() string {
 			b.WriteString(dimStyle.Render(fmt.Sprintf("  Agent: %s (%s)", a.Name, a.Provider)))
 			b.WriteString("\n")
 		}
+		if strings.TrimSpace(m.gatewayWorkspace) != "" {
+			b.WriteString(dimStyle.Render("  Workspace: " + m.gatewayWorkspace))
+			b.WriteString("\n")
+		}
 		b.WriteString(dimStyle.Render("  Final response will appear here when the provider process exits."))
 		b.WriteString("\n")
 	case gatewayResult:
-		b.WriteString(labelStyle.Render("  Step 5: Response"))
+		b.WriteString(labelStyle.Render("  Step 6: Response"))
 		b.WriteString("\n\n")
+		if strings.TrimSpace(m.gatewayWorkspace) != "" {
+			b.WriteString(dimStyle.Render("  Workspace: " + m.gatewayWorkspace))
+			b.WriteString("\n\n")
+		}
 		if m.gatewayErr != "" {
 			b.WriteString(errorStyle.Render("  Error: " + m.gatewayErr))
 			b.WriteString("\n")
@@ -2431,6 +2513,8 @@ func (m model) renderHelpBar() string {
 						help = "j/k: select agent  enter: next  esc: close gateway"
 					case gatewayInputPrompt:
 						help = "type: prompt  enter: rewrite  backspace: edit  esc: back"
+					case gatewaySelectWorkspace:
+						help = "type: workspace path  enter: continue  backspace: edit  esc: back"
 					case gatewayPreview:
 						help = "y/enter: run  n: edit  esc: back"
 					case gatewayRunning:
@@ -2454,9 +2538,9 @@ func (m model) renderHelpBar() string {
 	return helpStyle.Render("  " + help)
 }
 
-func runGatewayPromptCmd(a agent.Agent, prompt string, timeout time.Duration) tea.Cmd {
+func runGatewayPromptCmd(a agent.Agent, prompt string, executionDir string, timeout time.Duration) tea.Cmd {
 	return func() tea.Msg {
-		resp, usage, err := executeGatewayPrompt(a, prompt, timeout)
+		resp, usage, err := executeGatewayPrompt(a, prompt, executionDir, timeout)
 		return gatewayFinishedMsg{
 			response: resp,
 			usage:    usage,
@@ -2471,7 +2555,7 @@ func gatewayPulseCmd() tea.Cmd {
 	})
 }
 
-func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+func executeGatewayPrompt(a agent.Agent, prompt string, executionDir string, timeout time.Duration) (string, gatewayUsage, error) {
 	runtimeCfg := agent.ResolvePromptRuntimeConfig(a)
 	a.Model = runtimeCfg.Model.Value
 	a.APIKey = runtimeCfg.APIKey.Value
@@ -2481,9 +2565,9 @@ func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (
 	case agent.ProviderOllama:
 		return executeGatewayOllama(a, prompt, timeout)
 	case agent.ProviderCodex:
-		return executeGatewayCodex(a, prompt, timeout)
+		return executeGatewayCodex(a, prompt, executionDir, timeout)
 	case agent.ProviderGemini:
-		return executeGatewayGemini(a, prompt, timeout)
+		return executeGatewayGemini(a, prompt, executionDir, timeout)
 	case agent.ProviderClaude:
 		backend, err := agent.ParseClaudeBackend(a.Backend)
 		if err != nil {
@@ -2495,7 +2579,7 @@ func executeGatewayPrompt(a agent.Agent, prompt string, timeout time.Duration) (
 		case agent.ClaudeBackendBedrock:
 			return "", gatewayUsage{}, fmt.Errorf("claude bedrock backend is not supported in TUI gateway yet")
 		default:
-			return executeGatewayClaude(a, prompt, timeout)
+			return executeGatewayClaude(a, prompt, executionDir, timeout)
 		}
 	default:
 		return "", gatewayUsage{}, fmt.Errorf("provider %q is not supported in TUI gateway yet", a.Provider)
@@ -2562,7 +2646,7 @@ func statusRefreshCmd(v *vault.Vault) tea.Cmd {
 	}
 }
 
-func executeGatewayCodex(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+func executeGatewayCodex(a agent.Agent, prompt string, executionDir string, timeout time.Duration) (string, gatewayUsage, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return "", gatewayUsage{}, errors.New("codex binary not found in PATH")
 	}
@@ -2573,17 +2657,17 @@ func executeGatewayCodex(a agent.Agent, prompt string, timeout time.Duration) (s
 	_ = tmp.Close()
 	defer os.Remove(tmp.Name())
 
-	cwd, _ := os.Getwd()
-	args := agent.BuildCodexExecArgs(a.Model, tmp.Name(), cwd, prompt)
+	args := agent.BuildCodexExecArgs(a.Model, tmp.Name(), executionDir, prompt)
 
 	cmd := exec.Command("codex", args...)
+	cmd.Dir = executionDir
 	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := runCommandWithTimeout(cmd, timeout); err != nil {
-		return "", gatewayUsage{}, fmt.Errorf("codex failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+		return "", gatewayUsage{}, fmt.Errorf("codex failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
 	}
 
 	usage := parseGatewayCodexUsage(stdout.String())
@@ -2595,7 +2679,7 @@ func executeGatewayCodex(a agent.Agent, prompt string, timeout time.Duration) (s
 	return response, usage, nil
 }
 
-func executeGatewayClaude(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+func executeGatewayClaude(a agent.Agent, prompt string, executionDir string, timeout time.Duration) (string, gatewayUsage, error) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return "", gatewayUsage{}, errors.New("claude binary not found in PATH")
 	}
@@ -2603,13 +2687,14 @@ func executeGatewayClaude(a agent.Agent, prompt string, timeout time.Duration) (
 	args := agent.BuildClaudeExecArgs(a.Model, prompt)
 
 	cmd := exec.Command("claude", args...)
+	cmd.Dir = executionDir
 	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := runCommandWithTimeout(cmd, timeout); err != nil {
-		return "", gatewayUsage{}, fmt.Errorf("claude failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+		return "", gatewayUsage{}, fmt.Errorf("claude failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
 	}
 
 	raw := strings.TrimSpace(stdout.String())
@@ -2637,7 +2722,7 @@ func executeGatewayClaude(a agent.Agent, prompt string, timeout time.Duration) (
 	}, nil
 }
 
-func executeGatewayGemini(a agent.Agent, prompt string, timeout time.Duration) (string, gatewayUsage, error) {
+func executeGatewayGemini(a agent.Agent, prompt string, executionDir string, timeout time.Duration) (string, gatewayUsage, error) {
 	if _, err := exec.LookPath("gemini"); err != nil {
 		return "", gatewayUsage{}, errors.New("gemini binary not found in PATH")
 	}
@@ -2645,12 +2730,19 @@ func executeGatewayGemini(a agent.Agent, prompt string, timeout time.Duration) (
 	args := agent.BuildGeminiExecArgs(a.Model, prompt)
 
 	cmd := exec.Command("gemini", args...)
+	cmd.Dir = executionDir
+	cmd.Env = envutil.SetValuesWithPrecedence(
+		os.Environ(),
+		strings.TrimSpace(a.APIKey),
+		"GEMINI_API_KEY",
+		"GOOGLE_API_KEY",
+	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := runCommandWithTimeout(cmd, timeout); err != nil {
-		return "", gatewayUsage{}, fmt.Errorf("gemini failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+		return "", gatewayUsage{}, fmt.Errorf("gemini failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
 	}
 
 	raw := strings.TrimSpace(stdout.String())

@@ -134,6 +134,7 @@ Flags:
 - `--file <path>`
 - `--workflow <name>`: `implement_issue|issue|implement_pr|pr|fix_pr`
 - `--repo <path>`: repository path for workflow context (default: current directory)
+- `--workspace <path>`: execution workspace for agentic CLI providers
 - `--issue <ref>`: required with `--workflow implement_issue` or `issue`
 - `--pr <ref>`: required with `--workflow implement_pr`, `pr`, or `fix_pr`
 - `--json` (default: `false`)
@@ -150,8 +151,13 @@ Execution behavior:
 - Codex launches in agentic workspace-write mode (`--full-auto`).
 - Claude launches with `--permission-mode auto`.
 - Gemini launches with `--approval-mode auto_edit`.
+- Gemini receives both `GEMINI_API_KEY` and `GOOGLE_API_KEY` from AgentVault runtime config.
 - Ollama and OpenAI runners use their HTTP execution paths.
-- Prompt text does not implicitly switch repositories; use `--workflow` with `--repo` for repository-aware issue/PR work.
+- Prompt text does not implicitly switch repositories.
+- `--repo` controls workflow metadata and prompt generation.
+- `--workspace` controls actual subprocess working directory for Codex, Claude, and Gemini.
+- If `--workspace` is omitted and workflow mode is active, AgentVault runs in resolved `--repo` git root.
+- If both `--workspace` and `--repo` are omitted, AgentVault runs in current shell directory.
 
 Workflow behavior:
 - resolves the git repository root and current branch from `--repo`

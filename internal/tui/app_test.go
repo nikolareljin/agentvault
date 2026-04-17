@@ -288,7 +288,7 @@ func TestExecuteGatewayPrompt_BedrockReturnsExplicitError(t *testing.T) {
 		Backend:  agent.ClaudeBackendBedrock,
 	}
 
-	_, _, err := executeGatewayPrompt(a, "hello", time.Second)
+	_, _, err := executeGatewayPrompt(a, "hello", t.TempDir(), time.Second)
 	if err == nil {
 		t.Fatalf("expected error for bedrock gateway execution")
 	}
@@ -307,13 +307,39 @@ func TestRenderPromptGatewayRunningShowsElapsedStatus(t *testing.T) {
 	m.gatewayStartedAt = time.Now().Add(-3 * time.Second)
 	m.gatewayTick = 1
 	m.gatewayAgentCursor = 0
+	m.gatewayWorkspace = t.TempDir()
 
 	view := m.renderCommands()
 	for _, want := range []string{
-		"Step 4: Running prompt...",
+		"Step 5: Running prompt...",
 		"Waiting for agent response. Elapsed:",
 		"Final response will appear here when the provider process exits.",
 		"Agent: claude-main (claude)",
+		"Workspace: ",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("renderCommands() missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRenderGatewayWorkspaceSelection(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewaySelectWorkspace
+	m.gatewayAgentCursor = 0
+	m.gatewayWorkspace = filepath.Join(t.TempDir(), "repo")
+	m.gatewayWorkSource = "current_directory"
+	m.gatewayWorkGitRepo = true
+
+	view := m.renderCommands()
+	for _, want := range []string{
+		"Step 3: Select execution workspace",
+		"Default source: current_directory",
+		"Git repository detected for selected workspace.",
+		m.gatewayWorkspace,
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("renderCommands() missing %q:\n%s", want, view)
