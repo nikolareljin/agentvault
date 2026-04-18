@@ -926,6 +926,10 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.gatewayWorkspace = trimLastRune(m.gatewayWorkspace)
 			return m, nil
 		case "enter":
+			if strings.TrimSpace(m.gatewayWorkspace) == "" {
+				m.setStatus("Workspace cannot be empty", true)
+				return m, nil
+			}
 			resolved, err := workspace.Resolve(m.gatewayWorkspace, "", m.cwd)
 			if err != nil {
 				m.setStatus(err.Error(), true)
@@ -2226,7 +2230,7 @@ func (m model) renderGatewayFlow() string {
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  Confirm with y/enter, or n to edit prompt."))
+		b.WriteString(dimStyle.Render("  Confirm with y/enter, or n/esc to return to workspace selection."))
 		b.WriteString("\n")
 	case gatewayRunning:
 		b.WriteString(warnStyle.Render("  Step 5: Running prompt..."))

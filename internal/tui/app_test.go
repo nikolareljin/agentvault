@@ -346,3 +346,42 @@ func TestRenderGatewayWorkspaceSelection(t *testing.T) {
 		}
 	}
 }
+
+func TestGatewayWorkspaceEnterRejectsEmptyWorkspace(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewaySelectWorkspace
+	m.gatewayWorkspace = "   "
+	m.cwd = t.TempDir()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got, ok := updated.(*model)
+	if !ok {
+		t.Fatalf("Update() returned %T, want *model", updated)
+	}
+	if got.gatewayStage != gatewaySelectWorkspace {
+		t.Fatalf("gatewayStage = %v, want %v", got.gatewayStage, gatewaySelectWorkspace)
+	}
+	if !strings.Contains(got.statusMsg, "Workspace cannot be empty") {
+		t.Fatalf("statusMsg = %q, want workspace validation error", got.statusMsg)
+	}
+}
+
+func TestRenderGatewayPreviewShowsWorkspaceNavigationHint(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewayPreview
+	m.gatewayAgentCursor = 0
+	m.gatewayWorkspace = t.TempDir()
+	m.gatewayProfile = "default"
+	m.gatewayEffective = "refactor safely"
+
+	view := m.renderCommands()
+	if !strings.Contains(view, "Confirm with y/enter, or n/esc to return to workspace selection.") {
+		t.Fatalf("renderCommands() missing updated preview hint:\n%s", view)
+	}
+}
