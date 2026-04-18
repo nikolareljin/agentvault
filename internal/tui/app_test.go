@@ -385,3 +385,22 @@ func TestRenderGatewayPreviewShowsWorkspaceNavigationHint(t *testing.T) {
 		t.Fatalf("renderCommands() missing updated preview hint:\n%s", view)
 	}
 }
+
+func TestExtractGatewayStringSupportsGeminiCandidateArrayPath(t *testing.T) {
+	data := map[string]any{
+		"candidates": []any{
+			map[string]any{
+				"content": map[string]any{
+					"parts": []any{
+						map[string]any{"text": "trimmed gemini text"},
+					},
+				},
+			},
+		},
+	}
+
+	got := extractGatewayString(data, []string{"candidates.0.content.parts.0.text"})
+	if got != "trimmed gemini text" {
+		t.Fatalf("extractGatewayString() = %q, want trimmed gemini text", got)
+	}
+}

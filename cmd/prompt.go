@@ -886,12 +886,15 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 
 	cmd := exec.CommandContext(runCtx, "gemini", args...)
 	cmd.Dir = executionDir
-	cmd.Env = envutil.SetValuesWithPrecedence(
-		os.Environ(),
-		strings.TrimSpace(a.APIKey),
-		"GEMINI_API_KEY",
-		"GOOGLE_API_KEY",
-	)
+	cmd.Env = os.Environ()
+	if apiKey := strings.TrimSpace(a.APIKey); apiKey != "" {
+		cmd.Env = envutil.SetValuesWithPrecedence(
+			cmd.Env,
+			apiKey,
+			"GEMINI_API_KEY",
+			"GOOGLE_API_KEY",
+		)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -1086,7 +1089,7 @@ func chooseOptimizationProfile(a agent.Agent, requested string) string {
 
 func extractString(data map[string]any, paths []string) string {
 	for _, p := range paths {
-		if v, ok := lookupPath(data, p); ok {
+		if v, ok := agent.LookupPath(data, p); ok {
 			s, ok := v.(string)
 			if ok && strings.TrimSpace(s) != "" {
 				return s
@@ -1098,7 +1101,7 @@ func extractString(data map[string]any, paths []string) string {
 
 func extractInt64(data map[string]any, paths []string) int64 {
 	for _, p := range paths {
-		if v, ok := lookupPath(data, p); ok {
+		if v, ok := agent.LookupPath(data, p); ok {
 			switch n := v.(type) {
 			case float64:
 				return int64(n)
@@ -1113,21 +1116,4 @@ func extractInt64(data map[string]any, paths []string) int64 {
 		}
 	}
 	return 0
-}
-
-func lookupPath(data map[string]any, path string) (any, bool) {
-	parts := strings.Split(path, ".")
-	var cur any = data
-	for _, p := range parts {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		val, ok := m[p]
-		if !ok {
-			return nil, false
-		}
-		cur = val
-	}
-	return cur, true
 }
