@@ -168,3 +168,26 @@ func TestBuildGeminiExecArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestInferredRouteCapabilitiesIncludesGeminiCodingReviewAndAnalysis(t *testing.T) {
+	got := inferredRouteCapabilities(Agent{Name: "gemini", Provider: ProviderGemini})
+	for _, want := range []string{
+		RouteCapabilityGeneral,
+		RouteCapabilityCoding,
+		RouteCapabilityReview,
+		RouteCapabilityAnalysis,
+	} {
+		if !containsString(got, want) {
+			t.Fatalf("inferredRouteCapabilities() missing %q in %#v", want, got)
+		}
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}

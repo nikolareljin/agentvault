@@ -317,7 +317,7 @@ func inferredRouteCapabilities(a Agent) []string {
 	capabilities := []string{RouteCapabilityGeneral}
 	target := ResolveExecutionTarget(a)
 	switch a.Provider {
-	case ProviderCodex, ProviderClaude, ProviderOpenAI:
+	case ProviderCodex, ProviderClaude, ProviderOpenAI, ProviderGemini:
 		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview, RouteCapabilityAnalysis)
 	case ProviderOllama:
 		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityAnalysis)
