@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -51,6 +52,9 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 	case ProviderCodex, ProviderOpenAI:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), []string{"OPENAI_API_KEY"}, "")
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
+	case ProviderGemini:
+		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), []string{"GEMINI_API_KEY", "GOOGLE_API_KEY"}, "")
+		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
 	case ProviderOllama:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), []string{"OLLAMA_HOST"}, "http://localhost:11434")
@@ -78,4 +82,28 @@ func resolveValue(local string, envKeys []string, defaultValue string) ResolvedV
 		return ResolvedValue{Value: defaultValue, Source: ValueSourceDefault}
 	}
 	return ResolvedValue{Source: ValueSourceUnset}
+}
+
+func LookupPath(data map[string]any, path string) (any, bool) {
+	parts := strings.Split(path, ".")
+	var cur any = data
+	for _, p := range parts {
+		switch value := cur.(type) {
+		case map[string]any:
+			next, ok := value[p]
+			if !ok {
+				return nil, false
+			}
+			cur = next
+		case []any:
+			index, err := strconv.Atoi(p)
+			if err != nil || index < 0 || index >= len(value) {
+				return nil, false
+			}
+			cur = value[index]
+		default:
+			return nil, false
+		}
+	}
+	return cur, true
 }

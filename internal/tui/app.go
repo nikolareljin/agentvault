@@ -2743,12 +2743,15 @@ func executeGatewayGemini(a agent.Agent, prompt string, executionDir string, tim
 
 	cmd := exec.Command("gemini", args...)
 	cmd.Dir = executionDir
-	cmd.Env = envutil.SetValuesWithPrecedence(
-		os.Environ(),
-		strings.TrimSpace(a.APIKey),
-		"GEMINI_API_KEY",
-		"GOOGLE_API_KEY",
-	)
+	cmd.Env = os.Environ()
+	if apiKey := strings.TrimSpace(a.APIKey); apiKey != "" {
+		cmd.Env = envutil.SetValuesWithPrecedence(
+			cmd.Env,
+			apiKey,
+			"GEMINI_API_KEY",
+			"GOOGLE_API_KEY",
+		)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -2910,7 +2913,7 @@ func optimizePromptForGateway(original string, a agent.Agent, shared agent.Share
 
 func extractGatewayString(data map[string]any, paths []string) string {
 	for _, p := range paths {
-		if v, ok := lookupGatewayPath(data, p); ok {
+		if v, ok := agent.LookupPath(data, p); ok {
 			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
 				return s
 			}
@@ -2921,7 +2924,7 @@ func extractGatewayString(data map[string]any, paths []string) string {
 
 func extractGatewayInt64(data map[string]any, paths []string) int64 {
 	for _, p := range paths {
-		if v, ok := lookupGatewayPath(data, p); ok {
+		if v, ok := agent.LookupPath(data, p); ok {
 			switch n := v.(type) {
 			case float64:
 				return int64(n)
@@ -2936,23 +2939,6 @@ func extractGatewayInt64(data map[string]any, paths []string) int64 {
 		}
 	}
 	return 0
-}
-
-func lookupGatewayPath(data map[string]any, path string) (any, bool) {
-	parts := strings.Split(path, ".")
-	var cur any = data
-	for _, p := range parts {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		v, ok := m[p]
-		if !ok {
-			return nil, false
-		}
-		cur = v
-	}
-	return cur, true
 }
 
 func truncate(s string, max int) string {
