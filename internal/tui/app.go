@@ -924,6 +924,8 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "backspace":
 			m.gatewayWorkspace = trimLastRune(m.gatewayWorkspace)
+			m.gatewayWorkSource = ""
+			m.gatewayWorkGitRepo = false
 			return m, nil
 		case "enter":
 			if strings.TrimSpace(m.gatewayWorkspace) == "" {
@@ -943,6 +945,8 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		default:
 			if len(msg.Runes) > 0 {
 				m.gatewayWorkspace += string(msg.Runes)
+				m.gatewayWorkSource = ""
+				m.gatewayWorkGitRepo = false
 			}
 			return m, nil
 		}
