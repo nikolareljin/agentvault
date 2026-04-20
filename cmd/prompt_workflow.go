@@ -23,9 +23,9 @@ const (
 )
 
 const (
-	defaultPromptWorkflowCommandTimeout  = 30 * time.Second
-	maxPromptWorkflowCommandTimeout      = 2 * time.Minute
-	promptWorkflowRepoRootAnnotation     = "agentvault.prompt.workflowRepoRoot"
+	defaultPromptWorkflowCommandTimeout = 30 * time.Second
+	maxPromptWorkflowCommandTimeout     = 2 * time.Minute
+	promptWorkflowRepoRootAnnotation    = "agentvault.prompt.workflowRepoRoot"
 )
 
 type promptWorkflowDeps struct {
