@@ -138,3 +138,57 @@ func TestResolvePromptRuntimeConfig_ClaudeOllamaBackendUsesDefaultWhenEnvMissing
 		t.Fatalf("base url source = %q, want %q", cfg.BaseURL.Source, ValueSourceDefault)
 	}
 }
+
+func TestResolvePromptRuntimeConfig_GeminiUsesEnvFallback(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "env-gemini-key")
+	a := Agent{
+		Provider: ProviderGemini,
+		Model:    "gemini-2.5-pro",
+	}
+
+	cfg := ResolvePromptRuntimeConfig(a)
+	if cfg.APIKey.Value != "env-gemini-key" {
+		t.Fatalf("api key = %q, want env value", cfg.APIKey.Value)
+	}
+	if cfg.APIKey.Source != ValueSourceEnv {
+		t.Fatalf("api key source = %q, want %q", cfg.APIKey.Source, ValueSourceEnv)
+	}
+}
+
+func TestResolvePromptRuntimeConfig_GeminiUsesGoogleEnvFallback(t *testing.T) {
+	t.Setenv("GOOGLE_API_KEY", "env-google-key")
+	a := Agent{
+		Provider: ProviderGemini,
+		Model:    "gemini-2.5-pro",
+	}
+
+	cfg := ResolvePromptRuntimeConfig(a)
+	if cfg.APIKey.Value != "env-google-key" {
+		t.Fatalf("api key = %q, want env value", cfg.APIKey.Value)
+	}
+	if cfg.APIKey.Source != ValueSourceEnv {
+		t.Fatalf("api key source = %q, want %q", cfg.APIKey.Source, ValueSourceEnv)
+	}
+}
+
+func TestLookupPathSupportsArrays(t *testing.T) {
+	data := map[string]any{
+		"candidates": []any{
+			map[string]any{
+				"content": map[string]any{
+					"parts": []any{
+						map[string]any{"text": "gemini response"},
+					},
+				},
+			},
+		},
+	}
+
+	got, ok := LookupPath(data, "candidates.0.content.parts.0.text")
+	if !ok {
+		t.Fatalf("LookupPath() did not resolve array path")
+	}
+	if got != "gemini response" {
+		t.Fatalf("LookupPath() = %v, want gemini response", got)
+	}
+}
