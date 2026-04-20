@@ -954,12 +954,17 @@ func resolvePromptExecutionWorkspace(cmd *cobra.Command) (workspace.Resolved, er
 	workflowName, _ := cmd.Flags().GetString("workflow")
 	workflowRepo := ""
 	if strings.TrimSpace(workspaceFlag) == "" && strings.TrimSpace(workflowName) != "" {
-		deps := defaultPromptWorkflowDeps()
-		repoRoot, _, err := resolvePromptWorkflowRepoContext(cmd, deps)
-		if err != nil {
-			return workspace.Resolved{}, err
+		if cmd != nil && cmd.Annotations != nil {
+			workflowRepo = strings.TrimSpace(cmd.Annotations[promptWorkflowRepoRootAnnotation])
 		}
-		workflowRepo = repoRoot
+		if workflowRepo == "" {
+			deps := defaultPromptWorkflowDeps()
+			repoRoot, _, err := resolvePromptWorkflowRepoContext(cmd, deps)
+			if err != nil {
+				return workspace.Resolved{}, err
+			}
+			workflowRepo = repoRoot
+		}
 	}
 	cwd, err := os.Getwd()
 	if err != nil {

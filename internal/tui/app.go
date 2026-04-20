@@ -48,6 +48,8 @@ import (
 
 // Lipgloss styles for consistent TUI rendering.
 // Colors use ANSI 256-color codes for broad terminal compatibility.
+var gatewaySpinnerFrames = []string{"-", "\\", "|", "/"}
+
 var (
 	titleStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	subtitleStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
@@ -2239,8 +2241,7 @@ func (m model) renderGatewayFlow() string {
 	case gatewayRunning:
 		b.WriteString(warnStyle.Render("  Step 5: Running prompt..."))
 		b.WriteString("\n")
-		spinnerFrames := []string{"-", "\\", "|", "/"}
-		frame := spinnerFrames[m.gatewayTick%len(spinnerFrames)]
+		frame := gatewaySpinnerFrames[m.gatewayTick%len(gatewaySpinnerFrames)]
 		elapsed := time.Duration(0)
 		if !m.gatewayStartedAt.IsZero() {
 			elapsed = time.Since(m.gatewayStartedAt).Round(time.Second)
