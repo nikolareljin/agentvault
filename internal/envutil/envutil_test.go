@@ -1,6 +1,9 @@
 package envutil
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSetValueWithPrecedence_ReplacesExistingKey(t *testing.T) {
 	base := []string{
@@ -34,6 +37,51 @@ func TestSetValueWithPrecedence_RemovesKeyWhenValueEmpty(t *testing.T) {
 	for _, entry := range got {
 		if entry == "B=2" || entry == "B=" {
 			t.Fatalf("unexpected B entry after removal: %v", got)
+		}
+	}
+}
+
+func TestSetValuesWithPrecedence_ReplacesAllAliases(t *testing.T) {
+	base := []string{
+		"GEMINI_API_KEY=old-1",
+		"GOOGLE_API_KEY=old-2",
+		"PATH=/usr/bin",
+	}
+	got := SetValuesWithPrecedence(base, "new-key", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+	want := map[string]string{
+		"GEMINI_API_KEY": "new-key",
+		"GOOGLE_API_KEY": "new-key",
+	}
+	seen := map[string]int{}
+	for _, entry := range got {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		if expected, exists := want[key]; exists {
+			seen[key]++
+			if value != expected {
+				t.Fatalf("%s value = %q, want %q", key, value, expected)
+			}
+		}
+	}
+	for key := range want {
+		if seen[key] != 1 {
+			t.Fatalf("%s entries = %d, want 1 (%v)", key, seen[key], got)
+		}
+	}
+}
+
+func TestSetValuesWithPrecedence_RemovesAllAliasesWhenValueEmpty(t *testing.T) {
+	base := []string{
+		"GEMINI_API_KEY=old-1",
+		"GOOGLE_API_KEY=old-2",
+		"PATH=/usr/bin",
+	}
+	got := SetValuesWithPrecedence(base, "", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+	for _, entry := range got {
+		if strings.HasPrefix(entry, "GEMINI_API_KEY=") || strings.HasPrefix(entry, "GOOGLE_API_KEY=") {
+			t.Fatalf("unexpected alias entry after removal: %v", got)
 		}
 	}
 }

@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/spf13/cobra"
 )
 
 func TestValidatePromptBackend_BedrockReturnsExplicitError(t *testing.T) {
@@ -65,6 +69,43 @@ func TestExecutePromptAppliesRuntimeConfig(t *testing.T) {
 	}
 	if result.Response != "done" {
 		t.Fatalf("response = %q, want done", result.Response)
+	}
+}
+
+func TestResolvePromptExecutionWorkspaceUsesWorkflowRepoWhenWorkspaceUnset(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary not available")
+	}
+
+	repoRoot := t.TempDir()
+	if out, err := exec.Command("git", "init", repoRoot).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("git", "-C", repoRoot, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "test").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	nested := filepath.Join(repoRoot, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("creating nested dir: %v", err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("workflow", "", "")
+	cmd.Flags().String("repo", "", "")
+	cmd.Flags().String("workspace", "", "")
+	if err := cmd.Flags().Set("workflow", "implement_pr"); err != nil {
+		t.Fatalf("setting workflow: %v", err)
+	}
+	if err := cmd.Flags().Set("repo", nested); err != nil {
+		t.Fatalf("setting repo: %v", err)
+	}
+
+	got, err := resolvePromptExecutionWorkspace(cmd)
+	if err != nil {
+		t.Fatalf("resolvePromptExecutionWorkspace() error = %v", err)
+	}
+	if got.Path != repoRoot {
+		t.Fatalf("path = %q, want %q", got.Path, repoRoot)
 	}
 }
 

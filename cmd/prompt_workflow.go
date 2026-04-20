@@ -25,6 +25,7 @@ const (
 const (
 	defaultPromptWorkflowCommandTimeout = 30 * time.Second
 	maxPromptWorkflowCommandTimeout     = 2 * time.Minute
+	promptWorkflowRepoRootAnnotation    = "agentvault.prompt.workflowRepoRoot"
 )
 
 type promptWorkflowDeps struct {
@@ -130,6 +131,12 @@ func resolvePromptWorkflowContext(cmd *cobra.Command, rawWorkflow string, operat
 	repoRoot, branch, err := resolvePromptWorkflowRepoContext(cmd, deps)
 	if err != nil {
 		return promptWorkflowContext{}, err
+	}
+	if cmd != nil && strings.TrimSpace(repoRoot) != "" {
+		if cmd.Annotations == nil {
+			cmd.Annotations = map[string]string{}
+		}
+		cmd.Annotations[promptWorkflowRepoRootAnnotation] = repoRoot
 	}
 
 	resolved, warnings, err := workflowtemplates.LoadResolved(resolveConfigDir(), repoRoot)

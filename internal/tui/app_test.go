@@ -288,11 +288,119 @@ func TestExecuteGatewayPrompt_BedrockReturnsExplicitError(t *testing.T) {
 		Backend:  agent.ClaudeBackendBedrock,
 	}
 
-	_, _, err := executeGatewayPrompt(a, "hello", time.Second)
+	_, _, err := executeGatewayPrompt(a, "hello", t.TempDir(), time.Second)
 	if err == nil {
 		t.Fatalf("expected error for bedrock gateway execution")
 	}
 	if !strings.Contains(err.Error(), "claude bedrock backend is not supported in TUI gateway yet") {
 		t.Fatalf("unexpected bedrock gateway execution error: %v", err)
+	}
+}
+
+func TestRenderPromptGatewayRunningShowsElapsedStatus(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewayRunning
+	m.gatewayRunning = true
+	m.gatewayStartedAt = time.Now().Add(-3 * time.Second)
+	m.gatewayTick = 1
+	m.gatewayAgentCursor = 0
+	m.gatewayWorkspace = t.TempDir()
+
+	view := m.renderCommands()
+	for _, want := range []string{
+		"Step 5: Running prompt...",
+		"Waiting for agent response. Elapsed:",
+		"Final response will appear here when the provider process exits.",
+		"Agent: claude-main (claude)",
+		"Workspace: ",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("renderCommands() missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRenderGatewayWorkspaceSelection(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewaySelectWorkspace
+	m.gatewayAgentCursor = 0
+	m.gatewayWorkspace = filepath.Join(t.TempDir(), "repo")
+	m.gatewayWorkSource = "current_directory"
+	m.gatewayWorkGitRepo = true
+
+	view := m.renderCommands()
+	for _, want := range []string{
+		"Step 3: Select execution workspace",
+		"Default source: current_directory",
+		"Git repository detected for selected workspace.",
+		m.gatewayWorkspace,
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("renderCommands() missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestGatewayWorkspaceEnterRejectsEmptyWorkspace(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewaySelectWorkspace
+	m.gatewayWorkspace = "   "
+	m.cwd = t.TempDir()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got, ok := updated.(*model)
+	if !ok {
+		t.Fatalf("Update() returned %T, want *model", updated)
+	}
+	if got.gatewayStage != gatewaySelectWorkspace {
+		t.Fatalf("gatewayStage = %v, want %v", got.gatewayStage, gatewaySelectWorkspace)
+	}
+	if !strings.Contains(got.statusMsg, "Workspace cannot be empty") {
+		t.Fatalf("statusMsg = %q, want workspace validation error", got.statusMsg)
+	}
+}
+
+func TestRenderGatewayPreviewShowsWorkspaceNavigationHint(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.activeTab = tabCommands
+	m.mode = viewCommands
+	m.gatewayStage = gatewayPreview
+	m.gatewayAgentCursor = 0
+	m.gatewayWorkspace = t.TempDir()
+	m.gatewayProfile = "default"
+	m.gatewayEffective = "refactor safely"
+
+	view := m.renderCommands()
+	if !strings.Contains(view, "Confirm with y/enter, or n/esc to return to workspace selection.") {
+		t.Fatalf("renderCommands() missing updated preview hint:\n%s", view)
+	}
+}
+
+func TestExtractGatewayStringSupportsGeminiCandidateArrayPath(t *testing.T) {
+	data := map[string]any{
+		"candidates": []any{
+			map[string]any{
+				"content": map[string]any{
+					"parts": []any{
+						map[string]any{"text": "trimmed gemini text"},
+					},
+				},
+			},
+		},
+	}
+
+	got := extractGatewayString(data, []string{"candidates.0.content.parts.0.text"})
+	if got != "trimmed gemini text" {
+		t.Fatalf("extractGatewayString() = %q, want trimmed gemini text", got)
 	}
 }

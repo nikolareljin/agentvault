@@ -22,6 +22,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/envutil"
 	routerpkg "github.com/nikolareljin/agentvault/internal/router"
 	"github.com/nikolareljin/agentvault/internal/textutil"
+	"github.com/nikolareljin/agentvault/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -79,6 +80,7 @@ func init() {
 	promptCmd.Flags().String("file", "", "read prompt text from file")
 	promptCmd.Flags().String("workflow", "", "guided workflow prompt: implement_issue|issue|implement_pr|pr|fix_pr")
 	promptCmd.Flags().String("repo", "", "repository path for workflow context (default: current directory)")
+	promptCmd.Flags().String("workspace", "", "execution workspace path for agentic provider runs (default: workflow repo root or current directory)")
 	promptCmd.Flags().String("issue", "", "issue reference for --workflow implement_issue")
 	promptCmd.Flags().String("pr", "", "pull request reference for --workflow implement_pr")
 	promptCmd.Flags().Bool("json", false, "output machine-readable JSON")
@@ -173,6 +175,10 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(text) == "" {
 		return errors.New("prompt is empty")
 	}
+	executionWorkspace, err := resolvePromptExecutionWorkspace(cmd)
+	if err != nil {
+		return err
+	}
 
 	a, decision, runtimeCfg, err := resolvePromptAgent(cmd, v, args, text)
 	if err != nil {
@@ -204,12 +210,15 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if dryRun {
 		if jsonOut {
 			payload := map[string]any{
-				"agent":            a.Name,
-				"provider":         a.Provider,
-				"runner":           target.Runner,
-				"optimized":        optimized,
-				"profile":          optimizationProfile,
-				"effective_prompt": effectivePrompt,
+				"agent":                           a.Name,
+				"provider":                        a.Provider,
+				"runner":                          target.Runner,
+				"optimized":                       optimized,
+				"profile":                         optimizationProfile,
+				"effective_prompt":                effectivePrompt,
+				"execution_workspace":             executionWorkspace.Path,
+				"execution_workspace_source":      string(executionWorkspace.Source),
+				"execution_workspace_is_git_repo": executionWorkspace.IsGitRepo,
 				"value_sources": map[string]string{
 					"model":    string(runtimeCfg.Model.Source),
 					"api_key":  string(runtimeCfg.APIKey.Source),
@@ -232,7 +241,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if decision != nil && !jsonOut {
 		fmt.Fprintf(cmd.ErrOrStderr(), "routed to %q via %s (%s)\n", a.Name, target.Runner, decision.Intent.TaskClass)
 	}
-	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout)
+	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout, executionWorkspace.Path)
 
 	record := PromptRecord{
 		ID:                  fmt.Sprintf("prompt-%d", time.Now().UnixNano()),
@@ -457,17 +466,23 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 		a.BaseURL = runtimeCfg.BaseURL.Value
 	}
 	target := agent.ResolveExecutionTarget(a)
-	return executePromptTarget(target, a, prompt, timeout)
+	executionDir, err := defaultExecutionWorkspace()
+	if err != nil {
+		return promptResult{}, err
+	}
+	return executePromptTarget(target, a, prompt, timeout, executionDir)
 }
 
-func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration, executionDir string) (promptResult, error) {
 	switch target.Runner {
 	case agent.RunnerOllamaHTTP:
 		return executeOllamaPrompt(a, prompt, timeout)
 	case agent.RunnerCodexCLI:
-		return executeCodexPrompt(a, prompt, timeout)
+		return executeCodexPrompt(a, prompt, timeout, executionDir)
 	case agent.RunnerClaudeCLI:
-		return executeClaudePrompt(a, prompt, timeout)
+		return executeClaudePrompt(a, prompt, timeout, executionDir)
+	case agent.RunnerGeminiCLI:
+		return executeGeminiPrompt(a, prompt, timeout, executionDir)
 	case agent.RunnerOpenAIHTTP:
 		return executeOpenAIPrompt(a, prompt, timeout)
 	case agent.RunnerBedrockAPI:
@@ -504,6 +519,11 @@ func validatePromptTarget(target agent.ExecutionTarget, a agent.Agent, timeout t
 	case agent.RunnerClaudeCLI:
 		if _, err := exec.LookPath("claude"); err != nil {
 			return errors.New("claude binary not found in PATH")
+		}
+		return nil
+	case agent.RunnerGeminiCLI:
+		if _, err := exec.LookPath("gemini"); err != nil {
+			return errors.New("gemini binary not found in PATH")
 		}
 		return nil
 	case agent.RunnerOpenAIHTTP:
@@ -702,7 +722,7 @@ func openAIEndpointURL(baseURL, endpoint string) (string, error) {
 	return parsed.String(), nil
 }
 
-func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string) (promptResult, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return promptResult{}, errors.New("codex binary not found in PATH")
 	}
@@ -714,11 +734,7 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	_ = tmp.Close()
 	defer os.Remove(tmp.Name())
 
-	args := []string{"exec", "--json", "--output-last-message", tmp.Name()}
-	if strings.TrimSpace(a.Model) != "" {
-		args = append(args, "--model", a.Model)
-	}
-	args = append(args, prompt)
+	args := agent.BuildCodexExecArgs(a.Model, tmp.Name(), executionDir, prompt)
 
 	runCtx := context.Background()
 	cancel := func() {}
@@ -728,6 +744,7 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, "codex", args...)
+	cmd.Dir = executionDir
 	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -737,7 +754,7 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration) (pr
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return promptResult{}, fmt.Errorf("codex exec timed out after %s", timeout)
 		}
-		return promptResult{}, fmt.Errorf("codex exec failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+		return promptResult{}, fmt.Errorf("codex exec failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
 	}
 
 	usage := parseCodexUsage(stdout.String())
@@ -796,16 +813,12 @@ func parseCodexUsage(raw string) agent.PromptTokenUsage {
 	return usage
 }
 
-func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string) (promptResult, error) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return promptResult{}, errors.New("claude binary not found in PATH")
 	}
 
-	args := []string{"-p", "--output-format", "json"}
-	if strings.TrimSpace(a.Model) != "" {
-		args = append(args, "--model", a.Model)
-	}
-	args = append(args, prompt)
+	args := agent.BuildClaudeExecArgs(a.Model, prompt)
 
 	runCtx := context.Background()
 	cancel := func() {}
@@ -815,6 +828,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, "claude", args...)
+	cmd.Dir = executionDir
 	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
 
 	var stdout, stderr bytes.Buffer
@@ -825,7 +839,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return promptResult{}, fmt.Errorf("claude timed out after %s", timeout)
 		}
-		return promptResult{}, fmt.Errorf("claude failed: %v (%s)", err, strings.TrimSpace(stderr.String()))
+		return promptResult{}, fmt.Errorf("claude failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
 	}
 
 	raw := strings.TrimSpace(stdout.String())
@@ -856,6 +870,72 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	return promptResult{Response: strings.TrimSpace(response), Usage: usage}, nil
 }
 
+func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string) (promptResult, error) {
+	if _, err := exec.LookPath("gemini"); err != nil {
+		return promptResult{}, errors.New("gemini binary not found in PATH")
+	}
+
+	args := agent.BuildGeminiExecArgs(a.Model, prompt)
+
+	runCtx := context.Background()
+	cancel := func() {}
+	if timeout > 0 {
+		runCtx, cancel = context.WithTimeout(context.Background(), timeout)
+	}
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, "gemini", args...)
+	cmd.Dir = executionDir
+	cmd.Env = os.Environ()
+	if apiKey := strings.TrimSpace(a.APIKey); apiKey != "" {
+		cmd.Env = envutil.SetValuesWithPrecedence(
+			cmd.Env,
+			apiKey,
+			"GEMINI_API_KEY",
+			"GOOGLE_API_KEY",
+		)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return promptResult{}, fmt.Errorf("gemini timed out after %s", timeout)
+		}
+		return promptResult{}, fmt.Errorf("gemini failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
+	}
+
+	raw := strings.TrimSpace(stdout.String())
+	if raw == "" {
+		return promptResult{}, errors.New("gemini returned empty output")
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return promptResult{Response: raw}, nil
+	}
+
+	response := extractString(decoded, []string{
+		"result", "response", "output", "content", "text",
+		"candidates.0.content.parts.0.text",
+	})
+	if response == "" {
+		response = raw
+	}
+
+	usage := agent.PromptTokenUsage{
+		InputTokens:  extractInt64(decoded, []string{"input_tokens", "prompt_tokens", "usage.input_tokens", "usage.prompt_tokens", "usageMetadata.promptTokenCount"}),
+		OutputTokens: extractInt64(decoded, []string{"output_tokens", "completion_tokens", "usage.output_tokens", "usage.completion_tokens", "usageMetadata.candidatesTokenCount"}),
+		TotalTokens:  extractInt64(decoded, []string{"total_tokens", "usage.total_tokens", "usageMetadata.totalTokenCount"}),
+	}
+	if usage.TotalTokens == 0 && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	}
+
+	return promptResult{Response: strings.TrimSpace(response), Usage: usage}, nil
+}
+
 func appendPromptRecord(path string, rec PromptRecord) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -867,6 +947,42 @@ func appendPromptRecord(path string, rec PromptRecord) error {
 	defer f.Close()
 	enc := json.NewEncoder(f)
 	return enc.Encode(rec)
+}
+
+func resolvePromptExecutionWorkspace(cmd *cobra.Command) (workspace.Resolved, error) {
+	workspaceFlag, _ := cmd.Flags().GetString("workspace")
+	workflowName, _ := cmd.Flags().GetString("workflow")
+	workflowRepo := ""
+	if strings.TrimSpace(workspaceFlag) == "" && strings.TrimSpace(workflowName) != "" {
+		if cmd != nil && cmd.Annotations != nil {
+			workflowRepo = strings.TrimSpace(cmd.Annotations[promptWorkflowRepoRootAnnotation])
+		}
+		if workflowRepo == "" {
+			deps := defaultPromptWorkflowDeps()
+			repoRoot, _, err := resolvePromptWorkflowRepoContext(cmd, deps)
+			if err != nil {
+				return workspace.Resolved{}, err
+			}
+			workflowRepo = repoRoot
+		}
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return workspace.Resolved{}, fmt.Errorf("resolving current directory: %w", err)
+	}
+	return workspace.Resolve(workspaceFlag, workflowRepo, cwd)
+}
+
+func defaultExecutionWorkspace() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolving current directory: %w", err)
+	}
+	resolved, err := workspace.Resolve("", "", cwd)
+	if err != nil {
+		return "", err
+	}
+	return resolved.Path, nil
 }
 
 func truncateForHistory(s string) string {
@@ -978,7 +1094,7 @@ func chooseOptimizationProfile(a agent.Agent, requested string) string {
 
 func extractString(data map[string]any, paths []string) string {
 	for _, p := range paths {
-		if v, ok := lookupPath(data, p); ok {
+		if v, ok := agent.LookupPath(data, p); ok {
 			s, ok := v.(string)
 			if ok && strings.TrimSpace(s) != "" {
 				return s
@@ -990,7 +1106,7 @@ func extractString(data map[string]any, paths []string) string {
 
 func extractInt64(data map[string]any, paths []string) int64 {
 	for _, p := range paths {
-		if v, ok := lookupPath(data, p); ok {
+		if v, ok := agent.LookupPath(data, p); ok {
 			switch n := v.(type) {
 			case float64:
 				return int64(n)
@@ -1005,21 +1121,4 @@ func extractInt64(data map[string]any, paths []string) int64 {
 		}
 	}
 	return 0
-}
-
-func lookupPath(data map[string]any, path string) (any, bool) {
-	parts := strings.Split(path, ".")
-	var cur any = data
-	for _, p := range parts {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		val, ok := m[p]
-		if !ok {
-			return nil, false
-		}
-		cur = val
-	}
-	return cur, true
 }
