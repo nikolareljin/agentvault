@@ -313,7 +313,9 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println(result.Response)
+	if !stream {
+		fmt.Println(result.Response)
+	}
 	if usage := record.TokenUsage; usage != nil {
 		fmt.Fprintf(os.Stderr, "tokens used: input=%d output=%d total=%d\n",
 			usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
@@ -779,7 +781,7 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, exe
 	var stderrCapture bytes.Buffer
 	if stream {
 		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
 		cmd.Stderr = &stderrCapture
@@ -876,7 +878,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	var stderrCapture bytes.Buffer
 	if stream {
 		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
 		cmd.Stderr = &stderrCapture
@@ -958,7 +960,7 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	var stderrCapture bytes.Buffer
 	if stream {
 		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
-		cmd.Stderr = os.Stderr
+		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
 		cmd.Stderr = &stderrCapture
