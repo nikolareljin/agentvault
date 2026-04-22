@@ -411,7 +411,7 @@ func shouldStream(cmd *cobra.Command, jsonOut bool) bool {
 	if noStream {
 		return false
 	}
-	return term.IsTerminal(int(os.Stdout.Fd())) //nolint:gosec // #nosec G115 -- uintptr→int for fd is safe on all supported 64-bit platforms
+	return term.IsTerminal(int(os.Stdout.Fd())) // #nosec G115 -- uintptr→int for fd is safe on all supported 64-bit platforms
 }
 
 func shouldSkipOptimizationForWorkflow(cmd *cobra.Command) bool {
