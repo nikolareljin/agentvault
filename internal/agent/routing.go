@@ -69,9 +69,9 @@ type RouterConfig struct {
 	LocalOnly        bool   `json:"local_only,omitempty"`
 	AllowFallbacks   bool   `json:"allow_fallbacks,omitempty"`
 	RequireApproval  bool   `json:"require_approval,omitempty"`
-	Importance       string `json:"importance,omitempty"`         // low|medium|high|critical
-	Deadline         string `json:"deadline,omitempty"`           // immediate|normal|background
-	LocalAIModel     string `json:"local_ai_model,omitempty"`     // model used for local-ai routing classification
+	Importance       string `json:"importance,omitempty"`          // low|medium|high|critical
+	Deadline         string `json:"deadline,omitempty"`            // immediate|normal|background
+	LocalAIModel     string `json:"local_ai_model,omitempty"`      // model used for local-ai routing classification
 	LocalAIOllamaURL string `json:"local_ai_ollama_url,omitempty"` // ollama base URL override for local-ai routing
 }
 
