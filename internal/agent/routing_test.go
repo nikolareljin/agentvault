@@ -36,6 +36,72 @@ func TestRouterConfigValidateRejectsUnknownMode(t *testing.T) {
 	}
 }
 
+func TestRouterConfigValidateAcceptsLocalAIMode(t *testing.T) {
+	cfg := RouterConfig{Mode: "local-ai"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want nil for local-ai mode", err)
+	}
+}
+
+func TestRouterConfigValidateRejectsUnknownImportance(t *testing.T) {
+	cfg := RouterConfig{Importance: "extreme"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for unknown importance level")
+	}
+}
+
+func TestRouterConfigValidateAcceptsValidImportance(t *testing.T) {
+	for _, imp := range []string{"low", "medium", "high", "critical"} {
+		cfg := RouterConfig{Importance: imp}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate() error = %v for importance %q", err, imp)
+		}
+	}
+}
+
+func TestRouterConfigValidateRejectsUnknownDeadline(t *testing.T) {
+	cfg := RouterConfig{Deadline: "asap"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for unknown deadline")
+	}
+}
+
+func TestRouterConfigValidateAcceptsValidDeadlines(t *testing.T) {
+	for _, dl := range []string{"immediate", "normal", "background"} {
+		cfg := RouterConfig{Deadline: dl}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate() error = %v for deadline %q", err, dl)
+		}
+	}
+}
+
+func TestBuildClaudeStreamArgsOmitsOutputFormat(t *testing.T) {
+	args := BuildClaudeStreamArgs("claude-opus-4-7", "hello")
+	for _, arg := range args {
+		if arg == "--output-format" {
+			t.Fatal("BuildClaudeStreamArgs should not include --output-format flag")
+		}
+	}
+	found := false
+	for _, arg := range args {
+		if arg == "hello" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("BuildClaudeStreamArgs missing prompt in args")
+	}
+}
+
+func TestBuildGeminiStreamArgsOmitsOutputFormat(t *testing.T) {
+	args := BuildGeminiStreamArgs("gemini-2.5-flash", "hello")
+	for _, arg := range args {
+		if arg == "--output-format" {
+			t.Fatal("BuildGeminiStreamArgs should not include --output-format flag")
+		}
+	}
+}
+
 func TestResolveExecutionTarget(t *testing.T) {
 	tests := []struct {
 		name      string

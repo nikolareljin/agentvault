@@ -462,6 +462,130 @@ func TestResolvePythonInterpreterSkipsPython2Fallback(t *testing.T) {
 	}
 }
 
+func TestImportanceDeadlineScoreCriticalPenalizesLocal(t *testing.T) {
+	localTarget := agent.ExecutionTarget{Local: true}
+	score, reasons := importanceDeadlineScore("critical", "", localTarget, agent.RouteConfig{})
+	if score >= 0 {
+		t.Fatalf("importanceDeadlineScore(critical, local) = %d, want negative penalty", score)
+	}
+	if len(reasons) == 0 {
+		t.Fatal("expected reasons for critical importance")
+	}
+}
+
+func TestImportanceDeadlineScoreCriticalBonusCloud(t *testing.T) {
+	cloudTarget := agent.ExecutionTarget{Local: false}
+	score, _ := importanceDeadlineScore("critical", "", cloudTarget, agent.RouteConfig{})
+	if score <= 0 {
+		t.Fatalf("importanceDeadlineScore(critical, cloud) = %d, want positive bonus", score)
+	}
+}
+
+func TestImportanceDeadlineScoreImmediateDeadlineBoostsLowLatency(t *testing.T) {
+	localTarget := agent.ExecutionTarget{Local: true}
+	profile := agent.RouteConfig{LatencyTier: "low"}
+	score, reasons := importanceDeadlineScore("", "immediate", localTarget, profile)
+	if score <= 0 {
+		t.Fatalf("importanceDeadlineScore(immediate, low-latency-local) = %d, want positive bonus", score)
+	}
+	found := false
+	for _, r := range reasons {
+		if strings.Contains(r, "immediate") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("reasons missing 'immediate' mention: %v", reasons)
+	}
+}
+
+func TestImportanceDeadlineScoreBackgroundFavorsLowCost(t *testing.T) {
+	target := agent.ExecutionTarget{Local: false}
+	profileLow := agent.RouteConfig{CostTier: "low"}
+	profileHigh := agent.RouteConfig{CostTier: "high"}
+	scoreLow, _ := importanceDeadlineScore("", "background", target, profileLow)
+	scoreHigh, _ := importanceDeadlineScore("", "background", target, profileHigh)
+	if scoreLow <= scoreHigh {
+		t.Fatalf("background: low-cost score %d should exceed high-cost score %d", scoreLow, scoreHigh)
+	}
+}
+
+func TestRouteCriticalImportancePrefersCloud(t *testing.T) {
+	decision, err := Route(Request{
+		Prompt: "Summarize this design document.",
+		Agents: []agent.Agent{
+			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+			{Name: "cloud", Provider: agent.ProviderClaude, Model: "claude-opus-4-7"},
+		},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{Importance: "critical"},
+	})
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if decision.Selected.Agent.Name != "cloud" {
+		t.Fatalf("selected agent = %q, want cloud for critical importance", decision.Selected.Agent.Name)
+	}
+}
+
+func TestRouteLowImportancePrefersLocal(t *testing.T) {
+	decision, err := Route(Request{
+		Prompt: "Summarize this design document.",
+		Agents: []agent.Agent{
+			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+			{Name: "cloud", Provider: agent.ProviderClaude, Model: "claude-opus-4-7"},
+		},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{Importance: "low"},
+	})
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if decision.Selected.Agent.Name != "local" {
+		t.Fatalf("selected agent = %q, want local for low importance", decision.Selected.Agent.Name)
+	}
+}
+
+func TestNormalizeLocalAIAnalysisClampsBounds(t *testing.T) {
+	a := normalizeLocalAIAnalysis(LocalAIAnalysis{Complexity: 0, TaskType: "unknown", Urgency: "extreme"})
+	if a.Complexity != 1 {
+		t.Fatalf("Complexity = %d, want 1 (clamped from 0)", a.Complexity)
+	}
+	if a.TaskType != "general" {
+		t.Fatalf("TaskType = %q, want general for unknown type", a.TaskType)
+	}
+	if a.Urgency != "medium" {
+		t.Fatalf("Urgency = %q, want medium for unknown urgency", a.Urgency)
+	}
+
+	b := normalizeLocalAIAnalysis(LocalAIAnalysis{Complexity: 99})
+	if b.Complexity != 10 {
+		t.Fatalf("Complexity = %d, want 10 (clamped from 99)", b.Complexity)
+	}
+}
+
+func TestEnrichIntentFromLocalAISetsPrivacy(t *testing.T) {
+	intent := Intent{}
+	enrichIntentFromLocalAI(&intent, LocalAIAnalysis{PrivacySensitive: true, Urgency: "high", TaskType: "coding"})
+	if !intent.PrivacySensitive {
+		t.Fatal("PrivacySensitive not set from local AI analysis")
+	}
+	if !intent.LatencySensitive {
+		t.Fatal("LatencySensitive not set from high urgency")
+	}
+	if !intent.Coding {
+		t.Fatal("Coding not set from coding task type")
+	}
+}
+
+func TestStripJSONFencesRemovesMarkdown(t *testing.T) {
+	input := "```json\n{\"complexity\": 5}\n```"
+	got := stripJSONFences(input)
+	if got != `{"complexity": 5}` {
+		t.Fatalf("stripJSONFences() = %q, want bare JSON", got)
+	}
+}
+
 func TestResolvePythonInterpreterErrorsWhenOnlyPython2IsAvailable(t *testing.T) {
 	tempDir := t.TempDir()
 	python2Path := filepath.Join(tempDir, "python")
