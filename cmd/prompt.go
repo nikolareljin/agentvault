@@ -877,7 +877,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	var capture bytes.Buffer
 	var stderrCapture bytes.Buffer
 	if stream {
-		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
+		cmd.Stdout = os.Stdout
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
@@ -892,14 +892,14 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 		return promptResult{}, fmt.Errorf("claude failed in %s: %v (%s)", executionDir, err, stderrStr)
 	}
 
+	// In stream mode output was already written to the terminal; no capture needed.
+	if stream {
+		return promptResult{}, nil
+	}
+
 	raw := strings.TrimSpace(capture.String())
 	if raw == "" {
 		return promptResult{}, errors.New("claude returned empty output")
-	}
-
-	// In stream mode we get plain text; skip JSON parsing.
-	if stream {
-		return promptResult{Response: raw}, nil
 	}
 
 	var decoded map[string]any
@@ -959,7 +959,7 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	var capture bytes.Buffer
 	var stderrCapture bytes.Buffer
 	if stream {
-		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
+		cmd.Stdout = os.Stdout
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
@@ -974,14 +974,14 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 		return promptResult{}, fmt.Errorf("gemini failed in %s: %v (%s)", executionDir, err, stderrStr)
 	}
 
+	// In stream mode output was already written to the terminal; no capture needed.
+	if stream {
+		return promptResult{}, nil
+	}
+
 	raw := strings.TrimSpace(capture.String())
 	if raw == "" {
 		return promptResult{}, errors.New("gemini returned empty output")
-	}
-
-	// In stream mode we get plain text; skip JSON parsing.
-	if stream {
-		return promptResult{Response: raw}, nil
 	}
 
 	var decoded map[string]any

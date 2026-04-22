@@ -586,6 +586,47 @@ func TestStripJSONFencesRemovesMarkdown(t *testing.T) {
 	}
 }
 
+func TestStripJSONFencesSingleLine(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"`" + "``json{\"x\":1}`" + "``", `{"x":1}`},
+		{"`" + "``{\"x\":1}`" + "``", `{"x":1}`},
+		{"`" + "``json[1,2,3]`" + "``", `[1,2,3]`},
+	}
+	for _, tc := range cases {
+		got := stripJSONFences(tc.in)
+		if got != tc.want {
+			t.Errorf("stripJSONFences(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestEnrichIntentFromLocalAISetsGeneralAndQuestion(t *testing.T) {
+	for _, taskType := range []string{"general", "question"} {
+		intent := Intent{Coding: true}
+		enrichIntentFromLocalAI(&intent, LocalAIAnalysis{TaskType: taskType})
+		if intent.Coding {
+			t.Errorf("taskType=%q: Coding should be cleared", taskType)
+		}
+		if intent.TaskClass != taskType {
+			t.Errorf("taskType=%q: TaskClass = %q, want %q", taskType, intent.TaskClass, taskType)
+		}
+	}
+}
+
+func TestEnrichIntentFromLocalAIClearsCodingOnReview(t *testing.T) {
+	intent := Intent{Coding: true}
+	enrichIntentFromLocalAI(&intent, LocalAIAnalysis{TaskType: "review"})
+	if intent.Coding {
+		t.Fatal("Coding should be cleared when TaskType=review")
+	}
+	if !intent.Review {
+		t.Fatal("Review should be set when TaskType=review")
+	}
+}
+
 func TestResolvePythonInterpreterErrorsWhenOnlyPython2IsAvailable(t *testing.T) {
 	tempDir := t.TempDir()
 	python2Path := filepath.Join(tempDir, "python")
@@ -623,9 +664,9 @@ func TestRouteWithLocalAIReturnsErrorWhenOllamaUnreachableAndFallbacksDisabled(t
 		},
 		Shared: agent.SharedConfig{},
 		Config: agent.RouterConfig{
-			Mode:           "local-ai",
+			Mode:             "local-ai",
 			LocalAIOllamaURL: "http://127.0.0.1:0",
-			AllowFallbacks: false,
+			AllowFallbacks:   false,
 		},
 	})
 	if err == nil {
