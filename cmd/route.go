@@ -75,14 +75,8 @@ func runRoute(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stdout, "Model: %s\n", chooseDisplayValue(selected.Target.Model))
 	fmt.Fprintf(os.Stdout, "Mode: %s\n", decision.Mode)
 	fmt.Fprintf(os.Stdout, "Task class: %s\n", decision.Intent.TaskClass)
-	importance, _ := cmd.Flags().GetString("importance")
-	deadline, _ := cmd.Flags().GetString("deadline")
-	if importance != "" {
-		fmt.Fprintf(os.Stdout, "Importance: %s\n", importance)
-	}
-	if deadline != "" {
-		fmt.Fprintf(os.Stdout, "Deadline: %s\n", deadline)
-	}
+	fmt.Fprintf(os.Stdout, "Importance: %s\n", chooseDisplayValue(decision.EffectiveImportance))
+	fmt.Fprintf(os.Stdout, "Deadline: %s\n", chooseDisplayValue(decision.EffectiveDeadline))
 	fmt.Fprintln(os.Stdout, "Reasons:")
 	for _, reason := range selected.Reasons {
 		fmt.Fprintf(os.Stdout, " - %s\n", reason)
