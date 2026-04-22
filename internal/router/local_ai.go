@@ -13,9 +13,9 @@ import (
 
 // LocalAIAnalysis is the structured classification returned by a local AI routing call.
 type LocalAIAnalysis struct {
-	Complexity       int    `json:"complexity"`        // 1–10, higher = more complex
-	TaskType         string `json:"task_type"`          // coding|review|analysis|general|question
-	Urgency          string `json:"urgency"`            // low|medium|high
+	Complexity       int    `json:"complexity"` // 1–10, higher = more complex
+	TaskType         string `json:"task_type"`  // coding|review|analysis|general|question
+	Urgency          string `json:"urgency"`    // low|medium|high
 	EstimatedTokens  int    `json:"estimated_tokens"`
 	PrivacySensitive bool   `json:"privacy_sensitive"`
 	NeedsTools       bool   `json:"needs_tools"`
