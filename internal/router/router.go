@@ -522,7 +522,9 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	analysis, err := AnalyzeWithLocalAI(trimmedPrompt, ollamaURL, model, 10*time.Second)
 	if err != nil {
-		// Graceful fallback: heuristic with mode noted
+		if !cfg.AllowFallbacks {
+			return Decision{}, fmt.Errorf("local-ai analysis failed and fallbacks are disabled: %w", err)
+		}
 		decision, hErr := routeHeuristic(req, cfg)
 		if hErr != nil {
 			return Decision{}, hErr

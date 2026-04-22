@@ -614,3 +614,24 @@ func TestResolvePythonInterpreterErrorsWhenOnlyPython2IsAvailable(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRouteWithLocalAIReturnsErrorWhenOllamaUnreachableAndFallbacksDisabled(t *testing.T) {
+	_, err := Route(Request{
+		Prompt: "refactor the auth module",
+		Agents: []agent.Agent{
+			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+		},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{
+			Mode:           "local-ai",
+			LocalAIOllamaURL: "http://127.0.0.1:0",
+			AllowFallbacks: false,
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error when Ollama unreachable and AllowFallbacks=false")
+	}
+	if !strings.Contains(err.Error(), "local-ai analysis failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
