@@ -666,7 +666,7 @@ func TestRouteWithLocalAIFallsBackWhenOllamaUnreachable(t *testing.T) {
 		Config: agent.RouterConfig{
 			Mode:             "local-ai",
 			LocalAIOllamaURL: "http://127.0.0.1:0",
-			AllowFallbacks:   false,
+			AllowFallbacks:   true,
 		},
 	})
 	if err != nil {
@@ -674,5 +674,27 @@ func TestRouteWithLocalAIFallsBackWhenOllamaUnreachable(t *testing.T) {
 	}
 	if decision.Mode != "local-ai-fallback" {
 		t.Fatalf("expected mode local-ai-fallback, got %q", decision.Mode)
+	}
+}
+
+func TestRouteWithLocalAIErrorsWhenFallbacksDisabled(t *testing.T) {
+	// AllowFallbacks defaults to false; local-ai must respect it and return an error.
+	_, err := Route(Request{
+		Prompt: "refactor the auth module",
+		Agents: []agent.Agent{
+			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+		},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{
+			Mode:             "local-ai",
+			LocalAIOllamaURL: "http://127.0.0.1:0",
+			// AllowFallbacks is false (default)
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error when AllowFallbacks=false and Ollama unreachable, got nil")
+	}
+	if !strings.Contains(err.Error(), "local-ai analysis failed") {
+		t.Fatalf("unexpected error message: %v", err)
 	}
 }

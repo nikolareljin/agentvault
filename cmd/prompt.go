@@ -757,14 +757,20 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, exe
 		return promptResult{}, errors.New("codex binary not found in PATH")
 	}
 
-	tmp, err := os.CreateTemp("", "agentvault-codex-last-*.txt")
-	if err != nil {
-		return promptResult{}, err
+	var args []string
+	var tmpName string
+	if stream {
+		args = agent.BuildCodexStreamArgs(a.Model, executionDir, prompt)
+	} else {
+		tmp, err := os.CreateTemp("", "agentvault-codex-last-*.txt")
+		if err != nil {
+			return promptResult{}, err
+		}
+		_ = tmp.Close()
+		tmpName = tmp.Name()
+		defer os.Remove(tmpName)
+		args = agent.BuildCodexExecArgs(a.Model, tmpName, executionDir, prompt)
 	}
-	_ = tmp.Close()
-	defer os.Remove(tmp.Name())
-
-	args := agent.BuildCodexExecArgs(a.Model, tmp.Name(), executionDir, prompt)
 
 	runCtx := context.Background()
 	cancel := func() {}
@@ -795,8 +801,12 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, exe
 		return promptResult{}, fmt.Errorf("codex exec failed in %s: %v (%s)", executionDir, err, stderrStr)
 	}
 
+	if stream {
+		return promptResult{Response: strings.TrimSpace(capture.String())}, nil
+	}
+
 	usage := parseCodexUsage(capture.String())
-	respBytes, _ := os.ReadFile(tmp.Name())
+	respBytes, _ := os.ReadFile(tmpName)
 	response := strings.TrimSpace(string(respBytes))
 	if response == "" {
 		response = strings.TrimSpace(capture.String())
