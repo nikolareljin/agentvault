@@ -71,11 +71,13 @@ func (c Candidate) AgentConfig() agent.Agent {
 
 // Decision captures the selected route plus alternatives.
 type Decision struct {
-	Mode       string      `json:"mode"`
-	Intent     Intent      `json:"intent"`
-	Selected   Candidate   `json:"selected"`
-	Fallbacks  []Candidate `json:"fallbacks,omitempty"`
-	Candidates []Candidate `json:"candidates,omitempty"`
+	Mode                string      `json:"mode"`
+	Intent              Intent      `json:"intent"`
+	Selected            Candidate   `json:"selected"`
+	Fallbacks           []Candidate `json:"fallbacks,omitempty"`
+	Candidates          []Candidate `json:"candidates,omitempty"`
+	EffectiveImportance string      `json:"effective_importance,omitempty"`
+	EffectiveDeadline   string      `json:"effective_deadline,omitempty"`
 }
 
 // Route chooses an execution target using either heuristic, LangGraph, or local-ai mode.
@@ -197,11 +199,13 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 	}
 
 	return Decision{
-		Mode:       "heuristic",
-		Intent:     intent,
-		Selected:   selected,
-		Fallbacks:  fallbacks,
-		Candidates: candidates,
+		Mode:                "heuristic",
+		Intent:              intent,
+		Selected:            selected,
+		Fallbacks:           fallbacks,
+		Candidates:          candidates,
+		EffectiveImportance: cfg.Importance,
+		EffectiveDeadline:   cfg.Deadline,
 	}, nil
 }
 
@@ -522,9 +526,7 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	analysis, err := AnalyzeWithLocalAI(trimmedPrompt, ollamaURL, model, 10*time.Second)
 	if err != nil {
-		if !cfg.AllowFallbacks {
-			return Decision{}, fmt.Errorf("local-ai analysis failed and fallbacks are disabled: %w", err)
-		}
+		// local-ai always falls back to heuristic when Ollama is unreachable
 		decision, hErr := routeHeuristic(req, cfg)
 		if hErr != nil {
 			return Decision{}, hErr
@@ -592,11 +594,13 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 	selected = candidates[selectedIdx]
 
 	return Decision{
-		Mode:       "local-ai",
-		Intent:     intent,
-		Selected:   selected,
-		Fallbacks:  fallbacks,
-		Candidates: candidates,
+		Mode:                "local-ai",
+		Intent:              intent,
+		Selected:            selected,
+		Fallbacks:           fallbacks,
+		Candidates:          candidates,
+		EffectiveImportance: overrideCfg.Importance,
+		EffectiveDeadline:   overrideCfg.Deadline,
 	}, nil
 }
 
@@ -686,11 +690,13 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 		selected = candidates[selectedIdx]
 	}
 	return Decision{
-		Mode:       chooseNonEmpty(out.Mode, "langgraph"),
-		Intent:     intent,
-		Selected:   selected,
-		Fallbacks:  fallbacks,
-		Candidates: candidates,
+		Mode:                chooseNonEmpty(out.Mode, "langgraph"),
+		Intent:              intent,
+		Selected:            selected,
+		Fallbacks:           fallbacks,
+		Candidates:          candidates,
+		EffectiveImportance: cfg.Importance,
+		EffectiveDeadline:   cfg.Deadline,
 	}, nil
 }
 

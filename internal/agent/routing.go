@@ -155,12 +155,12 @@ var ValidDeadlines = []string{"immediate", "normal", "background"}
 
 func (cfg RouterConfig) WithDefaults() RouterConfig {
 	out := cfg
-	// Suppress the default local preference when importance/deadline already signal quality/speed intent.
+	// Suppress the default local preference when importance/deadline already provide explicit routing intent.
 	imp := strings.ToLower(strings.TrimSpace(out.Importance))
 	dl := strings.ToLower(strings.TrimSpace(out.Deadline))
-	qualityIntent := imp == "critical" || imp == "high"
-	urgentIntent := dl == "immediate"
-	if !out.PreferLocal && !out.PreferFast && !out.PreferLowCost && !out.LocalOnly && !qualityIntent && !urgentIntent {
+	hasImportanceIntent := imp != ""
+	hasDeadlineIntent := dl != ""
+	if !out.PreferLocal && !out.PreferFast && !out.PreferLowCost && !out.LocalOnly && !hasImportanceIntent && !hasDeadlineIntent {
 		out.PreferLocal = true
 	}
 	return out

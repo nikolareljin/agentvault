@@ -656,8 +656,8 @@ func TestResolvePythonInterpreterErrorsWhenOnlyPython2IsAvailable(t *testing.T) 
 	}
 }
 
-func TestRouteWithLocalAIReturnsErrorWhenOllamaUnreachableAndFallbacksDisabled(t *testing.T) {
-	_, err := Route(Request{
+func TestRouteWithLocalAIFallsBackWhenOllamaUnreachable(t *testing.T) {
+	decision, err := Route(Request{
 		Prompt: "refactor the auth module",
 		Agents: []agent.Agent{
 			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
@@ -669,10 +669,10 @@ func TestRouteWithLocalAIReturnsErrorWhenOllamaUnreachableAndFallbacksDisabled(t
 			AllowFallbacks:   false,
 		},
 	})
-	if err == nil {
-		t.Fatal("expected error when Ollama unreachable and AllowFallbacks=false")
+	if err != nil {
+		t.Fatalf("expected graceful fallback, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "local-ai analysis failed") {
-		t.Fatalf("unexpected error: %v", err)
+	if decision.Mode != "local-ai-fallback" {
+		t.Fatalf("expected mode local-ai-fallback, got %q", decision.Mode)
 	}
 }

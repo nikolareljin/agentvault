@@ -86,7 +86,7 @@ func init() {
 	promptCmd.Flags().String("pr", "", "pull request reference for --workflow implement_pr")
 	promptCmd.Flags().Bool("json", false, "output machine-readable JSON")
 	promptCmd.Flags().Bool("auto", false, "route the prompt automatically instead of selecting an agent manually (defaults to local-first routing when no other preferences are set)")
-	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph")
+	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph|local-ai")
 	promptCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
 	promptCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing (effective default when no other routing preferences are set)")
 	promptCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
@@ -877,7 +877,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	var capture bytes.Buffer
 	var stderrCapture bytes.Buffer
 	if stream {
-		cmd.Stdout = os.Stdout
+		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
@@ -892,9 +892,8 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 		return promptResult{}, fmt.Errorf("claude failed in %s: %v (%s)", executionDir, err, stderrStr)
 	}
 
-	// In stream mode output was already written to the terminal; no capture needed.
 	if stream {
-		return promptResult{}, nil
+		return promptResult{Response: strings.TrimSpace(capture.String())}, nil
 	}
 
 	raw := strings.TrimSpace(capture.String())
@@ -959,7 +958,7 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	var capture bytes.Buffer
 	var stderrCapture bytes.Buffer
 	if stream {
-		cmd.Stdout = os.Stdout
+		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
@@ -974,9 +973,8 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 		return promptResult{}, fmt.Errorf("gemini failed in %s: %v (%s)", executionDir, err, stderrStr)
 	}
 
-	// In stream mode output was already written to the terminal; no capture needed.
 	if stream {
-		return promptResult{}, nil
+		return promptResult{Response: strings.TrimSpace(capture.String())}, nil
 	}
 
 	raw := strings.TrimSpace(capture.String())
