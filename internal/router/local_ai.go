@@ -102,6 +102,14 @@ func stripJSONFences(s string) string {
 	if strings.HasPrefix(s, "```") {
 		if idx := strings.Index(s[3:], "\n"); idx >= 0 {
 			s = s[3+idx+1:]
+		} else {
+			if objIdx := strings.Index(s[3:], "{"); objIdx >= 0 {
+				s = s[3+objIdx:]
+			} else if arrIdx := strings.Index(s[3:], "["); arrIdx >= 0 {
+				s = s[3+arrIdx:]
+			} else {
+				s = s[3:]
+			}
 		}
 		s = strings.TrimSuffix(strings.TrimSpace(s), "```")
 	}
@@ -141,13 +149,29 @@ func enrichIntentFromLocalAI(intent *Intent, analysis LocalAIAnalysis) {
 	switch analysis.TaskType {
 	case "coding":
 		intent.Coding = true
+		intent.Review = false
+		intent.Analysis = false
 		intent.TaskClass = "coding"
 	case "review":
+		intent.Coding = false
 		intent.Review = true
+		intent.Analysis = false
 		intent.TaskClass = "review"
 	case "analysis":
+		intent.Coding = false
+		intent.Review = false
 		intent.Analysis = true
 		intent.TaskClass = "analysis"
+	case "general":
+		intent.Coding = false
+		intent.Review = false
+		intent.Analysis = false
+		intent.TaskClass = "general"
+	case "question":
+		intent.Coding = false
+		intent.Review = false
+		intent.Analysis = false
+		intent.TaskClass = "question"
 	}
 	// Very complex tasks always benefit from analysis capability even if they are coding tasks
 	if analysis.Complexity >= 8 && !intent.Analysis {
