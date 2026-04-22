@@ -27,12 +27,16 @@ func init() {
 	routeCmd.Flags().String("text", "", "prompt text")
 	routeCmd.Flags().String("file", "", "read prompt text from file")
 	routeCmd.Flags().Bool("json", false, "output machine-readable JSON")
-	routeCmd.Flags().String("router", "", "router mode override: heuristic|langgraph")
+	routeCmd.Flags().String("router", "", "router mode override: heuristic|langgraph|local-ai")
 	routeCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
 	routeCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing (effective default when no other routing preferences are set)")
 	routeCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
 	routeCmd.Flags().Bool("prefer-low-cost", false, "prefer lower-cost targets during routing")
 	routeCmd.Flags().Bool("local-only", false, "restrict routing to local execution targets only")
+	routeCmd.Flags().String("importance", "", "routing importance: low|medium|high|critical")
+	routeCmd.Flags().String("deadline", "", "routing deadline: immediate|normal|background")
+	routeCmd.Flags().String("local-ai-model", "", "ollama model for local-ai routing classification (default: llama3.2)")
+	routeCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: http://localhost:11434)")
 }
 
 func runRoute(cmd *cobra.Command, args []string) error {
@@ -69,7 +73,16 @@ func runRoute(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stdout, "Provider: %s\n", selected.Agent.Provider)
 	fmt.Fprintf(os.Stdout, "Runner: %s\n", selected.Target.Runner)
 	fmt.Fprintf(os.Stdout, "Model: %s\n", chooseDisplayValue(selected.Target.Model))
+	fmt.Fprintf(os.Stdout, "Mode: %s\n", decision.Mode)
 	fmt.Fprintf(os.Stdout, "Task class: %s\n", decision.Intent.TaskClass)
+	importance, _ := cmd.Flags().GetString("importance")
+	deadline, _ := cmd.Flags().GetString("deadline")
+	if importance != "" {
+		fmt.Fprintf(os.Stdout, "Importance: %s\n", importance)
+	}
+	if deadline != "" {
+		fmt.Fprintf(os.Stdout, "Deadline: %s\n", deadline)
+	}
 	fmt.Fprintln(os.Stdout, "Reasons:")
 	for _, reason := range selected.Reasons {
 		fmt.Fprintf(os.Stdout, " - %s\n", reason)
