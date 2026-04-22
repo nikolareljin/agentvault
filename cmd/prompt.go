@@ -27,6 +27,8 @@ import (
 	"golang.org/x/term"
 )
 
+const streamCaptureLimitBytes = 16 * 1024
+
 // PromptRecord stores one agentvault prompt-through execution entry.
 type PromptRecord struct {
 	ID                  string                  `json:"id"`
@@ -51,6 +53,38 @@ type PromptRecord struct {
 type promptResult struct {
 	Response string
 	Usage    agent.PromptTokenUsage
+}
+
+type tailBuffer struct {
+	limit int
+	buf   []byte
+}
+
+func newTailBuffer(limit int) *tailBuffer {
+	if limit <= 0 {
+		limit = streamCaptureLimitBytes
+	}
+	return &tailBuffer{limit: limit}
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		return len(p), nil
+	}
+	if len(p) >= b.limit {
+		b.buf = append(b.buf[:0], p[len(p)-b.limit:]...)
+		return len(p), nil
+	}
+	total := len(b.buf) + len(p)
+	if overflow := total - b.limit; overflow > 0 {
+		b.buf = append(b.buf[:0], b.buf[overflow:]...)
+	}
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string {
+	return string(b.buf)
 }
 
 var promptCmd = &cobra.Command{
@@ -785,8 +819,10 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, exe
 
 	var capture bytes.Buffer
 	var stderrCapture bytes.Buffer
+	var streamCapture *tailBuffer
 	if stream {
-		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
+		streamCapture = newTailBuffer(streamCaptureLimitBytes)
+		cmd.Stdout = io.MultiWriter(os.Stdout, streamCapture)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
@@ -802,7 +838,7 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, exe
 	}
 
 	if stream {
-		return promptResult{Response: strings.TrimSpace(capture.String())}, nil
+		return promptResult{Response: strings.TrimSpace(streamCapture.String())}, nil
 	}
 
 	usage := parseCodexUsage(capture.String())
@@ -886,8 +922,10 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 
 	var capture bytes.Buffer
 	var stderrCapture bytes.Buffer
+	var streamCapture *tailBuffer
 	if stream {
-		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
+		streamCapture = newTailBuffer(streamCaptureLimitBytes)
+		cmd.Stdout = io.MultiWriter(os.Stdout, streamCapture)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
@@ -903,7 +941,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	}
 
 	if stream {
-		return promptResult{Response: strings.TrimSpace(capture.String())}, nil
+		return promptResult{Response: strings.TrimSpace(streamCapture.String())}, nil
 	}
 
 	raw := strings.TrimSpace(capture.String())
@@ -967,8 +1005,10 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 
 	var capture bytes.Buffer
 	var stderrCapture bytes.Buffer
+	var streamCapture *tailBuffer
 	if stream {
-		cmd.Stdout = io.MultiWriter(os.Stdout, &capture)
+		streamCapture = newTailBuffer(streamCaptureLimitBytes)
+		cmd.Stdout = io.MultiWriter(os.Stdout, streamCapture)
 		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
@@ -984,7 +1024,7 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	}
 
 	if stream {
-		return promptResult{Response: strings.TrimSpace(capture.String())}, nil
+		return promptResult{Response: strings.TrimSpace(streamCapture.String())}, nil
 	}
 
 	raw := strings.TrimSpace(capture.String())

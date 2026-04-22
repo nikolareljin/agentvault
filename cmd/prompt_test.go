@@ -136,6 +136,29 @@ func TestTruncateForHistory_TruncatesOnRuneBoundary(t *testing.T) {
 	}
 }
 
+func TestTailBufferKeepsOnlyTrailingBytes(t *testing.T) {
+	buf := newTailBuffer(5)
+	if _, err := buf.Write([]byte("hello")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if _, err := buf.Write([]byte("world")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if got := buf.String(); got != "world" {
+		t.Fatalf("tailBuffer.String() = %q, want %q", got, "world")
+	}
+}
+
+func TestTailBufferReplacesOversizedChunk(t *testing.T) {
+	buf := newTailBuffer(4)
+	if _, err := buf.Write([]byte("abcdef")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if got := buf.String(); got != "cdef" {
+		t.Fatalf("tailBuffer.String() = %q, want %q", got, "cdef")
+	}
+}
+
 func TestShouldSkipOptimizationForWorkflow(t *testing.T) {
 	tests := []struct {
 		name        string

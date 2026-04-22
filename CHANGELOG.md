@@ -11,7 +11,7 @@
 - **Routing transparency**: Routing decisions now print the selected agent, runner, mode, task class, and top reasons before execution. `agentvault route` output now includes Mode, Importance, and Deadline fields.
 
 ### Changed
-- `RouterConfig.WithDefaults` no longer forces `prefer-local` when `importance` is `critical`/`high` or `deadline` is `immediate`, since those signals already express routing intent.
+- `RouterConfig.WithDefaults` no longer forces `prefer-local` when `importance` or `deadline` is explicitly set, since those signals already express routing intent.
 
 ## [0.8.1] - 2026-04-17
 
