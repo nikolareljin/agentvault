@@ -297,6 +297,21 @@ func BuildCodexExecArgs(model, outputPath, cwd, prompt string) []string {
 	return args
 }
 
+// BuildCodexStreamArgs returns the Codex invocation for live streaming agentic execution.
+// Omits --json and --output-last-message so output flows as human-readable text to the terminal
+// instead of JSON event lines.
+func BuildCodexStreamArgs(model, cwd, prompt string) []string {
+	args := []string{"exec", "--full-auto"}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	if strings.TrimSpace(cwd) != "" && !IsGitWorktree(cwd) {
+		args = append(args, "--skip-git-repo-check")
+	}
+	args = append(args, prompt)
+	return args
+}
+
 // BuildClaudeExecArgs returns the standard non-interactive Claude invocation
 // used by AgentVault. It prefers the built-in auto permission mode so Claude
 // can act on the workspace instead of only describing changes.

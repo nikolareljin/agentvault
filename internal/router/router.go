@@ -303,6 +303,14 @@ func scoreCandidate(a agent.Agent, profile agent.RouteConfig, target agent.Execu
 			reasons = append(reasons, fmt.Sprintf("missing %s capability", wanted))
 		}
 	}
+	// High-complexity coding tasks (intent.Analysis set alongside intent.Coding) also benefit
+	// from analysis capability; apply a secondary bonus so the routing score reflects it.
+	if intent.Analysis && wanted == agent.RouteCapabilityCoding {
+		if _, ok := caps[agent.RouteCapabilityAnalysis]; ok {
+			score += 15
+			reasons = append(reasons, "high-complexity coding task benefits from analysis capability")
+		}
+	}
 	if _, ok := caps[agent.RouteCapabilityGeneral]; ok {
 		score += 5
 	}
@@ -526,7 +534,9 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	analysis, err := AnalyzeWithLocalAI(trimmedPrompt, ollamaURL, model, 10*time.Second)
 	if err != nil {
-		// local-ai always falls back to heuristic when Ollama is unreachable
+		if !cfg.AllowFallbacks {
+			return Decision{}, fmt.Errorf("local-ai analysis failed: %w", err)
+		}
 		decision, hErr := routeHeuristic(req, cfg)
 		if hErr != nil {
 			return Decision{}, hErr

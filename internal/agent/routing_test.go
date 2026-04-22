@@ -215,6 +215,26 @@ func TestBuildCodexExecArgsAddsSkipGitCheckOutsideRepo(t *testing.T) {
 	}
 }
 
+func TestBuildCodexStreamArgsOmitsJSON(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("creating .git dir: %v", err)
+	}
+	args := BuildCodexStreamArgs("gpt-5", repo, "fix the bug")
+	joined := strings.Join(args, " ")
+	for _, banned := range []string{"--json", "--output-last-message"} {
+		if strings.Contains(joined, banned) {
+			t.Fatalf("BuildCodexStreamArgs should not include %q, got: %#v", banned, args)
+		}
+	}
+	if !strings.Contains(joined, "--full-auto") {
+		t.Fatalf("expected --full-auto in args: %#v", args)
+	}
+	if !strings.Contains(joined, "fix the bug") {
+		t.Fatalf("expected prompt in args: %#v", args)
+	}
+}
+
 func TestBuildClaudeExecArgs(t *testing.T) {
 	args := BuildClaudeExecArgs("sonnet", "fix the bug")
 	joined := strings.Join(args, " ")
