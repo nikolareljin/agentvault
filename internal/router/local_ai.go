@@ -74,7 +74,8 @@ func AnalyzeWithLocalAI(prompt, ollamaBaseURL, model string, timeout time.Durati
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		const maxErrBody = 4096
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 		return LocalAIAnalysis{}, fmt.Errorf("local-ai: ollama error %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 
