@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -133,6 +134,29 @@ func TestTruncateForHistory_TruncatesOnRuneBoundary(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "...") {
 		t.Fatalf("expected ellipsis suffix")
+	}
+}
+
+func TestTailBufferKeepsOnlyTrailingBytes(t *testing.T) {
+	buf := newTailBuffer(5)
+	if _, err := buf.Write([]byte("hello")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if _, err := buf.Write([]byte("world")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if got := buf.String(); got != "world" {
+		t.Fatalf("tailBuffer.String() = %q, want %q", got, "world")
+	}
+}
+
+func TestTailBufferReplacesOversizedChunk(t *testing.T) {
+	buf := newTailBuffer(4)
+	if _, err := buf.Write([]byte("abcdef")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if got := buf.String(); got != "cdef" {
+		t.Fatalf("tailBuffer.String() = %q, want %q", got, "cdef")
 	}
 }
 
@@ -300,7 +324,7 @@ func TestResolvePromptAgentAutoRejectsRemoteResolvedTargetForLocalOnly(t *testin
 }
 
 func TestExecutePromptTargetUnsupportedRunnerMentionsRunner(t *testing.T) {
-	_, err := executePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, "hello", time.Second, t.TempDir())
+	_, err := executePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, "hello", time.Second, t.TempDir(), false, os.Stdout, os.Stderr)
 	if err == nil {
 		t.Fatalf("expected unsupported runner error")
 	}

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-22
+
+### Added
+- **Live streaming output**: `agentvault prompt` now streams CLI agent subprocess output (Claude, Codex, Gemini) live to the terminal via `io.MultiWriter`. Claude and Gemini omit `--output-format json` in stream mode so tool calls, file edits, and in-progress actions are visible as they happen. Streaming is automatically disabled in `--json` mode or when stdout is not a terminal; use `--no-stream` to force buffered mode.
+- **Importance and deadline routing flags**: New `--importance low|medium|high|critical` and `--deadline immediate|normal|background` flags on both `agentvault prompt` and `agentvault route`. These feed directly into routing scoring — `critical` importance penalizes local targets and strongly prefers cloud runners; `immediate` deadline boosts low-latency agents; `background` deadline favors low-cost targets.
+- **Local-AI router mode**: New `--router local-ai` mode sends the prompt to a local Ollama instance for structured classification (complexity 1–10, task type, urgency, privacy sensitivity, tool need) before routing. The result enriches intent detection and scoring. Gracefully falls back to heuristic with mode `local-ai-fallback` if Ollama is unreachable. Configurable via `--local-ai-model` and `--local-ai-url`.
+- **Routing transparency**: Routing decisions now print the selected agent, runner, mode, task class, and top reasons before execution. `agentvault route` output now includes Mode, Importance, and Deadline fields.
+
+### Changed
+- `RouterConfig.WithDefaults` no longer forces `prefer-local` when `importance` or `deadline` is explicitly set, since those signals already express routing intent.
+
 ## [0.8.1] - 2026-04-17
 
 ### Fixed
