@@ -282,7 +282,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if decision != nil && !jsonOut {
 		printRoutingDecision(cmd.ErrOrStderr(), a, target, decision)
 	}
-	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout, executionWorkspace.Path, stream)
+	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout, executionWorkspace.Path, stream, cmd.OutOrStdout(), cmd.ErrOrStderr())
 
 	record := PromptRecord{
 		ID:                  fmt.Sprintf("prompt-%d", time.Now().UnixNano()),
@@ -445,7 +445,10 @@ func shouldStream(cmd *cobra.Command, jsonOut bool) bool {
 	if noStream {
 		return false
 	}
-	return term.IsTerminal(int(os.Stdout.Fd())) // #nosec G115 -- uintptr→int for fd is safe on all supported 64-bit platforms
+	if f, ok := cmd.OutOrStdout().(*os.File); ok {
+		return term.IsTerminal(int(f.Fd())) // #nosec G115 -- uintptr→int for fd is safe on all supported 64-bit platforms
+	}
+	return false
 }
 
 func shouldSkipOptimizationForWorkflow(cmd *cobra.Command) bool {
@@ -534,19 +537,19 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 	if err != nil {
 		return promptResult{}, err
 	}
-	return executePromptTarget(target, a, prompt, timeout, executionDir, false)
+	return executePromptTarget(target, a, prompt, timeout, executionDir, false, os.Stdout, os.Stderr)
 }
 
-func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool) (promptResult, error) {
+func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	switch target.Runner {
 	case agent.RunnerOllamaHTTP:
 		return executeOllamaPrompt(a, prompt, timeout)
 	case agent.RunnerCodexCLI:
-		return executeCodexPrompt(a, prompt, timeout, executionDir, stream)
+		return executeCodexPrompt(a, prompt, timeout, executionDir, stream, stdout, stderr)
 	case agent.RunnerClaudeCLI:
-		return executeClaudePrompt(a, prompt, timeout, executionDir, stream)
+		return executeClaudePrompt(a, prompt, timeout, executionDir, stream, stdout, stderr)
 	case agent.RunnerGeminiCLI:
-		return executeGeminiPrompt(a, prompt, timeout, executionDir, stream)
+		return executeGeminiPrompt(a, prompt, timeout, executionDir, stream, stdout, stderr)
 	case agent.RunnerOpenAIHTTP:
 		return executeOpenAIPrompt(a, prompt, timeout)
 	case agent.RunnerBedrockAPI:
@@ -786,7 +789,7 @@ func openAIEndpointURL(baseURL, endpoint string) (string, error) {
 	return parsed.String(), nil
 }
 
-func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool) (promptResult, error) {
+func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return promptResult{}, errors.New("codex binary not found in PATH")
 	}
@@ -822,8 +825,8 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, exe
 	var streamCapture *tailBuffer
 	if stream {
 		streamCapture = newTailBuffer(streamCaptureLimitBytes)
-		cmd.Stdout = io.MultiWriter(os.Stdout, streamCapture)
-		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
+		cmd.Stdout = io.MultiWriter(stdout, streamCapture)
+		cmd.Stderr = io.MultiWriter(stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
 		cmd.Stderr = &stderrCapture
@@ -897,7 +900,7 @@ func parseCodexUsage(raw string) agent.PromptTokenUsage {
 	return usage
 }
 
-func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool) (promptResult, error) {
+func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return promptResult{}, errors.New("claude binary not found in PATH")
 	}
@@ -925,8 +928,8 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	var streamCapture *tailBuffer
 	if stream {
 		streamCapture = newTailBuffer(streamCaptureLimitBytes)
-		cmd.Stdout = io.MultiWriter(os.Stdout, streamCapture)
-		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
+		cmd.Stdout = io.MultiWriter(stdout, streamCapture)
+		cmd.Stderr = io.MultiWriter(stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
 		cmd.Stderr = &stderrCapture
@@ -972,7 +975,7 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	return promptResult{Response: strings.TrimSpace(response), Usage: usage}, nil
 }
 
-func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool) (promptResult, error) {
+func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	if _, err := exec.LookPath("gemini"); err != nil {
 		return promptResult{}, errors.New("gemini binary not found in PATH")
 	}
@@ -1008,8 +1011,8 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	var streamCapture *tailBuffer
 	if stream {
 		streamCapture = newTailBuffer(streamCaptureLimitBytes)
-		cmd.Stdout = io.MultiWriter(os.Stdout, streamCapture)
-		cmd.Stderr = io.MultiWriter(os.Stderr, &stderrCapture)
+		cmd.Stdout = io.MultiWriter(stdout, streamCapture)
+		cmd.Stderr = io.MultiWriter(stderr, &stderrCapture)
 	} else {
 		cmd.Stdout = &capture
 		cmd.Stderr = &stderrCapture

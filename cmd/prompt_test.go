@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -323,7 +324,7 @@ func TestResolvePromptAgentAutoRejectsRemoteResolvedTargetForLocalOnly(t *testin
 }
 
 func TestExecutePromptTargetUnsupportedRunnerMentionsRunner(t *testing.T) {
-	_, err := executePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, "hello", time.Second, t.TempDir(), false)
+	_, err := executePromptTarget(agent.ExecutionTarget{Runner: agent.RunnerUnknown}, agent.Agent{Provider: agent.ProviderCustom}, "hello", time.Second, t.TempDir(), false, os.Stdout, os.Stderr)
 	if err == nil {
 		t.Fatalf("expected unsupported runner error")
 	}
