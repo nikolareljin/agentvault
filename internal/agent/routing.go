@@ -158,8 +158,8 @@ func (cfg RouterConfig) WithDefaults() RouterConfig {
 	// Suppress the default local preference when importance/deadline already provide explicit routing intent.
 	imp := strings.ToLower(strings.TrimSpace(out.Importance))
 	dl := strings.ToLower(strings.TrimSpace(out.Deadline))
-	hasImportanceIntent := imp != ""
-	hasDeadlineIntent := dl != ""
+	hasImportanceIntent := imp != "" && imp != "medium"
+	hasDeadlineIntent := dl != "" && dl != "normal"
 	if !out.PreferLocal && !out.PreferFast && !out.PreferLowCost && !out.LocalOnly && !hasImportanceIntent && !hasDeadlineIntent {
 		out.PreferLocal = true
 	}
