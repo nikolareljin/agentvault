@@ -24,7 +24,10 @@ import (
 	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/nikolareljin/agentvault/internal/workspace"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
+
+const streamCaptureLimitBytes = 16 * 1024
 
 // PromptRecord stores one agentvault prompt-through execution entry.
 type PromptRecord struct {
@@ -50,6 +53,38 @@ type PromptRecord struct {
 type promptResult struct {
 	Response string
 	Usage    agent.PromptTokenUsage
+}
+
+type tailBuffer struct {
+	limit int
+	buf   []byte
+}
+
+func newTailBuffer(limit int) *tailBuffer {
+	if limit <= 0 {
+		limit = streamCaptureLimitBytes
+	}
+	return &tailBuffer{limit: limit}
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		return len(p), nil
+	}
+	if len(p) >= b.limit {
+		b.buf = append(b.buf[:0], p[len(p)-b.limit:]...)
+		return len(p), nil
+	}
+	total := len(b.buf) + len(p)
+	if overflow := total - b.limit; overflow > 0 {
+		b.buf = append(b.buf[:0], b.buf[overflow:]...)
+	}
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string {
+	return string(b.buf)
 }
 
 var promptCmd = &cobra.Command{
@@ -85,7 +120,7 @@ func init() {
 	promptCmd.Flags().String("pr", "", "pull request reference for --workflow implement_pr")
 	promptCmd.Flags().Bool("json", false, "output machine-readable JSON")
 	promptCmd.Flags().Bool("auto", false, "route the prompt automatically instead of selecting an agent manually (defaults to local-first routing when no other preferences are set)")
-	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph")
+	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph|local-ai")
 	promptCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
 	promptCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing (effective default when no other routing preferences are set)")
 	promptCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
@@ -99,6 +134,11 @@ func init() {
 	promptCmd.Flags().Bool("no-log", false, "do not write prompt execution history")
 	promptCmd.Flags().String("history-file", "", "history file path (default: ~/.config/agentvault/prompt-history.jsonl)")
 	promptCmd.Flags().Duration("timeout", 5*time.Minute, "provider call timeout")
+	promptCmd.Flags().String("importance", "", "optional routing importance signal: low|medium|high|critical")
+	promptCmd.Flags().String("deadline", "", "optional routing deadline signal: immediate|normal|background")
+	promptCmd.Flags().Bool("no-stream", false, "disable live output streaming; buffer response and print after completion")
+	promptCmd.Flags().String("local-ai-model", "", "ollama model used for local-ai routing classification (default: llama3.2)")
+	promptCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: http://localhost:11434)")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "text")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "file")
@@ -232,16 +272,17 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 		if decision != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "routed to %q via %s (%s)\n", a.Name, target.Runner, decision.Intent.TaskClass)
+			printRoutingDecision(cmd.ErrOrStderr(), a, target, decision)
 		}
 		fmt.Println(effectivePrompt)
 		return nil
 	}
 
+	stream := shouldStream(cmd, jsonOut)
 	if decision != nil && !jsonOut {
-		fmt.Fprintf(cmd.ErrOrStderr(), "routed to %q via %s (%s)\n", a.Name, target.Runner, decision.Intent.TaskClass)
+		printRoutingDecision(cmd.ErrOrStderr(), a, target, decision)
 	}
-	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout, executionWorkspace.Path)
+	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout, executionWorkspace.Path, stream, cmd.OutOrStdout(), cmd.ErrOrStderr())
 
 	record := PromptRecord{
 		ID:                  fmt.Sprintf("prompt-%d", time.Now().UnixNano()),
@@ -306,7 +347,9 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println(result.Response)
+	if !stream {
+		fmt.Println(result.Response)
+	}
 	if usage := record.TokenUsage; usage != nil {
 		fmt.Fprintf(os.Stderr, "tokens used: input=%d output=%d total=%d\n",
 			usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
@@ -368,13 +411,21 @@ func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
 	preferFast, _ := cmd.Flags().GetBool("prefer-fast")
 	preferLowCost, _ := cmd.Flags().GetBool("prefer-low-cost")
 	localOnly, _ := cmd.Flags().GetBool("local-only")
+	importance, _ := cmd.Flags().GetString("importance")
+	deadline, _ := cmd.Flags().GetString("deadline")
+	localAIModel, _ := cmd.Flags().GetString("local-ai-model")
+	localAIOllamaURL, _ := cmd.Flags().GetString("local-ai-url")
 	return agent.RouterConfig{
-		Mode:          mode,
-		LangGraphCmd:  langGraphCmd,
-		PreferLocal:   preferLocal,
-		PreferFast:    preferFast,
-		PreferLowCost: preferLowCost,
-		LocalOnly:     localOnly,
+		Mode:             mode,
+		LangGraphCmd:     langGraphCmd,
+		PreferLocal:      preferLocal,
+		PreferFast:       preferFast,
+		PreferLowCost:    preferLowCost,
+		LocalOnly:        localOnly,
+		Importance:       importance,
+		Deadline:         deadline,
+		LocalAIModel:     localAIModel,
+		LocalAIOllamaURL: localAIOllamaURL,
 	}
 }
 
@@ -382,6 +433,22 @@ type vaultLike interface {
 	Get(name string) (agent.Agent, bool)
 	List() []agent.Agent
 	SharedConfig() agent.SharedConfig
+}
+
+// shouldStream returns true when live output should be piped to the terminal.
+// Streaming is disabled when --json is set, --no-stream is set, or stdout is not a terminal.
+func shouldStream(cmd *cobra.Command, jsonOut bool) bool {
+	if jsonOut {
+		return false
+	}
+	noStream, _ := cmd.Flags().GetBool("no-stream")
+	if noStream {
+		return false
+	}
+	if f, ok := cmd.OutOrStdout().(*os.File); ok {
+		return term.IsTerminal(int(f.Fd())) // #nosec G115 -- uintptr→int for fd is safe on all supported 64-bit platforms
+	}
+	return false
 }
 
 func shouldSkipOptimizationForWorkflow(cmd *cobra.Command) bool {
@@ -470,19 +537,19 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 	if err != nil {
 		return promptResult{}, err
 	}
-	return executePromptTarget(target, a, prompt, timeout, executionDir)
+	return executePromptTarget(target, a, prompt, timeout, executionDir, false, os.Stdout, os.Stderr)
 }
 
-func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration, executionDir string) (promptResult, error) {
+func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	switch target.Runner {
 	case agent.RunnerOllamaHTTP:
 		return executeOllamaPrompt(a, prompt, timeout)
 	case agent.RunnerCodexCLI:
-		return executeCodexPrompt(a, prompt, timeout, executionDir)
+		return executeCodexPrompt(a, prompt, timeout, executionDir, stream, stdout, stderr)
 	case agent.RunnerClaudeCLI:
-		return executeClaudePrompt(a, prompt, timeout, executionDir)
+		return executeClaudePrompt(a, prompt, timeout, executionDir, stream, stdout, stderr)
 	case agent.RunnerGeminiCLI:
-		return executeGeminiPrompt(a, prompt, timeout, executionDir)
+		return executeGeminiPrompt(a, prompt, timeout, executionDir, stream, stdout, stderr)
 	case agent.RunnerOpenAIHTTP:
 		return executeOpenAIPrompt(a, prompt, timeout)
 	case agent.RunnerBedrockAPI:
@@ -722,19 +789,25 @@ func openAIEndpointURL(baseURL, endpoint string) (string, error) {
 	return parsed.String(), nil
 }
 
-func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string) (promptResult, error) {
+func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return promptResult{}, errors.New("codex binary not found in PATH")
 	}
 
-	tmp, err := os.CreateTemp("", "agentvault-codex-last-*.txt")
-	if err != nil {
-		return promptResult{}, err
+	var args []string
+	var tmpName string
+	if stream {
+		args = agent.BuildCodexStreamArgs(a.Model, executionDir, prompt)
+	} else {
+		tmp, err := os.CreateTemp("", "agentvault-codex-last-*.txt")
+		if err != nil {
+			return promptResult{}, err
+		}
+		_ = tmp.Close()
+		tmpName = tmp.Name()
+		defer os.Remove(tmpName)
+		args = agent.BuildCodexExecArgs(a.Model, tmpName, executionDir, prompt)
 	}
-	_ = tmp.Close()
-	defer os.Remove(tmp.Name())
-
-	args := agent.BuildCodexExecArgs(a.Model, tmp.Name(), executionDir, prompt)
 
 	runCtx := context.Background()
 	cancel := func() {}
@@ -746,22 +819,36 @@ func executeCodexPrompt(a agent.Agent, prompt string, timeout time.Duration, exe
 	cmd := exec.CommandContext(runCtx, "codex", args...)
 	cmd.Dir = executionDir
 	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "OPENAI_API_KEY", strings.TrimSpace(a.APIKey))
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+
+	var capture bytes.Buffer
+	var stderrCapture bytes.Buffer
+	var streamCapture *tailBuffer
+	if stream {
+		streamCapture = newTailBuffer(streamCaptureLimitBytes)
+		cmd.Stdout = io.MultiWriter(stdout, streamCapture)
+		cmd.Stderr = io.MultiWriter(stderr, &stderrCapture)
+	} else {
+		cmd.Stdout = &capture
+		cmd.Stderr = &stderrCapture
+	}
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return promptResult{}, fmt.Errorf("codex exec timed out after %s", timeout)
 		}
-		return promptResult{}, fmt.Errorf("codex exec failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
+		stderrStr := strings.TrimSpace(stderrCapture.String())
+		return promptResult{}, fmt.Errorf("codex exec failed in %s: %v (%s)", executionDir, err, stderrStr)
 	}
 
-	usage := parseCodexUsage(stdout.String())
-	respBytes, _ := os.ReadFile(tmp.Name())
+	if stream {
+		return promptResult{Response: strings.TrimSpace(streamCapture.String())}, nil
+	}
+
+	usage := parseCodexUsage(capture.String())
+	respBytes, _ := os.ReadFile(tmpName)
 	response := strings.TrimSpace(string(respBytes))
 	if response == "" {
-		response = strings.TrimSpace(stdout.String())
+		response = strings.TrimSpace(capture.String())
 	}
 
 	return promptResult{Response: response, Usage: usage}, nil
@@ -813,12 +900,17 @@ func parseCodexUsage(raw string) agent.PromptTokenUsage {
 	return usage
 }
 
-func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string) (promptResult, error) {
+func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return promptResult{}, errors.New("claude binary not found in PATH")
 	}
 
-	args := agent.BuildClaudeExecArgs(a.Model, prompt)
+	var args []string
+	if stream {
+		args = agent.BuildClaudeStreamArgs(a.Model, prompt)
+	} else {
+		args = agent.BuildClaudeExecArgs(a.Model, prompt)
+	}
 
 	runCtx := context.Background()
 	cancel := func() {}
@@ -831,18 +923,31 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	cmd.Dir = executionDir
 	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	var capture bytes.Buffer
+	var stderrCapture bytes.Buffer
+	var streamCapture *tailBuffer
+	if stream {
+		streamCapture = newTailBuffer(streamCaptureLimitBytes)
+		cmd.Stdout = io.MultiWriter(stdout, streamCapture)
+		cmd.Stderr = io.MultiWriter(stderr, &stderrCapture)
+	} else {
+		cmd.Stdout = &capture
+		cmd.Stderr = &stderrCapture
+	}
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return promptResult{}, fmt.Errorf("claude timed out after %s", timeout)
 		}
-		return promptResult{}, fmt.Errorf("claude failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
+		stderrStr := strings.TrimSpace(stderrCapture.String())
+		return promptResult{}, fmt.Errorf("claude failed in %s: %v (%s)", executionDir, err, stderrStr)
 	}
 
-	raw := strings.TrimSpace(stdout.String())
+	if stream {
+		return promptResult{Response: strings.TrimSpace(streamCapture.String())}, nil
+	}
+
+	raw := strings.TrimSpace(capture.String())
 	if raw == "" {
 		return promptResult{}, errors.New("claude returned empty output")
 	}
@@ -870,12 +975,17 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 	return promptResult{Response: strings.TrimSpace(response), Usage: usage}, nil
 }
 
-func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string) (promptResult, error) {
+func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	if _, err := exec.LookPath("gemini"); err != nil {
 		return promptResult{}, errors.New("gemini binary not found in PATH")
 	}
 
-	args := agent.BuildGeminiExecArgs(a.Model, prompt)
+	var args []string
+	if stream {
+		args = agent.BuildGeminiStreamArgs(a.Model, prompt)
+	} else {
+		args = agent.BuildGeminiExecArgs(a.Model, prompt)
+	}
 
 	runCtx := context.Background()
 	cancel := func() {}
@@ -895,18 +1005,32 @@ func executeGeminiPrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 			"GOOGLE_API_KEY",
 		)
 	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+
+	var capture bytes.Buffer
+	var stderrCapture bytes.Buffer
+	var streamCapture *tailBuffer
+	if stream {
+		streamCapture = newTailBuffer(streamCaptureLimitBytes)
+		cmd.Stdout = io.MultiWriter(stdout, streamCapture)
+		cmd.Stderr = io.MultiWriter(stderr, &stderrCapture)
+	} else {
+		cmd.Stdout = &capture
+		cmd.Stderr = &stderrCapture
+	}
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
 			return promptResult{}, fmt.Errorf("gemini timed out after %s", timeout)
 		}
-		return promptResult{}, fmt.Errorf("gemini failed in %s: %v (%s)", executionDir, err, strings.TrimSpace(stderr.String()))
+		stderrStr := strings.TrimSpace(stderrCapture.String())
+		return promptResult{}, fmt.Errorf("gemini failed in %s: %v (%s)", executionDir, err, stderrStr)
 	}
 
-	raw := strings.TrimSpace(stdout.String())
+	if stream {
+		return promptResult{Response: strings.TrimSpace(streamCapture.String())}, nil
+	}
+
+	raw := strings.TrimSpace(capture.String())
 	if raw == "" {
 		return promptResult{}, errors.New("gemini returned empty output")
 	}
@@ -983,6 +1107,28 @@ func defaultExecutionWorkspace() (string, error) {
 		return "", err
 	}
 	return resolved.Path, nil
+}
+
+// printRoutingDecision writes a human-readable routing summary to w before execution starts.
+func printRoutingDecision(w io.Writer, a agent.Agent, target agent.ExecutionTarget, decision *routerpkg.Decision) {
+	if decision == nil {
+		return
+	}
+	modelStr := strings.TrimSpace(target.Model)
+	if modelStr == "" {
+		modelStr = strings.TrimSpace(a.Model)
+	}
+	if modelStr != "" {
+		fmt.Fprintf(w, "→ routing to %q via %s (%s, %s, model: %s)\n", a.Name, target.Runner, decision.Mode, decision.Intent.TaskClass, modelStr)
+	} else {
+		fmt.Fprintf(w, "→ routing to %q via %s (%s, %s)\n", a.Name, target.Runner, decision.Mode, decision.Intent.TaskClass)
+	}
+	for i, reason := range decision.Selected.Reasons {
+		if i >= 3 {
+			break
+		}
+		fmt.Fprintf(w, "  • %s\n", reason)
+	}
 }
 
 func truncateForHistory(s string) string {

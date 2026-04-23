@@ -71,14 +71,16 @@ func (c Candidate) AgentConfig() agent.Agent {
 
 // Decision captures the selected route plus alternatives.
 type Decision struct {
-	Mode       string      `json:"mode"`
-	Intent     Intent      `json:"intent"`
-	Selected   Candidate   `json:"selected"`
-	Fallbacks  []Candidate `json:"fallbacks,omitempty"`
-	Candidates []Candidate `json:"candidates,omitempty"`
+	Mode                string      `json:"mode"`
+	Intent              Intent      `json:"intent"`
+	Selected            Candidate   `json:"selected"`
+	Fallbacks           []Candidate `json:"fallbacks,omitempty"`
+	Candidates          []Candidate `json:"candidates,omitempty"`
+	EffectiveImportance string      `json:"effective_importance,omitempty"`
+	EffectiveDeadline   string      `json:"effective_deadline,omitempty"`
 }
 
-// Route chooses an execution target using either heuristic or LangGraph mode.
+// Route chooses an execution target using either heuristic, LangGraph, or local-ai mode.
 func Route(req Request) (Decision, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
 		return Decision{}, errors.New("routing requires non-empty prompt")
@@ -88,7 +90,8 @@ func Route(req Request) (Decision, error) {
 		return Decision{}, err
 	}
 	mode := cfg.EffectiveMode()
-	if mode == "langgraph" {
+	switch mode {
+	case "langgraph":
 		decision, err := routeWithLangGraph(req, cfg)
 		if err == nil {
 			return decision, nil
@@ -96,15 +99,17 @@ func Route(req Request) (Decision, error) {
 		if !cfg.AllowFallbacks {
 			return Decision{}, err
 		}
-	}
-	decision, err := routeHeuristic(req, cfg)
-	if err != nil {
-		return Decision{}, err
-	}
-	if mode == "langgraph" {
+		decision, err = routeHeuristic(req, cfg)
+		if err != nil {
+			return Decision{}, err
+		}
 		decision.Mode = "heuristic-fallback"
+		return decision, nil
+	case "local-ai":
+		return routeWithLocalAI(req, cfg)
+	default:
+		return routeHeuristic(req, cfg)
 	}
-	return decision, nil
 }
 
 func mergeRouterConfig(base, override agent.RouterConfig) agent.RouterConfig {
@@ -132,6 +137,18 @@ func mergeRouterConfig(base, override agent.RouterConfig) agent.RouterConfig {
 	}
 	if override.AllowFallbacks {
 		out.AllowFallbacks = true
+	}
+	if strings.TrimSpace(override.Importance) != "" {
+		out.Importance = override.Importance
+	}
+	if strings.TrimSpace(override.Deadline) != "" {
+		out.Deadline = override.Deadline
+	}
+	if strings.TrimSpace(override.LocalAIModel) != "" {
+		out.LocalAIModel = override.LocalAIModel
+	}
+	if strings.TrimSpace(override.LocalAIOllamaURL) != "" {
+		out.LocalAIOllamaURL = override.LocalAIOllamaURL
 	}
 	return out
 }
@@ -182,11 +199,13 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 	}
 
 	return Decision{
-		Mode:       "heuristic",
-		Intent:     intent,
-		Selected:   selected,
-		Fallbacks:  fallbacks,
-		Candidates: candidates,
+		Mode:                "heuristic",
+		Intent:              intent,
+		Selected:            selected,
+		Fallbacks:           fallbacks,
+		Candidates:          candidates,
+		EffectiveImportance: cfg.Importance,
+		EffectiveDeadline:   cfg.Deadline,
 	}, nil
 }
 
@@ -284,6 +303,17 @@ func scoreCandidate(a agent.Agent, profile agent.RouteConfig, target agent.Execu
 			reasons = append(reasons, fmt.Sprintf("missing %s capability", wanted))
 		}
 	}
+	// High-complexity coding tasks (intent.Analysis set alongside intent.Coding) also benefit
+	// from analysis capability; only apply the bonus when the agent supports the required coding
+	// capability, so analysis-only agents are not unintentionally boosted for coding prompts.
+	if intent.Analysis && wanted == agent.RouteCapabilityCoding {
+		if _, hasWanted := caps[wanted]; hasWanted {
+			if _, ok := caps[agent.RouteCapabilityAnalysis]; ok {
+				score += 15
+				reasons = append(reasons, "high-complexity coding task benefits from analysis capability")
+			}
+		}
+	}
 	if _, ok := caps[agent.RouteCapabilityGeneral]; ok {
 		score += 5
 	}
@@ -313,6 +343,63 @@ func scoreCandidate(a agent.Agent, profile agent.RouteConfig, target agent.Execu
 		score += 10
 		reasons = append(reasons, "non-coding prompt prefers local Ollama by default")
 	}
+
+	importanceScore, importanceReasons := importanceDeadlineScore(cfg.Importance, cfg.Deadline, target, profile)
+	score += importanceScore
+	reasons = append(reasons, importanceReasons...)
+
+	return score, reasons
+}
+
+// importanceDeadlineScore applies score adjustments based on the requested importance level and deadline.
+func importanceDeadlineScore(importance, deadline string, target agent.ExecutionTarget, profile agent.RouteConfig) (int, []string) {
+	imp := strings.ToLower(strings.TrimSpace(importance))
+	dl := strings.ToLower(strings.TrimSpace(deadline))
+	if imp == "" && dl == "" {
+		return 0, nil
+	}
+
+	score := 0
+	var reasons []string
+
+	switch imp {
+	case "critical":
+		if target.Local {
+			score -= 30
+			reasons = append(reasons, "critical importance: penalizing local target for quality")
+		} else {
+			score += 50
+			reasons = append(reasons, "critical importance: preferring cloud runner")
+		}
+	case "high":
+		if !target.Local {
+			score += 20
+			reasons = append(reasons, "high importance: preferring cloud runner")
+		}
+	case "low":
+		if target.Local {
+			score += 25
+			reasons = append(reasons, "low importance: preferring local target")
+		}
+		score += tierScore(profile.CostTier, 15, 5, -10)
+		reasons = append(reasons, fmt.Sprintf("low importance: cost tier %s evaluated", profile.CostTier))
+	}
+
+	switch dl {
+	case "immediate":
+		bonus := tierScore(profile.LatencyTier, 30, 10, -20)
+		score += bonus
+		reasons = append(reasons, fmt.Sprintf("immediate deadline: latency tier %s evaluated", profile.LatencyTier))
+		if target.Local {
+			score += 15
+			reasons = append(reasons, "immediate deadline: local target favored for low latency")
+		}
+	case "background":
+		bonus := tierScore(profile.CostTier, 25, 5, -10)
+		score += bonus
+		reasons = append(reasons, fmt.Sprintf("background deadline: cost tier %s evaluated", profile.CostTier))
+	}
+
 	return score, reasons
 }
 
@@ -442,6 +529,94 @@ func containsAny(haystack string, needles []string) bool {
 	return false
 }
 
+func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
+	trimmedPrompt := strings.TrimSpace(req.Prompt)
+
+	ollamaURL := strings.TrimSpace(cfg.LocalAIOllamaURL)
+	model := strings.TrimSpace(cfg.LocalAIModel)
+
+	analysis, err := AnalyzeWithLocalAI(trimmedPrompt, ollamaURL, model, 10*time.Second)
+	if err != nil {
+		if !cfg.AllowFallbacks {
+			return Decision{}, fmt.Errorf("local-ai analysis failed: %w", err)
+		}
+		decision, hErr := routeHeuristic(req, cfg)
+		if hErr != nil {
+			return Decision{}, hErr
+		}
+		decision.Mode = "local-ai-fallback"
+		return decision, nil
+	}
+
+	intent := classifyPrompt(trimmedPrompt)
+	enrichIntentFromLocalAI(&intent, analysis)
+
+	// High urgency from local AI overrides deadline to immediate unless explicitly set
+	overrideCfg := cfg
+	if analysis.Urgency == "high" && strings.TrimSpace(cfg.Deadline) == "" {
+		overrideCfg.Deadline = "immediate"
+	}
+	// Privacy sensitive: apply local-only if not already restricted
+	if analysis.PrivacySensitive && !cfg.LocalOnly {
+		overrideCfg.LocalOnly = true
+	}
+
+	candidates := buildCandidates(req.Agents, intent, overrideCfg, trimmedPrompt)
+	if len(candidates) == 0 {
+		return Decision{}, errors.New("no routing candidates available")
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score == candidates[j].Score {
+			if candidates[i].Target.Local != candidates[j].Target.Local {
+				return candidates[i].Target.Local
+			}
+			return candidates[i].Agent.Name < candidates[j].Agent.Name
+		}
+		return candidates[i].Score > candidates[j].Score
+	})
+
+	selectedIdx := -1
+	for i, candidate := range candidates {
+		if candidateAllowed(candidate, overrideCfg) {
+			selectedIdx = i
+			break
+		}
+	}
+	if selectedIdx == -1 {
+		return Decision{}, errors.New("no supported routing target satisfies the current policy")
+	}
+
+	selected := candidates[selectedIdx]
+	fallbacks := make([]Candidate, 0, 3)
+	if overrideCfg.AllowFallbacks {
+		for i, candidate := range candidates {
+			if i == selectedIdx || !candidateAllowed(candidate, overrideCfg) {
+				continue
+			}
+			fallbacks = append(fallbacks, candidate)
+			if len(fallbacks) == 3 {
+				break
+			}
+		}
+	}
+
+	aiReason := fmt.Sprintf("local-ai: complexity=%d/10 task=%s urgency=%s needs_tools=%v",
+		analysis.Complexity, analysis.TaskType, analysis.Urgency, analysis.NeedsTools)
+	candidates[selectedIdx].Reasons = append([]string{aiReason}, candidates[selectedIdx].Reasons...)
+	selected = candidates[selectedIdx]
+
+	return Decision{
+		Mode:                "local-ai",
+		Intent:              intent,
+		Selected:            selected,
+		Fallbacks:           fallbacks,
+		Candidates:          candidates,
+		EffectiveImportance: overrideCfg.Importance,
+		EffectiveDeadline:   overrideCfg.Deadline,
+	}, nil
+}
+
 type langGraphInput struct {
 	Prompt     string             `json:"prompt"`
 	Config     agent.RouterConfig `json:"config"`
@@ -528,11 +703,13 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 		selected = candidates[selectedIdx]
 	}
 	return Decision{
-		Mode:       chooseNonEmpty(out.Mode, "langgraph"),
-		Intent:     intent,
-		Selected:   selected,
-		Fallbacks:  fallbacks,
-		Candidates: candidates,
+		Mode:                chooseNonEmpty(out.Mode, "langgraph"),
+		Intent:              intent,
+		Selected:            selected,
+		Fallbacks:           fallbacks,
+		Candidates:          candidates,
+		EffectiveImportance: cfg.Importance,
+		EffectiveDeadline:   cfg.Deadline,
 	}, nil
 }
 

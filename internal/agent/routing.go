@@ -61,14 +61,18 @@ type RouteConfig struct {
 
 // RouterConfig stores shared prompt-router settings.
 type RouterConfig struct {
-	Mode            string `json:"mode,omitempty"`
-	LangGraphCmd    string `json:"langgraph_command,omitempty"`
-	PreferLocal     bool   `json:"prefer_local,omitempty"`
-	PreferFast      bool   `json:"prefer_fast,omitempty"`
-	PreferLowCost   bool   `json:"prefer_low_cost,omitempty"`
-	LocalOnly       bool   `json:"local_only,omitempty"`
-	AllowFallbacks  bool   `json:"allow_fallbacks,omitempty"`
-	RequireApproval bool   `json:"require_approval,omitempty"`
+	Mode             string `json:"mode,omitempty"`
+	LangGraphCmd     string `json:"langgraph_command,omitempty"`
+	PreferLocal      bool   `json:"prefer_local,omitempty"`
+	PreferFast       bool   `json:"prefer_fast,omitempty"`
+	PreferLowCost    bool   `json:"prefer_low_cost,omitempty"`
+	LocalOnly        bool   `json:"local_only,omitempty"`
+	AllowFallbacks   bool   `json:"allow_fallbacks,omitempty"`
+	RequireApproval  bool   `json:"require_approval,omitempty"`
+	Importance       string `json:"importance,omitempty"`          // low|medium|high|critical
+	Deadline         string `json:"deadline,omitempty"`            // immediate|normal|background
+	LocalAIModel     string `json:"local_ai_model,omitempty"`      // model used for local-ai routing classification
+	LocalAIOllamaURL string `json:"local_ai_ollama_url,omitempty"` // ollama base URL override for local-ai routing
 }
 
 func (cfg RouterConfig) IsZero() bool {
@@ -77,15 +81,28 @@ func (cfg RouterConfig) IsZero() bool {
 
 func (cfg RouterConfig) Validate() error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
-	if mode == "" {
-		return nil
+	if mode != "" {
+		switch mode {
+		case "heuristic", "langgraph", "local-ai":
+		default:
+			return fmt.Errorf("unknown router mode: %s", cfg.Mode)
+		}
 	}
-	switch mode {
-	case "heuristic", "langgraph":
-		return nil
-	default:
-		return fmt.Errorf("unknown router mode: %s", cfg.Mode)
+	if imp := strings.ToLower(strings.TrimSpace(cfg.Importance)); imp != "" {
+		switch imp {
+		case "low", "medium", "high", "critical":
+		default:
+			return fmt.Errorf("unknown importance level: %s", cfg.Importance)
+		}
 	}
+	if dl := strings.ToLower(strings.TrimSpace(cfg.Deadline)); dl != "" {
+		switch dl {
+		case "immediate", "normal", "background":
+		default:
+			return fmt.Errorf("unknown deadline: %s", cfg.Deadline)
+		}
+	}
+	return nil
 }
 
 // ExecutionTarget is a normalized execution descriptor derived from an agent.
@@ -130,9 +147,20 @@ func (cfg RouterConfig) EffectiveMode() string {
 	return mode
 }
 
+// ValidImportanceLevels are the accepted values for RouterConfig.Importance.
+var ValidImportanceLevels = []string{"low", "medium", "high", "critical"}
+
+// ValidDeadlines are the accepted values for RouterConfig.Deadline.
+var ValidDeadlines = []string{"immediate", "normal", "background"}
+
 func (cfg RouterConfig) WithDefaults() RouterConfig {
 	out := cfg
-	if !out.PreferLocal && !out.PreferFast && !out.PreferLowCost && !out.LocalOnly {
+	// Suppress the default local preference when importance/deadline already provide explicit routing intent.
+	imp := strings.ToLower(strings.TrimSpace(out.Importance))
+	dl := strings.ToLower(strings.TrimSpace(out.Deadline))
+	hasImportanceIntent := imp != "" && imp != "medium"
+	hasDeadlineIntent := dl != "" && dl != "normal"
+	if !out.PreferLocal && !out.PreferFast && !out.PreferLowCost && !out.LocalOnly && !hasImportanceIntent && !hasDeadlineIntent {
 		out.PreferLocal = true
 	}
 	return out
@@ -269,6 +297,21 @@ func BuildCodexExecArgs(model, outputPath, cwd, prompt string) []string {
 	return args
 }
 
+// BuildCodexStreamArgs returns the Codex invocation for live streaming agentic execution.
+// Omits --json and --output-last-message so output flows as human-readable text to the terminal
+// instead of JSON event lines.
+func BuildCodexStreamArgs(model, cwd, prompt string) []string {
+	args := []string{"exec", "--full-auto"}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	if strings.TrimSpace(cwd) != "" && !IsGitWorktree(cwd) {
+		args = append(args, "--skip-git-repo-check")
+	}
+	args = append(args, prompt)
+	return args
+}
+
 // BuildClaudeExecArgs returns the standard non-interactive Claude invocation
 // used by AgentVault. It prefers the built-in auto permission mode so Claude
 // can act on the workspace instead of only describing changes.
@@ -286,6 +329,27 @@ func BuildClaudeExecArgs(model, prompt string) []string {
 // read-only planning/chat-only flow.
 func BuildGeminiExecArgs(model, prompt string) []string {
 	args := []string{"--prompt", prompt, "--output-format", "json", "--approval-mode", "auto_edit"}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	return args
+}
+
+// BuildClaudeStreamArgs returns the Claude invocation for live streaming agentic execution.
+// Omits --output-format json so output flows progressively to the terminal.
+func BuildClaudeStreamArgs(model, prompt string) []string {
+	args := []string{"-p", "--permission-mode", "auto"}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	args = append(args, prompt)
+	return args
+}
+
+// BuildGeminiStreamArgs returns the Gemini invocation for live streaming agentic execution.
+// Omits --output-format json so output flows progressively to the terminal.
+func BuildGeminiStreamArgs(model, prompt string) []string {
+	args := []string{"--prompt", prompt, "--approval-mode", "auto_edit"}
 	if strings.TrimSpace(model) != "" {
 		args = append(args, "--model", strings.TrimSpace(model))
 	}
