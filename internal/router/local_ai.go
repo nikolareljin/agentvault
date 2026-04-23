@@ -91,7 +91,7 @@ func AnalyzeWithLocalAI(prompt, ollamaBaseURL, model string, timeout time.Durati
 
 	var analysis LocalAIAnalysis
 	if err := json.Unmarshal([]byte(rawResponse), &analysis); err != nil {
-		return LocalAIAnalysis{}, fmt.Errorf("local-ai: parse analysis JSON %q: %w", rawResponse, err)
+		return LocalAIAnalysis{}, fmt.Errorf("local-ai: parse analysis JSON: %w", err)
 	}
 
 	return normalizeLocalAIAnalysis(analysis), nil
