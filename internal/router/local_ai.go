@@ -176,5 +176,6 @@ func enrichIntentFromLocalAI(intent *Intent, analysis LocalAIAnalysis) {
 	// Very complex tasks always benefit from analysis capability even if they are coding tasks
 	if analysis.Complexity >= 8 && !intent.Analysis {
 		intent.Analysis = true
+		intent.TaskClass = "analysis"
 	}
 }
