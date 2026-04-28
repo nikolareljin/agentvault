@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -198,30 +197,35 @@ func TestResolveAgentEnvAPIKey_ReturnsEmptyWhenEnvVarUnset(t *testing.T) {
 
 func TestAgentKeyStatus_Redacted(t *testing.T) {
 	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: ""}
-	if got := agentKeyStatus(a, false); got != "[redacted]" {
+	if got := agentKeyStatus(a, false, false); got != "[redacted]" {
 		t.Fatalf("agentKeyStatus(includeKeys=false) = %q, want [redacted]", got)
 	}
 }
 
 func TestAgentKeyStatus_NoKeyNeeded(t *testing.T) {
 	a := agent.Agent{Name: "my-ollama", Provider: agent.ProviderOllama, APIKey: ""}
-	if got := agentKeyStatus(a, true); got != "[no key needed]" {
+	if got := agentKeyStatus(a, true, false); got != "[no key needed]" {
 		t.Fatalf("agentKeyStatus(ollama, includeKeys=true) = %q, want [no key needed]", got)
 	}
 }
 
+func TestAgentKeyStatus_NoKeyFound(t *testing.T) {
+	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: ""}
+	if got := agentKeyStatus(a, true, false); got != "[no key found]" {
+		t.Fatalf("agentKeyStatus(claude, no key) = %q, want [no key found]", got)
+	}
+}
+
 func TestAgentKeyStatus_VaultKey(t *testing.T) {
-	os.Unsetenv("ANTHROPIC_API_KEY")
 	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: "sk-vault"}
-	if got := agentKeyStatus(a, true); got != "[vault key included]" {
+	if got := agentKeyStatus(a, true, false); got != "[vault key included]" {
 		t.Fatalf("agentKeyStatus(vault key) = %q, want [vault key included]", got)
 	}
 }
 
 func TestAgentKeyStatus_EnvKey(t *testing.T) {
-	t.Setenv("ANTHROPIC_API_KEY", "sk-env")
 	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: "sk-env"}
-	if got := agentKeyStatus(a, true); got != "[env key included]" {
+	if got := agentKeyStatus(a, true, true); got != "[env key included]" {
 		t.Fatalf("agentKeyStatus(env key) = %q, want [env key included]", got)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // SetupBundle represents a complete portable agent configuration bundle.
@@ -242,6 +243,9 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	}
 	if includeSecrets && !encrypted {
 		if !confirmFlag {
+			if !term.IsTerminal(int(os.Stdin.Fd())) { // #nosec G115 -- uintptr→int for fd is safe on all supported 64-bit platforms
+				return fmt.Errorf("--include-secrets without --encrypted requires interactive confirmation; use --confirm to bypass in non-interactive environments")
+			}
 			fmt.Fprintln(cmd.ErrOrStderr(), "warning: --include-secrets will embed sensitive asset content in plaintext")
 			fmt.Fprint(cmd.ErrOrStderr(), "Confirm export with sensitive content? [y/N]: ")
 			line, err := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -300,10 +304,16 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	// Resolve and optionally include API keys.
 	// When --include-keys is set, fill empty vault keys from environment variables
 	// so that env-var-sourced credentials are preserved in the exported bundle.
+	// envKeyFilled tracks which agents had their key sourced from the environment
+	// rather than the vault, so agentKeyStatus can label them correctly.
+	envKeyFilled := make([]bool, len(bundle.Agents))
 	if includeKeys {
 		for i := range bundle.Agents {
 			if bundle.Agents[i].APIKey == "" {
-				bundle.Agents[i].APIKey = resolveAgentEnvAPIKey(bundle.Agents[i])
+				if k := resolveAgentEnvAPIKey(bundle.Agents[i]); k != "" {
+					bundle.Agents[i].APIKey = k
+					envKeyFilled[i] = true
+				}
 			}
 		}
 	} else {
@@ -392,8 +402,8 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	}
 	if len(bundle.Agents) > 0 {
 		fmt.Println("  Agent keys:")
-		for _, a := range bundle.Agents {
-			keyStatus := agentKeyStatus(a, includeKeys)
+		for i, a := range bundle.Agents {
+			keyStatus := agentKeyStatus(a, includeKeys, envKeyFilled[i])
 			fmt.Printf("    %-20s %s\n", a.Name+":", keyStatus)
 		}
 	}
@@ -1216,28 +1226,54 @@ func resolveAgentEnvAPIKey(a agent.Agent) string {
 	}
 	switch a.Provider {
 	case agent.ProviderClaude:
-		return os.Getenv("ANTHROPIC_API_KEY")
+		switch agent.NormalizeClaudeBackend(a.Backend) {
+		case agent.ClaudeBackendOllama, agent.ClaudeBackendBedrock:
+			return ""
+		default:
+			return os.Getenv("ANTHROPIC_API_KEY")
+		}
 	case agent.ProviderOpenAI:
 		return os.Getenv("OPENAI_API_KEY")
 	case agent.ProviderGemini:
-		return os.Getenv("GEMINI_API_KEY")
+		if key := os.Getenv("GEMINI_API_KEY"); key != "" {
+			return key
+		}
+		return os.Getenv("GOOGLE_API_KEY")
 	case agent.ProviderCodex:
 		return os.Getenv("OPENAI_API_KEY")
 	}
 	return ""
 }
 
+// agentRequiresAPIKey reports whether the agent's provider/backend needs an API key.
+// Ollama and Claude agents using the Ollama or Bedrock backend do not require one.
+func agentRequiresAPIKey(a agent.Agent) bool {
+	if a.Provider == agent.ProviderOllama {
+		return false
+	}
+	if a.Provider == agent.ProviderClaude {
+		switch agent.NormalizeClaudeBackend(a.Backend) {
+		case agent.ClaudeBackendOllama, agent.ClaudeBackendBedrock:
+			return false
+		}
+	}
+	return true
+}
+
 // agentKeyStatus returns a human-readable label describing the key state for
-// an agent in the export summary.
-func agentKeyStatus(a agent.Agent, includeKeys bool) string {
+// an agent in the export summary. envFilled indicates the key was sourced from
+// an environment variable during export (vault key was empty).
+func agentKeyStatus(a agent.Agent, includeKeys bool, envFilled bool) string {
 	if !includeKeys {
 		return "[redacted]"
 	}
 	if a.APIKey == "" {
+		if agentRequiresAPIKey(a) {
+			return "[no key found]"
+		}
 		return "[no key needed]"
 	}
-	envKey := resolveAgentEnvAPIKey(agent.Agent{Provider: a.Provider})
-	if envKey != "" && a.APIKey == envKey {
+	if envFilled {
 		return "[env key included]"
 	}
 	return "[vault key included]"

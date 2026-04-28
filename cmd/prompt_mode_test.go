@@ -286,8 +286,8 @@ func TestHasAnyTokens(t *testing.T) {
 		{"total only", agent.PromptTokenUsage{TotalTokens: 1}, true},
 		{"input only", agent.PromptTokenUsage{InputTokens: 1}, true},
 		{"output only", agent.PromptTokenUsage{OutputTokens: 1}, true},
-		{"cached only", agent.PromptTokenUsage{CachedInputTokens: 5}, false},
-		{"reasoning only", agent.PromptTokenUsage{ReasoningOutputTokens: 5}, false},
+		{"cached only", agent.PromptTokenUsage{CachedInputTokens: 5}, true},
+		{"reasoning only", agent.PromptTokenUsage{ReasoningOutputTokens: 5}, true},
 		{"full", agent.PromptTokenUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15}, true},
 	}
 	for _, tc := range tests {
