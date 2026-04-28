@@ -329,5 +329,9 @@ func accumulateTokenUsage(dst *agent.PromptTokenUsage, src *agent.PromptTokenUsa
 
 // hasAnyTokens reports whether at least one token counter is non-zero.
 func hasAnyTokens(u agent.PromptTokenUsage) bool {
-	return u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0
+	return u.TotalTokens > 0 ||
+		u.InputTokens > 0 ||
+		u.CachedInputTokens > 0 ||
+		u.OutputTokens > 0 ||
+		u.ReasoningOutputTokens > 0
 }
