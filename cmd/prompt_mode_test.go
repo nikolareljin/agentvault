@@ -242,6 +242,63 @@ func TestGeneratePromptModeSessionID_SkipsEmptyAndDuplicate(t *testing.T) {
 	}
 }
 
+func TestAccumulateTokenUsage_NilSrcIsNoOp(t *testing.T) {
+	dst := agent.PromptTokenUsage{InputTokens: 5, OutputTokens: 3, TotalTokens: 8}
+	accumulateTokenUsage(&dst, nil)
+	if dst.InputTokens != 5 || dst.OutputTokens != 3 || dst.TotalTokens != 8 {
+		t.Fatalf("accumulateTokenUsage(nil) mutated dst: %+v", dst)
+	}
+}
+
+func TestAccumulateTokenUsage_AddsSrcFields(t *testing.T) {
+	dst := agent.PromptTokenUsage{InputTokens: 10, CachedInputTokens: 2, OutputTokens: 5, ReasoningOutputTokens: 1, TotalTokens: 15}
+	src := &agent.PromptTokenUsage{InputTokens: 20, CachedInputTokens: 4, OutputTokens: 10, ReasoningOutputTokens: 3, TotalTokens: 30}
+	accumulateTokenUsage(&dst, src)
+	want := agent.PromptTokenUsage{InputTokens: 30, CachedInputTokens: 6, OutputTokens: 15, ReasoningOutputTokens: 4, TotalTokens: 45}
+	if dst != want {
+		t.Fatalf("accumulateTokenUsage() = %+v, want %+v", dst, want)
+	}
+}
+
+func TestAccumulateTokenUsage_MultipleAccumulations(t *testing.T) {
+	var total agent.PromptTokenUsage
+	usages := []*agent.PromptTokenUsage{
+		{InputTokens: 100, OutputTokens: 50, TotalTokens: 150},
+		nil,
+		{InputTokens: 200, OutputTokens: 75, TotalTokens: 275},
+		{InputTokens: 50, OutputTokens: 25, TotalTokens: 75},
+	}
+	for _, u := range usages {
+		accumulateTokenUsage(&total, u)
+	}
+	if total.InputTokens != 350 || total.OutputTokens != 150 || total.TotalTokens != 500 {
+		t.Fatalf("accumulated total = %+v, want input=350 output=150 total=500", total)
+	}
+}
+
+func TestHasAnyTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		u    agent.PromptTokenUsage
+		want bool
+	}{
+		{"all zero", agent.PromptTokenUsage{}, false},
+		{"total only", agent.PromptTokenUsage{TotalTokens: 1}, true},
+		{"input only", agent.PromptTokenUsage{InputTokens: 1}, true},
+		{"output only", agent.PromptTokenUsage{OutputTokens: 1}, true},
+		{"cached only", agent.PromptTokenUsage{CachedInputTokens: 5}, false},
+		{"reasoning only", agent.PromptTokenUsage{ReasoningOutputTokens: 5}, false},
+		{"full", agent.PromptTokenUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasAnyTokens(tc.u); got != tc.want {
+				t.Fatalf("hasAnyTokens(%+v) = %v, want %v", tc.u, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestShouldLogPromptModeHistory_DefaultNo(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("\n"))
 	var out bytes.Buffer

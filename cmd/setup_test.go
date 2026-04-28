@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,6 +150,80 @@ func TestBuildInstallGuideMentionsProviderAssets(t *testing.T) {
 		}
 	}
 	t.Fatal("provider config install guide step missing")
+}
+
+func TestResolveAgentEnvAPIKey_ReturnsVaultKeyWhenPresent(t *testing.T) {
+	a := agent.Agent{Provider: agent.ProviderClaude, APIKey: "vault-key"}
+	if got := resolveAgentEnvAPIKey(a); got != "vault-key" {
+		t.Fatalf("resolveAgentEnvAPIKey() = %q, want vault-key", got)
+	}
+}
+
+func TestResolveAgentEnvAPIKey_FallsBackToEnvVar(t *testing.T) {
+	tests := []struct {
+		provider agent.Provider
+		envVar   string
+	}{
+		{agent.ProviderClaude, "ANTHROPIC_API_KEY"},
+		{agent.ProviderOpenAI, "OPENAI_API_KEY"},
+		{agent.ProviderGemini, "GEMINI_API_KEY"},
+		{agent.ProviderCodex, "OPENAI_API_KEY"},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.provider), func(t *testing.T) {
+			t.Setenv(tc.envVar, "env-key-"+string(tc.provider))
+			a := agent.Agent{Provider: tc.provider, APIKey: ""}
+			got := resolveAgentEnvAPIKey(a)
+			if got != "env-key-"+string(tc.provider) {
+				t.Fatalf("resolveAgentEnvAPIKey(%s) = %q, want env key", tc.provider, got)
+			}
+		})
+	}
+}
+
+func TestResolveAgentEnvAPIKey_ReturnsEmptyForUnknownProvider(t *testing.T) {
+	a := agent.Agent{Provider: agent.ProviderOllama, APIKey: ""}
+	if got := resolveAgentEnvAPIKey(a); got != "" {
+		t.Fatalf("resolveAgentEnvAPIKey(ollama) = %q, want empty", got)
+	}
+}
+
+func TestResolveAgentEnvAPIKey_ReturnsEmptyWhenEnvVarUnset(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	a := agent.Agent{Provider: agent.ProviderClaude, APIKey: ""}
+	if got := resolveAgentEnvAPIKey(a); got != "" {
+		t.Fatalf("resolveAgentEnvAPIKey() = %q, want empty when env var unset", got)
+	}
+}
+
+func TestAgentKeyStatus_Redacted(t *testing.T) {
+	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: ""}
+	if got := agentKeyStatus(a, false); got != "[redacted]" {
+		t.Fatalf("agentKeyStatus(includeKeys=false) = %q, want [redacted]", got)
+	}
+}
+
+func TestAgentKeyStatus_NoKeyNeeded(t *testing.T) {
+	a := agent.Agent{Name: "my-ollama", Provider: agent.ProviderOllama, APIKey: ""}
+	if got := agentKeyStatus(a, true); got != "[no key needed]" {
+		t.Fatalf("agentKeyStatus(ollama, includeKeys=true) = %q, want [no key needed]", got)
+	}
+}
+
+func TestAgentKeyStatus_VaultKey(t *testing.T) {
+	os.Unsetenv("ANTHROPIC_API_KEY")
+	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: "sk-vault"}
+	if got := agentKeyStatus(a, true); got != "[vault key included]" {
+		t.Fatalf("agentKeyStatus(vault key) = %q, want [vault key included]", got)
+	}
+}
+
+func TestAgentKeyStatus_EnvKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-env")
+	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: "sk-env"}
+	if got := agentKeyStatus(a, true); got != "[env key included]" {
+		t.Fatalf("agentKeyStatus(env key) = %q, want [env key included]", got)
+	}
 }
 
 func TestSetupImportMergesSharedRouterConfig(t *testing.T) {
