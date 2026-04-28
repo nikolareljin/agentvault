@@ -72,6 +72,7 @@ func runPromptMode() error {
 	historyPath := resolvePromptHistoryPath()
 	var sessionTotals agent.PromptTokenUsage
 	messageCount := 0
+	tokenResponseCount := 0
 	for {
 		fmt.Fprint(promptModeOutput, "prompt> ")
 		if !scanner.Scan() {
@@ -113,6 +114,7 @@ func runPromptMode() error {
 				record.TokenUsage.TotalTokens,
 			)
 			accumulateTokenUsage(&sessionTotals, record.TokenUsage)
+			tokenResponseCount++
 		}
 	}
 
@@ -122,9 +124,9 @@ func runPromptMode() error {
 
 done:
 	session.EndedAt = time.Now().UTC()
-	if messageCount > 0 && hasAnyTokens(sessionTotals) {
-		fmt.Fprintf(promptModeOutput, "\nSession summary (%d responses): input=%d cached=%d output=%d reasoning=%d total=%d tokens\n",
-			messageCount,
+	if tokenResponseCount > 0 && hasAnyTokens(sessionTotals) {
+		fmt.Fprintf(promptModeErr, "\nSession summary (%d/%d responses with usage): input=%d cached=%d output=%d reasoning=%d total=%d tokens\n",
+			tokenResponseCount, messageCount,
 			sessionTotals.InputTokens,
 			sessionTotals.CachedInputTokens,
 			sessionTotals.OutputTokens,
