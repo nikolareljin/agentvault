@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-28
+
+### Added
+- **Session token summary in prompt mode**: `agentvault -p` now prints a cumulative token summary on exit showing total input, cached-input, output, reasoning, and total tokens across all messages in the session. Per-message token counts were already shown; this adds the session-level aggregate. The summary is also persisted to vault state via a new `total_token_usage` field on `PromptSession`. Closes #6.
+- **Env-var API key export**: `agentvault setup export --include-keys` now also captures API keys that were set via environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and Gemini fallback `GOOGLE_API_KEY`) when the vault-stored key for an agent is empty. This preserves credentials that were configured through the shell environment rather than stored directly in the vault. Closes #8.
+- **Confirmation gate for plaintext sensitive export**: `agentvault setup export --include-secrets` without `--encrypted` now requires explicit confirmation — either an interactive `y/N` prompt or the new `--confirm` flag for scripted/CI use. Previously only a warning was printed; the export proceeded unconditionally. Closes #8.
+- **Per-agent key status in export summary**: `agentvault setup export` output now includes a per-agent key status table showing `[vault key included]`, `[env key included]`, `[no key needed]`, `[no key found]`, or `[redacted]` for each exported agent, with `[no key found]` possible when `--include-keys` is requested but no key is available.
+
+### Changed
+- `internal/agent.PromptSession` gained a `TotalTokenUsage *PromptTokenUsage` field (JSON: `total_token_usage`) for aggregate session token data. The field is omitempty and fully backwards-compatible.
+- `agentvault setup export --include-keys` flag description updated to mention env-var key resolution.
+
 ## [0.9.0] - 2026-04-22
 
 ### Added
