@@ -412,7 +412,9 @@ No flags.
 
 ### `agentvault setup export [file]`
 Flags:
-- `--include-keys` (default: `false`)
+- `--include-keys` (default: `false`): Include API keys; also resolves keys from env vars when vault key is empty.
+- `--include-secrets` (default: `false`): Include sensitive asset files; requires `--confirm` or interactive consent when not encrypted.
+- `--confirm` (default: `false`): Bypass interactive confirmation for sensitive export options (CI/scripted use).
 - `--detect` (default: `false`)
 - `--include-status` (default: `false`)
 - `--encrypted` (default: `false`)
