@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -202,7 +203,7 @@ func init() {
 	setupExportCmd.Flags().Bool("include-keys", false, "include API keys in export, also resolving keys from environment variables (use with caution)")
 	setupExportCmd.Flags().Bool("detect", false, "include detected agent information")
 	setupExportCmd.Flags().Bool("include-status", false, "include provider token/quota status snapshot in bundle")
-	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content")
+	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content; plaintext exports require interactive confirmation unless --confirm is set or --encrypted is used")
 	setupExportCmd.Flags().Bool("confirm", false, "skip interactive confirmation for sensitive export options (for scripted/CI use)")
 	setupExportCmd.Flags().Bool("encrypted", false, "encrypt the bundle (prompted for password)")
 	setupExportCmd.Flags().Bool("plain", false, "force plaintext JSON output")
@@ -242,20 +243,8 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		encrypted = true
 	}
 	if includeSecrets && !encrypted {
-		if !confirmFlag {
-			if !term.IsTerminal(stdinFD()) {
-				return fmt.Errorf("--include-secrets without --encrypted requires interactive confirmation; use --confirm to bypass in non-interactive environments")
-			}
-			fmt.Fprintln(cmd.ErrOrStderr(), "warning: --include-secrets will embed sensitive asset content in plaintext")
-			fmt.Fprint(cmd.ErrOrStderr(), "Confirm export with sensitive content? [y/N]: ")
-			line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-			if err != nil {
-				return fmt.Errorf("reading confirmation: %w", err)
-			}
-			answer := strings.ToLower(strings.TrimSpace(line))
-			if answer != "y" && answer != "yes" {
-				return fmt.Errorf("export cancelled: add --encrypted to protect sensitive content, or use --confirm to bypass this check")
-			}
+		if err := confirmPlaintextExport(confirmFlag, term.IsTerminal(stdinFD()), os.Stdin, cmd.ErrOrStderr()); err != nil {
+			return err
 		}
 	}
 
@@ -1214,6 +1203,29 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 	}
 
 	return guide
+}
+
+// confirmPlaintextExport gates a plaintext --include-secrets export.
+// It returns nil when export should proceed (confirmFlag set or user typed y/yes).
+// isTerminal and r are injected so the function is testable without a real TTY.
+func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io.Writer) error {
+	if confirmFlag {
+		return nil
+	}
+	if !isTerminal {
+		return fmt.Errorf("--include-secrets without --encrypted requires interactive confirmation; use --confirm to bypass in non-interactive environments")
+	}
+	fmt.Fprintln(w, "warning: --include-secrets will embed sensitive asset content in plaintext")
+	fmt.Fprint(w, "Confirm export with sensitive content? [y/N]: ")
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("reading confirmation: %w", err)
+	}
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if answer != "y" && answer != "yes" {
+		return fmt.Errorf("export cancelled: add --encrypted to protect sensitive content, or use --confirm to bypass this check")
+	}
+	return nil
 }
 
 // resolveAgentEnvAPIKey returns the API key for the agent from standard environment
