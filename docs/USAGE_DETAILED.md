@@ -188,8 +188,8 @@ Enter interactive prompt mode immediately.
 Behavior:
 - Prompts for agent selection (unless only one agent exists).
 - Supports submit (`Enter`), cancel (`/cancel`), and exit (`/exit`, `quit`, `:q`).
-- Per-message token usage is printed to stderr after each response when available (all providers except streaming paths).
-- On exit, a **session summary** is printed showing cumulative input, cached-input, output, reasoning, and total tokens across all messages in the session.
+- Per-message token usage is printed to stderr after each response when available, typically for providers/versions that return usage metadata.
+- On exit, a **session summary** is printed showing cumulative input, cached-input, output, reasoning, and total tokens when usage metadata is available.
 - Can optionally log each execution to `~/.config/agentvault/prompt-history.jsonl` when history logging is enabled.
 - Can optionally persist transcript/session metadata (including aggregate token totals) in encrypted vault state on exit.
 
