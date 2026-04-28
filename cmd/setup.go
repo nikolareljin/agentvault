@@ -1265,6 +1265,9 @@ func agentRequiresAPIKey(a agent.Agent) bool {
 // an environment variable during export (vault key was empty).
 func agentKeyStatus(a agent.Agent, includeKeys bool, envFilled bool) string {
 	if !includeKeys {
+		if !agentRequiresAPIKey(a) {
+			return "[no key needed]"
+		}
 		return "[redacted]"
 	}
 	if a.APIKey == "" {

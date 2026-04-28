@@ -218,6 +218,13 @@ func TestAgentKeyStatus_NoKeyNeeded(t *testing.T) {
 	}
 }
 
+func TestAgentKeyStatus_NoKeyNeededWhenNotIncluded(t *testing.T) {
+	a := agent.Agent{Name: "my-ollama", Provider: agent.ProviderOllama, APIKey: ""}
+	if got := agentKeyStatus(a, false, false); got != "[no key needed]" {
+		t.Fatalf("agentKeyStatus(ollama, includeKeys=false) = %q, want [no key needed]", got)
+	}
+}
+
 func TestAgentKeyStatus_NoKeyFound(t *testing.T) {
 	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: ""}
 	if got := agentKeyStatus(a, true, false); got != "[no key found]" {

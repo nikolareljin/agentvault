@@ -123,7 +123,7 @@ func runPromptMode() error {
 done:
 	session.EndedAt = time.Now().UTC()
 	if messageCount > 0 && hasAnyTokens(sessionTotals) {
-		fmt.Fprintf(promptModeOutput, "\nSession summary (%d messages): input=%d cached=%d output=%d reasoning=%d total=%d tokens\n",
+		fmt.Fprintf(promptModeOutput, "\nSession summary (%d responses): input=%d cached=%d output=%d reasoning=%d total=%d tokens\n",
 			messageCount,
 			sessionTotals.InputTokens,
 			sessionTotals.CachedInputTokens,
