@@ -14,10 +14,11 @@ Detailed command and TUI references: `docs/README.md`.
 - **Portable Setup**: Export/import complete configurations including sessions between machines
 - **Agent Detection**: Auto-detect installed CLI agents
 - **Unified Instructions**: Sync AGENTS.md, CLAUDE.md, codex.md, etc. across projects
-- **Prompt Mode**: Start a focused interactive loop with `agentvault -p`
+- **Prompt Mode**: Start a focused interactive loop with `agentvault -p`; shows per-message and cumulative session token usage
 - **Intelligent Routing**: Route prompts to the best configured agent/runner/model, with local-first and LangGraph sidecar support
 - **Interactive TUI**: Multi-tab interface with search, filtering, and status views
 - **MCP Server Support**: Configure Model Context Protocol servers per agent
+- **Secure Portable Setup**: Export with env-var key capture (`--include-keys`) and confirmation-gated sensitive content (`--include-secrets`)
 
 ## Quick Start
 

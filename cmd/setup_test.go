@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -149,6 +150,138 @@ func TestBuildInstallGuideMentionsProviderAssets(t *testing.T) {
 		}
 	}
 	t.Fatal("provider config install guide step missing")
+}
+
+func TestResolveAgentEnvAPIKey_ReturnsVaultKeyWhenPresent(t *testing.T) {
+	a := agent.Agent{Provider: agent.ProviderClaude, APIKey: "vault-key"}
+	if got := resolveAgentEnvAPIKey(a); got != "vault-key" {
+		t.Fatalf("resolveAgentEnvAPIKey() = %q, want vault-key", got)
+	}
+}
+
+func TestResolveAgentEnvAPIKey_FallsBackToEnvVar(t *testing.T) {
+	tests := []struct {
+		provider agent.Provider
+		envVar   string
+	}{
+		{agent.ProviderClaude, "ANTHROPIC_API_KEY"},
+		{agent.ProviderOpenAI, "OPENAI_API_KEY"},
+		{agent.ProviderGemini, "GEMINI_API_KEY"},
+		{agent.ProviderCodex, "OPENAI_API_KEY"},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.provider), func(t *testing.T) {
+			t.Setenv(tc.envVar, "env-key-"+string(tc.provider))
+			a := agent.Agent{Provider: tc.provider, APIKey: ""}
+			got := resolveAgentEnvAPIKey(a)
+			if got != "env-key-"+string(tc.provider) {
+				t.Fatalf("resolveAgentEnvAPIKey(%s) = %q, want env key", tc.provider, got)
+			}
+		})
+	}
+}
+
+func TestResolveAgentEnvAPIKey_GeminiFallsBackToGoogleAPIKey(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "google-key")
+	a := agent.Agent{Provider: agent.ProviderGemini, APIKey: ""}
+	if got := resolveAgentEnvAPIKey(a); got != "google-key" {
+		t.Fatalf("resolveAgentEnvAPIKey(gemini, GOOGLE_API_KEY) = %q, want google-key", got)
+	}
+}
+
+func TestResolveAgentEnvAPIKey_ReturnsEmptyForUnknownProvider(t *testing.T) {
+	a := agent.Agent{Provider: agent.ProviderOllama, APIKey: ""}
+	if got := resolveAgentEnvAPIKey(a); got != "" {
+		t.Fatalf("resolveAgentEnvAPIKey(ollama) = %q, want empty", got)
+	}
+}
+
+func TestResolveAgentEnvAPIKey_ReturnsEmptyWhenEnvVarUnset(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	a := agent.Agent{Provider: agent.ProviderClaude, APIKey: ""}
+	if got := resolveAgentEnvAPIKey(a); got != "" {
+		t.Fatalf("resolveAgentEnvAPIKey() = %q, want empty when env var unset", got)
+	}
+}
+
+func TestAgentKeyStatus_Redacted(t *testing.T) {
+	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: ""}
+	if got := agentKeyStatus(a, false, false); got != "[redacted]" {
+		t.Fatalf("agentKeyStatus(includeKeys=false) = %q, want [redacted]", got)
+	}
+}
+
+func TestAgentKeyStatus_NoKeyNeeded(t *testing.T) {
+	a := agent.Agent{Name: "my-ollama", Provider: agent.ProviderOllama, APIKey: ""}
+	if got := agentKeyStatus(a, true, false); got != "[no key needed]" {
+		t.Fatalf("agentKeyStatus(ollama, includeKeys=true) = %q, want [no key needed]", got)
+	}
+}
+
+func TestAgentKeyStatus_NoKeyNeededWhenNotIncluded(t *testing.T) {
+	a := agent.Agent{Name: "my-ollama", Provider: agent.ProviderOllama, APIKey: ""}
+	if got := agentKeyStatus(a, false, false); got != "[no key needed]" {
+		t.Fatalf("agentKeyStatus(ollama, includeKeys=false) = %q, want [no key needed]", got)
+	}
+}
+
+func TestAgentKeyStatus_NoKeyFound(t *testing.T) {
+	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: ""}
+	if got := agentKeyStatus(a, true, false); got != "[no key found]" {
+		t.Fatalf("agentKeyStatus(claude, no key) = %q, want [no key found]", got)
+	}
+}
+
+func TestAgentKeyStatus_VaultKey(t *testing.T) {
+	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: "sk-vault"}
+	if got := agentKeyStatus(a, true, false); got != "[vault key included]" {
+		t.Fatalf("agentKeyStatus(vault key) = %q, want [vault key included]", got)
+	}
+}
+
+func TestAgentKeyStatus_EnvKey(t *testing.T) {
+	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: "sk-env"}
+	if got := agentKeyStatus(a, true, true); got != "[env key included]" {
+		t.Fatalf("agentKeyStatus(env key) = %q, want [env key included]", got)
+	}
+}
+
+func TestConfirmPlaintextExport_ConfirmFlagBypasses(t *testing.T) {
+	var w bytes.Buffer
+	if err := confirmPlaintextExport(true, false, strings.NewReader(""), &w); err != nil {
+		t.Fatalf("confirmFlag=true should bypass all checks, got error: %v", err)
+	}
+}
+
+func TestConfirmPlaintextExport_NonTTYErrors(t *testing.T) {
+	var w bytes.Buffer
+	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w)
+	if err == nil {
+		t.Fatal("non-TTY without --confirm should return error")
+	}
+	if !strings.Contains(err.Error(), "--confirm") {
+		t.Fatalf("error should mention --confirm, got: %v", err)
+	}
+}
+
+func TestConfirmPlaintextExport_TTYAcceptsYes(t *testing.T) {
+	for _, input := range []string{"y\n", "yes\n", "Y\n", "YES\n"} {
+		var w bytes.Buffer
+		if err := confirmPlaintextExport(false, true, strings.NewReader(input), &w); err != nil {
+			t.Fatalf("input %q should be accepted, got error: %v", input, err)
+		}
+	}
+}
+
+func TestConfirmPlaintextExport_TTYRejectsCancels(t *testing.T) {
+	for _, input := range []string{"n\n", "no\n", "\n", "maybe\n"} {
+		var w bytes.Buffer
+		err := confirmPlaintextExport(false, true, strings.NewReader(input), &w)
+		if err == nil {
+			t.Fatalf("input %q should cancel export, but got nil error", input)
+		}
+	}
 }
 
 func TestSetupImportMergesSharedRouterConfig(t *testing.T) {

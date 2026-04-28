@@ -188,8 +188,10 @@ Enter interactive prompt mode immediately.
 Behavior:
 - Prompts for agent selection (unless only one agent exists).
 - Supports submit (`Enter`), cancel (`/cancel`), and exit (`/exit`, `quit`, `:q`).
+- Per-message token usage is printed to stderr after each response when available, typically for providers/versions that return usage metadata.
+- On exit, a **session summary** is printed showing cumulative input, cached-input, output, reasoning, and total tokens when usage metadata is available.
 - Can optionally log each execution to `~/.config/agentvault/prompt-history.jsonl` when history logging is enabled.
-- Can optionally persist transcript/session metadata in encrypted vault state on exit.
+- Can optionally persist transcript/session metadata (including aggregate token totals) in encrypted vault state on exit.
 
 ### `agentvault status`
 Show provider usage/quota status report.
@@ -428,11 +430,15 @@ No flags.
 
 ### `agentvault setup export [file]`
 Flags:
-- `--include-keys` (default: `false`)
+- `--include-keys` (default: `false`): Include API keys. Also captures keys sourced from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) when the vault-stored key is empty.
+- `--include-secrets` (default: `false`): Include sensitive provider asset file content. **Requires interactive confirmation or `--confirm` when `--encrypted` is not set.**
+- `--confirm` (default: `false`): Skip the interactive confirmation prompt for sensitive export options. Use in CI/scripted contexts.
 - `--detect` (default: `false`)
 - `--include-status` (default: `false`): Include provider usage/quota snapshot.
 - `--encrypted` (default: `false`)
 - `--plain` (default: `false`)
+
+The export summary includes a per-agent key status table showing whether each agent's key was included from the vault, resolved from an environment variable, redacted, or shown as `[no key found]` when `--include-keys` is set and neither the vault nor environment provides a key.
 
 `setup export` also includes workflow templates from AgentVault config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`) with template version metadata.
 
