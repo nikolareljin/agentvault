@@ -70,6 +70,8 @@ func runPromptMode() error {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
 	historyPath := resolvePromptHistoryPath()
+	var sessionTotals agent.PromptTokenUsage
+	messageCount := 0
 	for {
 		fmt.Fprint(promptModeOutput, "prompt> ")
 		if !scanner.Scan() {
@@ -102,6 +104,7 @@ func runPromptMode() error {
 			continue
 		}
 
+		messageCount++
 		fmt.Fprintln(promptModeOutput, response)
 		if record.TokenUsage != nil {
 			fmt.Fprintf(promptModeErr, "tokens used: input=%d output=%d total=%d\n",
@@ -109,6 +112,7 @@ func runPromptMode() error {
 				record.TokenUsage.OutputTokens,
 				record.TokenUsage.TotalTokens,
 			)
+			accumulateTokenUsage(&sessionTotals, record.TokenUsage)
 		}
 	}
 
@@ -118,6 +122,18 @@ func runPromptMode() error {
 
 done:
 	session.EndedAt = time.Now().UTC()
+	if messageCount > 0 && hasAnyTokens(sessionTotals) {
+		fmt.Fprintf(promptModeOutput, "\nSession summary (%d messages): input=%d cached=%d output=%d reasoning=%d total=%d tokens\n",
+			messageCount,
+			sessionTotals.InputTokens,
+			sessionTotals.CachedInputTokens,
+			sessionTotals.OutputTokens,
+			sessionTotals.ReasoningOutputTokens,
+			sessionTotals.TotalTokens,
+		)
+		totals := sessionTotals
+		session.TotalTokenUsage = &totals
+	}
 	if !storeSession {
 		fmt.Fprintln(promptModeOutput, "Prompt mode ended. Transcript was not saved to vault state.")
 		return nil
@@ -297,4 +313,21 @@ func promptSessionRecencyTimestamp(session agent.PromptSession) time.Time {
 func truncatePromptFieldForVault(s string) string {
 	trimmed := strings.TrimSpace(s)
 	return textutil.TruncateRunesWithEllipsis(trimmed, maxStoredPromptFieldLenInVault)
+}
+
+// accumulateTokenUsage adds src into dst in-place.
+func accumulateTokenUsage(dst *agent.PromptTokenUsage, src *agent.PromptTokenUsage) {
+	if src == nil {
+		return
+	}
+	dst.InputTokens += src.InputTokens
+	dst.CachedInputTokens += src.CachedInputTokens
+	dst.OutputTokens += src.OutputTokens
+	dst.ReasoningOutputTokens += src.ReasoningOutputTokens
+	dst.TotalTokens += src.TotalTokens
+}
+
+// hasAnyTokens reports whether at least one token counter is non-zero.
+func hasAnyTokens(u agent.PromptTokenUsage) bool {
+	return u.TotalTokens > 0 || u.InputTokens > 0 || u.OutputTokens > 0
 }

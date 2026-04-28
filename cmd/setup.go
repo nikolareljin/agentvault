@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -197,10 +198,11 @@ func init() {
 	setupCmd.AddCommand(setupApplyCmd)
 	setupCmd.AddCommand(setupPullCmd)
 
-	setupExportCmd.Flags().Bool("include-keys", false, "include API keys in export (use with caution)")
+	setupExportCmd.Flags().Bool("include-keys", false, "include API keys in export, also resolving keys from environment variables (use with caution)")
 	setupExportCmd.Flags().Bool("detect", false, "include detected agent information")
 	setupExportCmd.Flags().Bool("include-status", false, "include provider token/quota status snapshot in bundle")
 	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content")
+	setupExportCmd.Flags().Bool("confirm", false, "skip interactive confirmation for sensitive export options (for scripted/CI use)")
 	setupExportCmd.Flags().Bool("encrypted", false, "encrypt the bundle (prompted for password)")
 	setupExportCmd.Flags().Bool("plain", false, "force plaintext JSON output")
 	setupExportCmd.Flags().String("agent", "", "export only one named agent")
@@ -227,6 +229,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	detect, _ := cmd.Flags().GetBool("detect")
 	includeStatus, _ := cmd.Flags().GetBool("include-status")
 	includeSecrets, _ := cmd.Flags().GetBool("include-secrets")
+	confirmFlag, _ := cmd.Flags().GetBool("confirm")
 	encrypted, _ := cmd.Flags().GetBool("encrypted")
 	plain, _ := cmd.Flags().GetBool("plain")
 	agentName, _ := cmd.Flags().GetString("agent")
@@ -238,7 +241,18 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		encrypted = true
 	}
 	if includeSecrets && !encrypted {
-		fmt.Fprintln(cmd.ErrOrStderr(), "warning: --include-secrets exports sensitive asset content without bundle encryption")
+		if !confirmFlag {
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: --include-secrets will embed sensitive asset content in plaintext")
+			fmt.Fprint(cmd.ErrOrStderr(), "Confirm export with sensitive content? [y/N]: ")
+			line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("reading confirmation: %w", err)
+			}
+			answer := strings.ToLower(strings.TrimSpace(line))
+			if answer != "y" && answer != "yes" {
+				return fmt.Errorf("export cancelled: add --encrypted to protect sensitive content, or use --confirm to bypass this check")
+			}
+		}
 	}
 
 	hostname, _ := os.Hostname()
@@ -283,8 +297,16 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 	}
 
-	// Optionally strip API keys
-	if !includeKeys {
+	// Resolve and optionally include API keys.
+	// When --include-keys is set, fill empty vault keys from environment variables
+	// so that env-var-sourced credentials are preserved in the exported bundle.
+	if includeKeys {
+		for i := range bundle.Agents {
+			if bundle.Agents[i].APIKey == "" {
+				bundle.Agents[i].APIKey = resolveAgentEnvAPIKey(bundle.Agents[i])
+			}
+		}
+	} else {
 		for i := range bundle.Agents {
 			bundle.Agents[i].APIKey = ""
 		}
@@ -350,9 +372,6 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Sessions: %d\n", len(bundle.Sessions.Sessions))
 	fmt.Printf("  Instructions: %d\n", len(bundle.SharedConfig.Instructions))
 	fmt.Printf("  Workflow templates: %d\n", len(bundle.Templates.Assets))
-	if includeKeys {
-		fmt.Println("  Warning: API keys are included!")
-	}
 	if includeStatus {
 		fmt.Println("  Includes status snapshot: yes")
 	}
@@ -370,6 +389,13 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Skill assets: %d\n", len(bundle.SkillAssets))
 	if includeSecrets {
 		fmt.Println("  Includes sensitive asset content: yes")
+	}
+	if len(bundle.Agents) > 0 {
+		fmt.Println("  Agent keys:")
+		for _, a := range bundle.Agents {
+			keyStatus := agentKeyStatus(a, includeKeys)
+			fmt.Printf("    %-20s %s\n", a.Name+":", keyStatus)
+		}
 	}
 	return nil
 }
@@ -1178,4 +1204,41 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 	}
 
 	return guide
+}
+
+// resolveAgentEnvAPIKey returns the API key for the agent from standard environment
+// variables when the vault-stored key is empty. This allows --include-keys to also
+// capture credentials that were configured via environment variables rather than
+// stored directly in the vault.
+func resolveAgentEnvAPIKey(a agent.Agent) string {
+	if a.APIKey != "" {
+		return a.APIKey
+	}
+	switch a.Provider {
+	case agent.ProviderClaude:
+		return os.Getenv("ANTHROPIC_API_KEY")
+	case agent.ProviderOpenAI:
+		return os.Getenv("OPENAI_API_KEY")
+	case agent.ProviderGemini:
+		return os.Getenv("GEMINI_API_KEY")
+	case agent.ProviderCodex:
+		return os.Getenv("OPENAI_API_KEY")
+	}
+	return ""
+}
+
+// agentKeyStatus returns a human-readable label describing the key state for
+// an agent in the export summary.
+func agentKeyStatus(a agent.Agent, includeKeys bool) string {
+	if !includeKeys {
+		return "[redacted]"
+	}
+	if a.APIKey == "" {
+		return "[no key needed]"
+	}
+	envKey := resolveAgentEnvAPIKey(agent.Agent{Provider: a.Provider})
+	if envKey != "" && a.APIKey == envKey {
+		return "[env key included]"
+	}
+	return "[vault key included]"
 }

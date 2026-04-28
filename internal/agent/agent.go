@@ -142,14 +142,15 @@ type PromptTranscriptEntry struct {
 
 // PromptSession stores prompt-mode transcript/session metadata in vault state.
 type PromptSession struct {
-	ID        string                  `json:"id"`
-	Name      string                  `json:"name,omitempty"`
-	AgentName string                  `json:"agent_name"`
-	Provider  string                  `json:"provider,omitempty"`
-	Model     string                  `json:"model,omitempty"`
-	StartedAt time.Time               `json:"started_at"`
-	EndedAt   time.Time               `json:"ended_at"`
-	Entries   []PromptTranscriptEntry `json:"entries,omitempty"`
+	ID              string                  `json:"id"`
+	Name            string                  `json:"name,omitempty"`
+	AgentName       string                  `json:"agent_name"`
+	Provider        string                  `json:"provider,omitempty"`
+	Model           string                  `json:"model,omitempty"`
+	StartedAt       time.Time               `json:"started_at"`
+	EndedAt         time.Time               `json:"ended_at"`
+	Entries         []PromptTranscriptEntry `json:"entries,omitempty"`
+	TotalTokenUsage *PromptTokenUsage       `json:"total_token_usage,omitempty"`
 }
 
 // PromptSessionRetentionLimit caps how many prompt sessions are retained in shared config.
