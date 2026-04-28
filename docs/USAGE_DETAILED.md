@@ -430,7 +430,7 @@ No flags.
 
 ### `agentvault setup export [file]`
 Flags:
-- `--include-keys` (default: `false`): Include API keys. Also captures keys sourced from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) when the vault-stored key is empty.
+- `--include-keys` (default: `false`): Include API keys. Also captures keys sourced from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) when the vault-stored key is empty.
 - `--include-secrets` (default: `false`): Include sensitive provider asset file content. **Requires interactive confirmation or `--confirm` when `--encrypted` is not set.**
 - `--confirm` (default: `false`): Skip the interactive confirmation prompt for sensitive export options. Use in CI/scripted contexts.
 - `--detect` (default: `false`)

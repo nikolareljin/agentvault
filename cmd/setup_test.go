@@ -180,6 +180,15 @@ func TestResolveAgentEnvAPIKey_FallsBackToEnvVar(t *testing.T) {
 	}
 }
 
+func TestResolveAgentEnvAPIKey_GeminiFallsBackToGoogleAPIKey(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "google-key")
+	a := agent.Agent{Provider: agent.ProviderGemini, APIKey: ""}
+	if got := resolveAgentEnvAPIKey(a); got != "google-key" {
+		t.Fatalf("resolveAgentEnvAPIKey(gemini, GOOGLE_API_KEY) = %q, want google-key", got)
+	}
+}
+
 func TestResolveAgentEnvAPIKey_ReturnsEmptyForUnknownProvider(t *testing.T) {
 	a := agent.Agent{Provider: agent.ProviderOllama, APIKey: ""}
 	if got := resolveAgentEnvAPIKey(a); got != "" {

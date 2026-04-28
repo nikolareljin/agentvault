@@ -243,7 +243,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	}
 	if includeSecrets && !encrypted {
 		if !confirmFlag {
-			if !term.IsTerminal(int(os.Stdin.Fd())) { // #nosec G115 -- uintptr→int for fd is safe on all supported 64-bit platforms
+			if !term.IsTerminal(stdinFD()) {
 				return fmt.Errorf("--include-secrets without --encrypted requires interactive confirmation; use --confirm to bypass in non-interactive environments")
 			}
 			fmt.Fprintln(cmd.ErrOrStderr(), "warning: --include-secrets will embed sensitive asset content in plaintext")
