@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -243,6 +244,43 @@ func TestAgentKeyStatus_EnvKey(t *testing.T) {
 	a := agent.Agent{Name: "my-claude", Provider: agent.ProviderClaude, APIKey: "sk-env"}
 	if got := agentKeyStatus(a, true, true); got != "[env key included]" {
 		t.Fatalf("agentKeyStatus(env key) = %q, want [env key included]", got)
+	}
+}
+
+func TestConfirmPlaintextExport_ConfirmFlagBypasses(t *testing.T) {
+	var w bytes.Buffer
+	if err := confirmPlaintextExport(true, false, strings.NewReader(""), &w); err != nil {
+		t.Fatalf("confirmFlag=true should bypass all checks, got error: %v", err)
+	}
+}
+
+func TestConfirmPlaintextExport_NonTTYErrors(t *testing.T) {
+	var w bytes.Buffer
+	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w)
+	if err == nil {
+		t.Fatal("non-TTY without --confirm should return error")
+	}
+	if !strings.Contains(err.Error(), "--confirm") {
+		t.Fatalf("error should mention --confirm, got: %v", err)
+	}
+}
+
+func TestConfirmPlaintextExport_TTYAcceptsYes(t *testing.T) {
+	for _, input := range []string{"y\n", "yes\n", "Y\n", "YES\n"} {
+		var w bytes.Buffer
+		if err := confirmPlaintextExport(false, true, strings.NewReader(input), &w); err != nil {
+			t.Fatalf("input %q should be accepted, got error: %v", input, err)
+		}
+	}
+}
+
+func TestConfirmPlaintextExport_TTYRejectsCancels(t *testing.T) {
+	for _, input := range []string{"n\n", "no\n", "\n", "maybe\n"} {
+		var w bytes.Buffer
+		err := confirmPlaintextExport(false, true, strings.NewReader(input), &w)
+		if err == nil {
+			t.Fatalf("input %q should cancel export, but got nil error", input)
+		}
 	}
 }
 

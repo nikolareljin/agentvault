@@ -438,7 +438,7 @@ Flags:
 - `--encrypted` (default: `false`)
 - `--plain` (default: `false`)
 
-The export summary includes a per-agent key status table showing whether each agent's key was included from the vault, resolved from an environment variable, or redacted.
+The export summary includes a per-agent key status table showing whether each agent's key was included from the vault, resolved from an environment variable, redacted, or shown as `[no key found]` when `--include-keys` is set and neither the vault nor environment provides a key.
 
 `setup export` also includes workflow templates from AgentVault config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`) with template version metadata.
 
