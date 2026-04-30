@@ -94,13 +94,34 @@ var instListCmd = &cobra.Command{
 			fmt.Println("No instruction files stored. Use 'agentvault instructions pull' or 'set' to add some.")
 			return nil
 		}
+		// Determine if any instruction has scope metadata to show.
+		hasScope := false
+		for _, inst := range instructions {
+			if inst.Scope != "" {
+				hasScope = true
+				break
+			}
+		}
 		for _, inst := range instructions {
 			age := ""
 			if !inst.UpdatedAt.IsZero() {
 				age = inst.UpdatedAt.Format("2006-01-02 15:04")
 			}
-			fmt.Printf("  %-12s -> %-40s  (%d bytes, %s)\n",
-				inst.Name, inst.Filename, len(inst.Content), age)
+			if hasScope {
+				scope := inst.Scope
+				if scope == "" {
+					scope = agent.InstructionScopeGlobal
+				}
+				pattern := inst.DirectoryPattern
+				if pattern == "" {
+					pattern = "-"
+				}
+				fmt.Printf("  %-12s -> %-35s  %-10s  %-30s  (%d bytes, %s)\n",
+					inst.Name, inst.Filename, scope, pattern, len(inst.Content), age)
+			} else {
+				fmt.Printf("  %-12s -> %-40s  (%d bytes, %s)\n",
+					inst.Name, inst.Filename, len(inst.Content), age)
+			}
 		}
 		return nil
 	},
@@ -166,16 +187,32 @@ Examples:
 			filename = agent.FilenameForInstruction(name)
 		}
 
+		scope, _ := cmd.Flags().GetString("scope")
+		dirPattern, _ := cmd.Flags().GetString("directory-pattern")
+
+		if scope != "" && scope != agent.InstructionScopeGlobal &&
+			scope != agent.InstructionScopeDirectory && scope != agent.InstructionScopeLocal {
+			return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
+		}
+		if dirPattern != "" && scope != agent.InstructionScopeDirectory {
+			return fmt.Errorf("--directory-pattern is only valid when --scope directory is set")
+		}
+		if strings.HasPrefix(dirPattern, "..") {
+			return fmt.Errorf("directory pattern must not begin with \"..\"")
+		}
+
 		// Scan for prompt hijacking
 		if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
 			fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
 		}
 
 		inst := agent.InstructionFile{
-			Name:      name,
-			Filename:  filename,
-			Content:   content,
-			UpdatedAt: time.Now(),
+			Name:             name,
+			Filename:         filename,
+			Content:          content,
+			UpdatedAt:        time.Now(),
+			Scope:            scope,
+			DirectoryPattern: dirPattern,
 		}
 		if err := v.SetInstruction(inst); err != nil {
 			return err
@@ -626,6 +663,227 @@ Examples:
 	},
 }
 
+var instPreviewCmd = &cobra.Command{
+	Use:   "preview [name]",
+	Short: "Show the effective instruction content after scope resolution",
+	Long: `Show which instruction wins for a given working directory after applying
+scope precedence (local > directory > global). Use --all to list all resolved
+instructions instead of a single named one.
+
+Examples:
+  agentvault instructions preview agents
+  agentvault instructions preview agents --dir /home/user/Projects/myrepo
+  agentvault instructions preview --all --dir /home/user/Projects/myrepo`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		v, err := openVault()
+		if err != nil {
+			return err
+		}
+		dir, _ := cmd.Flags().GetString("dir")
+		if dir == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				dir = cwd
+			}
+		}
+		showAll, _ := cmd.Flags().GetBool("all")
+
+		resolved := agent.ResolveEffectiveInstructions(v.ListInstructions(), dir)
+		if len(resolved) == 0 {
+			fmt.Println("No instruction files stored.")
+			return nil
+		}
+
+		if showAll || len(args) == 0 {
+			fmt.Printf("Effective instructions for directory: %s\n\n", dir)
+			for _, inst := range resolved {
+				scope := inst.Scope
+				if scope == "" {
+					scope = agent.InstructionScopeGlobal
+				}
+				fmt.Printf("=== %s (%s, scope: %s) ===\n", inst.Name, inst.Filename, scope)
+				fmt.Println(inst.Content)
+			}
+			return nil
+		}
+
+		name := args[0]
+		for _, inst := range resolved {
+			if inst.Name == name {
+				scope := inst.Scope
+				if scope == "" {
+					scope = agent.InstructionScopeGlobal
+				}
+				fmt.Printf("=== %s (%s, scope: %s) ===\n", inst.Name, inst.Filename, scope)
+				fmt.Print(inst.Content)
+				if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
+					fmt.Println()
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("instruction %q not found (or no applicable scope for this directory)", name)
+	},
+}
+
+var instExportCmd = &cobra.Command{
+	Use:   "export [file]",
+	Short: "Export stored instructions to a JSON or YAML file",
+	Long: `Export all stored instruction files (with scope metadata) to a portable
+file. Use --scope to filter by scope level.
+
+Examples:
+  agentvault instructions export instructions.json
+  agentvault instructions export instructions.yaml --format yaml
+  agentvault instructions export global.json --scope global`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		v, err := openVault()
+		if err != nil {
+			return err
+		}
+		format, _ := cmd.Flags().GetString("format")
+		scopeFilter, _ := cmd.Flags().GetString("scope")
+
+		instructions := v.ListInstructions()
+		if scopeFilter != "" {
+			var filtered []agent.InstructionFile
+			for _, inst := range instructions {
+				s := inst.Scope
+				if s == "" {
+					s = agent.InstructionScopeGlobal
+				}
+				if s == scopeFilter {
+					filtered = append(filtered, inst)
+				}
+			}
+			instructions = filtered
+		}
+
+		data, err := marshalInstructions(instructions, format, args)
+		if err != nil {
+			return err
+		}
+
+		if len(args) == 0 {
+			fmt.Println(string(data))
+			return nil
+		}
+		if err := os.WriteFile(args[0], data, 0600); err != nil {
+			return fmt.Errorf("writing file: %w", err)
+		}
+		fmt.Printf("Exported %d instruction(s) to %s.\n", len(instructions), args[0])
+		return nil
+	},
+}
+
+var instImportCmd = &cobra.Command{
+	Use:   "import [file]",
+	Short: "Import instructions from a JSON or YAML file",
+	Long: `Import instruction files from a portable export file into the vault.
+Existing instructions with the same name and scope are skipped unless --merge
+is specified.
+
+Examples:
+  agentvault instructions import instructions.json
+  agentvault instructions import instructions.yaml --merge
+  agentvault instructions import instructions.json --dry-run`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		v, err := openVault()
+		if err != nil {
+			return err
+		}
+		merge, _ := cmd.Flags().GetBool("merge")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		format, _ := cmd.Flags().GetString("format")
+
+		raw, err := os.ReadFile(args[0])
+		if err != nil {
+			return fmt.Errorf("reading file: %w", err)
+		}
+
+		incoming, err := unmarshalInstructions(raw, format, args[0])
+		if err != nil {
+			return err
+		}
+
+		existing := v.ListInstructions()
+		conflicts := agent.CheckInstructionConflicts(existing, incoming)
+
+		if dryRun {
+			fmt.Printf("Dry-run: would import %d instruction(s).\n", len(incoming))
+			if len(conflicts) > 0 {
+				fmt.Println("Conflicts (existing would win):")
+				for _, c := range conflicts {
+					fmt.Printf("  %s [scope: %s]: %s\n", c.Name, c.IncomingScope, c.ResolutionNote)
+				}
+			}
+			return nil
+		}
+
+		// Build conflict set for quick lookup.
+		conflictSet := make(map[string]bool)
+		for _, c := range conflicts {
+			conflictSet[c.Name+":"+c.IncomingScope] = true
+		}
+
+		imported, skipped := 0, 0
+		for _, inst := range incoming {
+			scope := inst.Scope
+			if scope == "" {
+				scope = agent.InstructionScopeGlobal
+			}
+			key := inst.Name + ":" + scope
+			if conflictSet[key] && !merge {
+				skipped++
+				continue
+			}
+			if err := v.SetInstruction(inst); err != nil {
+				return fmt.Errorf("storing instruction %q: %w", inst.Name, err)
+			}
+			imported++
+		}
+
+		fmt.Printf("Imported %d instruction(s)", imported)
+		if skipped > 0 {
+			fmt.Printf(", skipped %d (use --merge to update)", skipped)
+		}
+		fmt.Println(".")
+		return nil
+	},
+}
+
+func marshalInstructions(instructions []agent.InstructionFile, format string, args []string) ([]byte, error) {
+	if format == "" && len(args) > 0 {
+		ext := strings.ToLower(filepath.Ext(args[0]))
+		if ext == ".yaml" || ext == ".yml" {
+			format = "yaml"
+		}
+	}
+	if format == "yaml" {
+		return marshalYAML(instructions)
+	}
+	return marshalJSON(instructions)
+}
+
+func unmarshalInstructions(data []byte, format, filename string) ([]agent.InstructionFile, error) {
+	if format == "" {
+		ext := strings.ToLower(filepath.Ext(filename))
+		if ext == ".yaml" || ext == ".yml" {
+			format = "yaml"
+		} else if len(data) > 0 && data[0] == '{' || (len(data) > 1 && data[0] == '[') {
+			format = "json"
+		} else {
+			format = "yaml"
+		}
+	}
+	if format == "yaml" {
+		return unmarshalYAML[[]agent.InstructionFile](data)
+	}
+	return unmarshalJSONSlice[agent.InstructionFile](data)
+}
+
 func init() {
 	rootCmd.AddCommand(instructionsCmd)
 	instructionsCmd.AddCommand(instListCmd)
@@ -637,13 +895,28 @@ func init() {
 	instructionsCmd.AddCommand(instPushCmd)
 	instructionsCmd.AddCommand(instDiffCmd)
 	instructionsCmd.AddCommand(instScanCmd)
+	instructionsCmd.AddCommand(instPreviewCmd)
+	instructionsCmd.AddCommand(instExportCmd)
+	instructionsCmd.AddCommand(instImportCmd)
 
 	instSetCmd.Flags().String("file", "", "read content from a file")
 	instSetCmd.Flags().String("content", "", "set content inline")
 	instSetCmd.Flags().String("filename", "", "override target filename")
+	instSetCmd.Flags().String("scope", "", "scope: global (default), directory, or local")
+	instSetCmd.Flags().String("directory-pattern", "", "glob pattern for directory scope (requires --scope directory)")
 
 	instPullCmd.Flags().String("name", "", "pull only a specific instruction name")
 	instPullCmd.Flags().String("file", "", "filename to read (use with --name)")
 
 	instPushCmd.Flags().String("name", "", "push only a specific instruction name")
+
+	instPreviewCmd.Flags().String("dir", "", "directory to resolve scope against (default: cwd)")
+	instPreviewCmd.Flags().Bool("all", false, "show all resolved instructions")
+
+	instExportCmd.Flags().String("format", "", "output format: json or yaml (default: json)")
+	instExportCmd.Flags().String("scope", "", "export only instructions at this scope")
+
+	instImportCmd.Flags().String("format", "", "input format: json or yaml (autodetect by extension)")
+	instImportCmd.Flags().Bool("merge", false, "update existing instructions by name+scope")
+	instImportCmd.Flags().Bool("dry-run", false, "validate and report conflicts without writing")
 }
