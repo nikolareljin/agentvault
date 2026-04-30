@@ -119,8 +119,8 @@ func TestParseClaudeBackend(t *testing.T) {
 
 func TestAllProviders(t *testing.T) {
 	providers := ValidProviders()
-	if len(providers) != 10 {
-		t.Errorf("ValidProviders() len = %d, want 10", len(providers))
+	if len(providers) != 12 {
+		t.Errorf("ValidProviders() len = %d, want 12", len(providers))
 	}
 	for _, p := range providers {
 		a := Agent{Name: "test", Provider: p}

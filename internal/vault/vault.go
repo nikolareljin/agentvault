@@ -349,10 +349,11 @@ func (v *Vault) ExportData() ([]byte, error) {
 // "don't overwrite existing" strategy. Provider configs and sessions are merged
 // with the same non-destructive behavior, so existing vault values take
 // precedence over imported values to prevent accidental data loss.
-func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err error) {
+// conflicts reports instruction name+scope collisions where existing wins.
+func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflicts []agent.InstructionConflict, err error) {
 	var vd vaultData
 	if err := json.Unmarshal(data, &vd); err != nil {
-		return 0, nil, fmt.Errorf("decoding import data: %w", err)
+		return 0, nil, nil, fmt.Errorf("decoding import data: %w", err)
 	}
 	importedParallelLimitDefined := sessionParallelLimitDefined(data) || vd.Sessions.ParallelLimitSet || vd.Sessions.ParallelLimit != 0
 	for _, a := range vd.Agents {
@@ -364,6 +365,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		v.agents = append(v.agents, a)
 		imported++
 	}
+	conflicts = agent.CheckInstructionConflicts(v.shared.Instructions, vd.Shared.Instructions)
 	// merge shared system prompt (don't overwrite existing)
 	if vd.Shared.SystemPrompt != "" && v.shared.SystemPrompt == "" {
 		v.shared.SystemPrompt = vd.Shared.SystemPrompt
@@ -488,7 +490,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
 		v.sessions.ParallelLimitSet = true
 	}
-	return imported, skipped, v.Save()
+	return imported, skipped, conflicts, v.Save()
 }
 
 func promptSessionTimestamp(s agent.PromptSession) time.Time {

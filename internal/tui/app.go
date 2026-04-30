@@ -1754,7 +1754,16 @@ func (m model) renderInstructionDetail() string {
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Instruction: %s", inst.Name)))
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render(fmt.Sprintf("Target: %s  |  Size: %d bytes", inst.Filename, len(inst.Content))))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	if inst.Scope != "" {
+		scopeInfo := fmt.Sprintf("Scope: %s", inst.Scope)
+		if inst.DirectoryPattern != "" {
+			scopeInfo += fmt.Sprintf("  |  Pattern: %s", inst.DirectoryPattern)
+		}
+		b.WriteString(dimStyle.Render(scopeInfo))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	// Show content preview (first ~20 lines)
 	lines := strings.Split(inst.Content, "\n")

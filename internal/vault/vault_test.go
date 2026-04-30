@@ -317,7 +317,7 @@ func TestImportData(t *testing.T) {
 	_ = dst.Init("dst")
 	_ = dst.Add(agent.Agent{Name: "imp1", Provider: agent.ProviderOpenAI}) // same name
 
-	imported, skipped, err := dst.ImportData(exportJSON)
+	imported, skipped, _, err := dst.ImportData(exportJSON)
 	if err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
@@ -355,7 +355,7 @@ func TestImportDataDoesNotOverwriteExistingSharedPrompt(t *testing.T) {
 	_ = dst.SetSharedConfig(agent.SharedConfig{SystemPrompt: "Existing."})
 
 	importJSON := `{"agents":[],"shared":{"system_prompt":"New."}}`
-	_, _, err := dst.ImportData([]byte(importJSON))
+	_, _, _, err := dst.ImportData([]byte(importJSON))
 	if err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
@@ -394,7 +394,7 @@ func TestImportDataMergesSharedRulesAndRolesWithoutOverwrite(t *testing.T) {
 			]
 		}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -442,7 +442,7 @@ func TestImportDataImportsSharedRouterWithoutOverwritingExistingConfig(t *testin
 			}
 		}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -455,7 +455,7 @@ func TestImportDataImportsSharedRouterWithoutOverwritingExistingConfig(t *testin
 	if err := emptyVault.Init("master"); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
-	if _, _, err := emptyVault.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, err := emptyVault.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 	got := emptyVault.SharedConfig().Router
@@ -495,7 +495,7 @@ func TestImportDataMergesPromptSessionsWithoutOverwrite(t *testing.T) {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
 
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -541,7 +541,7 @@ func TestImportDataNormalizesExistingPromptSessionIDsForDeduplication(t *testing
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
 
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -581,7 +581,7 @@ func TestImportDataGeneratesUniqueIDForEmptyPromptSessionIDs(t *testing.T) {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
 
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -631,7 +631,7 @@ func TestImportDataPromptSessionsRetentionCap(t *testing.T) {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
 
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -684,7 +684,7 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 	if err != nil {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -759,7 +759,7 @@ func TestImportDataOverlongPromptSessionIDsDoNotCollideByTruncation(t *testing.T
 	if err != nil {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -815,7 +815,7 @@ func TestImportDataPromptSessionsKeepsNewestByTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -847,7 +847,7 @@ func TestImportDataDeduplicatesImportedSessionIDs(t *testing.T) {
 			]
 		}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -878,7 +878,7 @@ func TestImportDataDoesNotOverwriteUnlimitedParallelLimit(t *testing.T) {
 		"shared": {},
 		"sessions": {"parallel_limit": 4}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -899,7 +899,7 @@ func TestImportDataImportsParallelLimitForEmptySessionConfig(t *testing.T) {
 		"shared": {},
 		"sessions": {"parallel_limit": 4}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -926,7 +926,7 @@ func TestImportDataImportsParallelLimitWhenDefaultAgentsAlsoProvided(t *testing.
 			"parallel_limit": 3
 		}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -960,7 +960,7 @@ func TestImportDataDoesNotOverwriteExplicitUnlimitedParallelLimit(t *testing.T) 
 		"shared": {},
 		"sessions": {"parallel_limit": 4}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -1101,7 +1101,7 @@ func TestImportMergesInstructions(t *testing.T) {
 	// dst already has "agents" - should not be overwritten
 	_ = dst.SetInstruction(agent.InstructionFile{Name: "agents", Filename: "AGENTS.md", Content: "existing"})
 
-	_, _, _ = dst.ImportData(exportJSON)
+	_, _, _, _ = dst.ImportData(exportJSON)
 
 	// "agents" should keep its existing content
 	got, _ := dst.GetInstruction("agents")

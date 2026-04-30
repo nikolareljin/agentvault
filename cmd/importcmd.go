@@ -62,13 +62,19 @@ Example:
 			}
 		}
 
-		imported, skipped, err := v.ImportData(data)
+		imported, skipped, conflicts, err := v.ImportData(data)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("Imported %d agents.\n", imported)
 		if len(skipped) > 0 {
 			fmt.Printf("Skipped (already exist): %s\n", strings.Join(skipped, ", "))
+		}
+		if len(conflicts) > 0 {
+			fmt.Println("Instruction conflicts (existing kept):")
+			for _, c := range conflicts {
+				fmt.Printf("  %s [scope: %s]: %s\n", c.Name, c.IncomingScope, c.ResolutionNote)
+			}
 		}
 		return nil
 	},
