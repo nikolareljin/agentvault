@@ -139,8 +139,8 @@ type Role struct {
 
 // InstructionFile represents a stored instruction file (e.g. AGENTS.md, CLAUDE.md).
 type InstructionFile struct {
-	Name             string    `json:"name"`               // key, e.g. "agents", "claude"
-	Filename         string    `json:"filename"`           // target filename, e.g. "AGENTS.md"
+	Name             string    `json:"name"`     // key, e.g. "agents", "claude"
+	Filename         string    `json:"filename"` // target filename, e.g. "AGENTS.md"
 	Content          string    `json:"content"`
 	UpdatedAt        time.Time `json:"updated_at"`
 	Scope            string    `json:"scope,omitempty"`             // "global" (default), "directory", or "local"
