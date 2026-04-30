@@ -1,6 +1,9 @@
 package agent
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Auth mode constants for AgentProviderMeta.AuthMode.
 const (
@@ -20,15 +23,32 @@ func ValidateProviderMeta(provider Provider, backend string, meta *AgentProvider
 		return nil
 	}
 	if meta.AuthMode != "" {
-		valid := false
+		globalValid := false
 		for _, m := range validAuthModes {
 			if meta.AuthMode == m {
-				valid = true
+				globalValid = true
 				break
 			}
 		}
-		if !valid {
+		if !globalValid {
 			return fmt.Errorf("unknown auth_mode %q; valid: api_key, oauth, iam, token, none", meta.AuthMode)
+		}
+		// For Claude with Bedrock backend, auth modes match the Bedrock provider.
+		effectiveProvider := provider
+		if provider == ProviderClaude && backend == ClaudeBackendBedrock {
+			effectiveProvider = ProviderBedrock
+		}
+		supported := ProviderAuthModes(effectiveProvider)
+		providerValid := false
+		for _, m := range supported {
+			if meta.AuthMode == m {
+				providerValid = true
+				break
+			}
+		}
+		if !providerValid {
+			return fmt.Errorf("auth_mode %q not supported for provider %s; supported: %s",
+				meta.AuthMode, provider, strings.Join(supported, ", "))
 		}
 	}
 	if provider == ProviderBedrock || (provider == ProviderClaude && backend == ClaudeBackendBedrock) {

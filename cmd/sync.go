@@ -92,9 +92,7 @@ func runSyncTo(cmd *cobra.Command, args []string) error {
 
 	// Resolve instruction scope for the target directory so directory-scoped
 	// instructions take precedence over global ones when used in generated content.
-	if cwd, err := os.Getwd(); err == nil {
-		shared.Instructions = agent.ResolveEffectiveInstructions(shared.Instructions, cwd)
-	}
+	shared.Instructions = agent.ResolveEffectiveInstructions(shared.Instructions, dir)
 
 	if len(shared.Rules) == 0 {
 		fmt.Println("No rules configured. Use 'agentvault rules init' to add default rules.")

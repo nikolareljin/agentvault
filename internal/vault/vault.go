@@ -305,9 +305,12 @@ func (v *Vault) GetInstruction(name string) (agent.InstructionFile, bool) {
 }
 
 // SetInstruction stores or updates an instruction file in the vault.
+// Identity is the composite key (Name + Scope + DirectoryPattern), so global
+// and directory-scoped variants of the same name coexist.
 func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
+	key := agent.InstructionKey(inst)
 	for i, existing := range v.shared.Instructions {
-		if existing.Name == inst.Name {
+		if agent.InstructionKey(existing) == key {
 			v.shared.Instructions[i] = inst
 			return v.Save()
 		}
@@ -380,13 +383,13 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflic
 			v.shared.MCPServers = append(v.shared.MCPServers, s)
 		}
 	}
-	// merge instructions (don't overwrite existing by name)
+	// merge instructions by composite key (Name + Scope + DirectoryPattern)
 	seenInst := make(map[string]struct{})
 	for _, inst := range v.shared.Instructions {
-		seenInst[inst.Name] = struct{}{}
+		seenInst[agent.InstructionKey(inst)] = struct{}{}
 	}
 	for _, inst := range vd.Shared.Instructions {
-		if _, ok := seenInst[inst.Name]; !ok {
+		if _, ok := seenInst[agent.InstructionKey(inst)]; !ok {
 			v.shared.Instructions = append(v.shared.Instructions, inst)
 		}
 	}
