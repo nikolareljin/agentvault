@@ -10,6 +10,17 @@ type InstructionConflict struct {
 	ResolutionNote string
 }
 
+// InstructionKey returns the composite identity key for an instruction.
+// Unique identity is Name + Scope + DirectoryPattern, so a global and a
+// directory-scoped instruction with the same name can coexist.
+func InstructionKey(inst InstructionFile) string {
+	scope := inst.Scope
+	if scope == "" {
+		scope = InstructionScopeGlobal
+	}
+	return inst.Name + "\x00" + scope + "\x00" + inst.DirectoryPattern
+}
+
 // scopeRank returns the precedence level for a scope string.
 // Higher rank wins when multiple instructions share the same Name.
 func scopeRank(scope string) int {
@@ -71,34 +82,26 @@ func ResolveEffectiveInstructions(instructions []InstructionFile, workDir string
 	return result
 }
 
-// CheckInstructionConflicts compares incoming instructions against existing ones.
-// Same name + same effective scope is a conflict (existing wins on import).
-// Same name + different scopes coexist — not a conflict.
+// CheckInstructionConflicts compares incoming instructions against existing ones
+// using the composite key (Name + Scope + DirectoryPattern). Same composite key
+// is a conflict (existing wins). Different scopes for the same name coexist.
 func CheckInstructionConflicts(existing, incoming []InstructionFile) []InstructionConflict {
-	existingByName := make(map[string]InstructionFile, len(existing))
+	existingByKey := make(map[string]InstructionFile, len(existing))
 	for _, e := range existing {
-		existingByName[e.Name] = e
+		existingByKey[InstructionKey(e)] = e
 	}
 
 	var conflicts []InstructionConflict
 	for _, inc := range incoming {
-		ex, ok := existingByName[inc.Name]
-		if !ok {
-			continue
-		}
-		incScope := inc.Scope
-		if incScope == "" {
-			incScope = InstructionScopeGlobal
-		}
-		exScope := ex.Scope
-		if exScope == "" {
-			exScope = InstructionScopeGlobal
-		}
-		if incScope == exScope {
+		if _, ok := existingByKey[InstructionKey(inc)]; ok {
+			incScope := inc.Scope
+			if incScope == "" {
+				incScope = InstructionScopeGlobal
+			}
 			conflicts = append(conflicts, InstructionConflict{
 				Name:           inc.Name,
 				IncomingScope:  incScope,
-				ExistingScope:  exScope,
+				ExistingScope:  incScope,
 				ResolutionNote: "existing wins (use --merge to update)",
 			})
 		}

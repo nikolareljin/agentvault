@@ -197,6 +197,9 @@ Examples:
 		if dirPattern != "" && scope != agent.InstructionScopeDirectory {
 			return fmt.Errorf("--directory-pattern is only valid when --scope directory is set")
 		}
+		if scope == agent.InstructionScopeDirectory && dirPattern == "" {
+			return fmt.Errorf("--directory-pattern is required when --scope directory is set")
+		}
 		if strings.HasPrefix(dirPattern, "..") {
 			return fmt.Errorf("directory pattern must not begin with \"..\"")
 		}
