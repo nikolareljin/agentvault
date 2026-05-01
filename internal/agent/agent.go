@@ -459,8 +459,8 @@ func (a *Agent) Validate() error {
 		if backend != "" && backend != ClaudeBackendAnthropic && backend != ClaudeBackendOllama && backend != ClaudeBackendBedrock {
 			return errors.New("unknown claude backend: " + backendRaw)
 		}
-	} else if backendRaw != "" && a.Provider != ProviderBedrock && a.Provider != ProviderCopilot {
-		return errors.New("backend is only supported for claude, bedrock, and copilot agents")
+	} else if backendRaw != "" {
+		return errors.New("backend is only supported for claude agents")
 	}
 	if err := a.Route.Validate(); err != nil {
 		return err

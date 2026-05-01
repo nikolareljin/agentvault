@@ -1755,8 +1755,12 @@ func (m model) renderInstructionDetail() string {
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render(fmt.Sprintf("Target: %s  |  Size: %d bytes", inst.Filename, len(inst.Content))))
 	b.WriteString("\n")
-	if inst.Scope != "" {
-		scopeInfo := fmt.Sprintf("Scope: %s", inst.Scope)
+	{
+		scope := inst.Scope
+		if scope == "" {
+			scope = "global"
+		}
+		scopeInfo := fmt.Sprintf("Scope: %s", scope)
 		if inst.DirectoryPattern != "" {
 			scopeInfo += fmt.Sprintf("  |  Pattern: %s", inst.DirectoryPattern)
 		}

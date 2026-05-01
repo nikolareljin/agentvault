@@ -819,6 +819,14 @@ Examples:
 		format, _ := cmd.Flags().GetString("format")
 		scopeFilter, _ := cmd.Flags().GetString("scope")
 
+		if scopeFilter != "" {
+			switch scopeFilter {
+			case agent.InstructionScopeGlobal, agent.InstructionScopeDirectory, agent.InstructionScopeLocal:
+			default:
+				return fmt.Errorf("invalid --scope %q; valid: global, directory, local", scopeFilter)
+			}
+		}
+
 		instructions := v.ListInstructions()
 		if scopeFilter != "" {
 			var filtered []agent.InstructionFile
@@ -855,8 +863,8 @@ var instImportCmd = &cobra.Command{
 	Use:   "import [file]",
 	Short: "Import instructions from a JSON or YAML file",
 	Long: `Import instruction files from a portable export file into the vault.
-Existing instructions with the same name and scope are skipped unless --merge
-is specified.
+Existing instructions with the same name, scope, and directory pattern are
+skipped unless --merge is specified.
 
 Examples:
   agentvault instructions import instructions.json
@@ -890,7 +898,11 @@ Examples:
 			if len(conflicts) > 0 {
 				fmt.Println("Conflicts (existing would win):")
 				for _, c := range conflicts {
-					fmt.Printf("  %s [scope: %s]: %s\n", c.Name, c.IncomingScope, c.ResolutionNote)
+					if c.DirectoryPattern != "" {
+						fmt.Printf("  %s [scope: %s, pattern: %s]: %s\n", c.Name, c.IncomingScope, c.DirectoryPattern, c.ResolutionNote)
+					} else {
+						fmt.Printf("  %s [scope: %s]: %s\n", c.Name, c.IncomingScope, c.ResolutionNote)
+					}
 				}
 			}
 			return nil
@@ -1004,7 +1016,7 @@ func init() {
 	instExportCmd.Flags().String("scope", "", "export only instructions at this scope")
 
 	instImportCmd.Flags().String("format", "", "input format: json or yaml (autodetect by extension)")
-	instImportCmd.Flags().Bool("merge", false, "update existing instructions by name+scope")
+	instImportCmd.Flags().Bool("merge", false, "update existing instructions by name+scope+directory_pattern")
 	instImportCmd.Flags().Bool("dry-run", false, "validate and report conflicts without writing")
 
 	instRemoveCmd.Flags().String("scope", "", "target scope: global, directory, or local")

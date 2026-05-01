@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -50,14 +51,19 @@ func matchesDirectory(pattern, workDir string) bool {
 	if pattern == "" || workDir == "" {
 		return false
 	}
-	// Normalize to forward slashes when the pattern uses them (cross-platform).
-	p, w := pattern, workDir
+	// When the pattern contains forward slashes, normalize both to slashes and
+	// use path.Match (which always treats '/' as separator) for consistent
+	// cross-platform behavior. Otherwise use filepath.Match.
 	if strings.ContainsRune(pattern, '/') {
-		p = filepath.ToSlash(pattern)
-		w = filepath.ToSlash(workDir)
-	}
-	if ok, err := filepath.Match(p, w); err == nil && ok {
-		return true
+		p := filepath.ToSlash(pattern)
+		w := filepath.ToSlash(workDir)
+		if ok, err := path.Match(p, w); err == nil && ok {
+			return true
+		}
+	} else {
+		if ok, err := filepath.Match(pattern, workDir); err == nil && ok {
+			return true
+		}
 	}
 	// Separator-free patterns match against the base name.
 	if !strings.ContainsRune(pattern, filepath.Separator) && !strings.ContainsRune(pattern, '/') {
