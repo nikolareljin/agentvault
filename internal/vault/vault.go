@@ -294,12 +294,29 @@ func (v *Vault) Save() error {
 	return v.write()
 }
 
-// GetInstruction returns a stored instruction file by name.
+// GetInstruction returns a stored instruction file by name. When multiple
+// scoped variants exist, the global-scope variant is returned first; otherwise
+// the first match is returned. Use GetInstructionByKey for an exact lookup.
 func (v *Vault) GetInstruction(name string) (agent.InstructionFile, bool) {
-	for _, inst := range v.shared.Instructions {
-		if inst.Name == name {
-			return inst, true
+	var first *agent.InstructionFile
+	for i := range v.shared.Instructions {
+		inst := &v.shared.Instructions[i]
+		if inst.Name != name {
+			continue
 		}
+		if first == nil {
+			first = inst
+		}
+		scope := inst.Scope
+		if scope == "" {
+			scope = agent.InstructionScopeGlobal
+		}
+		if scope == agent.InstructionScopeGlobal {
+			return *inst, true
+		}
+	}
+	if first != nil {
+		return *first, true
 	}
 	return agent.InstructionFile{}, false
 }
@@ -376,7 +393,8 @@ func (v *Vault) ExportData() ([]byte, error) {
 // "don't overwrite existing" strategy. Provider configs and sessions are merged
 // with the same non-destructive behavior, so existing vault values take
 // precedence over imported values to prevent accidental data loss.
-// conflicts reports instruction name+scope collisions where existing wins.
+// conflicts reports instruction Name+Scope+DirectoryPattern collisions where existing wins;
+// same name at different scopes (or same scope with different directory patterns) coexist.
 func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflicts []agent.InstructionConflict, err error) {
 	var vd vaultData
 	if err := json.Unmarshal(data, &vd); err != nil {

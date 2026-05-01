@@ -73,7 +73,11 @@ Example:
 		if len(conflicts) > 0 {
 			fmt.Println("Instruction conflicts (existing kept):")
 			for _, c := range conflicts {
-				fmt.Printf("  %s [scope: %s]: %s\n", c.Name, c.IncomingScope, c.ResolutionNote)
+				if c.DirectoryPattern != "" {
+					fmt.Printf("  %s [scope: %s, pattern: %s]: %s\n", c.Name, c.IncomingScope, c.DirectoryPattern, c.ResolutionNote)
+				} else {
+					fmt.Printf("  %s [scope: %s]: %s\n", c.Name, c.IncomingScope, c.ResolutionNote)
+				}
 			}
 		}
 		return nil
