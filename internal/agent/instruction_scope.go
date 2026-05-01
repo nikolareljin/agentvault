@@ -2,6 +2,7 @@ package agent
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -39,18 +40,26 @@ func scopeRank(scope string) int {
 }
 
 // matchesDirectory reports whether pattern matches workDir.
-// Tries an exact filepath.Match first; for patterns without a path separator
-// it also matches against the base name so "projectname" works without anchoring.
+// Tries an exact filepath.Match first. When the pattern contains forward
+// slashes (common in exported patterns), both sides are normalized to forward
+// slashes via filepath.ToSlash so matching works correctly on Windows.
+// For patterns without any path separator, falls back to matching the base
+// name so "projectname" works without full anchoring.
 // Returns false on error or when either argument is empty.
 func matchesDirectory(pattern, workDir string) bool {
 	if pattern == "" || workDir == "" {
 		return false
 	}
-	if ok, err := filepath.Match(pattern, workDir); err == nil && ok {
+	// Normalize to forward slashes when the pattern uses them (cross-platform).
+	p, w := pattern, workDir
+	if strings.ContainsRune(pattern, '/') {
+		p = filepath.ToSlash(pattern)
+		w = filepath.ToSlash(workDir)
+	}
+	if ok, err := filepath.Match(p, w); err == nil && ok {
 		return true
 	}
-	// Check for both the OS path separator and '/' so exported patterns using
-	// forward slashes (e.g. "/repo/*") are treated as path-containing on Windows.
+	// Separator-free patterns match against the base name.
 	if !strings.ContainsRune(pattern, filepath.Separator) && !strings.ContainsRune(pattern, '/') {
 		ok, _ := filepath.Match(pattern, filepath.Base(workDir))
 		return ok
@@ -90,6 +99,7 @@ func ResolveEffectiveInstructions(instructions []InstructionFile, workDir string
 	for _, c := range best {
 		result = append(result, c.inst)
 	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result
 }
 

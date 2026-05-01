@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,37 @@ import (
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
+
+// getInstructionForCmd fetches an instruction by name, optionally targeting a
+// specific scoped variant when scope is provided.
+func getInstructionForCmd(v *vault.Vault, name, scope, pattern string) (agent.InstructionFile, bool) {
+	if scope != "" {
+		key := agent.InstructionKey(agent.InstructionFile{
+			Name:             name,
+			Scope:            scope,
+			DirectoryPattern: pattern,
+		})
+		return v.GetInstructionByKey(key)
+	}
+	return v.GetInstruction(name)
+}
+
+// validateScopeFlags returns an error if the scope/pattern combination is invalid.
+func validateScopeFlags(scope, pattern string) error {
+	switch scope {
+	case "", agent.InstructionScopeGlobal, agent.InstructionScopeLocal:
+		if pattern != "" {
+			return fmt.Errorf("--directory-pattern is only valid when --scope directory is set")
+		}
+	case agent.InstructionScopeDirectory:
+		if pattern == "" {
+			return fmt.Errorf("--directory-pattern is required when --scope directory is set")
+		}
+	default:
+		return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
+	}
+	return nil
+}
 
 // findEditorCommand returns the editor command and args.
 // It supports $EDITOR values with flags (e.g. "code --wait").
@@ -136,7 +168,12 @@ var instShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		inst, ok := v.GetInstruction(args[0])
+		scope, _ := cmd.Flags().GetString("scope")
+		pattern, _ := cmd.Flags().GetString("directory-pattern")
+		if err := validateScopeFlags(scope, pattern); err != nil {
+			return err
+		}
+		inst, ok := getInstructionForCmd(v, args[0], scope, pattern)
 		if !ok {
 			return fmt.Errorf("instruction %q not found", args[0])
 		}
@@ -245,7 +282,12 @@ Examples:
 		}
 
 		name := args[0]
-		inst, ok := v.GetInstruction(name)
+		scope, _ := cmd.Flags().GetString("scope")
+		pattern, _ := cmd.Flags().GetString("directory-pattern")
+		if err := validateScopeFlags(scope, pattern); err != nil {
+			return err
+		}
+		inst, ok := getInstructionForCmd(v, name, scope, pattern)
 		if !ok {
 			return fmt.Errorf("instruction %q not found", name)
 		}
@@ -326,6 +368,9 @@ exact variant; omitting --scope removes the first match by name.`,
 		}
 		scope, _ := cmd.Flags().GetString("scope")
 		pattern, _ := cmd.Flags().GetString("directory-pattern")
+		if err := validateScopeFlags(scope, pattern); err != nil {
+			return err
+		}
 		name := args[0]
 		if scope != "" {
 			key := agent.InstructionKey(agent.InstructionFile{
@@ -645,9 +690,16 @@ Examples:
 			return err
 		}
 
+		scope, _ := cmd.Flags().GetString("scope")
+		pattern, _ := cmd.Flags().GetString("directory-pattern")
+		if len(args) > 0 {
+			if err := validateScopeFlags(scope, pattern); err != nil {
+				return err
+			}
+		}
 		var toScan []agent.InstructionFile
 		if len(args) > 0 {
-			inst, ok := v.GetInstruction(args[0])
+			inst, ok := getInstructionForCmd(v, args[0], scope, pattern)
 			if !ok {
 				return fmt.Errorf("instruction %q not found", args[0])
 			}
@@ -904,10 +956,13 @@ func unmarshalInstructions(data []byte, format, filename string) ([]agent.Instru
 		ext := strings.ToLower(filepath.Ext(filename))
 		if ext == ".yaml" || ext == ".yml" {
 			format = "yaml"
-		} else if len(data) > 0 && data[0] == '{' || (len(data) > 1 && data[0] == '[') {
-			format = "json"
 		} else {
-			format = "yaml"
+			trimmed := bytes.TrimSpace(data)
+			if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+				format = "json"
+			} else {
+				format = "yaml"
+			}
 		}
 	}
 	if format == "yaml" {
@@ -954,4 +1009,13 @@ func init() {
 
 	instRemoveCmd.Flags().String("scope", "", "target scope: global, directory, or local")
 	instRemoveCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
+
+	instShowCmd.Flags().String("scope", "", "target scope: global, directory, or local")
+	instShowCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
+
+	instEditCmd.Flags().String("scope", "", "target scope: global, directory, or local")
+	instEditCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
+
+	instScanCmd.Flags().String("scope", "", "target scope: global, directory, or local (only used with a name argument)")
+	instScanCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
 }
