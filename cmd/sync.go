@@ -83,6 +83,9 @@ func runSyncTo(cmd *cobra.Command, args []string) error {
 	}
 
 	dir := args[0]
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	agentsOnly, _ := cmd.Flags().GetBool("agents-only")
 	providerFilter, _ := cmd.Flags().GetString("provider")
 	includeRoles, _ := cmd.Flags().GetBool("include-roles")

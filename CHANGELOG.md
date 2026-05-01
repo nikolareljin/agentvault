@@ -13,7 +13,7 @@
   Flags: `--format json|yaml`, `--include-key`, `--dry-run`, `--merge`. Schema version `1.0`
   with full `ValidateProviderMeta` checks on import. Closes #4.
 - **`copilot` and `bedrock` providers**: recognized in `ValidProviders()` and
-  `ProviderInstructionMap` (`copilot` → `copilot-instructions.md` + `AGENTS.md`;
+  `ProviderInstructionMap` (`copilot` → `.github/copilot-instructions.md` + `AGENTS.md`;
   `bedrock` → `AGENTS.md`).
 - **Instruction scopes**: `InstructionFile` gains `scope` (`global`|`directory`|`local`) and
   `directory_pattern` (glob) fields. `global` is the default; all existing instructions

@@ -825,20 +825,19 @@ Examples:
 			return nil
 		}
 
-		// Build conflict set for quick lookup.
+		// Build conflict set for quick lookup using the composite identity key.
 		conflictSet := make(map[string]bool)
 		for _, c := range conflicts {
-			conflictSet[c.Name+":"+c.IncomingScope] = true
+			conflictSet[agent.InstructionKey(agent.InstructionFile{
+				Name:             c.Name,
+				Scope:            c.IncomingScope,
+				DirectoryPattern: c.DirectoryPattern,
+			})] = true
 		}
 
 		imported, skipped := 0, 0
 		for _, inst := range incoming {
-			scope := inst.Scope
-			if scope == "" {
-				scope = agent.InstructionScopeGlobal
-			}
-			key := inst.Name + ":" + scope
-			if conflictSet[key] && !merge {
+			if conflictSet[agent.InstructionKey(inst)] && !merge {
 				skipped++
 				continue
 			}
