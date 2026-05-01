@@ -49,7 +49,9 @@ func matchesDirectory(pattern, workDir string) bool {
 	if ok, err := filepath.Match(pattern, workDir); err == nil && ok {
 		return true
 	}
-	if !strings.ContainsRune(pattern, filepath.Separator) {
+	// Check for both the OS path separator and '/' so exported patterns using
+	// forward slashes (e.g. "/repo/*") are treated as path-containing on Windows.
+	if !strings.ContainsRune(pattern, filepath.Separator) && !strings.ContainsRune(pattern, '/') {
 		ok, _ := filepath.Match(pattern, filepath.Base(workDir))
 		return ok
 	}
@@ -112,7 +114,7 @@ func CheckInstructionConflicts(existing, incoming []InstructionFile) []Instructi
 				IncomingScope:    incScope,
 				ExistingScope:    incScope,
 				DirectoryPattern: inc.DirectoryPattern,
-				ResolutionNote:   "existing wins (use --merge to update)",
+				ResolutionNote:   "existing kept",
 			})
 		}
 	}

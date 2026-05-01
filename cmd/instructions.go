@@ -315,16 +315,33 @@ Examples:
 var instRemoveCmd = &cobra.Command{
 	Use:   "remove [name]",
 	Short: "Remove a stored instruction file",
-	Args:  cobra.ExactArgs(1),
+	Long: `Remove a stored instruction file by name. When multiple scoped variants
+exist, use --scope (and --directory-pattern for directory scope) to target the
+exact variant; omitting --scope removes the first match by name.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		v, err := openVault()
 		if err != nil {
 			return err
 		}
-		if err := v.RemoveInstruction(args[0]); err != nil {
-			return err
+		scope, _ := cmd.Flags().GetString("scope")
+		pattern, _ := cmd.Flags().GetString("directory-pattern")
+		name := args[0]
+		if scope != "" {
+			key := agent.InstructionKey(agent.InstructionFile{
+				Name:             name,
+				Scope:            scope,
+				DirectoryPattern: pattern,
+			})
+			if err := v.RemoveInstructionByKey(key); err != nil {
+				return fmt.Errorf("removing instruction %q (scope %s): %w", name, scope, err)
+			}
+		} else {
+			if err := v.RemoveInstruction(name); err != nil {
+				return err
+			}
 		}
-		fmt.Printf("Instruction %q removed.\n", args[0])
+		fmt.Printf("Instruction %q removed.\n", name)
 		return nil
 	},
 }
@@ -688,6 +705,8 @@ Examples:
 			if cwd, err := os.Getwd(); err == nil {
 				dir = cwd
 			}
+		} else if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
 		}
 		showAll, _ := cmd.Flags().GetBool("all")
 
@@ -841,6 +860,17 @@ Examples:
 				skipped++
 				continue
 			}
+			// Validate scope invariants before persisting.
+			switch inst.Scope {
+			case "", agent.InstructionScopeGlobal, agent.InstructionScopeLocal:
+				// valid
+			case agent.InstructionScopeDirectory:
+				if inst.DirectoryPattern == "" {
+					return fmt.Errorf("instruction %q has directory scope but no directory_pattern", inst.Name)
+				}
+			default:
+				return fmt.Errorf("instruction %q has unknown scope %q", inst.Name, inst.Scope)
+			}
 			if err := v.SetInstruction(inst); err != nil {
 				return fmt.Errorf("storing instruction %q: %w", inst.Name, err)
 			}
@@ -921,4 +951,7 @@ func init() {
 	instImportCmd.Flags().String("format", "", "input format: json or yaml (autodetect by extension)")
 	instImportCmd.Flags().Bool("merge", false, "update existing instructions by name+scope")
 	instImportCmd.Flags().Bool("dry-run", false, "validate and report conflicts without writing")
+
+	instRemoveCmd.Flags().String("scope", "", "target scope: global, directory, or local")
+	instRemoveCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
 }

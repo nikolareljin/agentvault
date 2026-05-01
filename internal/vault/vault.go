@@ -319,6 +319,30 @@ func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
 	return v.Save()
 }
 
+// GetInstructionByKey returns the instruction with the given composite key
+// (Name + Scope + DirectoryPattern). Use this when multiple scoped variants
+// of the same name may coexist and the caller knows the exact variant.
+func (v *Vault) GetInstructionByKey(key string) (agent.InstructionFile, bool) {
+	for _, inst := range v.shared.Instructions {
+		if agent.InstructionKey(inst) == key {
+			return inst, true
+		}
+	}
+	return agent.InstructionFile{}, false
+}
+
+// RemoveInstructionByKey removes the instruction with the given composite key.
+// Use this when multiple scoped variants of the same name may coexist.
+func (v *Vault) RemoveInstructionByKey(key string) error {
+	for i, inst := range v.shared.Instructions {
+		if agent.InstructionKey(inst) == key {
+			v.shared.Instructions = append(v.shared.Instructions[:i], v.shared.Instructions[i+1:]...)
+			return v.Save()
+		}
+	}
+	return fmt.Errorf("instruction not found")
+}
+
 // RemoveInstruction removes a stored instruction file by name.
 func (v *Vault) RemoveInstruction(name string) error {
 	idx := -1

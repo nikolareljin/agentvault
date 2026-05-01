@@ -218,6 +218,8 @@ func runSyncPreview(cmd *cobra.Command, args []string) error {
 		if cwd, err := os.Getwd(); err == nil {
 			resolveDir = cwd
 		}
+	} else if abs, err := filepath.Abs(resolveDir); err == nil {
+		resolveDir = abs
 	}
 	shared.Instructions = agent.ResolveEffectiveInstructions(shared.Instructions, resolveDir)
 
