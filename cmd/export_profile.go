@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -36,7 +37,8 @@ func marshalAgentProfile(a agent.Agent, format string) ([]byte, error) {
 // Format is autodetected from the first byte when not specified.
 func unmarshalAgentProfile(data []byte, format string) (agent.Agent, string, error) {
 	if format == "" {
-		if len(data) > 0 && data[0] == '{' {
+		trimmed := bytes.TrimSpace(data)
+		if len(trimmed) > 0 && trimmed[0] == '{' {
 			format = "json"
 		} else {
 			format = "yaml"

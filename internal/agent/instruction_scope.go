@@ -1,13 +1,17 @@
 package agent
 
-import "path/filepath"
+import (
+	"path/filepath"
+	"strings"
+)
 
 // InstructionConflict reports a scope collision detected during import.
 type InstructionConflict struct {
-	Name           string
-	IncomingScope  string
-	ExistingScope  string
-	ResolutionNote string
+	Name             string
+	IncomingScope    string
+	ExistingScope    string
+	DirectoryPattern string
+	ResolutionNote   string
 }
 
 // InstructionKey returns the composite identity key for an instruction.
@@ -34,17 +38,22 @@ func scopeRank(scope string) int {
 	}
 }
 
-// matchesDirectory reports whether pattern matches workDir using filepath.Match.
+// matchesDirectory reports whether pattern matches workDir.
+// Tries an exact filepath.Match first; for patterns without a path separator
+// it also matches against the base name so "projectname" works without anchoring.
 // Returns false on error or when either argument is empty.
 func matchesDirectory(pattern, workDir string) bool {
 	if pattern == "" || workDir == "" {
 		return false
 	}
-	matched, err := filepath.Match(pattern, workDir)
-	if err != nil {
-		return false
+	if ok, err := filepath.Match(pattern, workDir); err == nil && ok {
+		return true
 	}
-	return matched
+	if !strings.ContainsRune(pattern, filepath.Separator) {
+		ok, _ := filepath.Match(pattern, filepath.Base(workDir))
+		return ok
+	}
+	return false
 }
 
 // ResolveEffectiveInstructions merges a flat instruction list using scope precedence:
@@ -99,10 +108,11 @@ func CheckInstructionConflicts(existing, incoming []InstructionFile) []Instructi
 				incScope = InstructionScopeGlobal
 			}
 			conflicts = append(conflicts, InstructionConflict{
-				Name:           inc.Name,
-				IncomingScope:  incScope,
-				ExistingScope:  incScope,
-				ResolutionNote: "existing wins (use --merge to update)",
+				Name:             inc.Name,
+				IncomingScope:    incScope,
+				ExistingScope:    incScope,
+				DirectoryPattern: inc.DirectoryPattern,
+				ResolutionNote:   "existing wins (use --merge to update)",
 			})
 		}
 	}
