@@ -1758,7 +1758,7 @@ func (m model) renderInstructionDetail() string {
 	{
 		scope := inst.Scope
 		if scope == "" {
-			scope = "global"
+			scope = agent.InstructionScopeGlobal
 		}
 		scopeInfo := fmt.Sprintf("Scope: %s", scope)
 		if inst.DirectoryPattern != "" {

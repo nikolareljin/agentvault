@@ -361,18 +361,31 @@ func (v *Vault) RemoveInstructionByKey(key string) error {
 }
 
 // RemoveInstruction removes a stored instruction file by name.
+// When multiple scoped variants exist, prefers the global-scope variant
+// (matching GetInstruction behavior) so that show and remove operate on
+// the same variant when --scope is omitted.
 func (v *Vault) RemoveInstruction(name string) error {
-	idx := -1
+	first := -1
 	for i, inst := range v.shared.Instructions {
-		if inst.Name == name {
-			idx = i
-			break
+		if inst.Name != name {
+			continue
+		}
+		scope := inst.Scope
+		if scope == "" {
+			scope = agent.InstructionScopeGlobal
+		}
+		if scope == agent.InstructionScopeGlobal {
+			v.shared.Instructions = append(v.shared.Instructions[:i], v.shared.Instructions[i+1:]...)
+			return v.Save()
+		}
+		if first == -1 {
+			first = i
 		}
 	}
-	if idx == -1 {
+	if first == -1 {
 		return fmt.Errorf("instruction %q not found", name)
 	}
-	v.shared.Instructions = append(v.shared.Instructions[:idx], v.shared.Instructions[idx+1:]...)
+	v.shared.Instructions = append(v.shared.Instructions[:first], v.shared.Instructions[first+1:]...)
 	return v.Save()
 }
 
