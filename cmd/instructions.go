@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,23 +30,14 @@ func getInstructionForCmd(v *vault.Vault, name, scope, pattern string) (agent.In
 }
 
 // validateScopeFlags returns an error if the scope/pattern combination is invalid.
+// Delegates validation logic to agent.ValidateScopePattern and translates
+// field names to CLI flag names for user-facing output.
 func validateScopeFlags(scope, pattern string) error {
-	switch scope {
-	case "", agent.InstructionScopeGlobal, agent.InstructionScopeLocal:
-		if pattern != "" {
-			return fmt.Errorf("--directory-pattern is only valid when --scope directory is set")
-		}
-	case agent.InstructionScopeDirectory:
-		if pattern == "" {
-			return fmt.Errorf("--directory-pattern is required when --scope directory is set")
-		}
-		if strings.HasPrefix(pattern, "..") {
-			return fmt.Errorf("directory pattern must not begin with \"..\"")
-		}
-	default:
-		return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
+	err := agent.ValidateScopePattern(scope, pattern)
+	if err == nil {
+		return nil
 	}
-	return nil
+	return errors.New(strings.ReplaceAll(err.Error(), "directory_pattern", "--directory-pattern"))
 }
 
 // findEditorCommand returns the editor command and args.
@@ -884,11 +876,28 @@ Examples:
 			return err
 		}
 
+		// Filter invalid instructions first so conflicts are only reported for valid ones.
+		var validIncoming []agent.InstructionFile
+		var invalidIncoming []error
+		for _, inst := range incoming {
+			if err := agent.ValidateInstructionScope(inst); err != nil {
+				invalidIncoming = append(invalidIncoming, err)
+			} else {
+				validIncoming = append(validIncoming, inst)
+			}
+		}
+
 		existing := v.ListInstructions()
-		conflicts := agent.CheckInstructionConflicts(existing, incoming)
+		conflicts := agent.CheckInstructionConflicts(existing, validIncoming)
 
 		if dryRun {
-			fmt.Printf("Dry-run: would import %d instruction(s).\n", len(incoming))
+			fmt.Printf("Dry-run: would import %d instruction(s).\n", len(validIncoming))
+			if len(invalidIncoming) > 0 {
+				fmt.Println("Invalid (would be skipped):")
+				for _, e := range invalidIncoming {
+					fmt.Printf("  %v\n", e)
+				}
+			}
 			if len(conflicts) > 0 {
 				fmt.Println("Conflicts (existing would win):")
 				for _, c := range conflicts {
@@ -901,6 +910,8 @@ Examples:
 			}
 			return nil
 		}
+
+		incoming = validIncoming
 
 		// Build conflict set for quick lookup using the composite identity key.
 		conflictSet := make(map[string]bool)
@@ -917,26 +928,6 @@ Examples:
 			if conflictSet[agent.InstructionKey(inst)] && !merge {
 				skipped++
 				continue
-			}
-			// Validate scope invariants before persisting.
-			scope := inst.Scope
-			if scope == "" {
-				scope = agent.InstructionScopeGlobal
-			}
-			switch scope {
-			case agent.InstructionScopeGlobal, agent.InstructionScopeLocal:
-				if inst.DirectoryPattern != "" {
-					return fmt.Errorf("instruction %q has scope %q but non-empty directory_pattern", inst.Name, scope)
-				}
-			case agent.InstructionScopeDirectory:
-				if inst.DirectoryPattern == "" {
-					return fmt.Errorf("instruction %q has directory scope but no directory_pattern", inst.Name)
-				}
-				if strings.HasPrefix(inst.DirectoryPattern, "..") {
-					return fmt.Errorf("instruction %q has directory pattern beginning with \"..\"", inst.Name)
-				}
-			default:
-				return fmt.Errorf("instruction %q has unknown scope %q", inst.Name, inst.Scope)
 			}
 			if err := v.SetInstruction(inst); err != nil {
 				return fmt.Errorf("storing instruction %q: %w", inst.Name, err)

@@ -423,7 +423,16 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflic
 		v.agents = append(v.agents, a)
 		imported++
 	}
-	conflicts = agent.CheckInstructionConflicts(v.shared.Instructions, vd.Shared.Instructions)
+	// Filter invalid instructions first so conflicts are only reported for valid ones.
+	var validIncoming []agent.InstructionFile
+	for _, inst := range vd.Shared.Instructions {
+		if err := agent.ValidateInstructionScope(inst); err != nil {
+			skipped = append(skipped, fmt.Sprintf("invalid instruction: %v", err))
+			continue
+		}
+		validIncoming = append(validIncoming, inst)
+	}
+	conflicts = agent.CheckInstructionConflicts(v.shared.Instructions, validIncoming)
 	// merge shared system prompt (don't overwrite existing)
 	if vd.Shared.SystemPrompt != "" && v.shared.SystemPrompt == "" {
 		v.shared.SystemPrompt = vd.Shared.SystemPrompt
@@ -443,11 +452,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflic
 	for _, inst := range v.shared.Instructions {
 		seenInst[agent.InstructionKey(inst)] = struct{}{}
 	}
-	for _, inst := range vd.Shared.Instructions {
-		if err := agent.ValidateInstructionScope(inst); err != nil {
-			skipped = append(skipped, fmt.Sprintf("invalid instruction: %v", err))
-			continue
-		}
+	for _, inst := range validIncoming {
 		key := agent.InstructionKey(inst)
 		if _, ok := seenInst[key]; !ok {
 			v.shared.Instructions = append(v.shared.Instructions, inst)

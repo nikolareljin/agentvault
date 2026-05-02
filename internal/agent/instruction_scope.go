@@ -8,26 +8,33 @@ import (
 	"strings"
 )
 
-// ValidateInstructionScope returns an error if the scope/directory_pattern
-// combination for inst is invalid (unknown scope, pattern required/forbidden,
-// or pattern starts with "..").
-func ValidateInstructionScope(inst InstructionFile) error {
-	scope := inst.Scope
-	pattern := inst.DirectoryPattern
+// ValidateScopePattern returns an error if the scope/directory_pattern
+// combination is invalid. This is the single source of truth for scope
+// validation logic; callers may wrap or translate the error for their context.
+func ValidateScopePattern(scope, pattern string) error {
 	switch scope {
 	case "", InstructionScopeGlobal, InstructionScopeLocal:
 		if pattern != "" {
-			return fmt.Errorf("instruction %q: directory_pattern is only valid for directory scope", inst.Name)
+			return fmt.Errorf("directory_pattern is only valid for directory scope")
 		}
 	case InstructionScopeDirectory:
 		if pattern == "" {
-			return fmt.Errorf("instruction %q: directory_pattern is required for directory scope", inst.Name)
+			return fmt.Errorf("directory_pattern is required for directory scope")
 		}
 		if strings.HasPrefix(pattern, "..") {
-			return fmt.Errorf("instruction %q: directory_pattern must not begin with \"..\"", inst.Name)
+			return fmt.Errorf("directory_pattern must not begin with \"..\"")
 		}
 	default:
-		return fmt.Errorf("instruction %q: invalid scope %q; valid: global, directory, local", inst.Name, scope)
+		return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
+	}
+	return nil
+}
+
+// ValidateInstructionScope returns an error if the scope/directory_pattern
+// combination for inst is invalid.
+func ValidateInstructionScope(inst InstructionFile) error {
+	if err := ValidateScopePattern(inst.Scope, inst.DirectoryPattern); err != nil {
+		return fmt.Errorf("instruction %q: %w", inst.Name, err)
 	}
 	return nil
 }
