@@ -444,6 +444,10 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflic
 		seenInst[agent.InstructionKey(inst)] = struct{}{}
 	}
 	for _, inst := range vd.Shared.Instructions {
+		if err := agent.ValidateInstructionScope(inst); err != nil {
+			skipped = append(skipped, fmt.Sprintf("invalid instruction: %v", err))
+			continue
+		}
 		key := agent.InstructionKey(inst)
 		if _, ok := seenInst[key]; !ok {
 			v.shared.Instructions = append(v.shared.Instructions, inst)

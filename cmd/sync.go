@@ -73,7 +73,6 @@ func init() {
 	syncVaultCmd.Flags().Bool("include-roles", true, "include role descriptions")
 
 	syncPreviewCmd.Flags().String("provider", "", "preview specific provider")
-	syncPreviewCmd.Flags().String("dir", "", "directory to resolve instruction scope against (default: cwd)")
 }
 
 func runSyncTo(cmd *cobra.Command, args []string) error {
@@ -92,10 +91,6 @@ func runSyncTo(cmd *cobra.Command, args []string) error {
 	force, _ := cmd.Flags().GetBool("force")
 
 	shared := v.SharedConfig()
-
-	// Resolve instruction scope for the target directory so directory-scoped
-	// instructions take precedence over global ones when used in generated content.
-	shared.Instructions = agent.ResolveEffectiveInstructions(shared.Instructions, dir)
 
 	if len(shared.Rules) == 0 {
 		fmt.Println("No rules configured. Use 'agentvault rules init' to add default rules.")
@@ -209,19 +204,7 @@ func runSyncPreview(cmd *cobra.Command, args []string) error {
 	}
 
 	providerFilter, _ := cmd.Flags().GetString("provider")
-	dir, _ := cmd.Flags().GetString("dir")
 	shared := v.SharedConfig()
-
-	// Resolve instruction scope for the specified (or current) directory.
-	resolveDir := dir
-	if resolveDir == "" {
-		if cwd, err := os.Getwd(); err == nil {
-			resolveDir = cwd
-		}
-	} else if abs, err := filepath.Abs(resolveDir); err == nil {
-		resolveDir = abs
-	}
-	shared.Instructions = agent.ResolveEffectiveInstructions(shared.Instructions, resolveDir)
 
 	if len(shared.Rules) == 0 {
 		fmt.Println("No rules configured. Use 'agentvault rules init' to add default rules.")

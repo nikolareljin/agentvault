@@ -41,7 +41,13 @@ func marshalAgentProfile(a agent.Agent, format string) ([]byte, error) {
 
 // unmarshalAgentProfile parses a JSON or YAML agent profile export.
 // Format is autodetected from the first byte when not specified.
+// format must be "json", "yaml", or "" (autodetect).
 func unmarshalAgentProfile(data []byte, format string) (agent.Agent, string, error) {
+	switch format {
+	case "", "json", "yaml":
+	default:
+		return agent.Agent{}, "", fmt.Errorf("unknown format %q; use json or yaml", format)
+	}
 	if format == "" {
 		trimmed := bytes.TrimSpace(data)
 		if len(trimmed) > 0 && trimmed[0] == '{' {
