@@ -31,7 +31,7 @@
   when incoming instructions collide by name at the same scope (existing wins).
 
 ### Changed
-- `Vault.ImportData` returns `(int, []string, []agent.InstructionConflict, error)`.
+- `Vault.ImportData` returns `(imported int, skippedAgents []string, invalidInstructions []string, conflicts []agent.InstructionConflict, err error)`.
 - `agentvault instructions list` shows Scope and DirectoryPattern columns when any
   stored instruction has a non-empty scope.
 - `agentvault sync to` resolves effective instructions per the current working directory
