@@ -138,6 +138,13 @@ Examples:
 			if !merge {
 				return fmt.Errorf("agent %q already exists; use --merge to update", a.Name)
 			}
+			// Preserve the existing API key when the imported profile omits it
+			// (i.e. was exported without --include-key).
+			if a.APIKey == "" {
+				if existing, ok := v.Get(a.Name); ok {
+					a.APIKey = existing.APIKey
+				}
+			}
 			if err := v.Update(a); err != nil {
 				return fmt.Errorf("updating agent: %w", err)
 			}

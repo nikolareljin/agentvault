@@ -895,6 +895,19 @@ Examples:
 			}
 		}
 
+		// Deduplicate validIncoming by composite key; last occurrence wins.
+		seenKeys := make(map[string]int)
+		for i, inst := range validIncoming {
+			seenKeys[agent.InstructionKey(inst)] = i
+		}
+		deduped := make([]agent.InstructionFile, 0, len(seenKeys))
+		for i, inst := range validIncoming {
+			if seenKeys[agent.InstructionKey(inst)] == i {
+				deduped = append(deduped, inst)
+			}
+		}
+		validIncoming = deduped
+
 		existing := v.ListInstructions()
 		conflicts := agent.CheckInstructionConflicts(existing, validIncoming)
 
