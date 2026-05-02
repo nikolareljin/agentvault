@@ -352,7 +352,8 @@ var instRemoveCmd = &cobra.Command{
 	Short: "Remove a stored instruction file",
 	Long: `Remove a stored instruction file by name. When multiple scoped variants
 exist, use --scope (and --directory-pattern for directory scope) to target the
-exact variant; omitting --scope removes the first match by name.`,
+exact variant; omitting --scope prefers the global-scope variant when one exists,
+otherwise removes the first match by name.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		v, err := openVault()
@@ -930,6 +931,9 @@ Examples:
 			case agent.InstructionScopeDirectory:
 				if inst.DirectoryPattern == "" {
 					return fmt.Errorf("instruction %q has directory scope but no directory_pattern", inst.Name)
+				}
+				if strings.HasPrefix(inst.DirectoryPattern, "..") {
+					return fmt.Errorf("instruction %q has directory pattern beginning with \"..\"", inst.Name)
 				}
 			default:
 				return fmt.Errorf("instruction %q has unknown scope %q", inst.Name, inst.Scope)
