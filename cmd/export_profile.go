@@ -21,7 +21,13 @@ type AgentProfileExport struct {
 }
 
 // marshalAgentProfile serializes an agent profile to JSON or YAML.
+// format must be "json", "yaml", or "" (defaults to JSON).
 func marshalAgentProfile(a agent.Agent, format string) ([]byte, error) {
+	switch format {
+	case "", "json", "yaml":
+	default:
+		return nil, fmt.Errorf("unknown format %q; use json or yaml", format)
+	}
 	export := AgentProfileExport{
 		SchemaVersion: agentProfileSchemaVersion,
 		ExportedAt:    time.Now().UTC(),
