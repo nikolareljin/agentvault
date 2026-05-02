@@ -357,7 +357,7 @@ func (v *Vault) RemoveInstructionByKey(key string) error {
 			return v.Save()
 		}
 	}
-	return fmt.Errorf("instruction not found")
+	return fmt.Errorf("instruction not found: %s", key)
 }
 
 // RemoveInstruction removes a stored instruction file by name.
