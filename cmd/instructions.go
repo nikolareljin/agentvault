@@ -556,9 +556,12 @@ Examples:
 			return err
 		}
 		dir := args[0]
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
 		specificName, _ := cmd.Flags().GetString("name")
 
-		instructions := v.ListInstructions()
+		instructions := agent.ResolveEffectiveInstructions(v.ListInstructions(), dir)
 		if len(instructions) == 0 {
 			fmt.Println("No instruction files stored. Use 'pull' or 'set' first.")
 			return nil
@@ -605,7 +608,10 @@ Examples:
 			return err
 		}
 		dir := args[0]
-		instructions := v.ListInstructions()
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		instructions := agent.ResolveEffectiveInstructions(v.ListInstructions(), dir)
 		if len(instructions) == 0 {
 			fmt.Println("No instruction files stored.")
 			return nil
