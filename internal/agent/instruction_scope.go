@@ -1,11 +1,36 @@
 package agent
 
 import (
+	"fmt"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 )
+
+// ValidateInstructionScope returns an error if the scope/directory_pattern
+// combination for inst is invalid (unknown scope, pattern required/forbidden,
+// or pattern starts with "..").
+func ValidateInstructionScope(inst InstructionFile) error {
+	scope := inst.Scope
+	pattern := inst.DirectoryPattern
+	switch scope {
+	case "", InstructionScopeGlobal, InstructionScopeLocal:
+		if pattern != "" {
+			return fmt.Errorf("instruction %q: directory_pattern is only valid for directory scope", inst.Name)
+		}
+	case InstructionScopeDirectory:
+		if pattern == "" {
+			return fmt.Errorf("instruction %q: directory_pattern is required for directory scope", inst.Name)
+		}
+		if strings.HasPrefix(pattern, "..") {
+			return fmt.Errorf("instruction %q: directory_pattern must not begin with \"..\"", inst.Name)
+		}
+	default:
+		return fmt.Errorf("instruction %q: invalid scope %q; valid: global, directory, local", inst.Name, scope)
+	}
+	return nil
+}
 
 // InstructionConflict reports a scope collision detected during import.
 type InstructionConflict struct {
