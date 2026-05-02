@@ -62,13 +62,19 @@ Example:
 			}
 		}
 
-		imported, skipped, conflicts, err := v.ImportData(data)
+		imported, skippedAgents, invalidInstructions, conflicts, err := v.ImportData(data)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("Imported %d agents.\n", imported)
-		if len(skipped) > 0 {
-			fmt.Printf("Skipped (already exist): %s\n", strings.Join(skipped, ", "))
+		if len(skippedAgents) > 0 {
+			fmt.Printf("Skipped (already exist): %s\n", strings.Join(skippedAgents, ", "))
+		}
+		if len(invalidInstructions) > 0 {
+			fmt.Println("Invalid instructions (skipped):")
+			for _, msg := range invalidInstructions {
+				fmt.Printf("  %s\n", msg)
+			}
 		}
 		if len(conflicts) > 0 {
 			fmt.Println("Instruction conflicts (existing kept):")
