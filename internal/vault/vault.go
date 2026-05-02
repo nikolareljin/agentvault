@@ -444,8 +444,10 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflic
 		seenInst[agent.InstructionKey(inst)] = struct{}{}
 	}
 	for _, inst := range vd.Shared.Instructions {
-		if _, ok := seenInst[agent.InstructionKey(inst)]; !ok {
+		key := agent.InstructionKey(inst)
+		if _, ok := seenInst[key]; !ok {
 			v.shared.Instructions = append(v.shared.Instructions, inst)
+			seenInst[key] = struct{}{}
 		}
 	}
 	// merge shared rules (don't overwrite existing by name)
