@@ -965,6 +965,12 @@ Examples:
 			fmt.Printf(", skipped %d (use --merge to update)", skipped)
 		}
 		fmt.Println(".")
+		if len(invalidIncoming) > 0 {
+			fmt.Println("Invalid (skipped):")
+			for _, e := range invalidIncoming {
+				fmt.Printf("  %v\n", e)
+			}
+		}
 		return nil
 	},
 }
