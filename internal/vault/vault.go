@@ -401,23 +401,24 @@ func (v *Vault) ExportData() ([]byte, error) {
 }
 
 // ImportData merges agents plus shared/provider/session config from JSON into this vault.
-// Agents with duplicate names are skipped. Shared config fields (system prompt,
-// MCP servers, instructions, rules, roles, and prompt sessions) are merged using a
-// "don't overwrite existing" strategy. Provider configs and sessions are merged
-// with the same non-destructive behavior, so existing vault values take
-// precedence over imported values to prevent accidental data loss.
+// Agents with duplicate names are reported in skippedAgents. Instructions that fail
+// scope validation are reported in invalidInstructions. Shared config fields (system
+// prompt, MCP servers, instructions, rules, roles, and prompt sessions) are merged using
+// a "don't overwrite existing" strategy. Provider configs and sessions are merged with
+// the same non-destructive behavior, so existing vault values take precedence over
+// imported values to prevent accidental data loss.
 // conflicts reports instruction Name+Scope+DirectoryPattern collisions where existing wins;
 // same name at different scopes (or same scope with different directory patterns) coexist.
-func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflicts []agent.InstructionConflict, err error) {
+func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, invalidInstructions []string, conflicts []agent.InstructionConflict, err error) {
 	var vd vaultData
 	if err := json.Unmarshal(data, &vd); err != nil {
-		return 0, nil, nil, fmt.Errorf("decoding import data: %w", err)
+		return 0, nil, nil, nil, fmt.Errorf("decoding import data: %w", err)
 	}
 	importedParallelLimitDefined := sessionParallelLimitDefined(data) || vd.Sessions.ParallelLimitSet || vd.Sessions.ParallelLimit != 0
 	for _, a := range vd.Agents {
 		_, exists := v.Get(a.Name)
 		if exists {
-			skipped = append(skipped, a.Name)
+			skippedAgents = append(skippedAgents, a.Name)
 			continue
 		}
 		v.agents = append(v.agents, a)
@@ -427,7 +428,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflic
 	var validIncoming []agent.InstructionFile
 	for _, inst := range vd.Shared.Instructions {
 		if err := agent.ValidateInstructionScope(inst); err != nil {
-			skipped = append(skipped, fmt.Sprintf("invalid instruction: %v", err))
+			invalidInstructions = append(invalidInstructions, err.Error())
 			continue
 		}
 		validIncoming = append(validIncoming, inst)
@@ -559,7 +560,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, conflic
 		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
 		v.sessions.ParallelLimitSet = true
 	}
-	return imported, skipped, conflicts, v.Save()
+	return imported, skippedAgents, invalidInstructions, conflicts, v.Save()
 }
 
 func promptSessionTimestamp(s agent.PromptSession) time.Time {
