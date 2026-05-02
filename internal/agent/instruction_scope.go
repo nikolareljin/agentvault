@@ -96,7 +96,9 @@ func ResolveEffectiveInstructions(instructions []InstructionFile, workDir string
 		}
 
 		rank := scopeRank(scope)
-		if existing, ok := best[inst.Name]; !ok || rank > existing.rank {
+		if existing, ok := best[inst.Name]; !ok || rank > existing.rank ||
+			(rank == existing.rank && len(inst.DirectoryPattern) > len(existing.inst.DirectoryPattern)) ||
+			(rank == existing.rank && inst.DirectoryPattern < existing.inst.DirectoryPattern) {
 			best[inst.Name] = candidate{inst: inst, rank: rank}
 		}
 	}

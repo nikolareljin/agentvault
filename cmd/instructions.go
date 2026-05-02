@@ -39,6 +39,9 @@ func validateScopeFlags(scope, pattern string) error {
 		if pattern == "" {
 			return fmt.Errorf("--directory-pattern is required when --scope directory is set")
 		}
+		if strings.HasPrefix(pattern, "..") {
+			return fmt.Errorf("directory pattern must not begin with \"..\"")
+		}
 	default:
 		return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
 	}
@@ -227,18 +230,8 @@ Examples:
 		scope, _ := cmd.Flags().GetString("scope")
 		dirPattern, _ := cmd.Flags().GetString("directory-pattern")
 
-		if scope != "" && scope != agent.InstructionScopeGlobal &&
-			scope != agent.InstructionScopeDirectory && scope != agent.InstructionScopeLocal {
-			return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
-		}
-		if dirPattern != "" && scope != agent.InstructionScopeDirectory {
-			return fmt.Errorf("--directory-pattern is only valid when --scope directory is set")
-		}
-		if scope == agent.InstructionScopeDirectory && dirPattern == "" {
-			return fmt.Errorf("--directory-pattern is required when --scope directory is set")
-		}
-		if strings.HasPrefix(dirPattern, "..") {
-			return fmt.Errorf("directory pattern must not begin with \"..\"")
+		if err := validateScopeFlags(scope, dirPattern); err != nil {
+			return err
 		}
 
 		// Scan for prompt hijacking
@@ -925,9 +918,15 @@ Examples:
 				continue
 			}
 			// Validate scope invariants before persisting.
-			switch inst.Scope {
-			case "", agent.InstructionScopeGlobal, agent.InstructionScopeLocal:
-				// valid
+			scope := inst.Scope
+			if scope == "" {
+				scope = agent.InstructionScopeGlobal
+			}
+			switch scope {
+			case agent.InstructionScopeGlobal, agent.InstructionScopeLocal:
+				if inst.DirectoryPattern != "" {
+					return fmt.Errorf("instruction %q has scope %q but non-empty directory_pattern", inst.Name, scope)
+				}
 			case agent.InstructionScopeDirectory:
 				if inst.DirectoryPattern == "" {
 					return fmt.Errorf("instruction %q has directory scope but no directory_pattern", inst.Name)

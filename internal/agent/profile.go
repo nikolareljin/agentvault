@@ -47,6 +47,10 @@ func ValidateProviderMeta(provider Provider, backend string, meta *AgentProvider
 			}
 		}
 		if !providerValid {
+			if effectiveProvider != provider {
+				return fmt.Errorf("auth_mode %q not supported for provider %s (effective: %s); supported: %s",
+					meta.AuthMode, provider, effectiveProvider, strings.Join(supported, ", "))
+			}
 			return fmt.Errorf("auth_mode %q not supported for provider %s; supported: %s",
 				meta.AuthMode, provider, strings.Join(supported, ", "))
 		}
