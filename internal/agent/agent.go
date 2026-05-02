@@ -459,6 +459,7 @@ func (a *Agent) Validate() error {
 		if backend != "" && backend != ClaudeBackendAnthropic && backend != ClaudeBackendOllama && backend != ClaudeBackendBedrock {
 			return errors.New("unknown claude backend: " + backendRaw)
 		}
+		a.Backend = backend // normalize in-place so ValidateProviderMeta sees canonical form
 	} else if backendRaw != "" {
 		return errors.New("backend is only supported for claude agents")
 	}
