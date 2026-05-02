@@ -122,15 +122,19 @@ func CheckInstructionConflicts(existing, incoming []InstructionFile) []Instructi
 
 	var conflicts []InstructionConflict
 	for _, inc := range incoming {
-		if _, ok := existingByKey[InstructionKey(inc)]; ok {
+		if ex, ok := existingByKey[InstructionKey(inc)]; ok {
 			incScope := inc.Scope
 			if incScope == "" {
 				incScope = InstructionScopeGlobal
 			}
+			exScope := ex.Scope
+			if exScope == "" {
+				exScope = InstructionScopeGlobal
+			}
 			conflicts = append(conflicts, InstructionConflict{
 				Name:             inc.Name,
 				IncomingScope:    incScope,
-				ExistingScope:    incScope,
+				ExistingScope:    exScope,
 				DirectoryPattern: inc.DirectoryPattern,
 				ResolutionNote:   "existing kept",
 			})
