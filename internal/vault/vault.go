@@ -357,7 +357,13 @@ func (v *Vault) RemoveInstructionByKey(key string) error {
 			return v.Save()
 		}
 	}
-	return fmt.Errorf("instruction not found: %s", key)
+	parts := strings.SplitN(key, "\x00", 3)
+	if len(parts) == 3 && parts[2] != "" {
+		return fmt.Errorf("instruction not found: name=%q scope=%q pattern=%q", parts[0], parts[1], parts[2])
+	} else if len(parts) >= 2 {
+		return fmt.Errorf("instruction not found: name=%q scope=%q", parts[0], parts[1])
+	}
+	return fmt.Errorf("instruction not found: %q", key)
 }
 
 // RemoveInstruction removes a stored instruction file by name.

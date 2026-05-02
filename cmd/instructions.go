@@ -30,14 +30,16 @@ func getInstructionForCmd(v *vault.Vault, name, scope, pattern string) (agent.In
 }
 
 // validateScopeFlags returns an error if the scope/pattern combination is invalid.
-// Delegates validation logic to agent.ValidateScopePattern and translates
-// field names to CLI flag names for user-facing output.
+// Delegates to agent.ValidateScopePattern and translates field names to CLI flag
+// names: "directory_pattern" → "--directory-pattern", "invalid scope" → "invalid --scope".
 func validateScopeFlags(scope, pattern string) error {
 	err := agent.ValidateScopePattern(scope, pattern)
 	if err == nil {
 		return nil
 	}
-	return errors.New(strings.ReplaceAll(err.Error(), "directory_pattern", "--directory-pattern"))
+	msg := strings.ReplaceAll(err.Error(), "directory_pattern", "--directory-pattern")
+	msg = strings.ReplaceAll(msg, "invalid scope ", "invalid --scope ")
+	return errors.New(msg)
 }
 
 // findEditorCommand returns the editor command and args.
@@ -891,7 +893,11 @@ Examples:
 		conflicts := agent.CheckInstructionConflicts(existing, validIncoming)
 
 		if dryRun {
-			fmt.Printf("Dry-run: would import %d instruction(s).\n", len(validIncoming))
+			wouldImport := len(validIncoming)
+			if !merge {
+				wouldImport -= len(conflicts)
+			}
+			fmt.Printf("Dry-run: would import %d instruction(s).\n", wouldImport)
 			if len(invalidIncoming) > 0 {
 				fmt.Println("Invalid (would be skipped):")
 				for _, e := range invalidIncoming {
