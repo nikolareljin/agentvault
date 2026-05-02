@@ -325,7 +325,7 @@ func TestImportData(t *testing.T) {
 		t.Errorf("imported = %d, want 1", imported)
 	}
 	if len(skippedAgents) != 1 || skippedAgents[0] != "imp1" {
-		t.Errorf("skipped = %v, want [imp1]", skippedAgents)
+		t.Errorf("skippedAgents = %v, want [imp1]", skippedAgents)
 	}
 
 	// verify the import
