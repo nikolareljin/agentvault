@@ -90,6 +90,18 @@ func TestResolveEffectiveInstructions_wildcardPattern(t *testing.T) {
 	}
 }
 
+func TestResolveEffectiveInstructions_directoryMatchesSubdir(t *testing.T) {
+	instructions := []InstructionFile{
+		{Name: "agents", Content: "global", Scope: InstructionScopeGlobal},
+		{Name: "agents", Content: "repo-root", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/Projects/myrepo"},
+	}
+	// workDir is a subdirectory of the pattern — should still match.
+	result := ResolveEffectiveInstructions(instructions, "/home/user/Projects/myrepo/src/pkg")
+	if len(result) != 1 || result[0].Content != "repo-root" {
+		t.Errorf("expected directory instruction to apply in subdirectory, got %+v", result)
+	}
+}
+
 func TestCheckInstructionConflicts_sameScope(t *testing.T) {
 	existing := []InstructionFile{
 		{Name: "agents", Scope: InstructionScopeGlobal, Content: "old"},

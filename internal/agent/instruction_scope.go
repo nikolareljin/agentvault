@@ -40,37 +40,43 @@ func scopeRank(scope string) int {
 	}
 }
 
-// matchesDirectory reports whether pattern matches workDir.
-// Tries an exact filepath.Match first. When the pattern contains forward
-// slashes (common in exported patterns), both sides are normalized to forward
-// slashes via filepath.ToSlash so matching works correctly on Windows.
-// For patterns without any path separator, falls back to matching the base
-// name so "projectname" works without full anchoring.
+// matchesDirectory reports whether pattern applies to workDir or any of its
+// ancestors. This allows a directory-scoped instruction to apply anywhere
+// inside a matched root (e.g. pattern "/repo" matches "/repo/src/pkg").
+//
+// When the pattern contains forward slashes, both sides are normalized to
+// forward slashes and path.Match is used for consistent cross-platform
+// behavior. Separator-free patterns match against the base name of the
+// original workDir only (no ancestor walk), so "myrepo" still works without
+// full path anchoring.
 // Returns false on error or when either argument is empty.
 func matchesDirectory(pattern, workDir string) bool {
 	if pattern == "" || workDir == "" {
 		return false
 	}
-	// When the pattern contains forward slashes, normalize both to slashes and
-	// use path.Match (which always treats '/' as separator) for consistent
-	// cross-platform behavior. Otherwise use filepath.Match.
-	if strings.ContainsRune(pattern, '/') {
+	hasSep := strings.ContainsRune(pattern, '/') || strings.ContainsRune(pattern, filepath.Separator)
+	if hasSep {
+		// Walk workDir and each ancestor upward.
 		p := filepath.ToSlash(pattern)
-		w := filepath.ToSlash(workDir)
-		if ok, err := path.Match(p, w); err == nil && ok {
-			return true
+		dir := workDir
+		for {
+			if ok, err := path.Match(p, filepath.ToSlash(dir)); err == nil && ok {
+				return true
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
 		}
-	} else {
-		if ok, err := filepath.Match(pattern, workDir); err == nil && ok {
-			return true
-		}
+		return false
 	}
-	// Separator-free patterns match against the base name.
-	if !strings.ContainsRune(pattern, filepath.Separator) && !strings.ContainsRune(pattern, '/') {
-		ok, _ := filepath.Match(pattern, filepath.Base(workDir))
-		return ok
+	// Separator-free pattern: exact match first, then base-name fallback.
+	if ok, err := filepath.Match(pattern, workDir); err == nil && ok {
+		return true
 	}
-	return false
+	ok, _ := filepath.Match(pattern, filepath.Base(workDir))
+	return ok
 }
 
 // ResolveEffectiveInstructions merges a flat instruction list using scope precedence:

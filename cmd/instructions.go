@@ -960,6 +960,11 @@ func marshalInstructions(instructions []agent.InstructionFile, format string, ar
 			format = "yaml"
 		}
 	}
+	switch format {
+	case "", "json", "yaml":
+	default:
+		return nil, fmt.Errorf("unknown format %q; use json or yaml", format)
+	}
 	if format == "yaml" {
 		return marshalYAML(instructions)
 	}
@@ -967,6 +972,11 @@ func marshalInstructions(instructions []agent.InstructionFile, format string, ar
 }
 
 func unmarshalInstructions(data []byte, format, filename string) ([]agent.InstructionFile, error) {
+	switch format {
+	case "", "json", "yaml":
+	default:
+		return nil, fmt.Errorf("unknown format %q; use json or yaml", format)
+	}
 	if format == "" {
 		ext := strings.ToLower(filepath.Ext(filename))
 		if ext == ".yaml" || ext == ".yml" {
