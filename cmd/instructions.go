@@ -685,10 +685,11 @@ Examples:
 
 		scope, _ := cmd.Flags().GetString("scope")
 		pattern, _ := cmd.Flags().GetString("directory-pattern")
-		if len(args) > 0 {
-			if err := validateScopeFlags(scope, pattern); err != nil {
-				return err
-			}
+		if err := validateScopeFlags(scope, pattern); err != nil {
+			return err
+		}
+		if len(args) == 0 && (scope != "" || pattern != "") {
+			return fmt.Errorf("--scope and --directory-pattern require an instruction name")
 		}
 		var toScan []agent.InstructionFile
 		if len(args) > 0 {
@@ -747,9 +748,11 @@ Examples:
 		}
 		dir, _ := cmd.Flags().GetString("dir")
 		if dir == "" {
-			if cwd, err := os.Getwd(); err == nil {
-				dir = cwd
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("get current directory: %w", err)
 			}
+			dir = cwd
 		} else if abs, err := filepath.Abs(dir); err == nil {
 			dir = abs
 		}
