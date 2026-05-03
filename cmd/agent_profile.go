@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/spf13/cobra"
 )
 
@@ -112,9 +111,6 @@ Examples:
 				schemaVersion, agentProfileSchemaVersion)
 		}
 
-		if err := agent.ValidateProviderMeta(a.Provider, a.Backend, a.ProviderMeta); err != nil {
-			return fmt.Errorf("invalid provider_meta: %w", err)
-		}
 		if err := a.Validate(); err != nil {
 			return fmt.Errorf("invalid agent profile: %w", err)
 		}
