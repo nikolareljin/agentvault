@@ -1260,6 +1260,15 @@ func (m *model) handleEdit() (tea.Model, tea.Cmd) {
 func (m *model) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd) {
 	defer os.Remove(msg.tmpPath)
 
+	if msg.key != m.editingInst || msg.tmpPath != m.editTmpPath {
+		m.setStatus(fmt.Sprintf("Ignoring stale editor result for %q", msg.name), true)
+		return m, nil
+	}
+	defer func() {
+		m.editingInst = ""
+		m.editTmpPath = ""
+	}()
+
 	if msg.err != nil {
 		m.setStatus(fmt.Sprintf("Editor error: %v", msg.err), true)
 		return m, nil

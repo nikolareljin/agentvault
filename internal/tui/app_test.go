@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -278,6 +279,44 @@ func TestApplyStartTarget(t *testing.T) {
 		if m.mode != tc.mode {
 			t.Fatalf("target %q mode = %v, want %v", tc.target, m.mode, tc.mode)
 		}
+	}
+}
+
+func TestHandleEditorFinishedIgnoresStaleResult(t *testing.T) {
+	v := testVault(t)
+	inst := agent.InstructionFile{Name: "agents", Filename: "AGENTS.md", Content: "original"}
+	if err := v.SetInstruction(inst); err != nil {
+		t.Fatalf("SetInstruction() error = %v", err)
+	}
+
+	tmpPath := filepath.Join(t.TempDir(), "edit.md")
+	if err := os.WriteFile(tmpPath, []byte("stale edit"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	m := initialModel(v)
+	m.editingInst = "active-edit"
+	m.editTmpPath = filepath.Join(t.TempDir(), "active.md")
+
+	updated, _ := m.handleEditorFinished(editorFinishedMsg{
+		tmpPath: tmpPath,
+		name:    inst.Name,
+		key:     agent.InstructionKey(inst),
+	})
+	gotModel := updated.(*model)
+	if gotModel.editingInst != "active-edit" || gotModel.editTmpPath == "" {
+		t.Fatalf("active editor state was cleared by stale result")
+	}
+
+	got, ok := v.GetInstruction("agents")
+	if !ok {
+		t.Fatal("GetInstruction() not found")
+	}
+	if got.Content != "original" {
+		t.Fatalf("stale editor result changed content to %q", got.Content)
+	}
+	if !gotModel.statusIsError || !strings.Contains(gotModel.statusMsg, "Ignoring stale editor result") {
+		t.Fatalf("status = (%v, %q), want stale editor error", gotModel.statusIsError, gotModel.statusMsg)
 	}
 }
 
