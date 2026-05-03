@@ -12,6 +12,9 @@ import (
 // combination is invalid. This is the single source of truth for scope
 // validation logic; callers may wrap or translate the error for their context.
 func ValidateScopePattern(scope, pattern string) error {
+	if strings.ContainsRune(scope, 0) || strings.ContainsRune(pattern, 0) {
+		return fmt.Errorf("scope and directory_pattern must not contain null bytes")
+	}
 	switch scope {
 	case "", InstructionScopeGlobal, InstructionScopeLocal:
 		if pattern != "" {
@@ -33,6 +36,9 @@ func ValidateScopePattern(scope, pattern string) error {
 // ValidateInstructionScope returns an error if the scope/directory_pattern
 // combination for inst is invalid.
 func ValidateInstructionScope(inst InstructionFile) error {
+	if strings.ContainsRune(inst.Name, 0) {
+		return fmt.Errorf("instruction name must not contain null bytes")
+	}
 	if err := ValidateScopePattern(inst.Scope, inst.DirectoryPattern); err != nil {
 		return fmt.Errorf("instruction %q: %w", inst.Name, err)
 	}

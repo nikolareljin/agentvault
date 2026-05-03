@@ -70,7 +70,10 @@ func ValidateProviderMeta(provider Provider, backend string, meta *AgentProvider
 	return nil
 }
 
-// DefaultProviderMeta returns sensible defaults for a provider/backend pair.
+// DefaultProviderMeta returns a partial starting-point meta for a provider/backend pair.
+// For providers that require additional fields before ValidateProviderMeta will pass
+// (Bedrock/Claude-bedrock need BedrockRegion for IAM; Copilot needs CopilotOrg for OAuth),
+// the caller must supply those fields after calling this function.
 // Returns nil for providers with no required metadata.
 func DefaultProviderMeta(provider Provider, backend string) *AgentProviderMeta {
 	switch provider {

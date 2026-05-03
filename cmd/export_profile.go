@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -48,26 +47,24 @@ func unmarshalAgentProfile(data []byte, format string) (agent.Agent, string, err
 	default:
 		return agent.Agent{}, "", fmt.Errorf("unknown format %q; use json or yaml", format)
 	}
-	if format == "" {
-		trimmed := bytes.TrimSpace(data)
-		if len(trimmed) > 0 && trimmed[0] == '{' {
-			format = "json"
-		} else {
-			format = "yaml"
-		}
-	}
-
 	var export AgentProfileExport
 	var err error
-	if format == "yaml" {
-		export, err = unmarshalYAML[AgentProfileExport](data)
-	} else {
-		if err2 := json.Unmarshal(data, &export); err2 != nil {
-			err = fmt.Errorf("decoding profile JSON: %w", err2)
+	if format == "json" {
+		if err = json.Unmarshal(data, &export); err != nil {
+			return agent.Agent{}, "", fmt.Errorf("decoding profile JSON: %w", err)
 		}
-	}
-	if err != nil {
-		return agent.Agent{}, "", err
+	} else if format == "yaml" {
+		if export, err = unmarshalYAML[AgentProfileExport](data); err != nil {
+			return agent.Agent{}, "", err
+		}
+	} else {
+		// Autodetect: try JSON first; YAML flow-mappings also start with '{'
+		// so byte-sniffing is unreliable.
+		if err = json.Unmarshal(data, &export); err != nil {
+			if export, err = unmarshalYAML[AgentProfileExport](data); err != nil {
+				return agent.Agent{}, "", err
+			}
+		}
 	}
 	return export.Agent, export.SchemaVersion, nil
 }
