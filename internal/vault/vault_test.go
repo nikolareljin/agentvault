@@ -1075,9 +1075,15 @@ func TestSetInstructionAllowsMultipleScopes(t *testing.T) {
 	dir := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}
 	local := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "local", Scope: agent.InstructionScopeLocal}
 
-	_ = v.SetInstruction(global)
-	_ = v.SetInstruction(dir)
-	_ = v.SetInstruction(local)
+	if err := v.SetInstruction(global); err != nil {
+		t.Fatalf("SetInstruction(global) error = %v", err)
+	}
+	if err := v.SetInstruction(dir); err != nil {
+		t.Fatalf("SetInstruction(dir) error = %v", err)
+	}
+	if err := v.SetInstruction(local); err != nil {
+		t.Fatalf("SetInstruction(local) error = %v", err)
+	}
 
 	if got := len(v.ListInstructions()); got != 3 {
 		t.Errorf("ListInstructions() len = %d, want 3", got)
@@ -1089,8 +1095,12 @@ func TestGetInstructionPrefersGlobal(t *testing.T) {
 	v := New(path)
 	_ = v.Init("master")
 
-	_ = v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"})
-	_ = v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal})
+	if err := v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}); err != nil {
+		t.Fatalf("SetInstruction(dir) error = %v", err)
+	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}); err != nil {
+		t.Fatalf("SetInstruction(global) error = %v", err)
+	}
 
 	got, ok := v.GetInstruction("rules")
 	if !ok {
@@ -1106,8 +1116,12 @@ func TestRemoveInstructionPrefersGlobal(t *testing.T) {
 	v := New(path)
 	_ = v.Init("master")
 
-	_ = v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal})
-	_ = v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"})
+	if err := v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}); err != nil {
+		t.Fatalf("SetInstruction(global) error = %v", err)
+	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}); err != nil {
+		t.Fatalf("SetInstruction(dir) error = %v", err)
+	}
 
 	if err := v.RemoveInstruction("rules"); err != nil {
 		t.Fatalf("RemoveInstruction() error = %v", err)
@@ -1128,8 +1142,12 @@ func TestRemoveInstructionByKeyTargetsExact(t *testing.T) {
 
 	global := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}
 	dir := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}
-	_ = v.SetInstruction(global)
-	_ = v.SetInstruction(dir)
+	if err := v.SetInstruction(global); err != nil {
+		t.Fatalf("SetInstruction(global) error = %v", err)
+	}
+	if err := v.SetInstruction(dir); err != nil {
+		t.Fatalf("SetInstruction(dir) error = %v", err)
+	}
 
 	if err := v.RemoveInstructionByKey(agent.InstructionKey(dir)); err != nil {
 		t.Fatalf("RemoveInstructionByKey() error = %v", err)
@@ -1178,7 +1196,9 @@ func TestImportMergesInstructions(t *testing.T) {
 	// dst already has "agents" - should not be overwritten
 	_ = dst.SetInstruction(agent.InstructionFile{Name: "agents", Filename: "AGENTS.md", Content: "existing"})
 
-	_, _, _, _, _ = dst.ImportData(exportJSON)
+	if _, _, _, _, err := dst.ImportData(exportJSON); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
 
 	// "agents" should keep its existing content
 	got, _ := dst.GetInstruction("agents")

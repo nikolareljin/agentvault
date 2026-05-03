@@ -328,6 +328,10 @@ func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
 	if err := agent.ValidateInstructionScope(inst); err != nil {
 		return err
 	}
+	// Normalize "global" to "" so the field stays omitempty-friendly in exports.
+	if inst.Scope == agent.InstructionScopeGlobal {
+		inst.Scope = ""
+	}
 	key := agent.InstructionKey(inst)
 	for i, existing := range v.shared.Instructions {
 		if agent.InstructionKey(existing) == key {
