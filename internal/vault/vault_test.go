@@ -1066,6 +1066,83 @@ func TestRemoveInstructionNotFound(t *testing.T) {
 	}
 }
 
+func TestSetInstructionAllowsMultipleScopes(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	global := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}
+	dir := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}
+	local := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "local", Scope: agent.InstructionScopeLocal}
+
+	_ = v.SetInstruction(global)
+	_ = v.SetInstruction(dir)
+	_ = v.SetInstruction(local)
+
+	if got := len(v.ListInstructions()); got != 3 {
+		t.Errorf("ListInstructions() len = %d, want 3", got)
+	}
+}
+
+func TestGetInstructionPrefersGlobal(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	_ = v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"})
+	_ = v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal})
+
+	got, ok := v.GetInstruction("rules")
+	if !ok {
+		t.Fatal("GetInstruction() not found")
+	}
+	if got.Content != "global" {
+		t.Errorf("GetInstruction() content = %q, want %q", got.Content, "global")
+	}
+}
+
+func TestRemoveInstructionPrefersGlobal(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	_ = v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal})
+	_ = v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"})
+
+	if err := v.RemoveInstruction("rules"); err != nil {
+		t.Fatalf("RemoveInstruction() error = %v", err)
+	}
+	insts := v.ListInstructions()
+	if len(insts) != 1 {
+		t.Fatalf("after remove: len = %d, want 1", len(insts))
+	}
+	if insts[0].Content != "dir" {
+		t.Errorf("remaining instruction content = %q, want %q", insts[0].Content, "dir")
+	}
+}
+
+func TestRemoveInstructionByKeyTargetsExact(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	global := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}
+	dir := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}
+	_ = v.SetInstruction(global)
+	_ = v.SetInstruction(dir)
+
+	if err := v.RemoveInstructionByKey(agent.InstructionKey(dir)); err != nil {
+		t.Fatalf("RemoveInstructionByKey() error = %v", err)
+	}
+	insts := v.ListInstructions()
+	if len(insts) != 1 {
+		t.Fatalf("after remove: len = %d, want 1", len(insts))
+	}
+	if insts[0].Content != "global" {
+		t.Errorf("remaining instruction content = %q, want %q", insts[0].Content, "global")
+	}
+}
+
 func TestExportIncludesInstructions(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)
