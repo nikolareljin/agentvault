@@ -31,7 +31,7 @@ func ValidateProviderMeta(provider Provider, backend string, meta *AgentProvider
 			}
 		}
 		if !globalValid {
-			return fmt.Errorf("unknown auth_mode %q; valid: api_key, oauth, iam, token, none", meta.AuthMode)
+			return fmt.Errorf("unknown auth_mode %q; valid: %s", meta.AuthMode, strings.Join(validAuthModes, ", "))
 		}
 		// For Claude with Bedrock or Ollama backend, auth modes match those providers.
 		effectiveProvider := provider
