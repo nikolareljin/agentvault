@@ -102,6 +102,25 @@ func TestResolveEffectiveInstructions_directoryMatchesSubdir(t *testing.T) {
 	}
 }
 
+func TestValidateScopePattern_rejectsInvalidDirectoryGlob(t *testing.T) {
+	err := ValidateScopePattern(InstructionScopeDirectory, "/home/user/[broken")
+	if err == nil {
+		t.Fatal("expected invalid glob pattern to fail validation")
+	}
+}
+
+func TestValidateInstructionScope_rejectsInvalidDirectoryGlob(t *testing.T) {
+	inst := InstructionFile{
+		Name:             "agents",
+		Scope:            InstructionScopeDirectory,
+		DirectoryPattern: "/repo/[broken",
+	}
+	err := ValidateInstructionScope(inst)
+	if err == nil {
+		t.Fatal("expected invalid glob pattern to fail instruction validation")
+	}
+}
+
 func TestCheckInstructionConflicts_sameScope(t *testing.T) {
 	existing := []InstructionFile{
 		{Name: "agents", Scope: InstructionScopeGlobal, Content: "old"},
