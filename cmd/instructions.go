@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -1003,19 +1002,22 @@ func unmarshalInstructions(data []byte, format, filename string) ([]agent.Instru
 		ext := strings.ToLower(filepath.Ext(filename))
 		if ext == ".yaml" || ext == ".yml" {
 			format = "yaml"
-		} else {
-			trimmed := bytes.TrimSpace(data)
-			if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
-				format = "json"
-			} else {
-				format = "yaml"
-			}
+		} else if ext == ".json" {
+			format = "json"
 		}
 	}
 	if format == "yaml" {
 		return unmarshalYAML[[]agent.InstructionFile](data)
 	}
-	return unmarshalJSONSlice[agent.InstructionFile](data)
+	if format == "json" {
+		return unmarshalJSONSlice[agent.InstructionFile](data)
+	}
+	// Autodetect: try JSON first; YAML flow-style arrays also start with '['
+	// so byte-sniffing is unreliable.
+	if result, err := unmarshalJSONSlice[agent.InstructionFile](data); err == nil {
+		return result, nil
+	}
+	return unmarshalYAML[[]agent.InstructionFile](data)
 }
 
 func init() {
