@@ -74,7 +74,7 @@ func TestUnmarshalAgentProfile_AutodetectJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalAgentProfile error: %v", err)
 	}
-	// format="" → autodetect from first byte
+	// format="" tries JSON first, then falls back to YAML on parse failure.
 	got, _, err := unmarshalAgentProfile(data, "")
 	if err != nil {
 		t.Fatalf("unmarshalAgentProfile autodetect error: %v", err)
@@ -90,7 +90,7 @@ func TestUnmarshalAgentProfile_AutodetectYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalAgentProfile error: %v", err)
 	}
-	// format="" → first byte is not '{', so YAML
+	// format="" falls back to YAML when JSON parsing fails.
 	got, _, err := unmarshalAgentProfile(data, "")
 	if err != nil {
 		t.Fatalf("unmarshalAgentProfile autodetect YAML error: %v", err)
