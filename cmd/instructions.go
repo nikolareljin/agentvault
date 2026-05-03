@@ -733,12 +733,13 @@ var instPreviewCmd = &cobra.Command{
 	Use:   "preview [name]",
 	Short: "Show the effective instruction content after scope resolution",
 	Long: `Show which instruction wins for a given working directory after applying
-scope precedence (local > directory > global). Use --all to list all resolved
-instructions instead of a single named one.
+scope precedence (local > directory > global). Omit [name] or use --all to list
+all resolved instructions instead of a single named one.
 
 Examples:
   agentvault instructions preview agents
   agentvault instructions preview agents --dir /home/user/Projects/myrepo
+  agentvault instructions preview --dir /home/user/Projects/myrepo
   agentvault instructions preview --all --dir /home/user/Projects/myrepo`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
