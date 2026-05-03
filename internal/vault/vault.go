@@ -467,6 +467,9 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 		seenInst[agent.InstructionKey(inst)] = struct{}{}
 	}
 	for _, inst := range validIncoming {
+		if inst.Scope == agent.InstructionScopeGlobal {
+			inst.Scope = ""
+		}
 		key := agent.InstructionKey(inst)
 		if _, ok := seenInst[key]; !ok {
 			v.shared.Instructions = append(v.shared.Instructions, inst)
