@@ -325,6 +325,9 @@ func (v *Vault) GetInstruction(name string) (agent.InstructionFile, bool) {
 // Identity is the composite key (Name + Scope + DirectoryPattern), so global
 // and directory-scoped variants of the same name coexist.
 func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
+	if err := agent.ValidateInstructionScope(inst); err != nil {
+		return err
+	}
 	key := agent.InstructionKey(inst)
 	for i, existing := range v.shared.Instructions {
 		if agent.InstructionKey(existing) == key {
