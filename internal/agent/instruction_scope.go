@@ -27,6 +27,9 @@ func ValidateScopePattern(scope, pattern string) error {
 		if strings.HasPrefix(pattern, "..") {
 			return fmt.Errorf("directory_pattern must not begin with \"..\"")
 		}
+		if _, err := path.Match(filepath.ToSlash(pattern), ""); err != nil {
+			return fmt.Errorf("directory_pattern has invalid glob syntax: %w", err)
+		}
 	default:
 		return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
 	}
