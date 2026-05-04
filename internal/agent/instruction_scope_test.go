@@ -102,10 +102,36 @@ func TestResolveEffectiveInstructions_directoryMatchesSubdir(t *testing.T) {
 	}
 }
 
+func TestResolveEffectiveInstructions_relativeDirectoryPatternWithSeparator(t *testing.T) {
+	instructions := []InstructionFile{
+		{Name: "agents", Content: "global", Scope: InstructionScopeGlobal},
+		{Name: "agents", Content: "repo-subdir", Scope: InstructionScopeDirectory, DirectoryPattern: "myrepo/*"},
+	}
+	result := ResolveEffectiveInstructions(instructions, "/home/user/Projects/myrepo/src/pkg")
+	if len(result) != 1 || result[0].Content != "repo-subdir" {
+		t.Errorf("expected relative directory pattern to match absolute workDir suffix, got %+v", result)
+	}
+}
+
 func TestValidateScopePattern_rejectsInvalidDirectoryGlob(t *testing.T) {
 	err := ValidateScopePattern(InstructionScopeDirectory, "/home/user/[broken")
 	if err == nil {
 		t.Fatal("expected invalid glob pattern to fail validation")
+	}
+}
+
+func TestValidateScopePattern_allowsNonTraversalDotDotPrefix(t *testing.T) {
+	err := ValidateScopePattern(InstructionScopeDirectory, "..repo/*")
+	if err != nil {
+		t.Fatalf("expected non-traversal pattern to pass validation, got %v", err)
+	}
+}
+
+func TestValidateScopePattern_rejectsLeadingParentSegment(t *testing.T) {
+	for _, pattern := range []string{"..", "../repo/*"} {
+		if err := ValidateScopePattern(InstructionScopeDirectory, pattern); err == nil {
+			t.Fatalf("expected leading parent segment %q to fail validation", pattern)
+		}
 	}
 }
 

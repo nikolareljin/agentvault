@@ -24,10 +24,11 @@ func ValidateScopePattern(scope, pattern string) error {
 		if pattern == "" {
 			return fmt.Errorf("directory_pattern is required for directory scope")
 		}
-		if strings.HasPrefix(pattern, "..") {
+		normalizedPattern := filepath.ToSlash(pattern)
+		if normalizedPattern == ".." || strings.HasPrefix(normalizedPattern, "../") {
 			return fmt.Errorf("directory_pattern must not begin with \"..\"")
 		}
-		if _, err := path.Match(filepath.ToSlash(pattern), ""); err != nil {
+		if _, err := path.Match(normalizedPattern, ""); err != nil {
 			return fmt.Errorf("directory_pattern has invalid glob syntax: %w", err)
 		}
 	default:
@@ -87,9 +88,11 @@ func scopeRank(scope string) int {
 //
 // When the pattern contains forward slashes, both sides are normalized to
 // forward slashes and path.Match is used for consistent cross-platform
-// behavior. Separator-free patterns match against the base name of the
-// original workDir only (no ancestor walk), so "myrepo" still works without
-// full path anchoring.
+// behavior. Absolute patterns match against workDir and its ancestors.
+// Relative patterns with separators match against suffixes of workDir and its
+// ancestors, so "repo/*" can match "/home/user/repo/src". Separator-free
+// patterns match against the base name of the original workDir only (no
+// ancestor walk), so "myrepo" still works without full path anchoring.
 // Returns false on error or when either argument is empty.
 func matchesDirectory(pattern, workDir string) bool {
 	if pattern == "" || workDir == "" {
@@ -101,7 +104,11 @@ func matchesDirectory(pattern, workDir string) bool {
 		p := filepath.ToSlash(pattern)
 		dir := workDir
 		for {
-			if ok, err := path.Match(p, filepath.ToSlash(dir)); err == nil && ok {
+			dirSlash := filepath.ToSlash(dir)
+			if ok, err := path.Match(p, dirSlash); err == nil && ok {
+				return true
+			}
+			if !path.IsAbs(p) && matchesDirectorySuffix(p, strings.TrimPrefix(dirSlash, "/")) {
 				return true
 			}
 			parent := filepath.Dir(dir)
@@ -118,6 +125,20 @@ func matchesDirectory(pattern, workDir string) bool {
 	}
 	ok, _ := filepath.Match(pattern, filepath.Base(workDir))
 	return ok
+}
+
+func matchesDirectorySuffix(pattern, workDir string) bool {
+	for candidate := workDir; candidate != ""; {
+		if ok, err := path.Match(pattern, candidate); err == nil && ok {
+			return true
+		}
+		idx := strings.IndexRune(candidate, '/')
+		if idx < 0 {
+			break
+		}
+		candidate = candidate[idx+1:]
+	}
+	return false
 }
 
 // ResolveEffectiveInstructions merges a flat instruction list using scope precedence:
