@@ -24,7 +24,7 @@ func ValidateScopePattern(scope, pattern string) error {
 		if pattern == "" {
 			return fmt.Errorf("directory_pattern is required for directory scope")
 		}
-		normalizedPattern := filepath.ToSlash(pattern)
+		normalizedPattern := NormalizeDirectoryPattern(pattern)
 		if normalizedPattern == ".." || strings.HasPrefix(normalizedPattern, "../") {
 			return fmt.Errorf("directory_pattern must not begin with \"..\"")
 		}
@@ -35,6 +35,12 @@ func ValidateScopePattern(scope, pattern string) error {
 		return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
 	}
 	return nil
+}
+
+// NormalizeDirectoryPattern returns a stable slash form for directory-scope
+// identity and matching, regardless of the platform or CLI input style.
+func NormalizeDirectoryPattern(pattern string) string {
+	return strings.ReplaceAll(filepath.ToSlash(pattern), "\\", "/")
 }
 
 // ValidateInstructionScope returns an error if the scope/directory_pattern
@@ -66,7 +72,11 @@ func InstructionKey(inst InstructionFile) string {
 	if scope == "" {
 		scope = InstructionScopeGlobal
 	}
-	return inst.Name + "\x00" + scope + "\x00" + inst.DirectoryPattern
+	pattern := inst.DirectoryPattern
+	if scope == InstructionScopeDirectory {
+		pattern = NormalizeDirectoryPattern(pattern)
+	}
+	return inst.Name + "\x00" + scope + "\x00" + pattern
 }
 
 // scopeRank returns the precedence level for a scope string.
@@ -101,7 +111,7 @@ func matchesDirectory(pattern, workDir string) bool {
 	hasSep := strings.ContainsRune(pattern, '/') || strings.ContainsRune(pattern, filepath.Separator)
 	if hasSep {
 		// Walk workDir and each ancestor upward.
-		p := filepath.ToSlash(pattern)
+		p := NormalizeDirectoryPattern(pattern)
 		dir := workDir
 		for {
 			dirSlash := filepath.ToSlash(dir)
