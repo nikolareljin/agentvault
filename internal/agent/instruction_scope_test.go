@@ -135,6 +135,23 @@ func TestValidateScopePattern_rejectsLeadingParentSegment(t *testing.T) {
 	}
 }
 
+func TestInstructionKey_normalizesDirectoryPatternSeparators(t *testing.T) {
+	backslash := InstructionFile{
+		Name:             "agents",
+		Scope:            InstructionScopeDirectory,
+		DirectoryPattern: `C:\repo\*`,
+	}
+	forwardSlash := InstructionFile{
+		Name:             "agents",
+		Scope:            InstructionScopeDirectory,
+		DirectoryPattern: "C:/repo/*",
+	}
+
+	if InstructionKey(backslash) != InstructionKey(forwardSlash) {
+		t.Fatalf("expected equivalent directory patterns to share an instruction key")
+	}
+}
+
 func TestValidateInstructionScope_rejectsInvalidDirectoryGlob(t *testing.T) {
 	inst := InstructionFile{
 		Name:             "agents",

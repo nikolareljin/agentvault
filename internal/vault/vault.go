@@ -332,6 +332,9 @@ func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
 	if inst.Scope == agent.InstructionScopeGlobal {
 		inst.Scope = ""
 	}
+	if inst.Scope == agent.InstructionScopeDirectory {
+		inst.DirectoryPattern = agent.NormalizeDirectoryPattern(inst.DirectoryPattern)
+	}
 	key := agent.InstructionKey(inst)
 	for i, existing := range v.shared.Instructions {
 		if agent.InstructionKey(existing) == key {

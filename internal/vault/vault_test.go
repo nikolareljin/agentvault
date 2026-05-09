@@ -1161,6 +1161,54 @@ func TestRemoveInstructionByKeyTargetsExact(t *testing.T) {
 	}
 }
 
+func TestSetInstructionNormalizesDirectoryPatternIdentity(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	first := agent.InstructionFile{
+		Name:             "rules",
+		Filename:         "RULES.md",
+		Content:          "first",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: `C:\repo\*`,
+	}
+	second := agent.InstructionFile{
+		Name:             "rules",
+		Filename:         "RULES.md",
+		Content:          "second",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: "C:/repo/*",
+	}
+	if err := v.SetInstruction(first); err != nil {
+		t.Fatalf("SetInstruction(first) error = %v", err)
+	}
+	if err := v.SetInstruction(second); err != nil {
+		t.Fatalf("SetInstruction(second) error = %v", err)
+	}
+
+	insts := v.ListInstructions()
+	if len(insts) != 1 {
+		t.Fatalf("ListInstructions() len = %d, want 1", len(insts))
+	}
+	if insts[0].Content != "second" {
+		t.Errorf("stored instruction content = %q, want %q", insts[0].Content, "second")
+	}
+	if insts[0].DirectoryPattern != "C:/repo/*" {
+		t.Errorf("DirectoryPattern = %q, want normalized slash pattern", insts[0].DirectoryPattern)
+	}
+
+	if _, ok := v.GetInstructionByKey(agent.InstructionKey(first)); !ok {
+		t.Fatal("GetInstructionByKey() should find stored instruction with equivalent backslash key")
+	}
+	if err := v.RemoveInstructionByKey(agent.InstructionKey(first)); err != nil {
+		t.Fatalf("RemoveInstructionByKey() with equivalent key error = %v", err)
+	}
+	if got := len(v.ListInstructions()); got != 0 {
+		t.Fatalf("after remove: len = %d, want 0", got)
+	}
+}
+
 func TestExportIncludesInstructions(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)
