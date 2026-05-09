@@ -155,3 +155,38 @@ func TestGetExt(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareAgentProfileMergePreservesCreatedAtAndBumpsUpdatedAt(t *testing.T) {
+	existing := testAgent()
+	existing.APIKey = "existing-key"
+	imported := testAgent()
+	imported.APIKey = ""
+	imported.CreatedAt = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	imported.UpdatedAt = time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 5, 9, 15, 30, 0, 0, time.UTC)
+
+	got := prepareAgentProfileMerge(existing, imported, now)
+
+	if !got.CreatedAt.Equal(existing.CreatedAt) {
+		t.Fatalf("CreatedAt = %v, want existing %v", got.CreatedAt, existing.CreatedAt)
+	}
+	if !got.UpdatedAt.Equal(now) {
+		t.Fatalf("UpdatedAt = %v, want %v", got.UpdatedAt, now)
+	}
+	if got.APIKey != "existing-key" {
+		t.Fatalf("APIKey = %q, want existing key", got.APIKey)
+	}
+}
+
+func TestPrepareAgentProfileMergeKeepsImportedAPIKey(t *testing.T) {
+	existing := testAgent()
+	existing.APIKey = "existing-key"
+	imported := testAgent()
+	imported.APIKey = "imported-key"
+
+	got := prepareAgentProfileMerge(existing, imported, time.Now())
+
+	if got.APIKey != "imported-key" {
+		t.Fatalf("APIKey = %q, want imported key", got.APIKey)
+	}
+}

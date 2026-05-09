@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/spf13/cobra"
 )
 
@@ -117,7 +119,7 @@ Examples:
 
 		merge, _ := cmd.Flags().GetBool("merge")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
-		_, exists := v.Get(a.Name)
+		existing, exists := v.Get(a.Name)
 
 		if dryRun {
 			if exists && !merge {
@@ -134,13 +136,7 @@ Examples:
 			if !merge {
 				return fmt.Errorf("agent %q already exists; use --merge to update", a.Name)
 			}
-			// Preserve the existing API key when the imported profile omits it
-			// (i.e. was exported without --include-key).
-			if a.APIKey == "" {
-				if existing, ok := v.Get(a.Name); ok {
-					a.APIKey = existing.APIKey
-				}
-			}
+			a = prepareAgentProfileMerge(existing, a, time.Now())
 			if err := v.Update(a); err != nil {
 				return fmt.Errorf("updating agent: %w", err)
 			}
@@ -153,6 +149,15 @@ Examples:
 		}
 		return nil
 	},
+}
+
+func prepareAgentProfileMerge(existing, imported agent.Agent, now time.Time) agent.Agent {
+	imported.CreatedAt = existing.CreatedAt
+	imported.UpdatedAt = now
+	if imported.APIKey == "" {
+		imported.APIKey = existing.APIKey
+	}
+	return imported
 }
 
 // getExt returns the file extension including the dot.
