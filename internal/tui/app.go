@@ -1152,7 +1152,7 @@ func (m *model) handleDelete() (tea.Model, tea.Cmd) {
 	case tabInstructions:
 		if m.mode == viewInstructions && len(m.instructions) > 0 && m.instCursor < len(m.instructions) {
 			inst := m.instructions[m.instCursor]
-			m.deleteTarget = inst.Name
+			m.deleteTarget = instructionDisplayName(inst)
 			m.deleteInstKey = agent.InstructionKey(inst)
 			m.deleteType = "instruction"
 			m.prevMode = m.mode
@@ -1167,6 +1167,18 @@ func (m *model) handleDelete() (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func instructionDisplayName(inst agent.InstructionFile) string {
+	scope := inst.Scope
+	if scope == "" {
+		scope = agent.InstructionScopeGlobal
+	}
+	label := fmt.Sprintf("%s [scope: %s", inst.Name, scope)
+	if inst.DirectoryPattern != "" {
+		label += fmt.Sprintf(", pattern: %s", inst.DirectoryPattern)
+	}
+	return label + "]"
 }
 
 // handleConfirmDelete processes Y/N on the delete confirmation screen.

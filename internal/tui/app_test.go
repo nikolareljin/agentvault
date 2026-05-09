@@ -320,6 +320,37 @@ func TestHandleEditorFinishedIgnoresStaleResult(t *testing.T) {
 	}
 }
 
+func TestInstructionDeleteConfirmationDisambiguatesScope(t *testing.T) {
+	v := testVault(t)
+	inst := agent.InstructionFile{
+		Name:             "rules",
+		Filename:         "RULES.md",
+		Content:          "dir rules",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: "/repo/*",
+	}
+	if err := v.SetInstruction(inst); err != nil {
+		t.Fatalf("SetInstruction() error = %v", err)
+	}
+
+	m := initialModel(v)
+	m.activeTab = tabInstructions
+	m.mode = viewInstructions
+	updated, _ := m.handleDelete()
+	got := *(updated.(*model))
+
+	if got.deleteTarget != "rules [scope: directory, pattern: /repo/*]" {
+		t.Fatalf("deleteTarget = %q", got.deleteTarget)
+	}
+	if got.deleteInstKey != agent.InstructionKey(inst) {
+		t.Fatalf("deleteInstKey = %q, want %q", got.deleteInstKey, agent.InstructionKey(inst))
+	}
+	view := got.renderConfirmDelete()
+	if !strings.Contains(view, "scope: directory") || !strings.Contains(view, "pattern: /repo/*") {
+		t.Fatalf("confirmation view does not disambiguate scoped instruction: %s", view)
+	}
+}
+
 func TestExecuteGatewayPrompt_BedrockReturnsExplicitError(t *testing.T) {
 	a := agent.Agent{
 		Name:     "claude-bedrock",
