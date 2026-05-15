@@ -328,13 +328,7 @@ func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
 	if err := agent.ValidateInstructionScope(inst); err != nil {
 		return err
 	}
-	// Normalize "global" to "" so the field stays omitempty-friendly in exports.
-	if inst.Scope == agent.InstructionScopeGlobal {
-		inst.Scope = ""
-	}
-	if inst.Scope == agent.InstructionScopeDirectory {
-		inst.DirectoryPattern = agent.NormalizeDirectoryPattern(inst.DirectoryPattern)
-	}
+	inst = normalizeInstructionForStorage(inst)
 	key := agent.InstructionKey(inst)
 	for i, existing := range v.shared.Instructions {
 		if agent.InstructionKey(existing) == key {
@@ -344,6 +338,17 @@ func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
 	}
 	v.shared.Instructions = append(v.shared.Instructions, inst)
 	return v.Save()
+}
+
+func normalizeInstructionForStorage(inst agent.InstructionFile) agent.InstructionFile {
+	// Normalize "global" to "" so the field stays omitempty-friendly in exports.
+	if inst.Scope == agent.InstructionScopeGlobal {
+		inst.Scope = ""
+	}
+	if inst.Scope == agent.InstructionScopeDirectory {
+		inst.DirectoryPattern = agent.NormalizeDirectoryPattern(inst.DirectoryPattern)
+	}
+	return inst
 }
 
 // GetInstructionByKey returns the instruction with the given composite key
@@ -447,7 +452,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 			invalidInstructions = append(invalidInstructions, err.Error())
 			continue
 		}
-		validIncoming = append(validIncoming, inst)
+		validIncoming = append(validIncoming, normalizeInstructionForStorage(inst))
 	}
 	conflicts = agent.CheckInstructionConflicts(v.shared.Instructions, validIncoming)
 	// merge shared system prompt (don't overwrite existing)
@@ -470,9 +475,6 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 		seenInst[agent.InstructionKey(inst)] = struct{}{}
 	}
 	for _, inst := range validIncoming {
-		if inst.Scope == agent.InstructionScopeGlobal {
-			inst.Scope = ""
-		}
 		key := agent.InstructionKey(inst)
 		if _, ok := seenInst[key]; !ok {
 			v.shared.Instructions = append(v.shared.Instructions, inst)
