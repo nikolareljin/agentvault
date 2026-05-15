@@ -294,20 +294,44 @@ func (v *Vault) Save() error {
 	return v.write()
 }
 
-// GetInstruction returns a stored instruction file by name.
+// GetInstruction returns a stored instruction file by name. When multiple
+// scoped variants exist, the global-scope variant is returned first; otherwise
+// the first match is returned. Use GetInstructionByKey for an exact lookup.
 func (v *Vault) GetInstruction(name string) (agent.InstructionFile, bool) {
-	for _, inst := range v.shared.Instructions {
-		if inst.Name == name {
-			return inst, true
+	var first *agent.InstructionFile
+	for i := range v.shared.Instructions {
+		inst := &v.shared.Instructions[i]
+		if inst.Name != name {
+			continue
 		}
+		if first == nil {
+			first = inst
+		}
+		scope := inst.Scope
+		if scope == "" {
+			scope = agent.InstructionScopeGlobal
+		}
+		if scope == agent.InstructionScopeGlobal {
+			return *inst, true
+		}
+	}
+	if first != nil {
+		return *first, true
 	}
 	return agent.InstructionFile{}, false
 }
 
 // SetInstruction stores or updates an instruction file in the vault.
+// Identity is the composite key (Name + Scope + DirectoryPattern), so global
+// and directory-scoped variants of the same name coexist.
 func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
+	if err := agent.ValidateInstructionScope(inst); err != nil {
+		return err
+	}
+	inst = normalizeInstructionForStorage(inst)
+	key := agent.InstructionKey(inst)
 	for i, existing := range v.shared.Instructions {
-		if existing.Name == inst.Name {
+		if agent.InstructionKey(existing) == key {
 			v.shared.Instructions[i] = inst
 			return v.Save()
 		}
@@ -316,19 +340,81 @@ func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
 	return v.Save()
 }
 
-// RemoveInstruction removes a stored instruction file by name.
-func (v *Vault) RemoveInstruction(name string) error {
-	idx := -1
-	for i, inst := range v.shared.Instructions {
-		if inst.Name == name {
-			idx = i
-			break
+func normalizeInstructionForStorage(inst agent.InstructionFile) agent.InstructionFile {
+	// Normalize "global" to "" so the field stays omitempty-friendly in exports.
+	if inst.Scope == agent.InstructionScopeGlobal {
+		inst.Scope = ""
+	}
+	if inst.Scope == agent.InstructionScopeDirectory {
+		inst.DirectoryPattern = agent.NormalizeDirectoryPattern(inst.DirectoryPattern)
+	}
+	return inst
+}
+
+// GetInstructionByKey returns the instruction with the given composite key
+// (Name + Scope + DirectoryPattern). Use this when multiple scoped variants
+// of the same name may coexist and the caller knows the exact variant.
+func (v *Vault) GetInstructionByKey(key string) (agent.InstructionFile, bool) {
+	for _, inst := range v.shared.Instructions {
+		if agent.InstructionKey(inst) == key {
+			return inst, true
 		}
 	}
-	if idx == -1 {
+	return agent.InstructionFile{}, false
+}
+
+// RemoveInstructionByKey removes the instruction with the given composite key.
+// Use this when multiple scoped variants of the same name may coexist.
+func (v *Vault) RemoveInstructionByKey(key string) error {
+	for i, inst := range v.shared.Instructions {
+		if agent.InstructionKey(inst) == key {
+			v.shared.Instructions = append(v.shared.Instructions[:i], v.shared.Instructions[i+1:]...)
+			return v.Save()
+		}
+	}
+	parts := strings.SplitN(key, "\x00", 3)
+	name, scope, pattern := "", "", ""
+	if len(parts) > 0 {
+		name = parts[0]
+	}
+	if len(parts) > 1 {
+		scope = parts[1]
+	}
+	if len(parts) > 2 {
+		pattern = parts[2]
+	}
+	if pattern != "" {
+		return fmt.Errorf("instruction not found: name=%q scope=%q pattern=%q", name, scope, pattern)
+	}
+	return fmt.Errorf("instruction not found: name=%q scope=%q", name, scope)
+}
+
+// RemoveInstruction removes a stored instruction file by name.
+// When multiple scoped variants exist, prefers the global-scope variant
+// (matching GetInstruction behavior) so that show and remove operate on
+// the same variant when --scope is omitted.
+func (v *Vault) RemoveInstruction(name string) error {
+	first := -1
+	for i, inst := range v.shared.Instructions {
+		if inst.Name != name {
+			continue
+		}
+		scope := inst.Scope
+		if scope == "" {
+			scope = agent.InstructionScopeGlobal
+		}
+		if scope == agent.InstructionScopeGlobal {
+			v.shared.Instructions = append(v.shared.Instructions[:i], v.shared.Instructions[i+1:]...)
+			return v.Save()
+		}
+		if first == -1 {
+			first = i
+		}
+	}
+	if first == -1 {
 		return fmt.Errorf("instruction %q not found", name)
 	}
-	v.shared.Instructions = append(v.shared.Instructions[:idx], v.shared.Instructions[idx+1:]...)
+	v.shared.Instructions = append(v.shared.Instructions[:first], v.shared.Instructions[first+1:]...)
 	return v.Save()
 }
 
@@ -344,26 +430,39 @@ func (v *Vault) ExportData() ([]byte, error) {
 }
 
 // ImportData merges agents plus shared/provider/session config from JSON into this vault.
-// Agents with duplicate names are skipped. Shared config fields (system prompt,
-// MCP servers, instructions, rules, roles, and prompt sessions) are merged using a
-// "don't overwrite existing" strategy. Provider configs and sessions are merged
-// with the same non-destructive behavior, so existing vault values take
-// precedence over imported values to prevent accidental data loss.
-func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err error) {
+// Agents with duplicate names are reported in skippedAgents. Instructions that fail
+// scope validation are reported in invalidInstructions. Shared config fields (system
+// prompt, MCP servers, instructions, rules, roles, and prompt sessions) are merged using
+// a "don't overwrite existing" strategy. Provider configs and sessions are merged with
+// the same non-destructive behavior, so existing vault values take precedence over
+// imported values to prevent accidental data loss.
+// conflicts reports instruction Name+Scope+DirectoryPattern collisions where existing wins;
+// same name at different scopes (or same scope with different directory patterns) coexist.
+func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, invalidInstructions []string, conflicts []agent.InstructionConflict, err error) {
 	var vd vaultData
 	if err := json.Unmarshal(data, &vd); err != nil {
-		return 0, nil, fmt.Errorf("decoding import data: %w", err)
+		return 0, nil, nil, nil, fmt.Errorf("decoding import data: %w", err)
 	}
 	importedParallelLimitDefined := sessionParallelLimitDefined(data) || vd.Sessions.ParallelLimitSet || vd.Sessions.ParallelLimit != 0
 	for _, a := range vd.Agents {
 		_, exists := v.Get(a.Name)
 		if exists {
-			skipped = append(skipped, a.Name)
+			skippedAgents = append(skippedAgents, a.Name)
 			continue
 		}
 		v.agents = append(v.agents, a)
 		imported++
 	}
+	// Filter invalid instructions first so conflicts are only reported for valid ones.
+	var validIncoming []agent.InstructionFile
+	for _, inst := range vd.Shared.Instructions {
+		if err := agent.ValidateInstructionScope(inst); err != nil {
+			invalidInstructions = append(invalidInstructions, err.Error())
+			continue
+		}
+		validIncoming = append(validIncoming, normalizeInstructionForStorage(inst))
+	}
+	conflicts = agent.CheckInstructionConflicts(v.shared.Instructions, validIncoming)
 	// merge shared system prompt (don't overwrite existing)
 	if vd.Shared.SystemPrompt != "" && v.shared.SystemPrompt == "" {
 		v.shared.SystemPrompt = vd.Shared.SystemPrompt
@@ -378,14 +477,16 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 			v.shared.MCPServers = append(v.shared.MCPServers, s)
 		}
 	}
-	// merge instructions (don't overwrite existing by name)
+	// merge instructions by composite key (Name + Scope + DirectoryPattern)
 	seenInst := make(map[string]struct{})
 	for _, inst := range v.shared.Instructions {
-		seenInst[inst.Name] = struct{}{}
+		seenInst[agent.InstructionKey(inst)] = struct{}{}
 	}
-	for _, inst := range vd.Shared.Instructions {
-		if _, ok := seenInst[inst.Name]; !ok {
+	for _, inst := range validIncoming {
+		key := agent.InstructionKey(inst)
+		if _, ok := seenInst[key]; !ok {
 			v.shared.Instructions = append(v.shared.Instructions, inst)
+			seenInst[key] = struct{}{}
 		}
 	}
 	// merge shared rules (don't overwrite existing by name)
@@ -488,7 +589,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skipped []string, err err
 		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
 		v.sessions.ParallelLimitSet = true
 	}
-	return imported, skipped, v.Save()
+	return imported, skippedAgents, invalidInstructions, conflicts, v.Save()
 }
 
 func promptSessionTimestamp(s agent.PromptSession) time.Time {

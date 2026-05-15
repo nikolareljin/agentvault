@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-04-30
+
+### Added
+- **Agent profile schema** (`ProviderMeta`): `Agent` now carries optional `provider_meta`
+  with auth mode, Bedrock region/ARN, Copilot org, Gemini project/location, AWS profile,
+  and Ollama keep-alive. All fields are `omitempty`; existing vaults are fully backward-compatible.
+  Closes #4.
+- **`agentvault agent export / import`**: single-agent round-trip portability via JSON or YAML.
+  Flags: `--format json|yaml`, `--include-key`, `--dry-run`, `--merge`. Schema version `1.0`
+  with full `ValidateProviderMeta` checks on import. Closes #4.
+- **`copilot` and `bedrock` providers**: recognized in `ValidProviders()` and
+  `ProviderInstructionMap` (`copilot` → `.github/copilot-instructions.md` + `AGENTS.md`;
+  `bedrock` → `AGENTS.md`).
+- **Instruction scopes**: `InstructionFile` gains `scope` (`global`|`directory`|`local`) and
+  `directory_pattern` (glob) fields. `global` is the default; all existing instructions
+  are unaffected. Scope precedence: local > directory > global. Closes #15.
+- **`agentvault instructions set --scope / --directory-pattern`**: store instructions at a
+  specific scope. Directory-scoped instructions also require `--directory-pattern <glob>`.
+- **`agentvault instructions preview [name]`**: show the effective merged instruction for a
+  working directory (`--dir <path>`, default cwd). Use `--all` to list all resolved
+  instructions. Reflects scope precedence. Closes #15.
+- **`agentvault instructions export [file]`**: export the full instruction hierarchy with scope
+  metadata as JSON or YAML. Filter by `--scope`.
+- **`agentvault instructions import [file]`**: import instructions with conflict reporting,
+  `--merge`, and `--dry-run`.
+- **Import conflict reporting**: `agentvault import` now prints an instruction conflict section
+  when incoming instructions collide by name at the same scope (existing wins).
+
+### Changed
+- `Vault.ImportData` returns `(imported int, skippedAgents []string, invalidInstructions []string, conflicts []agent.InstructionConflict, err error)`.
+- `agentvault instructions list` shows Scope and DirectoryPattern columns when any
+  stored instruction has a non-empty scope.
+- `agentvault sync to` resolves effective instructions per the current working directory
+  before generating content, so directory-scoped overrides take effect.
+- `agentvault sync preview` gains `--dir <path>` flag for testing scope resolution.
+- TUI instruction detail view shows Scope and DirectoryPattern when set.
+
 ## [0.10.0] - 2026-04-28
 
 ### Added
