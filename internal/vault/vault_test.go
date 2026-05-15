@@ -1161,6 +1161,26 @@ func TestRemoveInstructionByKeyTargetsExact(t *testing.T) {
 	}
 }
 
+func TestRemoveInstructionByKeyNotFoundReportsCompositeKey(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	key := agent.InstructionKey(agent.InstructionFile{
+		Name:             "rules",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: "/repo",
+	})
+	err := v.RemoveInstructionByKey(key)
+	if err == nil {
+		t.Fatal("RemoveInstructionByKey() error = nil")
+	}
+	want := `instruction not found: name="rules" scope="directory" pattern="/repo"`
+	if err.Error() != want {
+		t.Fatalf("RemoveInstructionByKey() error = %q, want %q", err.Error(), want)
+	}
+}
+
 func TestSetInstructionNormalizesDirectoryPatternIdentity(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)

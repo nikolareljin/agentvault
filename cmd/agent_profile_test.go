@@ -141,21 +141,6 @@ func TestMarshalUnmarshalInstructions_YAML(t *testing.T) {
 	}
 }
 
-func TestGetExt(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"profile.yaml", ".yaml"},
-		{"profile.yml", ".yml"},
-		{"profile.json", ".json"},
-		{"noext", ""},
-		{"/path/to/file.yaml", ".yaml"},
-	}
-	for _, tc := range cases {
-		if got := getExt(tc.in); got != tc.want {
-			t.Errorf("getExt(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 func TestPrepareAgentProfileMergePreservesCreatedAtAndBumpsUpdatedAt(t *testing.T) {
 	existing := testAgent()
 	existing.APIKey = "existing-key"
