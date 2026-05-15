@@ -113,6 +113,28 @@ func TestResolveEffectiveInstructions_relativeDirectoryPatternWithSeparator(t *t
 	}
 }
 
+func TestResolveEffectiveInstructions_prefersLongerDirectoryPatternBeforeLexicographicTieBreak(t *testing.T) {
+	instructions := []InstructionFile{
+		{Name: "agents", Content: "specific", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/Projects/myrepo"},
+		{Name: "agents", Content: "shorter", Scope: InstructionScopeDirectory, DirectoryPattern: "*/myrepo"},
+	}
+	result := ResolveEffectiveInstructions(instructions, "/home/user/Projects/myrepo")
+	if len(result) != 1 || result[0].Content != "specific" {
+		t.Errorf("expected longer matching directory pattern to win, got %+v", result)
+	}
+}
+
+func TestResolveEffectiveInstructions_usesLexicographicTieBreakOnlyForEqualLengthPatterns(t *testing.T) {
+	instructions := []InstructionFile{
+		{Name: "agents", Content: "question", Scope: InstructionScopeDirectory, DirectoryPattern: "/repo/?"},
+		{Name: "agents", Content: "star", Scope: InstructionScopeDirectory, DirectoryPattern: "/repo/*"},
+	}
+	result := ResolveEffectiveInstructions(instructions, "/repo/a")
+	if len(result) != 1 || result[0].Content != "star" {
+		t.Errorf("expected lexicographic tie-break for equal-length patterns, got %+v", result)
+	}
+}
+
 func TestValidateScopePattern_rejectsInvalidDirectoryGlob(t *testing.T) {
 	err := ValidateScopePattern(InstructionScopeDirectory, "/home/user/[broken")
 	if err == nil {
