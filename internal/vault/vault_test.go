@@ -1263,6 +1263,80 @@ func TestImportMergesInstructions(t *testing.T) {
 	}
 }
 
+func TestImportDataNormalizesInstructionScopeAndDirectoryPattern(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+	if err := v.SetInstruction(agent.InstructionFile{
+		Name:             "rules",
+		Filename:         "RULES.md",
+		Content:          "existing",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: "C:/repo/*",
+	}); err != nil {
+		t.Fatalf("SetInstruction() error = %v", err)
+	}
+
+	importJSON := `{
+		"shared": {
+			"instructions": [
+				{
+					"name": "rules",
+					"filename": "RULES.md",
+					"content": "incoming",
+					"scope": "directory",
+					"directory_pattern": "C:\\repo\\*"
+				},
+				{
+					"name": "agents",
+					"filename": "AGENTS.md",
+					"content": "global",
+					"scope": "global"
+				},
+				{
+					"name": "docs",
+					"filename": "DOCS.md",
+					"content": "dir",
+					"scope": "directory",
+					"directory_pattern": "C:\\repo\\docs"
+				}
+			]
+		}
+	}`
+
+	_, _, _, conflicts, err := v.ImportData([]byte(importJSON))
+	if err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("conflicts len = %d, want 1", len(conflicts))
+	}
+	if conflicts[0].Name != "rules" || conflicts[0].DirectoryPattern != "C:/repo/*" {
+		t.Fatalf("conflict = %+v, want normalized rules conflict", conflicts[0])
+	}
+
+	insts := v.ListInstructions()
+	if len(insts) != 3 {
+		t.Fatalf("ListInstructions() len = %d, want 3", len(insts))
+	}
+	for _, inst := range insts {
+		switch inst.Name {
+		case "rules":
+			if inst.Content != "existing" {
+				t.Errorf("rules content = %q, want existing", inst.Content)
+			}
+		case "agents":
+			if inst.Scope != "" {
+				t.Errorf("agents Scope = %q, want empty global scope", inst.Scope)
+			}
+		case "docs":
+			if inst.DirectoryPattern != "C:/repo/docs" {
+				t.Errorf("docs DirectoryPattern = %q, want normalized slash pattern", inst.DirectoryPattern)
+			}
+		}
+	}
+}
+
 func TestAddWithMCPServers(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)
