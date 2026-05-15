@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"sort"
 	"testing"
 )
@@ -139,6 +140,13 @@ func TestValidateScopePattern_rejectsInvalidDirectoryGlob(t *testing.T) {
 	err := ValidateScopePattern(InstructionScopeDirectory, "/home/user/[broken")
 	if err == nil {
 		t.Fatal("expected invalid glob pattern to fail validation")
+	}
+	var scopeErr *ScopePatternError
+	if !errors.As(err, &scopeErr) {
+		t.Fatalf("expected ScopePatternError, got %T", err)
+	}
+	if scopeErr.Kind != ScopePatternErrorInvalidGlob {
+		t.Fatalf("error kind = %q, want %q", scopeErr.Kind, ScopePatternErrorInvalidGlob)
 	}
 }
 

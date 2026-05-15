@@ -8,31 +8,74 @@ import (
 	"strings"
 )
 
+// ScopePatternErrorKind identifies a specific scope/directory_pattern validation failure.
+type ScopePatternErrorKind string
+
+const (
+	ScopePatternErrorNullByte          ScopePatternErrorKind = "null_byte"
+	ScopePatternErrorDirectoryOnly     ScopePatternErrorKind = "directory_only"
+	ScopePatternErrorDirectoryRequired ScopePatternErrorKind = "directory_required"
+	ScopePatternErrorParentTraversal   ScopePatternErrorKind = "parent_traversal"
+	ScopePatternErrorInvalidGlob       ScopePatternErrorKind = "invalid_glob"
+	ScopePatternErrorInvalidScope      ScopePatternErrorKind = "invalid_scope"
+)
+
+// ScopePatternError reports a structured scope/directory_pattern validation failure.
+type ScopePatternError struct {
+	Kind    ScopePatternErrorKind
+	Scope   string
+	Pattern string
+	Err     error
+}
+
+func (e *ScopePatternError) Error() string {
+	switch e.Kind {
+	case ScopePatternErrorNullByte:
+		return "scope and directory_pattern must not contain null bytes"
+	case ScopePatternErrorDirectoryOnly:
+		return "directory_pattern is only valid for directory scope"
+	case ScopePatternErrorDirectoryRequired:
+		return "directory_pattern is required for directory scope"
+	case ScopePatternErrorParentTraversal:
+		return "directory_pattern must not begin with \"..\""
+	case ScopePatternErrorInvalidGlob:
+		return fmt.Sprintf("directory_pattern has invalid glob syntax: %v", e.Err)
+	case ScopePatternErrorInvalidScope:
+		return fmt.Sprintf("invalid scope %q; valid: global, directory, local", e.Scope)
+	default:
+		return "invalid scope/directory_pattern"
+	}
+}
+
+func (e *ScopePatternError) Unwrap() error {
+	return e.Err
+}
+
 // ValidateScopePattern returns an error if the scope/directory_pattern
 // combination is invalid. This is the single source of truth for scope
 // validation logic; callers may wrap or translate the error for their context.
 func ValidateScopePattern(scope, pattern string) error {
 	if strings.ContainsRune(scope, 0) || strings.ContainsRune(pattern, 0) {
-		return fmt.Errorf("scope and directory_pattern must not contain null bytes")
+		return &ScopePatternError{Kind: ScopePatternErrorNullByte, Scope: scope, Pattern: pattern}
 	}
 	switch scope {
 	case "", InstructionScopeGlobal, InstructionScopeLocal:
 		if pattern != "" {
-			return fmt.Errorf("directory_pattern is only valid for directory scope")
+			return &ScopePatternError{Kind: ScopePatternErrorDirectoryOnly, Scope: scope, Pattern: pattern}
 		}
 	case InstructionScopeDirectory:
 		if pattern == "" {
-			return fmt.Errorf("directory_pattern is required for directory scope")
+			return &ScopePatternError{Kind: ScopePatternErrorDirectoryRequired, Scope: scope, Pattern: pattern}
 		}
 		normalizedPattern := NormalizeDirectoryPattern(pattern)
 		if normalizedPattern == ".." || strings.HasPrefix(normalizedPattern, "../") {
-			return fmt.Errorf("directory_pattern must not begin with \"..\"")
+			return &ScopePatternError{Kind: ScopePatternErrorParentTraversal, Scope: scope, Pattern: pattern}
 		}
 		if _, err := path.Match(normalizedPattern, ""); err != nil {
-			return fmt.Errorf("directory_pattern has invalid glob syntax: %w", err)
+			return &ScopePatternError{Kind: ScopePatternErrorInvalidGlob, Scope: scope, Pattern: pattern, Err: err}
 		}
 	default:
-		return fmt.Errorf("invalid scope %q; valid: global, directory, local", scope)
+		return &ScopePatternError{Kind: ScopePatternErrorInvalidScope, Scope: scope, Pattern: pattern}
 	}
 	return nil
 }

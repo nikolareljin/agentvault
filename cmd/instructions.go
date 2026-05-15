@@ -29,16 +29,31 @@ func getInstructionForCmd(v *vault.Vault, name, scope, pattern string) (agent.In
 }
 
 // validateScopeFlags returns an error if the scope/pattern combination is invalid.
-// Delegates to agent.ValidateScopePattern and translates field names to CLI flag
-// names: "directory_pattern" → "--directory-pattern", "invalid scope" → "invalid --scope".
 func validateScopeFlags(scope, pattern string) error {
 	err := agent.ValidateScopePattern(scope, pattern)
 	if err == nil {
 		return nil
 	}
-	msg := strings.ReplaceAll(err.Error(), "directory_pattern", "--directory-pattern")
-	msg = strings.ReplaceAll(msg, "invalid scope ", "invalid --scope ")
-	return errors.New(msg)
+	var scopeErr *agent.ScopePatternError
+	if !errors.As(err, &scopeErr) {
+		return err
+	}
+	switch scopeErr.Kind {
+	case agent.ScopePatternErrorNullByte:
+		return errors.New("--scope and --directory-pattern must not contain null bytes")
+	case agent.ScopePatternErrorDirectoryOnly:
+		return errors.New("--directory-pattern is only valid for directory scope")
+	case agent.ScopePatternErrorDirectoryRequired:
+		return errors.New("--directory-pattern is required for directory scope")
+	case agent.ScopePatternErrorParentTraversal:
+		return errors.New("--directory-pattern must not begin with \"..\"")
+	case agent.ScopePatternErrorInvalidGlob:
+		return fmt.Errorf("--directory-pattern has invalid glob syntax: %w", scopeErr.Err)
+	case agent.ScopePatternErrorInvalidScope:
+		return fmt.Errorf("invalid --scope %q; valid: global, directory, local", scopeErr.Scope)
+	default:
+		return err
+	}
 }
 
 // findEditorCommand returns the editor command and args.

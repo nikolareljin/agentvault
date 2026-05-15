@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,7 +49,7 @@ Examples:
 		format, _ := cmd.Flags().GetString("format")
 		// Autodetect format from file extension when not explicit.
 		if format == "" && len(args) == 2 {
-			ext := strings.ToLower(getExt(args[1]))
+			ext := strings.ToLower(filepath.Ext(args[1]))
 			if ext == ".yaml" || ext == ".yml" {
 				format = "yaml"
 			}
@@ -98,7 +99,7 @@ Examples:
 		format, _ := cmd.Flags().GetString("format")
 		// Autodetect from extension when not explicit.
 		if format == "" {
-			ext := strings.ToLower(getExt(args[0]))
+			ext := strings.ToLower(filepath.Ext(args[0]))
 			if ext == ".yaml" || ext == ".yml" {
 				format = "yaml"
 			}
@@ -158,19 +159,6 @@ func prepareAgentProfileMerge(existing, imported agent.Agent, now time.Time) age
 		imported.APIKey = existing.APIKey
 	}
 	return imported
-}
-
-// getExt returns the file extension including the dot.
-func getExt(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '.' {
-			return path[i:]
-		}
-		if path[i] == '/' || path[i] == '\\' {
-			break
-		}
-	}
-	return ""
 }
 
 func init() {
