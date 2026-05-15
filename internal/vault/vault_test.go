@@ -317,15 +317,15 @@ func TestImportData(t *testing.T) {
 	_ = dst.Init("dst")
 	_ = dst.Add(agent.Agent{Name: "imp1", Provider: agent.ProviderOpenAI}) // same name
 
-	imported, skipped, err := dst.ImportData(exportJSON)
+	imported, skippedAgents, _, _, err := dst.ImportData(exportJSON)
 	if err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 	if imported != 1 {
 		t.Errorf("imported = %d, want 1", imported)
 	}
-	if len(skipped) != 1 || skipped[0] != "imp1" {
-		t.Errorf("skipped = %v, want [imp1]", skipped)
+	if len(skippedAgents) != 1 || skippedAgents[0] != "imp1" {
+		t.Errorf("skippedAgents = %v, want [imp1]", skippedAgents)
 	}
 
 	// verify the import
@@ -355,7 +355,7 @@ func TestImportDataDoesNotOverwriteExistingSharedPrompt(t *testing.T) {
 	_ = dst.SetSharedConfig(agent.SharedConfig{SystemPrompt: "Existing."})
 
 	importJSON := `{"agents":[],"shared":{"system_prompt":"New."}}`
-	_, _, err := dst.ImportData([]byte(importJSON))
+	_, _, _, _, err := dst.ImportData([]byte(importJSON))
 	if err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
@@ -394,7 +394,7 @@ func TestImportDataMergesSharedRulesAndRolesWithoutOverwrite(t *testing.T) {
 			]
 		}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -442,7 +442,7 @@ func TestImportDataImportsSharedRouterWithoutOverwritingExistingConfig(t *testin
 			}
 		}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -455,7 +455,7 @@ func TestImportDataImportsSharedRouterWithoutOverwritingExistingConfig(t *testin
 	if err := emptyVault.Init("master"); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
-	if _, _, err := emptyVault.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, _, err := emptyVault.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 	got := emptyVault.SharedConfig().Router
@@ -495,7 +495,7 @@ func TestImportDataMergesPromptSessionsWithoutOverwrite(t *testing.T) {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
 
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -541,7 +541,7 @@ func TestImportDataNormalizesExistingPromptSessionIDsForDeduplication(t *testing
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
 
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -581,7 +581,7 @@ func TestImportDataGeneratesUniqueIDForEmptyPromptSessionIDs(t *testing.T) {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
 
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -631,7 +631,7 @@ func TestImportDataPromptSessionsRetentionCap(t *testing.T) {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
 
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -684,7 +684,7 @@ func TestImportDataSanitizesImportedPromptSessionEntriesAndFieldSizes(t *testing
 	if err != nil {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -759,7 +759,7 @@ func TestImportDataOverlongPromptSessionIDsDoNotCollideByTruncation(t *testing.T
 	if err != nil {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -815,7 +815,7 @@ func TestImportDataPromptSessionsKeepsNewestByTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json.Marshal(importData) error = %v", err)
 	}
-	if _, _, err := v.ImportData(raw); err != nil {
+	if _, _, _, _, err := v.ImportData(raw); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -847,7 +847,7 @@ func TestImportDataDeduplicatesImportedSessionIDs(t *testing.T) {
 			]
 		}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -878,7 +878,7 @@ func TestImportDataDoesNotOverwriteUnlimitedParallelLimit(t *testing.T) {
 		"shared": {},
 		"sessions": {"parallel_limit": 4}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -899,7 +899,7 @@ func TestImportDataImportsParallelLimitForEmptySessionConfig(t *testing.T) {
 		"shared": {},
 		"sessions": {"parallel_limit": 4}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -926,7 +926,7 @@ func TestImportDataImportsParallelLimitWhenDefaultAgentsAlsoProvided(t *testing.
 			"parallel_limit": 3
 		}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -960,7 +960,7 @@ func TestImportDataDoesNotOverwriteExplicitUnlimitedParallelLimit(t *testing.T) 
 		"shared": {},
 		"sessions": {"parallel_limit": 4}
 	}`
-	if _, _, err := v.ImportData([]byte(importJSON)); err != nil {
+	if _, _, _, _, err := v.ImportData([]byte(importJSON)); err != nil {
 		t.Fatalf("ImportData() error = %v", err)
 	}
 
@@ -1066,6 +1066,169 @@ func TestRemoveInstructionNotFound(t *testing.T) {
 	}
 }
 
+func TestSetInstructionAllowsMultipleScopes(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	global := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}
+	dir := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}
+	local := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "local", Scope: agent.InstructionScopeLocal}
+
+	if err := v.SetInstruction(global); err != nil {
+		t.Fatalf("SetInstruction(global) error = %v", err)
+	}
+	if err := v.SetInstruction(dir); err != nil {
+		t.Fatalf("SetInstruction(dir) error = %v", err)
+	}
+	if err := v.SetInstruction(local); err != nil {
+		t.Fatalf("SetInstruction(local) error = %v", err)
+	}
+
+	if got := len(v.ListInstructions()); got != 3 {
+		t.Errorf("ListInstructions() len = %d, want 3", got)
+	}
+}
+
+func TestGetInstructionPrefersGlobal(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	if err := v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}); err != nil {
+		t.Fatalf("SetInstruction(dir) error = %v", err)
+	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}); err != nil {
+		t.Fatalf("SetInstruction(global) error = %v", err)
+	}
+
+	got, ok := v.GetInstruction("rules")
+	if !ok {
+		t.Fatal("GetInstruction() not found")
+	}
+	if got.Content != "global" {
+		t.Errorf("GetInstruction() content = %q, want %q", got.Content, "global")
+	}
+}
+
+func TestRemoveInstructionPrefersGlobal(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	if err := v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}); err != nil {
+		t.Fatalf("SetInstruction(global) error = %v", err)
+	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}); err != nil {
+		t.Fatalf("SetInstruction(dir) error = %v", err)
+	}
+
+	if err := v.RemoveInstruction("rules"); err != nil {
+		t.Fatalf("RemoveInstruction() error = %v", err)
+	}
+	insts := v.ListInstructions()
+	if len(insts) != 1 {
+		t.Fatalf("after remove: len = %d, want 1", len(insts))
+	}
+	if insts[0].Content != "dir" {
+		t.Errorf("remaining instruction content = %q, want %q", insts[0].Content, "dir")
+	}
+}
+
+func TestRemoveInstructionByKeyTargetsExact(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	global := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "global", Scope: agent.InstructionScopeGlobal}
+	dir := agent.InstructionFile{Name: "rules", Filename: "RULES.md", Content: "dir", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/repo"}
+	if err := v.SetInstruction(global); err != nil {
+		t.Fatalf("SetInstruction(global) error = %v", err)
+	}
+	if err := v.SetInstruction(dir); err != nil {
+		t.Fatalf("SetInstruction(dir) error = %v", err)
+	}
+
+	if err := v.RemoveInstructionByKey(agent.InstructionKey(dir)); err != nil {
+		t.Fatalf("RemoveInstructionByKey() error = %v", err)
+	}
+	insts := v.ListInstructions()
+	if len(insts) != 1 {
+		t.Fatalf("after remove: len = %d, want 1", len(insts))
+	}
+	if insts[0].Content != "global" {
+		t.Errorf("remaining instruction content = %q, want %q", insts[0].Content, "global")
+	}
+}
+
+func TestRemoveInstructionByKeyNotFoundReportsCompositeKey(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	key := agent.InstructionKey(agent.InstructionFile{
+		Name:             "rules",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: "/repo",
+	})
+	err := v.RemoveInstructionByKey(key)
+	if err == nil {
+		t.Fatal("RemoveInstructionByKey() error = nil")
+	}
+	want := `instruction not found: name="rules" scope="directory" pattern="/repo"`
+	if err.Error() != want {
+		t.Fatalf("RemoveInstructionByKey() error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestSetInstructionNormalizesDirectoryPatternIdentity(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+
+	first := agent.InstructionFile{
+		Name:             "rules",
+		Filename:         "RULES.md",
+		Content:          "first",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: `C:\repo\*`,
+	}
+	second := agent.InstructionFile{
+		Name:             "rules",
+		Filename:         "RULES.md",
+		Content:          "second",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: "C:/repo/*",
+	}
+	if err := v.SetInstruction(first); err != nil {
+		t.Fatalf("SetInstruction(first) error = %v", err)
+	}
+	if err := v.SetInstruction(second); err != nil {
+		t.Fatalf("SetInstruction(second) error = %v", err)
+	}
+
+	insts := v.ListInstructions()
+	if len(insts) != 1 {
+		t.Fatalf("ListInstructions() len = %d, want 1", len(insts))
+	}
+	if insts[0].Content != "second" {
+		t.Errorf("stored instruction content = %q, want %q", insts[0].Content, "second")
+	}
+	if insts[0].DirectoryPattern != "C:/repo/*" {
+		t.Errorf("DirectoryPattern = %q, want normalized slash pattern", insts[0].DirectoryPattern)
+	}
+
+	if _, ok := v.GetInstructionByKey(agent.InstructionKey(first)); !ok {
+		t.Fatal("GetInstructionByKey() should find stored instruction with equivalent backslash key")
+	}
+	if err := v.RemoveInstructionByKey(agent.InstructionKey(first)); err != nil {
+		t.Fatalf("RemoveInstructionByKey() with equivalent key error = %v", err)
+	}
+	if got := len(v.ListInstructions()); got != 0 {
+		t.Fatalf("after remove: len = %d, want 0", got)
+	}
+}
+
 func TestExportIncludesInstructions(t *testing.T) {
 	path := tempVaultPath(t)
 	v := New(path)
@@ -1101,7 +1264,9 @@ func TestImportMergesInstructions(t *testing.T) {
 	// dst already has "agents" - should not be overwritten
 	_ = dst.SetInstruction(agent.InstructionFile{Name: "agents", Filename: "AGENTS.md", Content: "existing"})
 
-	_, _, _ = dst.ImportData(exportJSON)
+	if _, _, _, _, err := dst.ImportData(exportJSON); err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
 
 	// "agents" should keep its existing content
 	got, _ := dst.GetInstruction("agents")
@@ -1115,6 +1280,80 @@ func TestImportMergesInstructions(t *testing.T) {
 	}
 	if got2.Content != "from-src-claude" {
 		t.Errorf("claude content = %q, want %q", got2.Content, "from-src-claude")
+	}
+}
+
+func TestImportDataNormalizesInstructionScopeAndDirectoryPattern(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	_ = v.Init("master")
+	if err := v.SetInstruction(agent.InstructionFile{
+		Name:             "rules",
+		Filename:         "RULES.md",
+		Content:          "existing",
+		Scope:            agent.InstructionScopeDirectory,
+		DirectoryPattern: "C:/repo/*",
+	}); err != nil {
+		t.Fatalf("SetInstruction() error = %v", err)
+	}
+
+	importJSON := `{
+		"shared": {
+			"instructions": [
+				{
+					"name": "rules",
+					"filename": "RULES.md",
+					"content": "incoming",
+					"scope": "directory",
+					"directory_pattern": "C:\\repo\\*"
+				},
+				{
+					"name": "agents",
+					"filename": "AGENTS.md",
+					"content": "global",
+					"scope": "global"
+				},
+				{
+					"name": "docs",
+					"filename": "DOCS.md",
+					"content": "dir",
+					"scope": "directory",
+					"directory_pattern": "C:\\repo\\docs"
+				}
+			]
+		}
+	}`
+
+	_, _, _, conflicts, err := v.ImportData([]byte(importJSON))
+	if err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+	if len(conflicts) != 1 {
+		t.Fatalf("conflicts len = %d, want 1", len(conflicts))
+	}
+	if conflicts[0].Name != "rules" || conflicts[0].DirectoryPattern != "C:/repo/*" {
+		t.Fatalf("conflict = %+v, want normalized rules conflict", conflicts[0])
+	}
+
+	insts := v.ListInstructions()
+	if len(insts) != 3 {
+		t.Fatalf("ListInstructions() len = %d, want 3", len(insts))
+	}
+	for _, inst := range insts {
+		switch inst.Name {
+		case "rules":
+			if inst.Content != "existing" {
+				t.Errorf("rules content = %q, want existing", inst.Content)
+			}
+		case "agents":
+			if inst.Scope != "" {
+				t.Errorf("agents Scope = %q, want empty global scope", inst.Scope)
+			}
+		case "docs":
+			if inst.DirectoryPattern != "C:/repo/docs" {
+				t.Errorf("docs DirectoryPattern = %q, want normalized slash pattern", inst.DirectoryPattern)
+			}
+		}
 	}
 }
 

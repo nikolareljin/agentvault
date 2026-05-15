@@ -134,7 +134,8 @@ type statusRefreshMsg struct {
 type editorFinishedMsg struct {
 	err     error
 	tmpPath string
-	name    string
+	name    string // display name
+	key     string // composite identity key (Name+Scope+DirectoryPattern)
 }
 
 // cliCommandFinishedMsg is sent after a CLI command exits.
@@ -242,11 +243,12 @@ type model struct {
 	gatewayTick        int
 
 	// Delete confirmation state
-	deleteTarget string // name of item to delete
-	deleteType   string // "agent", "rule", "instruction"
+	deleteTarget  string // display name of item to delete
+	deleteInstKey string // composite key for instruction deletes
+	deleteType    string // "agent", "rule", "instruction"
 
 	// Editor state
-	editingInst string // name of instruction being edited
+	editingInst string // composite key of instruction being edited
 	editTmpPath string // temp file path for editor
 
 	// Temporary status messages (auto-clear after 3 seconds)
@@ -1149,7 +1151,9 @@ func (m *model) handleDelete() (tea.Model, tea.Cmd) {
 		}
 	case tabInstructions:
 		if m.mode == viewInstructions && len(m.instructions) > 0 && m.instCursor < len(m.instructions) {
-			m.deleteTarget = m.instructions[m.instCursor].Name
+			inst := m.instructions[m.instCursor]
+			m.deleteTarget = instructionDisplayName(inst)
+			m.deleteInstKey = agent.InstructionKey(inst)
 			m.deleteType = "instruction"
 			m.prevMode = m.mode
 			m.mode = viewConfirmDelete
@@ -1165,6 +1169,18 @@ func (m *model) handleDelete() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func instructionDisplayName(inst agent.InstructionFile) string {
+	scope := inst.Scope
+	if scope == "" {
+		scope = agent.InstructionScopeGlobal
+	}
+	label := fmt.Sprintf("%s [scope: %s", inst.Name, scope)
+	if inst.DirectoryPattern != "" {
+		label += fmt.Sprintf(", pattern: %s", inst.DirectoryPattern)
+	}
+	return label + "]"
+}
+
 // handleConfirmDelete processes Y/N on the delete confirmation screen.
 func (m *model) handleConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -1174,7 +1190,7 @@ func (m *model) handleConfirmDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "agent":
 			err = m.vault.Remove(m.deleteTarget)
 		case "instruction":
-			err = m.vault.RemoveInstruction(m.deleteTarget)
+			err = m.vault.RemoveInstructionByKey(m.deleteInstKey)
 		case "rule":
 			shared := m.vault.SharedConfig()
 			idx := -1
@@ -1242,19 +1258,28 @@ func (m *model) handleEdit() (tea.Model, tea.Cmd) {
 	}
 	tmpFile.Close()
 
-	m.editingInst = inst.Name
+	m.editingInst = agent.InstructionKey(inst)
 	m.editTmpPath = tmpFile.Name()
 
 	// Launch editor via tea.ExecProcess
 	c := exec.Command(editor, tmpFile.Name())
 	return m, tea.ExecProcess(c, func(err error) tea.Msg {
-		return editorFinishedMsg{err: err, tmpPath: tmpFile.Name(), name: inst.Name}
+		return editorFinishedMsg{err: err, tmpPath: tmpFile.Name(), name: inst.Name, key: agent.InstructionKey(inst)}
 	})
 }
 
 // handleEditorFinished processes the result after the editor closes.
 func (m *model) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd) {
 	defer os.Remove(msg.tmpPath)
+
+	if msg.key != m.editingInst || msg.tmpPath != m.editTmpPath {
+		m.setStatus(fmt.Sprintf("Ignoring stale editor result for %q", msg.name), true)
+		return m, nil
+	}
+	defer func() {
+		m.editingInst = ""
+		m.editTmpPath = ""
+	}()
 
 	if msg.err != nil {
 		m.setStatus(fmt.Sprintf("Editor error: %v", msg.err), true)
@@ -1267,7 +1292,7 @@ func (m *model) handleEditorFinished(msg editorFinishedMsg) (tea.Model, tea.Cmd)
 		return m, nil
 	}
 
-	inst, ok := m.vault.GetInstruction(msg.name)
+	inst, ok := m.vault.GetInstructionByKey(msg.key)
 	if !ok {
 		m.setStatus(fmt.Sprintf("Instruction %q not found", msg.name), true)
 		return m, nil
@@ -1754,7 +1779,20 @@ func (m model) renderInstructionDetail() string {
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Instruction: %s", inst.Name)))
 	b.WriteString("\n")
 	b.WriteString(dimStyle.Render(fmt.Sprintf("Target: %s  |  Size: %d bytes", inst.Filename, len(inst.Content))))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
+	{
+		scope := inst.Scope
+		if scope == "" {
+			scope = agent.InstructionScopeGlobal
+		}
+		scopeInfo := fmt.Sprintf("Scope: %s", scope)
+		if inst.DirectoryPattern != "" {
+			scopeInfo += fmt.Sprintf("  |  Pattern: %s", inst.DirectoryPattern)
+		}
+		b.WriteString(dimStyle.Render(scopeInfo))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
 	// Show content preview (first ~20 lines)
 	lines := strings.Split(inst.Content, "\n")

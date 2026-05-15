@@ -51,12 +51,12 @@ var validRoutePrivacyTiers = map[string]struct{}{
 
 // RouteConfig stores per-agent routing metadata.
 type RouteConfig struct {
-	Capabilities []string `json:"capabilities,omitempty"`
-	LatencyTier  string   `json:"latency_tier,omitempty"`
-	CostTier     string   `json:"cost_tier,omitempty"`
-	PrivacyTier  string   `json:"privacy_tier,omitempty"`
-	Priority     int      `json:"priority,omitempty"`
-	Disabled     bool     `json:"disabled,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
+	LatencyTier  string   `json:"latency_tier,omitempty" yaml:"latency_tier,omitempty"`
+	CostTier     string   `json:"cost_tier,omitempty"    yaml:"cost_tier,omitempty"`
+	PrivacyTier  string   `json:"privacy_tier,omitempty" yaml:"privacy_tier,omitempty"`
+	Priority     int      `json:"priority,omitempty"     yaml:"priority,omitempty"`
+	Disabled     bool     `json:"disabled,omitempty"     yaml:"disabled,omitempty"`
 }
 
 // RouterConfig stores shared prompt-router settings.

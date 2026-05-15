@@ -35,6 +35,15 @@ const (
 	ProviderNanoclaw Provider = "nanoclaw"
 	ProviderAider    Provider = "aider"
 	ProviderCustom   Provider = "custom"
+	ProviderCopilot  Provider = "copilot"
+	ProviderBedrock  Provider = "bedrock"
+)
+
+// Instruction scope constants for InstructionFile.Scope.
+const (
+	InstructionScopeGlobal    = "global"
+	InstructionScopeDirectory = "directory"
+	InstructionScopeLocal     = "local"
 )
 
 const (
@@ -45,29 +54,45 @@ const (
 
 // MCPServer represents a Model Context Protocol server configuration.
 type MCPServer struct {
-	Name    string            `json:"name"`
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
+	Name    string            `json:"name"           yaml:"name"`
+	Command string            `json:"command"        yaml:"command"`
+	Args    []string          `json:"args,omitempty" yaml:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"  yaml:"env,omitempty"`
+}
+
+// AgentProviderMeta captures provider-specific configuration for full round-trip portability.
+// Only fields relevant to the agent's Provider are populated; all fields are optional.
+type AgentProviderMeta struct {
+	AuthMode        string            `json:"auth_mode,omitempty"        yaml:"auth_mode,omitempty"`
+	BedrockRegion   string            `json:"bedrock_region,omitempty"   yaml:"bedrock_region,omitempty"`
+	BedrockRoleARN  string            `json:"bedrock_role_arn,omitempty" yaml:"bedrock_role_arn,omitempty"`
+	CopilotOrg      string            `json:"copilot_org,omitempty"      yaml:"copilot_org,omitempty"`
+	GeminiProject   string            `json:"gemini_project,omitempty"   yaml:"gemini_project,omitempty"`
+	GeminiLocation  string            `json:"gemini_location,omitempty"  yaml:"gemini_location,omitempty"`
+	AWSProfile      string            `json:"aws_profile,omitempty"      yaml:"aws_profile,omitempty"`
+	AWSRegion       string            `json:"aws_region,omitempty"       yaml:"aws_region,omitempty"`
+	OllamaKeepAlive string            `json:"ollama_keep_alive,omitempty" yaml:"ollama_keep_alive,omitempty"`
+	Extra           map[string]string `json:"extra,omitempty"            yaml:"extra,omitempty"`
 }
 
 // Agent represents a configured AI agent.
 type Agent struct {
-	Name          string      `json:"name"`
-	Provider      Provider    `json:"provider"`
-	Model         string      `json:"model"`
-	Backend       string      `json:"backend,omitempty"`
-	APIKey        string      `json:"api_key,omitempty"`
-	BaseURL       string      `json:"base_url,omitempty"`
-	SystemPrompt  string      `json:"system_prompt,omitempty"`
-	TaskDesc      string      `json:"task_description,omitempty"`
-	Tags          []string    `json:"tags,omitempty"`
-	Route         RouteConfig `json:"route,omitempty"`
-	MCPServers    []MCPServer `json:"mcp_servers,omitempty"`
-	Role          string      `json:"role,omitempty"`           // Role name to apply (e.g., "lead-engineer")
-	DisabledRules []string    `json:"disabled_rules,omitempty"` // Rules to skip for this agent
-	CreatedAt     time.Time   `json:"created_at"`
-	UpdatedAt     time.Time   `json:"updated_at"`
+	Name          string             `json:"name"                      yaml:"name"`
+	Provider      Provider           `json:"provider"                  yaml:"provider"`
+	Model         string             `json:"model"                     yaml:"model"`
+	Backend       string             `json:"backend,omitempty"         yaml:"backend,omitempty"`
+	APIKey        string             `json:"api_key,omitempty"         yaml:"api_key,omitempty"`
+	BaseURL       string             `json:"base_url,omitempty"        yaml:"base_url,omitempty"`
+	SystemPrompt  string             `json:"system_prompt,omitempty"   yaml:"system_prompt,omitempty"`
+	TaskDesc      string             `json:"task_description,omitempty" yaml:"task_description,omitempty"`
+	Tags          []string           `json:"tags,omitempty"            yaml:"tags,omitempty"`
+	Route         RouteConfig        `json:"route,omitempty"           yaml:"route,omitempty"`
+	MCPServers    []MCPServer        `json:"mcp_servers,omitempty"     yaml:"mcp_servers,omitempty"`
+	Role          string             `json:"role,omitempty"            yaml:"role,omitempty"`
+	DisabledRules []string           `json:"disabled_rules,omitempty"  yaml:"disabled_rules,omitempty"`
+	ProviderMeta  *AgentProviderMeta `json:"provider_meta,omitempty"   yaml:"provider_meta,omitempty"`
+	CreatedAt     time.Time          `json:"created_at"                yaml:"created_at"`
+	UpdatedAt     time.Time          `json:"updated_at"                yaml:"updated_at"`
 }
 
 // UnifiedRule represents a rule that applies across all agents.
@@ -114,10 +139,12 @@ type Role struct {
 
 // InstructionFile represents a stored instruction file (e.g. AGENTS.md, CLAUDE.md).
 type InstructionFile struct {
-	Name      string    `json:"name"`     // key, e.g. "agents", "claude"
-	Filename  string    `json:"filename"` // target filename, e.g. "AGENTS.md"
-	Content   string    `json:"content"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Name             string    `json:"name"                        yaml:"name"`     // key, e.g. "agents", "claude"
+	Filename         string    `json:"filename"                    yaml:"filename"` // target filename, e.g. "AGENTS.md"
+	Content          string    `json:"content"                     yaml:"content"`
+	UpdatedAt        time.Time `json:"updated_at"                  yaml:"updated_at"`
+	Scope            string    `json:"scope,omitempty"             yaml:"scope,omitempty"`             // "global" (default), "directory", or "local"
+	DirectoryPattern string    `json:"directory_pattern,omitempty" yaml:"directory_pattern,omitempty"` // glob for "directory" scope
 }
 
 // PromptTokenUsage captures token usage metadata for one prompt execution.
@@ -195,6 +222,8 @@ var ProviderInstructionMap = map[Provider][]string{
 	ProviderOllama:   {"agents"},
 	ProviderOpenAI:   {"agents"},
 	ProviderCustom:   {"agents"},
+	ProviderCopilot:  {"copilot", "agents"},
+	ProviderBedrock:  {"agents"},
 }
 
 // FilenameForInstruction returns the conventional filename for a name,
@@ -223,7 +252,7 @@ func ValidProviders() []Provider {
 		ProviderClaude, ProviderGemini, ProviderCodex,
 		ProviderOllama, ProviderOpenAI, ProviderMeldbot,
 		ProviderOpenclaw, ProviderNanoclaw, ProviderAider,
-		ProviderCustom,
+		ProviderCustom, ProviderCopilot, ProviderBedrock,
 	}
 }
 
@@ -430,10 +459,14 @@ func (a *Agent) Validate() error {
 		if backend != "" && backend != ClaudeBackendAnthropic && backend != ClaudeBackendOllama && backend != ClaudeBackendBedrock {
 			return errors.New("unknown claude backend: " + backendRaw)
 		}
+		a.Backend = backend // normalize in-place so ValidateProviderMeta sees canonical form
 	} else if backendRaw != "" {
 		return errors.New("backend is only supported for claude agents")
 	}
 	if err := a.Route.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateProviderMeta(a.Provider, a.Backend, a.ProviderMeta); err != nil {
 		return err
 	}
 	return nil
