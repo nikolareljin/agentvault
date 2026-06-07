@@ -55,6 +55,10 @@ for h in llama.h ggml.h; do
         cp "${found}" "${OUT_DIR}/include/"
     fi
 done
+if [ ! -f "${OUT_DIR}/include/llama.h" ]; then
+    echo "ERROR: llama.h not found in ${OUT_DIR}/src — header copy failed" >&2
+    exit 1
+fi
 
 # Static libraries — location varies across cmake configurations
 for lib in libllama.a libggml.a libggml-cpu.a libggml-base.a; do

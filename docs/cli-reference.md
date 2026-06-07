@@ -248,7 +248,7 @@ Required:
 
 Optional:
 - `--context <int>`: context window size in tokens
-- `--caps <comma-separated>`: capability tags — `code`, `vision`, `embedding`, `reasoning`, `general`
+- `--caps <comma-separated>`: capability tags — routing: `coding`, `review`, `analysis`, `general`; informational: `vision`, `embedding`
 
 ### `agentvault capability remove`
 Required:

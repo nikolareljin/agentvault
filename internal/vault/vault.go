@@ -319,6 +319,36 @@ func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
 	return v.Save()
 }
 
+// AddCapabilities adds multiple capability entries in a single vault save.
+// Duplicate entries (same endpoint+model) are skipped; the returned int is the
+// number actually added.
+func (v *Vault) AddCapabilities(entries []agent.ModelCapabilityEntry) (int, error) {
+	added := 0
+	for _, entry := range entries {
+		entry.EndpointURL = strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/")
+		entry.ModelName = strings.TrimSpace(entry.ModelName)
+		dup := false
+		for _, e := range v.modelCapabilities {
+			if e.EndpointURL == entry.EndpointURL && e.ModelName == entry.ModelName {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		if entry.UpdatedAt.IsZero() {
+			entry.UpdatedAt = time.Now().UTC()
+		}
+		v.modelCapabilities = append(v.modelCapabilities, entry)
+		added++
+	}
+	if added == 0 {
+		return 0, nil
+	}
+	return added, v.Save()
+}
+
 // RemoveCapability removes a capability entry by endpoint URL and model name.
 // Returns an error if not found.
 func (v *Vault) RemoveCapability(endpointURL, modelName string) error {

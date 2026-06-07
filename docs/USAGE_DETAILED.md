@@ -305,7 +305,7 @@ agentvault capability add \
   --endpoint http://localhost:11434 \
   --model llama3.1:8b \
   --context 8192 \
-  --caps code,general
+  --caps coding,general
 
 # Auto-discover from endpoint (/v1/models or /health)
 agentvault capability discover --endpoint http://localhost:11434
@@ -318,10 +318,10 @@ agentvault capability remove \
 ```
 
 Capability tags inferred from model names during discovery:
-- `code` — model name contains `code`, `codex`, `coder`, `starcoder`, `deepseek-coder`
+- `coding` — model name contains `code`, `codex`, `coder`, `starcoder`, `deepseek-coder`
 - `vision` — contains `vision`, `vl`, `llava`, `visual`
 - `embedding` — contains `embed`
-- `reasoning` — contains `reasoning`, `think`, `r1`
+- `analysis` — contains `reasoning`, `think`, `r1`
 - `general` — always added
 
 ## 3.4 Rules
@@ -834,7 +834,7 @@ agentvault capability add \
   --endpoint http://localhost:11434 \
   --model llama3.1:70b \
   --context 32768 \
-  --caps code,general,reasoning
+  --caps coding,general,analysis
 
 # Run some prompts — cost is tracked automatically per execution
 agentvault prompt my-claude --text "review this PR"
