@@ -40,6 +40,10 @@ func init() {
 	routeCmd.Flags().String("llm-router-url", "", "URL of local llama-server or bitnet-server for llm-router mode (e.g. http://localhost:8080)")
 	routeCmd.Flags().String("llm-router-model", "", "model name override for llm-router mode (uses server default if empty)")
 	routeCmd.Flags().Int("llm-router-timeout", 0, "llm-router request timeout in seconds (default 30)")
+	routeCmd.Flags().String("llm-router-model-path", "", "path to GGUF model file for embedded in-process inference (requires build-bitnet)")
+	routeCmd.Flags().Int("llm-router-context-size", 0, "context window in tokens for embedded inference (default 512)")
+	routeCmd.Flags().Int("llm-router-threads", 0, "CPU threads for embedded inference (default: all available)")
+	routeCmd.Flags().Int("llm-router-gpu-layers", 0, "transformer layers to offload to GPU for embedded inference (default 0, CPU-only)")
 }
 
 func runRoute(cmd *cobra.Command, args []string) error {

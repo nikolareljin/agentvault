@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-06-06
+
+### Added
+- **Embedded BitNet/llama.cpp inference engine**: `llm-router` mode now supports in-process
+  GGUF model inference with no external server. Build with `make build-bitnet` to compile in
+  the llama.cpp C library. Use `--llm-router-model-path PATH` to load any GGUF model.
+  Falls back to heuristic routing when the embedded engine is not compiled in or the model
+  file is missing.
+- **`internal/localllm` package**: `Engine` interface + `New()` constructor with CGo
+  implementation (`-tags localllm`) and a pure-Go stub (`!localllm`). `llm_stub.go` returns
+  `ErrNotBuilt` so the default binary is still CGo-free and cross-compilable.
+- **`scripts/build-llama.sh`**: one-time build script that clones `ggerganov/llama.cpp`,
+  builds a static library (`third_party/llama/lib/libllama.a`), and copies headers.
+  Re-running is a no-op once the library exists.
+- **`Makefile` targets**: `make build-llama` (compile llama.cpp) and `make build-bitnet`
+  (link embedded engine, outputs `agentvault-bitnet`).
+- **`RouterConfig` fields**: `LLMRouterModelPath`, `LLMRouterContextSize` (default 512),
+  `LLMRouterThreads`, `LLMRouterGPULayers` — all wired through `mergeRouterConfig` and
+  exposed as CLI flags on `route` and `prompt`.
+- **`agentvault routing-model`** subcommand with `status` (show engine + model info) and
+  `download` (stream BitNet-b1.58-2B-4T.gguf from Hugging Face with progress display).
+
+### Changed
+- `AnalyzeWithLLMRouter` branches on `ModelPath`: local engine when set, HTTP server otherwise.
+  Error message updated to list both configuration options.
+- `LLMRouterConfig` gains `ModelPath`, `ContextSize`, `Threads`, `GPULayers`.
+- `callLLMServer` now delegates JSON parsing to extracted `parseLLMDecision` helper, shared
+  with the local inference path.
+- `RouterConfig.WithDefaults()` sets `LLMRouterContextSize = 512` when unset.
+
 ## [0.12.0] - 2026-06-06
 
 ### Added
