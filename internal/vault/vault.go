@@ -623,11 +623,15 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 		}
 	}
 	// Merge model capabilities: keep existing entries; add imported ones not already present (keyed by endpoint+model).
+	// Normalize the same way AddCapability does so import and direct-add produce identical keys.
 	seenCaps := make(map[string]struct{}, len(v.modelCapabilities))
 	for _, c := range v.modelCapabilities {
-		seenCaps[c.EndpointURL+"\x00"+c.ModelName] = struct{}{}
+		k := strings.TrimRight(strings.TrimSpace(c.EndpointURL), "/") + "\x00" + strings.TrimSpace(c.ModelName)
+		seenCaps[k] = struct{}{}
 	}
 	for _, c := range vd.ModelCapabilities {
+		c.EndpointURL = strings.TrimRight(strings.TrimSpace(c.EndpointURL), "/")
+		c.ModelName = strings.TrimSpace(c.ModelName)
 		key := c.EndpointURL + "\x00" + c.ModelName
 		if _, ok := seenCaps[key]; !ok {
 			v.modelCapabilities = append(v.modelCapabilities, c)
