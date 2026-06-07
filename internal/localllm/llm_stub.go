@@ -9,6 +9,9 @@ func New(_ string, _, _, _ int) (Engine, error) {
 	return nil, ErrNotBuilt
 }
 
+// IsBuilt reports whether embedded inference was compiled in.
+func IsBuilt() bool { return false }
+
 type stubEngine struct{}
 
 func (s *stubEngine) Route(_ context.Context, _, _ string) (string, error) {

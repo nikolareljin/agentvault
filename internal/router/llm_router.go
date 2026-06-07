@@ -8,9 +8,18 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/localllm"
+)
+
+// localEngMu serialises engine access: llama.cpp contexts are not thread-safe,
+// and the mutex doubles as a cache guard for the long-lived engine instance.
+var (
+	localEngMu   sync.Mutex
+	localEng     localllm.Engine
+	localEngPath string
 )
 
 // LLMRouterConfig holds settings for the llm-router routing mode.
@@ -184,14 +193,26 @@ func parseLLMDecision(raw string) (LLMRouterDecision, error) {
 }
 
 // analyzeLocal runs inference using the embedded llama.cpp engine (requires -tags localllm).
+// The engine is loaded once per unique model path and reused across routing calls; the mutex
+// serialises access because llama.cpp contexts are not thread-safe.
 func analyzeLocal(ctx context.Context, sysPrompt, usrMsg string, cfg LLMRouterConfig) (LLMRouterDecision, error) {
-	eng, err := localllm.New(cfg.ModelPath, cfg.ContextSize, cfg.Threads, cfg.GPULayers)
-	if err != nil {
-		return LLMRouterDecision{}, fmt.Errorf("llm-router local: %w", err)
-	}
-	defer eng.Close()
+	localEngMu.Lock()
+	defer localEngMu.Unlock()
 
-	raw, err := eng.Route(ctx, sysPrompt, usrMsg)
+	if localEng == nil || localEngPath != cfg.ModelPath {
+		if localEng != nil {
+			localEng.Close()
+			localEng = nil
+		}
+		eng, err := localllm.New(cfg.ModelPath, cfg.ContextSize, cfg.Threads, cfg.GPULayers)
+		if err != nil {
+			return LLMRouterDecision{}, fmt.Errorf("llm-router local: %w", err)
+		}
+		localEng = eng
+		localEngPath = cfg.ModelPath
+	}
+
+	raw, err := localEng.Route(ctx, sysPrompt, usrMsg)
 	if err != nil {
 		return LLMRouterDecision{}, fmt.Errorf("llm-router local: %w", err)
 	}
