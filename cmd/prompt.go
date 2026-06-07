@@ -143,6 +143,10 @@ func init() {
 	promptCmd.Flags().String("llm-router-url", "", "URL of local llama-server or bitnet-server for llm-router mode (e.g. http://localhost:8080)")
 	promptCmd.Flags().String("llm-router-model", "", "model name override for llm-router mode (uses server default if empty)")
 	promptCmd.Flags().Int("llm-router-timeout", 0, "llm-router request timeout in seconds (default 30)")
+	promptCmd.Flags().String("llm-router-model-path", "", "path to GGUF model file for embedded in-process inference (requires build-bitnet)")
+	promptCmd.Flags().Int("llm-router-context-size", 0, "context window in tokens for embedded inference (default 512)")
+	promptCmd.Flags().Int("llm-router-threads", 0, "CPU threads for embedded inference (default: all available)")
+	promptCmd.Flags().Int("llm-router-gpu-layers", 0, "transformer layers to offload to GPU for embedded inference (default 0, CPU-only)")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "text")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "file")
@@ -433,6 +437,10 @@ func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
 	llmRouterURL, _ := cmd.Flags().GetString("llm-router-url")
 	llmRouterModel, _ := cmd.Flags().GetString("llm-router-model")
 	llmRouterTimeout, _ := cmd.Flags().GetInt("llm-router-timeout")
+	llmRouterModelPath, _ := cmd.Flags().GetString("llm-router-model-path")
+	llmRouterContextSize, _ := cmd.Flags().GetInt("llm-router-context-size")
+	llmRouterThreads, _ := cmd.Flags().GetInt("llm-router-threads")
+	llmRouterGPULayers, _ := cmd.Flags().GetInt("llm-router-gpu-layers")
 	return agent.RouterConfig{
 		Mode:                 mode,
 		LangGraphCmd:         langGraphCmd,
@@ -447,6 +455,10 @@ func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
 		LLMRouterURL:         llmRouterURL,
 		LLMRouterModel:       llmRouterModel,
 		LLMRouterTimeoutSecs: llmRouterTimeout,
+		LLMRouterModelPath:   llmRouterModelPath,
+		LLMRouterContextSize: llmRouterContextSize,
+		LLMRouterThreads:     llmRouterThreads,
+		LLMRouterGPULayers:   llmRouterGPULayers,
 	}
 }
 

@@ -165,6 +165,18 @@ func mergeRouterConfig(base, override agent.RouterConfig) agent.RouterConfig {
 	if override.LLMRouterEnableCostEst {
 		out.LLMRouterEnableCostEst = true
 	}
+	if strings.TrimSpace(override.LLMRouterModelPath) != "" {
+		out.LLMRouterModelPath = override.LLMRouterModelPath
+	}
+	if override.LLMRouterContextSize != 0 {
+		out.LLMRouterContextSize = override.LLMRouterContextSize
+	}
+	if override.LLMRouterThreads != 0 {
+		out.LLMRouterThreads = override.LLMRouterThreads
+	}
+	if override.LLMRouterGPULayers != 0 {
+		out.LLMRouterGPULayers = override.LLMRouterGPULayers
+	}
 	return out
 }
 
@@ -673,6 +685,10 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		Model:         cfg.LLMRouterModel,
 		TimeoutSecs:   cfg.LLMRouterTimeoutSecs,
 		EnableCostEst: cfg.LLMRouterEnableCostEst,
+		ModelPath:     cfg.LLMRouterModelPath,
+		ContextSize:   cfg.LLMRouterContextSize,
+		Threads:       cfg.LLMRouterThreads,
+		GPULayers:     cfg.LLMRouterGPULayers,
 	}
 
 	decision, err := AnalyzeWithLLMRouter(context.Background(), trimmedPrompt, candidates, llmCfg)
