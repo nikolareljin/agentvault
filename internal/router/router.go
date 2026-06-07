@@ -711,6 +711,17 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	if decision.RoutingFactors.PrivacySensitive && !overrideCfg.LocalOnly {
 		overrideCfg.LocalOnly = true
+		// Re-filter candidates: the list was built before the LLM marked the prompt
+		// privacy-sensitive, so remote targets must be excluded now.
+		local := candidates[:0]
+		for _, c := range candidates {
+			if c.Target.Local {
+				local = append(local, c)
+			}
+		}
+		if len(local) > 0 {
+			candidates = local
+		}
 	}
 	if decision.RoutingFactors.TimeSensitive && strings.TrimSpace(overrideCfg.Deadline) == "" {
 		overrideCfg.Deadline = "immediate"
@@ -725,6 +736,9 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 	llmReason := fmt.Sprintf("llm-router: %s (confidence=%.2f complexity=%d/10 task=%s)",
 		decision.Reasoning, decision.Confidence,
 		decision.RoutingFactors.Complexity, decision.RoutingFactors.TaskType)
+	if llmCfg.EnableCostEst && (decision.EstInputTokens > 0 || decision.EstOutputTokens > 0) {
+		llmReason += fmt.Sprintf(" est_tokens=in:%d out:%d", decision.EstInputTokens, decision.EstOutputTokens)
+	}
 	selected.Reasons = append([]string{llmReason}, selected.Reasons...)
 
 	fallbacks := make([]Candidate, 0, 3)
@@ -964,13 +978,14 @@ func chooseNonEmpty(value, fallback string) string {
 func mergeCapabilities(existing, additional []string) []string {
 	seen := make(map[string]bool, len(existing))
 	for _, c := range existing {
-		seen[c] = true
+		seen[strings.ToLower(c)] = true
 	}
 	out := append([]string(nil), existing...)
 	for _, c := range additional {
-		if !seen[strings.ToLower(c)] {
-			out = append(out, strings.ToLower(c))
-			seen[strings.ToLower(c)] = true
+		lc := strings.ToLower(c)
+		if !seen[lc] {
+			out = append(out, lc)
+			seen[lc] = true
 		}
 	}
 	return out

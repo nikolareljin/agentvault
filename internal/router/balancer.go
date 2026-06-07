@@ -76,11 +76,15 @@ func (b *Balancer) CheckHealth(ctx context.Context, c Candidate) bool {
 
 	resp, err := http.DefaultClient.Do(req)
 	latencyMs := float64(time.Since(start).Milliseconds())
-	if err != nil || resp.StatusCode >= 500 {
+	if err != nil {
 		b.RecordFailure(c.Agent.Name)
 		return false
 	}
 	resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		b.RecordFailure(c.Agent.Name)
+		return false
+	}
 
 	b.RecordSuccess(c.Agent.Name, latencyMs)
 	return true

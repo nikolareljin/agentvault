@@ -53,7 +53,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	costReportFlag, _ := cmd.Flags().GetBool("cost-report")
 	report := statuspkg.BuildReport(v, homeDir)
+	if costReportFlag {
+		report.Cost = statuspkg.CostReportForVault(v)
+	}
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -106,7 +110,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	costReportFlag, _ := cmd.Flags().GetBool("cost-report")
 	if costReportFlag && report.Cost != nil {
 		c := report.Cost
 		fmt.Printf("Cost (from %d prompt records):\n", c.RecordCount)

@@ -37,6 +37,7 @@ func New(modelPath string, ctxSize, threads, gpuLayers int) (Engine, error) {
 
 	model := C.llama_load_model_from_file(cpath, mparams)
 	if model == nil {
+		C.llama_backend_free()
 		return nil, fmt.Errorf("localllm: cannot load model from %q", modelPath)
 	}
 
@@ -51,6 +52,7 @@ func New(modelPath string, ctxSize, threads, gpuLayers int) (Engine, error) {
 	ctx := C.llama_new_context_with_model(model, cparams)
 	if ctx == nil {
 		C.llama_free_model(model)
+		C.llama_backend_free()
 		return nil, fmt.Errorf("localllm: cannot create inference context")
 	}
 

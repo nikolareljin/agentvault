@@ -9,9 +9,17 @@ LDFLAGS   := -s -w \
 
 # Embedded llama.cpp inference engine (BitNet support)
 LLAMA_DIR := $(shell pwd)/third_party/llama
-LLAMA_CGO  = CGO_ENABLED=1 \
-  CGO_CFLAGS="-I$(LLAMA_DIR)/include" \
-  CGO_LDFLAGS="-L$(LLAMA_DIR)/lib -lllama -lggml -lggml-cpu -lstdc++ -lm -lgomp"
+# -lgomp (OpenMP via libgomp) is Linux-specific; omit on macOS where Accelerate provides parallelism.
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  LLAMA_CGO = CGO_ENABLED=1 \
+    CGO_CFLAGS="-I$(LLAMA_DIR)/include" \
+    CGO_LDFLAGS="-L$(LLAMA_DIR)/lib -lllama -lggml -lggml-cpu -lstdc++ -lm"
+else
+  LLAMA_CGO = CGO_ENABLED=1 \
+    CGO_CFLAGS="-I$(LLAMA_DIR)/include" \
+    CGO_LDFLAGS="-L$(LLAMA_DIR)/lib -lllama -lggml -lggml-cpu -lstdc++ -lm -lgomp"
+endif
 
 .PHONY: build build-llama build-bitnet test lint clean install fmt vet run
 
