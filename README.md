@@ -15,8 +15,13 @@ Detailed command and TUI references: `docs/README.md`.
 - **Agent Detection**: Auto-detect installed CLI agents
 - **Unified Instructions**: Sync AGENTS.md, CLAUDE.md, codex.md, etc. across projects
 - **Prompt Mode**: Start a focused interactive loop with `agentvault -p`; shows per-message and cumulative session token usage
-- **Intelligent Routing**: Route prompts to the best configured agent/runner/model, with local-first and LangGraph sidecar support
-- **Interactive TUI**: Multi-tab interface with search, filtering, and status views
+- **Intelligent Routing**: Four modes — heuristic, LangGraph sidecar, local-ai (Ollama), llm-router (HTTP or embedded GGUF engine)
+- **Embedded Inference Engine**: `make build-bitnet` compiles llama.cpp directly into the binary; route without any external server using a small GGUF model (~400 MB, BitNet-b1.58-2B-4T)
+- **Model Capability Registry**: Store endpoint → model → capability mappings; all routing modes use the registry to improve agent selection
+- **Cost Projection Dashboard**: Per-execution cost estimates using public provider rates; `status --cost-report` shows spend breakdown and budget alerts
+- **Importance and Deadline Routing**: `--importance critical` and `--deadline immediate` influence scoring across all routing modes
+- **Live Streaming Output**: Prompt responses stream in real-time for Claude, Codex, and Gemini
+- **Interactive TUI**: 8-tab interface (Agents/Instructions/Rules/Sessions/Detected/Commands/Status/About) with search, filtering, and Prompt Gateway
 - **MCP Server Support**: Configure Model Context Protocol servers per agent
 - **Secure Portable Setup**: Export with env-var key capture (`--include-keys`) and confirmation-gated sensitive content (`--include-secrets`)
 
@@ -136,6 +141,17 @@ brew install nikolareljin/tap/agentvault
 | `sync vault` | Update vault's stored instructions |
 | `instructions pull <dir>` | Import from project |
 | `instructions push <dir>` | Write to project |
+
+### Intelligent Routing
+| Command | Description |
+|---------|-------------|
+| `route` | Inspect routing decision without executing |
+| `capability list` | List model capability registry entries |
+| `capability add` | Add endpoint/model capability entry |
+| `capability remove` | Remove capability entry |
+| `capability discover` | Auto-discover capabilities from `/v1/models` or `/health` |
+| `routing-model status` | Show embedded engine state and model file info |
+| `routing-model download` | Download BitNet-b1.58-2B-4T routing model (~400 MB) |
 
 ### Setup Export/Import
 | Command | Description |
@@ -429,10 +445,15 @@ agentvault session import session.json
 ## Development
 
 ```bash
-make build    # Build binary
-make test     # Run tests
-make lint     # Check formatting
-make fmt      # Auto-format
+make build          # Build pure-Go binary (no CGo, cross-compilable)
+make test           # Run tests
+make lint           # Check formatting
+make fmt            # Auto-format
+make clean          # Remove built binaries
+
+# Embedded inference engine (optional — requires cmake + gcc)
+make build-llama    # Build llama.cpp static library (one-time, ~5 min)
+make build-bitnet   # Build binary with embedded inference → ./agentvault-bitnet
 ```
 
 ## Security

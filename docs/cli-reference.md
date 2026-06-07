@@ -31,6 +31,8 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `prompt`
 - `route`
 - `status`
+- `capability`
+- `routing-model`
 - `rules`
 - `roles`
 - `session`
@@ -121,7 +123,7 @@ Flags:
 
 Argument rules:
 - default mode requires exactly one `agent-name`
-- `--auto` requires no positional agent argument and lets AgentVault choose the target
+- `--auto` requires no positional agent argument and lets AgentVault choose the target via the configured routing mode
 Input:
 - Without `--workflow` (default), one primary prompt source is required:
   - `--text <prompt>` or
@@ -132,6 +134,7 @@ Input:
 Flags:
 - `--text <prompt>`
 - `--file <path>`
+- `--auto` (default: `false`): automatic agent selection — no positional agent argument required
 - `--workflow <name>`: `implement_issue|issue|implement_pr|pr|fix_pr`
 - `--repo <path>`: repository path for workflow context (default: current directory)
 - `--workspace <path>`: execution workspace for agentic CLI providers
@@ -146,6 +149,24 @@ Flags:
 - `--no-log` (default: `false`)
 - `--history-file <path>`
 - `--timeout <duration>` (default: `5m`)
+
+Routing flags (apply when `--auto` is used or router mode is set):
+- `--router <mode>`: `heuristic|langgraph|local-ai|llm-router`
+- `--importance <level>`: `low|medium|high|critical`
+- `--deadline <level>`: `immediate|normal|background`
+- `--prefer-local` (default: `false`)
+- `--prefer-fast` (default: `false`)
+- `--prefer-low-cost` (default: `false`)
+- `--local-only` (default: `false`)
+- `--local-ai-model <model>` (default: `llama3.2`)
+- `--local-ai-url <url>` (default: `http://localhost:11434`)
+- `--llm-router-url <url>`
+- `--llm-router-model <name>`
+- `--llm-router-timeout <int>` (default: `30`)
+- `--llm-router-model-path <path>`: GGUF model for embedded inference (requires `make build-bitnet`)
+- `--llm-router-context-size <int>` (default: `512`)
+- `--llm-router-threads <int>` (default: all available)
+- `--llm-router-gpu-layers <int>` (default: `0`)
 
 Execution behavior:
 - Codex launches in agentic workspace-write mode (`--full-auto`).
@@ -174,6 +195,7 @@ Flags:
 - `--json` (default: `true`)
 - `--no-vault` (default: `false`)
 - `--vault-password-env <ENV_VAR>` (default: `AGENTVAULT_PASSWORD`)
+- `--cost-report` (default: `false`): include estimated cost breakdown aggregated from prompt history; fires budget alerts when spend exceeds 80% of `MonthlyBudgetUSD`
 
 ### `agentvault route`
 Input:
@@ -186,18 +208,77 @@ Flags:
 - `--text <prompt>`
 - `--file <path>`
 - `--json` (default: `false`)
-- `--router <mode>`: `heuristic|langgraph`
+- `--router <mode>`: `heuristic|langgraph|local-ai|llm-router`
 - `--langgraph-cmd <path-to-python-script>`
 - `--prefer-local` (default flag value: `false`; effective default policy is local-first when no preference flags are set)
 - `--prefer-fast` (default: `false`)
 - `--prefer-low-cost` (default: `false`)
 - `--local-only` (default: `false`)
+- `--importance <level>`: `low|medium|high|critical` — influences scoring; `critical` strongly prefers cloud/low-latency runners
+- `--deadline <level>`: `immediate|normal|background` — `immediate` boosts low-latency agents; `background` favors low-cost
+- `--local-ai-model <model>` (default: `llama3.2`): Ollama model for `local-ai` routing classification
+- `--local-ai-url <url>` (default: `http://localhost:11434`): Ollama base URL for `local-ai` routing
+- `--llm-router-url <url>`: OpenAI-compatible server URL for `llm-router` mode (e.g. `http://localhost:8080`)
+- `--llm-router-model <name>`: model name override for `llm-router` HTTP mode (uses server default if empty)
+- `--llm-router-timeout <int>` (default: `30`): `llm-router` HTTP request timeout in seconds
+- `--llm-router-model-path <path>`: path to GGUF model file for embedded in-process inference (requires `make build-bitnet`)
+- `--llm-router-context-size <int>` (default: `512`): context window tokens for embedded inference
+- `--llm-router-threads <int>` (default: all available): CPU threads for embedded inference
+- `--llm-router-gpu-layers <int>` (default: `0`): transformer layers to offload to GPU for embedded inference
 
 Behavior:
-- inspects all configured agents and their inferred or explicit routing metadata
+- inspects all configured agents, their routing metadata, and the vault capability registry
 - selects the best agent/runner/model combination without executing the prompt
 - defaults to a local-first routing policy when none of `--prefer-local`, `--prefer-fast`, or `--prefer-low-cost` are set
+- `local-ai` mode sends prompt to a local Ollama model for structured classification, then scores agents; falls back to heuristic if Ollama is unreachable
+- `llm-router` mode calls an external OpenAI-compatible server OR an embedded GGUF engine (when `--llm-router-model-path` is set) for intelligent cost-aware routing; falls back to heuristic on error
 - returns fallback candidates when available and when enabled in the router configuration
+- output includes: Mode, Importance, Deadline, task class, top reasons, and fallback list
+
+## Capability registry
+
+### `agentvault capability list`
+Flags:
+- `--json` (default: `false`)
+
+### `agentvault capability add`
+Required:
+- `--endpoint <url>`: endpoint base URL
+- `--model <name>`: model name
+
+Optional:
+- `--context <int>`: context window size in tokens
+- `--caps <comma-separated>`: capability tags — `code`, `vision`, `embedding`, `reasoning`, `general`
+
+### `agentvault capability remove`
+Required:
+- `--endpoint <url>`
+- `--model <name>`
+
+### `agentvault capability discover`
+Required:
+- `--endpoint <url>`: base URL to query for model capabilities
+
+Optional:
+- `--timeout <duration>` (default: `10s`): request timeout
+
+Behavior: tries `/v1/models` (OpenAI-compat shape — llama.cpp, Ollama, bitnet-server) first,
+then falls back to `/health` (llm-gateway-helpers shape). Infers capability tags from model names.
+Registry entries are used by all routing modes to augment agent `RouteConfig.Capabilities`.
+
+## Embedded inference model
+
+### `agentvault routing-model status`
+No flags. Prints engine state (enabled/disabled based on build tag), expected model path,
+file size, and OS/arch. The embedded engine requires `make build-bitnet`.
+
+### `agentvault routing-model download`
+Flags:
+- `--output <dir>` (default: `~/.local/share/agentvault/models/`): directory to save the GGUF file
+- `--url <url>` (default: HuggingFace BitNet-b1.58-2B-4T URL): download URL override
+
+Downloads `bitnet_b1_58-2B-4T.gguf` (~400 MB) from Hugging Face with streaming progress.
+Re-running is a no-op if the file already exists.
 
 ## Rules (`rules` alias: `rule`)
 
