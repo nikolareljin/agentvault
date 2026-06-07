@@ -305,6 +305,8 @@ func (v *Vault) ListCapabilities() []agent.ModelCapabilityEntry {
 // AddCapability adds a new model capability entry. Returns an error if an entry
 // for the same endpoint+model combination already exists.
 func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
+	entry.EndpointURL = strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/")
+	entry.ModelName = strings.TrimSpace(entry.ModelName)
 	for _, e := range v.modelCapabilities {
 		if e.EndpointURL == entry.EndpointURL && e.ModelName == entry.ModelName {
 			return fmt.Errorf("capability entry for %s/%s already exists; remove it first with 'agentvault capability remove'", entry.EndpointURL, entry.ModelName)
@@ -320,6 +322,8 @@ func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
 // RemoveCapability removes a capability entry by endpoint URL and model name.
 // Returns an error if not found.
 func (v *Vault) RemoveCapability(endpointURL, modelName string) error {
+	endpointURL = strings.TrimRight(strings.TrimSpace(endpointURL), "/")
+	modelName = strings.TrimSpace(modelName)
 	for i, e := range v.modelCapabilities {
 		if e.EndpointURL == endpointURL && e.ModelName == modelName {
 			v.modelCapabilities = append(v.modelCapabilities[:i], v.modelCapabilities[i+1:]...)

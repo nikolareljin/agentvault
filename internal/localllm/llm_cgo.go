@@ -108,7 +108,7 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 	defer C.llama_sampler_free(sampler)
 
 	var out []byte
-	for range 256 {
+	for i := 0; i < 256; i++ {
 		select {
 		case <-ctx.Done():
 			return string(out), ctx.Err()
