@@ -102,6 +102,11 @@ func (cfg RouterConfig) Validate() error {
 			return fmt.Errorf("unknown router mode: %s", cfg.Mode)
 		}
 	}
+	if mode == "llm-router" &&
+		strings.TrimSpace(cfg.LLMRouterURL) == "" &&
+		strings.TrimSpace(cfg.LLMRouterModelPath) == "" {
+		return fmt.Errorf("llm-router mode requires --llm-router-url (HTTP server) or --llm-router-model-path (embedded inference)")
+	}
 	if imp := strings.ToLower(strings.TrimSpace(cfg.Importance)); imp != "" {
 		switch imp {
 		case "low", "medium", "high", "critical":

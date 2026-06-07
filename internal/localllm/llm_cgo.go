@@ -117,8 +117,11 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 			break
 		}
 
-		var pieceBuf [32]C.char
+		var pieceBuf [256]C.char
 		n := C.llama_token_to_piece(e.model, tok, &pieceBuf[0], C.int32_t(len(pieceBuf)), 0, C.bool(true))
+		if n < 0 {
+			return string(out), fmt.Errorf("localllm: token piece buffer too small (need %d bytes)", -n)
+		}
 		if n > 0 {
 			out = append(out, C.GoStringN(&pieceBuf[0], C.int(n))...)
 		}
