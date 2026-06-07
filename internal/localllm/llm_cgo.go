@@ -80,8 +80,8 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 		e.model,
 		ccombined, C.int32_t(len(combined)),
 		&tokens[0], C.int32_t(maxTokens),
-		C.bool(true),  // add_special (BOS)
-		C.bool(true),  // parse_special tokens
+		C.bool(true), // add_special (BOS)
+		C.bool(true), // parse_special tokens
 	)
 	if nTokens < 0 {
 		return "", fmt.Errorf("localllm: tokenize failed (input too long?)")

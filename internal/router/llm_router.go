@@ -30,8 +30,8 @@ type LLMRouterConfig struct {
 
 // RoutingFactors captures the analysis dimensions returned by the routing model.
 type RoutingFactors struct {
-	Complexity       int    `json:"complexity"`        // 1–10
-	TaskType         string `json:"task_type"`         // coding|review|analysis|general
+	Complexity       int    `json:"complexity"` // 1–10
+	TaskType         string `json:"task_type"`  // coding|review|analysis|general
 	RequiresTools    bool   `json:"requires_tools"`
 	PrivacySensitive bool   `json:"privacy_sensitive"`
 	TimeSensitive    bool   `json:"time_sensitive"`

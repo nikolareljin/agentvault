@@ -35,23 +35,23 @@ import (
 // vaultData is the JSON structure persisted inside the encrypted file.
 // All fields are serialized together as a single encrypted blob.
 type vaultData struct {
-	Agents               []agent.Agent                 `json:"agents"`
-	Shared               agent.SharedConfig             `json:"shared"`
-	ProviderConfigs      agent.ProviderConfig           `json:"provider_configs"`
-	Sessions             agent.SessionConfig            `json:"sessions"`
-	ModelCapabilities    []agent.ModelCapabilityEntry   `json:"model_capabilities,omitempty"`
+	Agents            []agent.Agent                `json:"agents"`
+	Shared            agent.SharedConfig           `json:"shared"`
+	ProviderConfigs   agent.ProviderConfig         `json:"provider_configs"`
+	Sessions          agent.SessionConfig          `json:"sessions"`
+	ModelCapabilities []agent.ModelCapabilityEntry `json:"model_capabilities,omitempty"`
 }
 
 // Vault represents the encrypted agent store.
 type Vault struct {
-	path                string
-	agents              []agent.Agent
-	shared              agent.SharedConfig
-	providerConfigs     agent.ProviderConfig
-	sessions            agent.SessionConfig
-	modelCapabilities   []agent.ModelCapabilityEntry
-	key                 []byte // derived key, set after Init or Unlock
-	salt                []byte // persisted salt
+	path              string
+	agents            []agent.Agent
+	shared            agent.SharedConfig
+	providerConfigs   agent.ProviderConfig
+	sessions          agent.SessionConfig
+	modelCapabilities []agent.ModelCapabilityEntry
+	key               []byte // derived key, set after Init or Unlock
+	salt              []byte // persisted salt
 }
 
 // New creates a Vault instance at the given path.
