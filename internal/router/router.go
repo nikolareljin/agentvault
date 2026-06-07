@@ -28,11 +28,11 @@ var (
 
 // Request captures one routing decision request.
 type Request struct {
-	Prompt             string
-	Agents             []agent.Agent
-	Shared             agent.SharedConfig
-	Config             agent.RouterConfig
-	ModelCapabilities  []agent.ModelCapabilityEntry
+	Prompt            string
+	Agents            []agent.Agent
+	Shared            agent.SharedConfig
+	Config            agent.RouterConfig
+	ModelCapabilities []agent.ModelCapabilityEntry
 }
 
 // Intent is a normalized prompt classification used for routing.
