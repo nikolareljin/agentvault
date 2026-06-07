@@ -35,21 +35,23 @@ import (
 // vaultData is the JSON structure persisted inside the encrypted file.
 // All fields are serialized together as a single encrypted blob.
 type vaultData struct {
-	Agents          []agent.Agent        `json:"agents"`
-	Shared          agent.SharedConfig   `json:"shared"`
-	ProviderConfigs agent.ProviderConfig `json:"provider_configs"`
-	Sessions        agent.SessionConfig  `json:"sessions"`
+	Agents               []agent.Agent                 `json:"agents"`
+	Shared               agent.SharedConfig             `json:"shared"`
+	ProviderConfigs      agent.ProviderConfig           `json:"provider_configs"`
+	Sessions             agent.SessionConfig            `json:"sessions"`
+	ModelCapabilities    []agent.ModelCapabilityEntry   `json:"model_capabilities,omitempty"`
 }
 
 // Vault represents the encrypted agent store.
 type Vault struct {
-	path            string
-	agents          []agent.Agent
-	shared          agent.SharedConfig
-	providerConfigs agent.ProviderConfig
-	sessions        agent.SessionConfig
-	key             []byte // derived key, set after Init or Unlock
-	salt            []byte // persisted salt
+	path                string
+	agents              []agent.Agent
+	shared              agent.SharedConfig
+	providerConfigs     agent.ProviderConfig
+	sessions            agent.SessionConfig
+	modelCapabilities   []agent.ModelCapabilityEntry
+	key                 []byte // derived key, set after Init or Unlock
+	salt                []byte // persisted salt
 }
 
 // New creates a Vault instance at the given path.
@@ -130,6 +132,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
 	v.sessions = vd.Sessions
+	v.modelCapabilities = vd.ModelCapabilities
 	if v.sessions.ParallelLimit != 0 {
 		v.sessions.ParallelLimitSet = true
 	} else if sessionParallelLimitDefined(plaintext) {
@@ -294,6 +297,38 @@ func (v *Vault) Save() error {
 	return v.write()
 }
 
+// ListCapabilities returns all model capability entries.
+func (v *Vault) ListCapabilities() []agent.ModelCapabilityEntry {
+	return append([]agent.ModelCapabilityEntry(nil), v.modelCapabilities...)
+}
+
+// AddCapability adds a new model capability entry. Returns an error if an entry
+// for the same endpoint+model combination already exists.
+func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
+	for _, e := range v.modelCapabilities {
+		if e.EndpointURL == entry.EndpointURL && e.ModelName == entry.ModelName {
+			return fmt.Errorf("capability entry for %s/%s already exists; use update or remove first", entry.EndpointURL, entry.ModelName)
+		}
+	}
+	if entry.UpdatedAt.IsZero() {
+		entry.UpdatedAt = time.Now().UTC()
+	}
+	v.modelCapabilities = append(v.modelCapabilities, entry)
+	return v.Save()
+}
+
+// RemoveCapability removes a capability entry by endpoint URL and model name.
+// Returns an error if not found.
+func (v *Vault) RemoveCapability(endpointURL, modelName string) error {
+	for i, e := range v.modelCapabilities {
+		if e.EndpointURL == endpointURL && e.ModelName == modelName {
+			v.modelCapabilities = append(v.modelCapabilities[:i], v.modelCapabilities[i+1:]...)
+			return v.Save()
+		}
+	}
+	return fmt.Errorf("no capability entry found for %s/%s", endpointURL, modelName)
+}
+
 // GetInstruction returns a stored instruction file by name. When multiple
 // scoped variants exist, the global-scope variant is returned first; otherwise
 // the first match is returned. Use GetInstructionByKey for an exact lookup.
@@ -425,7 +460,7 @@ func (v *Vault) ListInstructions() []agent.InstructionFile {
 
 // ExportData returns the vault contents as JSON (for export to a file).
 func (v *Vault) ExportData() ([]byte, error) {
-	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities}
 	return json.MarshalIndent(vd, "", "  ")
 }
 
@@ -703,7 +738,7 @@ func sessionParallelLimitDefined(data []byte) bool {
 // write encrypts the entire vault state and writes it atomically to disk.
 // The output format is: [salt bytes][nonce + AES-256-GCM ciphertext].
 func (v *Vault) write() error {
-	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities}
 	plaintext, err := json.Marshal(vd)
 	if err != nil {
 		return fmt.Errorf("encoding vault: %w", err)

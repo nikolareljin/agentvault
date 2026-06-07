@@ -27,7 +27,7 @@ func init() {
 	routeCmd.Flags().String("text", "", "prompt text")
 	routeCmd.Flags().String("file", "", "read prompt text from file")
 	routeCmd.Flags().Bool("json", false, "output machine-readable JSON")
-	routeCmd.Flags().String("router", "", "router mode override: heuristic|langgraph|local-ai")
+	routeCmd.Flags().String("router", "", "router mode override: heuristic|langgraph|local-ai|llm-router")
 	routeCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
 	routeCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing (effective default when no other routing preferences are set)")
 	routeCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
@@ -37,6 +37,9 @@ func init() {
 	routeCmd.Flags().String("deadline", "", "routing deadline: immediate|normal|background")
 	routeCmd.Flags().String("local-ai-model", "", "ollama model for local-ai routing classification (default: llama3.2)")
 	routeCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: http://localhost:11434)")
+	routeCmd.Flags().String("llm-router-url", "", "URL of local llama-server or bitnet-server for llm-router mode (e.g. http://localhost:8080)")
+	routeCmd.Flags().String("llm-router-model", "", "model name override for llm-router mode (uses server default if empty)")
+	routeCmd.Flags().Int("llm-router-timeout", 0, "llm-router request timeout in seconds (default 30)")
 }
 
 func runRoute(cmd *cobra.Command, args []string) error {
@@ -53,10 +56,11 @@ func runRoute(cmd *cobra.Command, args []string) error {
 	}
 	routingAgents := resolvedRoutingAgents(v.List())
 	decision, err := routerpkg.Route(routerpkg.Request{
-		Prompt: text,
-		Agents: routingAgents,
-		Shared: v.SharedConfig(),
-		Config: promptRouterOverride(cmd),
+		Prompt:            text,
+		Agents:            routingAgents,
+		Shared:            v.SharedConfig(),
+		Config:            promptRouterOverride(cmd),
+		ModelCapabilities: v.ListCapabilities(),
 	})
 	if err != nil {
 		return err

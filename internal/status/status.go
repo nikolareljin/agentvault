@@ -20,6 +20,22 @@ type Report struct {
 	Vault       *VaultSummary             `json:"vault,omitempty"`
 	Providers   map[string]ProviderStatus `json:"providers"`
 	Agents      []AgentStatus             `json:"agents,omitempty"`
+	Cost        *CostReport               `json:"cost,omitempty"`
+}
+
+// CostReport aggregates estimated spend from the prompt history file.
+type CostReport struct {
+	TotalUSD     float64            `json:"total_usd"`
+	ByProvider   map[string]float64 `json:"by_provider"`
+	RecordCount  int                `json:"record_count"`
+	BudgetAlerts []BudgetAlert      `json:"budget_alerts,omitempty"`
+}
+
+// BudgetAlert is emitted when a provider's estimated spend exceeds its monthly budget.
+type BudgetAlert struct {
+	Provider  string  `json:"provider"`
+	SpentUSD  float64 `json:"spent_usd"`
+	BudgetUSD float64 `json:"budget_usd"`
 }
 
 // VaultSummary captures high-level vault metadata counts.
@@ -120,6 +136,9 @@ func BuildReport(v *vault.Vault, homeDir string) Report {
 	if providerConfigs.Ollama != nil {
 		providerCfgCount++
 	}
+
+	historyPath := filepath.Join(filepath.Dir(v.Path()), "prompt-history.jsonl")
+	report.Cost = BuildCostReport(historyPath, shared.Pricing)
 
 	agents := append([]agent.Agent(nil), v.List()...)
 	report.Vault = &VaultSummary{
@@ -386,4 +405,82 @@ func findNewestJSONL(root string) (string, error) {
 		return "", fmt.Errorf("no codex session logs found")
 	}
 	return newest, nil
+}
+
+// BuildCostReport reads the prompt history JSONL file and aggregates estimated cost by provider.
+// Returns nil if the history file does not exist or is empty.
+func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostReport {
+	f, err := os.Open(historyPath)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	if len(pricing) == 0 {
+		pricing = agent.DefaultPricing()
+	}
+
+	type historyRecord struct {
+		Provider         string                  `json:"provider"`
+		Model            string                  `json:"model"`
+		TokenUsage       *agent.PromptTokenUsage `json:"token_usage"`
+		EstimatedCostUSD float64                 `json:"estimated_cost_usd"`
+		Success          bool                    `json:"success"`
+	}
+
+	byProvider := make(map[string]float64)
+	var total float64
+	var count int
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var rec historyRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil || !rec.Success {
+			continue
+		}
+		cost := rec.EstimatedCostUSD
+		if cost == 0 && rec.TokenUsage != nil {
+			// Re-compute for records written before cost tracking landed.
+			p := agent.Provider(rec.Provider)
+			cost = agent.ComputeCostUSD(rec.TokenUsage, p, rec.Model, pricing)
+		}
+		if cost > 0 {
+			byProvider[rec.Provider] += cost
+			total += cost
+		}
+		count++
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	report := &CostReport{
+		TotalUSD:    total,
+		ByProvider:  byProvider,
+		RecordCount: count,
+	}
+
+	// Check budget alerts against per-provider monthly budget from pricing config.
+	for prov, spent := range byProvider {
+		for _, p := range pricing {
+			if string(p.Provider) == prov && p.MonthlyBudgetUSD > 0 && spent >= p.MonthlyBudgetUSD*0.8 {
+				report.BudgetAlerts = append(report.BudgetAlerts, BudgetAlert{
+					Provider:  prov,
+					SpentUSD:  spent,
+					BudgetUSD: p.MonthlyBudgetUSD,
+				})
+				break
+			}
+		}
+	}
+	sort.Slice(report.BudgetAlerts, func(i, j int) bool {
+		return report.BudgetAlerts[i].Provider < report.BudgetAlerts[j].Provider
+	})
+
+	return report
 }

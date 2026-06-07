@@ -3,6 +3,8 @@ package router
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,31 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
+
+func newLLMRouterMockServer(t *testing.T, selectedAgent string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d := LLMRouterDecision{
+			SelectedAgent: selectedAgent,
+			Reasoning:     "best for the task",
+			Confidence:    0.9,
+			RoutingFactors: RoutingFactors{
+				Complexity: 5,
+				TaskType:   "coding",
+			},
+		}
+		resp := map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"content": func() string {
+					b, _ := json.Marshal(d)
+					return string(b)
+				}()}},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+}
 
 func requirePythonInterpreter(t *testing.T) {
 	t.Helper()
@@ -696,5 +723,63 @@ func TestRouteWithLocalAIErrorsWhenFallbacksDisabled(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "local-ai analysis failed") {
 		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestRouteLLMRouterUnreachableFallsBackToHeuristic(t *testing.T) {
+	decision, err := Route(Request{
+		Prompt: "write a sort function in Go",
+		Agents: []agent.Agent{
+			{Name: "codex", Provider: agent.ProviderCodex},
+			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+		},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{
+			Mode:                 "llm-router",
+			LLMRouterURL:         "http://localhost:19999",
+			LLMRouterTimeoutSecs: 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("llm-router unreachable should not return error, got: %v", err)
+	}
+	if decision.Mode != "heuristic-fallback" {
+		t.Fatalf("expected heuristic-fallback mode, got %q", decision.Mode)
+	}
+	reasonsStr := strings.Join(decision.Selected.Reasons, " ")
+	if !strings.Contains(reasonsStr, "fallback") {
+		t.Errorf("expected fallback reason, got reasons: %v", decision.Selected.Reasons)
+	}
+}
+
+func TestRouteLLMRouterModeReturnsDecision(t *testing.T) {
+	srv := newLLMRouterMockServer(t, "codex")
+	defer srv.Close()
+
+	decision, err := Route(Request{
+		Prompt: "implement quicksort",
+		Agents: []agent.Agent{
+			{Name: "codex", Provider: agent.ProviderCodex},
+			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+		},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{
+			Mode:                 "llm-router",
+			LLMRouterURL:         srv.URL,
+			LLMRouterTimeoutSecs: 5,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if decision.Mode != "llm-router" {
+		t.Fatalf("expected mode llm-router, got %q", decision.Mode)
+	}
+	if decision.Selected.Agent.Name != "codex" {
+		t.Fatalf("expected codex selected by llm-router, got %q", decision.Selected.Agent.Name)
+	}
+	reasonsStr := strings.Join(decision.Selected.Reasons, " ")
+	if !strings.Contains(reasonsStr, "llm-router") {
+		t.Errorf("expected llm-router reason, got: %v", decision.Selected.Reasons)
 	}
 }

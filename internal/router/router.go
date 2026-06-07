@@ -28,10 +28,11 @@ var (
 
 // Request captures one routing decision request.
 type Request struct {
-	Prompt string
-	Agents []agent.Agent
-	Shared agent.SharedConfig
-	Config agent.RouterConfig
+	Prompt             string
+	Agents             []agent.Agent
+	Shared             agent.SharedConfig
+	Config             agent.RouterConfig
+	ModelCapabilities  []agent.ModelCapabilityEntry
 }
 
 // Intent is a normalized prompt classification used for routing.
@@ -107,6 +108,8 @@ func Route(req Request) (Decision, error) {
 		return decision, nil
 	case "local-ai":
 		return routeWithLocalAI(req, cfg)
+	case "llm-router":
+		return routeWithLLMRouter(req, cfg)
 	default:
 		return routeHeuristic(req, cfg)
 	}
@@ -150,6 +153,18 @@ func mergeRouterConfig(base, override agent.RouterConfig) agent.RouterConfig {
 	if strings.TrimSpace(override.LocalAIOllamaURL) != "" {
 		out.LocalAIOllamaURL = override.LocalAIOllamaURL
 	}
+	if strings.TrimSpace(override.LLMRouterURL) != "" {
+		out.LLMRouterURL = override.LLMRouterURL
+	}
+	if strings.TrimSpace(override.LLMRouterModel) != "" {
+		out.LLMRouterModel = override.LLMRouterModel
+	}
+	if override.LLMRouterTimeoutSecs > 0 {
+		out.LLMRouterTimeoutSecs = override.LLMRouterTimeoutSecs
+	}
+	if override.LLMRouterEnableCostEst {
+		out.LLMRouterEnableCostEst = true
+	}
 	return out
 }
 
@@ -159,7 +174,7 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 		return Decision{}, errors.New("routing requires non-empty prompt")
 	}
 	intent := classifyPrompt(prompt)
-	candidates := buildCandidates(req.Agents, intent, cfg, prompt)
+	candidates := buildCandidates(req.Agents, intent, cfg, prompt, req.ModelCapabilities)
 	if len(candidates) == 0 {
 		return Decision{}, errors.New("no routing candidates available")
 	}
@@ -209,12 +224,28 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 	}, nil
 }
 
-func buildCandidates(agents []agent.Agent, intent Intent, cfg agent.RouterConfig, prompt string) []Candidate {
+func buildCandidates(agents []agent.Agent, intent Intent, cfg agent.RouterConfig, prompt string, capabilities ...[]agent.ModelCapabilityEntry) []Candidate {
+	var caps []agent.ModelCapabilityEntry
+	if len(capabilities) > 0 {
+		caps = capabilities[0]
+	}
 	candidates := make([]Candidate, 0, len(agents))
 	for _, a := range agents {
 		profile := a.EffectiveRouteConfig()
 		if profile.Disabled {
 			continue
+		}
+		// Augment profile capabilities from the capability registry when the
+		// agent's BaseURL matches a registered endpoint.
+		if len(caps) > 0 && strings.TrimSpace(a.BaseURL) != "" {
+			normalizedBase := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
+			for _, cap := range caps {
+				if strings.TrimRight(cap.EndpointURL, "/") == normalizedBase &&
+					(cap.ModelName == "" || cap.ModelName == a.Model) {
+					profile.Capabilities = mergeCapabilities(profile.Capabilities, cap.Capabilities)
+					break
+				}
+			}
 		}
 		target := agent.ResolveExecutionTarget(a)
 		score, reasons := scoreCandidate(a, profile, target, intent, cfg, prompt)
@@ -561,7 +592,7 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 		overrideCfg.LocalOnly = true
 	}
 
-	candidates := buildCandidates(req.Agents, intent, overrideCfg, trimmedPrompt)
+	candidates := buildCandidates(req.Agents, intent, overrideCfg, trimmedPrompt, req.ModelCapabilities)
 	if len(candidates) == 0 {
 		return Decision{}, errors.New("no routing candidates available")
 	}
@@ -617,6 +648,95 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 	}, nil
 }
 
+func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
+	trimmedPrompt := strings.TrimSpace(req.Prompt)
+	intent := classifyPrompt(trimmedPrompt)
+	overrideCfg := cfg
+
+	candidates := buildCandidates(req.Agents, intent, overrideCfg, trimmedPrompt, req.ModelCapabilities)
+	if len(candidates) == 0 {
+		return Decision{}, errors.New("no routing candidates available")
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score == candidates[j].Score {
+			if candidates[i].Target.Local != candidates[j].Target.Local {
+				return candidates[i].Target.Local
+			}
+			return candidates[i].Agent.Name < candidates[j].Agent.Name
+		}
+		return candidates[i].Score > candidates[j].Score
+	})
+
+	llmCfg := LLMRouterConfig{
+		URL:           cfg.LLMRouterURL,
+		Model:         cfg.LLMRouterModel,
+		TimeoutSecs:   cfg.LLMRouterTimeoutSecs,
+		EnableCostEst: cfg.LLMRouterEnableCostEst,
+	}
+
+	decision, err := AnalyzeWithLLMRouter(context.Background(), trimmedPrompt, candidates, llmCfg)
+	if err != nil {
+		// Graceful degradation: fall through to heuristic, never surface the error to the caller.
+		hDecision, hErr := routeHeuristic(req, overrideCfg)
+		if hErr != nil {
+			return Decision{}, hErr
+		}
+		hDecision.Mode = "heuristic-fallback"
+		if len(hDecision.Selected.Reasons) > 0 {
+			hDecision.Selected.Reasons = append([]string{"llm-router unavailable, used heuristic fallback"}, hDecision.Selected.Reasons...)
+		} else {
+			hDecision.Selected.Reasons = []string{"llm-router unavailable, used heuristic fallback"}
+		}
+		return hDecision, nil
+	}
+
+	enrichIntentFromLLMDecision(&intent, decision)
+
+	if decision.RoutingFactors.PrivacySensitive && !overrideCfg.LocalOnly {
+		overrideCfg.LocalOnly = true
+	}
+	if decision.RoutingFactors.TimeSensitive && strings.TrimSpace(overrideCfg.Deadline) == "" {
+		overrideCfg.Deadline = "immediate"
+	}
+
+	balancer := NewBalancer()
+	selected, err := balancer.PickBest(context.Background(), decision, candidates)
+	if err != nil {
+		return Decision{}, err
+	}
+
+	llmReason := fmt.Sprintf("llm-router: %s (confidence=%.2f complexity=%d/10 task=%s)",
+		decision.Reasoning, decision.Confidence,
+		decision.RoutingFactors.Complexity, decision.RoutingFactors.TaskType)
+	selected.Reasons = append([]string{llmReason}, selected.Reasons...)
+
+	fallbacks := make([]Candidate, 0, 3)
+	if overrideCfg.AllowFallbacks {
+		for _, name := range decision.FallbackAgents {
+			for _, c := range candidates {
+				if c.Agent.Name == name && c.Agent.Name != selected.Agent.Name {
+					fallbacks = append(fallbacks, c)
+					break
+				}
+			}
+			if len(fallbacks) == 3 {
+				break
+			}
+		}
+	}
+
+	return Decision{
+		Mode:                "llm-router",
+		Intent:              intent,
+		Selected:            selected,
+		Fallbacks:           fallbacks,
+		Candidates:          candidates,
+		EffectiveImportance: overrideCfg.Importance,
+		EffectiveDeadline:   overrideCfg.Deadline,
+	}, nil
+}
+
 type langGraphInput struct {
 	Prompt     string             `json:"prompt"`
 	Config     agent.RouterConfig `json:"config"`
@@ -640,7 +760,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if scriptPath == "" {
 		return Decision{}, errors.New("langgraph mode requires a router script path or AGENTVAULT_LANGGRAPH_ROUTER_CMD")
 	}
-	candidates := buildCandidates(req.Agents, intent, cfg, trimmedPrompt)
+	candidates := buildCandidates(req.Agents, intent, cfg, trimmedPrompt, req.ModelCapabilities)
 	if len(candidates) == 0 {
 		return Decision{}, errors.New("no routing candidates available")
 	}
@@ -823,4 +943,19 @@ func chooseNonEmpty(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func mergeCapabilities(existing, additional []string) []string {
+	seen := make(map[string]bool, len(existing))
+	for _, c := range existing {
+		seen[c] = true
+	}
+	out := append([]string(nil), existing...)
+	for _, c := range additional {
+		if !seen[strings.ToLower(c)] {
+			out = append(out, strings.ToLower(c))
+			seen[strings.ToLower(c)] = true
+		}
+	}
+	return out
 }

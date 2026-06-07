@@ -235,6 +235,111 @@ func FilenameForInstruction(name string) string {
 	return name + ".md"
 }
 
+// ProviderPricing holds per-token cost rates for one provider.
+// Rates are in USD per 1,000 tokens.
+type ProviderPricing struct {
+	Provider          Provider `json:"provider"`
+	ModelPattern      string   `json:"model_pattern,omitempty"` // substring match, empty = all models
+	InputPer1KTokens  float64  `json:"input_per_1k_tokens"`
+	OutputPer1KTokens float64  `json:"output_per_1k_tokens"`
+	CachedPer1KTokens float64  `json:"cached_per_1k_tokens,omitempty"`
+	MonthlyBudgetUSD  float64  `json:"monthly_budget_usd,omitempty"`
+}
+
+// DefaultPricing returns well-known public pricing for common providers.
+// Values reflect publicly available pricing and should be updated as providers change rates.
+func DefaultPricing() []ProviderPricing {
+	return []ProviderPricing{
+		{Provider: ProviderClaude, ModelPattern: "haiku", InputPer1KTokens: 0.00025, OutputPer1KTokens: 0.00125, CachedPer1KTokens: 0.000030},
+		{Provider: ProviderClaude, ModelPattern: "sonnet", InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015, CachedPer1KTokens: 0.00030},
+		{Provider: ProviderClaude, ModelPattern: "opus", InputPer1KTokens: 0.015, OutputPer1KTokens: 0.075, CachedPer1KTokens: 0.0015},
+		{Provider: ProviderClaude, InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015},
+		{Provider: ProviderOpenAI, ModelPattern: "gpt-4o-mini", InputPer1KTokens: 0.00015, OutputPer1KTokens: 0.000600},
+		{Provider: ProviderOpenAI, ModelPattern: "gpt-4o", InputPer1KTokens: 0.005, OutputPer1KTokens: 0.015},
+		{Provider: ProviderOpenAI, InputPer1KTokens: 0.005, OutputPer1KTokens: 0.015},
+		{Provider: ProviderGemini, ModelPattern: "flash", InputPer1KTokens: 0.000075, OutputPer1KTokens: 0.0003},
+		{Provider: ProviderGemini, InputPer1KTokens: 0.00125, OutputPer1KTokens: 0.005},
+		{Provider: ProviderCodex, InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015},
+		{Provider: ProviderBedrock, InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015},
+		{Provider: ProviderOllama, InputPer1KTokens: 0, OutputPer1KTokens: 0},
+	}
+}
+
+// ComputeCostUSD returns the estimated USD cost for the given token usage against a pricing slice.
+// Returns 0 for providers not found in pricing (e.g. Ollama) and when usage is nil.
+func ComputeCostUSD(usage *PromptTokenUsage, provider Provider, model string, pricing []ProviderPricing) float64 {
+	if usage == nil || len(pricing) == 0 {
+		return 0
+	}
+	// Find the most specific match: prefer ModelPattern hit over catch-all.
+	var best *ProviderPricing
+	for i := range pricing {
+		p := &pricing[i]
+		if p.Provider != provider {
+			continue
+		}
+		if p.ModelPattern != "" && !containsFold(model, p.ModelPattern) {
+			continue
+		}
+		if best == nil || (p.ModelPattern != "" && best.ModelPattern == "") {
+			best = p
+		}
+	}
+	if best == nil {
+		return 0
+	}
+	inputCost := float64(usage.InputTokens) / 1000.0 * best.InputPer1KTokens
+	cachedCost := float64(usage.CachedInputTokens) / 1000.0 * best.CachedPer1KTokens
+	outputCost := float64(usage.OutputTokens) / 1000.0 * best.OutputPer1KTokens
+	return inputCost + cachedCost + outputCost
+}
+
+func containsFold(s, substr string) bool {
+	if substr == "" {
+		return true
+	}
+	return len(s) >= len(substr) && containsRuneFold(s, substr)
+}
+
+func containsRuneFold(s, substr string) bool {
+	ls, lsub := len(s), len(substr)
+	for i := 0; i <= ls-lsub; i++ {
+		if equalFold(s[i:i+lsub], substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func equalFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if ca >= 'A' && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if cb >= 'A' && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
+}
+
+// ModelCapabilityEntry records one endpoint/model capability tuple for the model registry.
+type ModelCapabilityEntry struct {
+	EndpointURL  string    `json:"endpoint_url"`
+	ModelName    string    `json:"model_name"`
+	ContextSize  int       `json:"context_size,omitempty"`
+	Capabilities []string  `json:"capabilities"` // code, vision, embedding, reasoning, general
+	Source       string    `json:"source"`       // manual | auto-discovered
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // SharedConfig holds global settings that apply to all agents unless overridden.
 type SharedConfig struct {
 	SystemPrompt   string            `json:"system_prompt,omitempty"`
@@ -244,6 +349,7 @@ type SharedConfig struct {
 	Roles          []Role            `json:"roles,omitempty"`
 	PromptSessions []PromptSession   `json:"prompt_sessions,omitempty"`
 	Router         RouterConfig      `json:"router,omitempty"`
+	Pricing        []ProviderPricing `json:"pricing,omitempty"`
 }
 
 // ValidProviders returns all known provider values.

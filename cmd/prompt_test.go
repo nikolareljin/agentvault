@@ -233,6 +233,8 @@ func (s stubPromptVault) List() []agent.Agent { return append([]agent.Agent(nil)
 
 func (s stubPromptVault) SharedConfig() agent.SharedConfig { return s.shared }
 
+func (s stubPromptVault) ListCapabilities() []agent.ModelCapabilityEntry { return nil }
+
 func TestResolvePromptAgentAutoUsesProvidedPromptText(t *testing.T) {
 	cmd := newPromptOptimizationTestCommand()
 	cmd.Flags().Bool("auto", false, "")
