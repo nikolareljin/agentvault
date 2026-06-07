@@ -189,6 +189,7 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	total := len(entries)
 	added := 0
 	for _, entry := range entries {
 		entry.EndpointURL = baseURL
@@ -201,7 +202,12 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 		fmt.Printf("  + %s (%s)\n", entry.ModelName, strings.Join(entry.Capabilities, ","))
 		added++
 	}
-	fmt.Printf("Discovered %d model(s) from %s\n", added, baseURL)
+	skipped := total - added
+	if skipped > 0 {
+		fmt.Printf("Added %d of %d model(s) from %s (%d already in registry)\n", added, total, baseURL, skipped)
+	} else {
+		fmt.Printf("Added %d model(s) from %s\n", added, baseURL)
+	}
 	return nil
 }
 
@@ -279,11 +285,13 @@ func discoverFromHealthEndpoint(client *http.Client, baseURL string) ([]agent.Mo
 }
 
 // inferCapabilities guesses capability tags from a model name.
+// Tags use the routing vocabulary (agent.RouteCapability* constants) so they
+// directly influence routing scores when merged into a profile's Capabilities.
 func inferCapabilities(model string) []string {
 	m := strings.ToLower(model)
 	caps := []string{"general"}
 	if strings.Contains(m, "code") || strings.Contains(m, "codex") || strings.Contains(m, "coder") || strings.Contains(m, "starcoder") || strings.Contains(m, "deepseek-coder") {
-		caps = append(caps, "code")
+		caps = append(caps, "coding")
 	}
 	if strings.Contains(m, "vision") || strings.Contains(m, "vl") || strings.Contains(m, "llava") || strings.Contains(m, "visual") {
 		caps = append(caps, "vision")
@@ -292,7 +300,7 @@ func inferCapabilities(model string) []string {
 		caps = append(caps, "embedding")
 	}
 	if strings.Contains(m, "reasoning") || strings.Contains(m, "think") || strings.Contains(m, "r1") {
-		caps = append(caps, "reasoning")
+		caps = append(caps, "analysis")
 	}
 	return caps
 }
