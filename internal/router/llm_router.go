@@ -17,9 +17,9 @@ import (
 // localEngMu serialises engine access: llama.cpp contexts are not thread-safe,
 // and the mutex doubles as a cache guard for the long-lived engine instance.
 var (
-	localEngMu   sync.Mutex
-	localEng     localllm.Engine
-	localEngPath string
+	localEngMu     sync.Mutex
+	localEng       localllm.Engine
+	localEngCfgKey string
 )
 
 // LLMRouterConfig holds settings for the llm-router routing mode.
@@ -203,7 +203,8 @@ func analyzeLocal(ctx context.Context, sysPrompt, usrMsg string, cfg LLMRouterCo
 	localEngMu.Lock()
 	defer localEngMu.Unlock()
 
-	if localEng == nil || localEngPath != cfg.ModelPath {
+	cfgKey := fmt.Sprintf("%s:%d:%d:%d", cfg.ModelPath, cfg.ContextSize, cfg.Threads, cfg.GPULayers)
+	if localEng == nil || localEngCfgKey != cfgKey {
 		if localEng != nil {
 			localEng.Close()
 			localEng = nil
@@ -213,7 +214,7 @@ func analyzeLocal(ctx context.Context, sysPrompt, usrMsg string, cfg LLMRouterCo
 			return LLMRouterDecision{}, fmt.Errorf("llm-router local: %w", err)
 		}
 		localEng = eng
-		localEngPath = cfg.ModelPath
+		localEngCfgKey = cfgKey
 	}
 
 	raw, err := localEng.Route(ctx, sysPrompt, usrMsg)

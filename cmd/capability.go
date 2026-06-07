@@ -190,17 +190,28 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	}
 
 	total := len(entries)
-	added := 0
+	now := time.Now().UTC()
+	for i := range entries {
+		entries[i].EndpointURL = baseURL
+		entries[i].Source = "auto-discovered"
+		entries[i].UpdatedAt = now
+	}
+
+	// Pre-check which entries already exist so we can report accurately.
+	existing := map[string]bool{}
+	for _, e := range v.ListCapabilities() {
+		existing[e.EndpointURL+"\x00"+e.ModelName] = true
+	}
+
+	added, err := v.AddCapabilities(entries)
+	if err != nil {
+		return err
+	}
 	for _, entry := range entries {
-		entry.EndpointURL = baseURL
-		entry.Source = "auto-discovered"
-		entry.UpdatedAt = time.Now().UTC()
-		if err := v.AddCapability(entry); err != nil {
-			fmt.Fprintf(os.Stderr, "  skip %s: %v\n", entry.ModelName, err)
-			continue
+		key := strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/") + "\x00" + strings.TrimSpace(entry.ModelName)
+		if !existing[key] {
+			fmt.Printf("  + %s (%s)\n", entry.ModelName, strings.Join(entry.Capabilities, ","))
 		}
-		fmt.Printf("  + %s (%s)\n", entry.ModelName, strings.Join(entry.Capabilities, ","))
-		added++
 	}
 	skipped := total - added
 	if skipped > 0 {

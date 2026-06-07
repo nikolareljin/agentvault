@@ -433,7 +433,7 @@ After several `prompt` executions, `status --cost-report` aggregates cost estima
   --endpoint http://localhost:11434 \
   --model llama3.1:8b \
   --context 8192 \
-  --caps code,general
+  --caps coding,general
 
 ./agentvault capability add \
   --endpoint http://localhost:8080 \
