@@ -58,12 +58,16 @@ type LLMRouterDecision struct {
 }
 
 // estimateTokens returns a rough token count using the 4-chars-per-token heuristic.
+// Counts runes via range to avoid allocating a []rune.
 func estimateTokens(text string) int {
-	r := []rune(text)
-	if len(r) == 0 {
+	var n int
+	for range text {
+		n++
+	}
+	if n == 0 {
 		return 0
 	}
-	est := len(r) / 4
+	est := n / 4
 	if est == 0 {
 		return 1
 	}
