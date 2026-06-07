@@ -69,6 +69,9 @@ func New(modelPath string, ctxSize, threads, gpuLayers int) (Engine, error) {
 // runs greedy autoregressive generation (max 256 tokens), and returns the raw
 // generated text. The caller expects a JSON string matching LLMRouterDecision.
 func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+	// Clear KV cache so prior routing calls don't leak into this generation.
+	C.llama_kv_cache_clear(e.ctx)
+
 	// Llama-3 instruct chat template — broadly supported by instruction-tuned GGUF models.
 	combined := "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n" +
 		systemPrompt +

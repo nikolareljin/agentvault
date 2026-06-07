@@ -174,12 +174,13 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	client := &http.Client{Timeout: timeout}
 
 	// Try OpenAI-compat /v1/models first (llama.cpp, bitnet.cpp, Ollama).
-	entries, err := discoverFromModelsEndpoint(client, baseURL)
-	if err != nil {
+	entries, modelsErr := discoverFromModelsEndpoint(client, baseURL)
+	if modelsErr != nil {
 		// Fall back to /health (llm-gateway-helpers).
-		entries, err = discoverFromHealthEndpoint(client, baseURL)
-		if err != nil {
-			return fmt.Errorf("discover: could not query %s: /v1/models and /health both failed", baseURL)
+		var healthErr error
+		entries, healthErr = discoverFromHealthEndpoint(client, baseURL)
+		if healthErr != nil {
+			return fmt.Errorf("discover: could not query %s — /v1/models: %v; /health: %v", baseURL, modelsErr, healthErr)
 		}
 	}
 
