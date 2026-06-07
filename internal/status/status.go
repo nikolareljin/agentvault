@@ -434,7 +434,7 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 		TokenUsage       *agent.PromptTokenUsage `json:"token_usage"`
 		EstimatedCostUSD float64                 `json:"estimated_cost_usd"`
 		Success          bool                    `json:"success"`
-		RecordedAt       time.Time               `json:"recorded_at"`
+		Timestamp        time.Time               `json:"timestamp"`
 	}
 
 	now := time.Now().UTC()
@@ -468,9 +468,9 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 			byProvider[rec.Provider] += cost
 			total += cost
 			// Track this-month spend separately for budget alert evaluation.
-			if !rec.RecordedAt.IsZero() &&
-				rec.RecordedAt.UTC().Year() == thisYear &&
-				rec.RecordedAt.UTC().Month() == thisMonth {
+			if !rec.Timestamp.IsZero() &&
+				rec.Timestamp.UTC().Year() == thisYear &&
+				rec.Timestamp.UTC().Month() == thisMonth {
 				byProviderThisMonth[rec.Provider] += cost
 			}
 		}

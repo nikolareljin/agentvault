@@ -711,21 +711,26 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	if decision.RoutingFactors.PrivacySensitive && !overrideCfg.LocalOnly {
 		overrideCfg.LocalOnly = true
-		// Re-filter candidates: the list was built before the LLM marked the prompt
-		// privacy-sensitive, so remote targets must be excluded now.
-		local := candidates[:0]
-		for _, c := range candidates {
-			if c.Target.Local {
-				local = append(local, c)
-			}
-		}
-		if len(local) > 0 {
-			candidates = local
-		}
 	}
 	if decision.RoutingFactors.TimeSensitive && strings.TrimSpace(overrideCfg.Deadline) == "" {
 		overrideCfg.Deadline = "immediate"
 	}
+
+	// Rebuild candidates with enriched intent and updated policy (privacy/deadline) so
+	// fallback selection scores reflect the same signals the LLM decision was based on.
+	candidates = buildCandidates(req.Agents, intent, overrideCfg, trimmedPrompt, req.ModelCapabilities)
+	if len(candidates) == 0 {
+		return Decision{}, errors.New("no routing candidates after intent enrichment")
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score == candidates[j].Score {
+			if candidates[i].Target.Local != candidates[j].Target.Local {
+				return candidates[i].Target.Local
+			}
+			return candidates[i].Agent.Name < candidates[j].Agent.Name
+		}
+		return candidates[i].Score > candidates[j].Score
+	})
 
 	selected, err := llmBalancer.PickBest(context.Background(), decision, candidates)
 	if err != nil {
