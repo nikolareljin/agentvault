@@ -281,7 +281,8 @@ func ComputeCostUSD(usage *PromptTokenUsage, provider Provider, model string, pr
 		if p.ModelPattern != "" && !containsFold(model, p.ModelPattern) {
 			continue
 		}
-		if best == nil || (p.ModelPattern != "" && best.ModelPattern == "") {
+		if best == nil || (p.ModelPattern != "" && best.ModelPattern == "") ||
+			(p.ModelPattern != "" && best.ModelPattern != "" && len(p.ModelPattern) > len(best.ModelPattern)) {
 			best = p
 		}
 	}

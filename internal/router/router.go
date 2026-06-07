@@ -18,6 +18,9 @@ import (
 
 var execLookPath = exec.LookPath
 
+// llmBalancer is shared across calls so circuit-breaker state and EWMA latency persist.
+var llmBalancer = NewBalancer()
+
 var (
 	codingTerms   = []string{"code", "coding", "implement", "bug", "fix", "refactor", "test", "function", "compile", "build", "issue", "repository", "repo", "golang", "python", "javascript", "rust"}
 	reviewTerms   = []string{"review", "diff", "pull request", "regression", "risk", "edge case"}
@@ -699,11 +702,8 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 			return Decision{}, hErr
 		}
 		hDecision.Mode = "heuristic-fallback"
-		if len(hDecision.Selected.Reasons) > 0 {
-			hDecision.Selected.Reasons = append([]string{"llm-router unavailable, used heuristic fallback"}, hDecision.Selected.Reasons...)
-		} else {
-			hDecision.Selected.Reasons = []string{"llm-router unavailable, used heuristic fallback"}
-		}
+		fallbackReason := fmt.Sprintf("llm-router unavailable (%s), used heuristic fallback", err.Error())
+		hDecision.Selected.Reasons = append([]string{fallbackReason}, hDecision.Selected.Reasons...)
 		return hDecision, nil
 	}
 
@@ -727,8 +727,7 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		overrideCfg.Deadline = "immediate"
 	}
 
-	balancer := NewBalancer()
-	selected, err := balancer.PickBest(context.Background(), decision, candidates)
+	selected, err := llmBalancer.PickBest(context.Background(), decision, candidates)
 	if err != nil {
 		return Decision{}, err
 	}
