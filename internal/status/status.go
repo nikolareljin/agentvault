@@ -137,9 +137,6 @@ func BuildReport(v *vault.Vault, homeDir string) Report {
 		providerCfgCount++
 	}
 
-	historyPath := filepath.Join(filepath.Dir(v.Path()), "prompt-history.jsonl")
-	report.Cost = BuildCostReport(historyPath, shared.Pricing)
-
 	agents := append([]agent.Agent(nil), v.List()...)
 	report.Vault = &VaultSummary{
 		Path:          v.Path(),
@@ -165,6 +162,17 @@ func BuildReport(v *vault.Vault, homeDir string) Report {
 	}
 
 	return report
+}
+
+// CostReportForVault builds a cost report from the vault's prompt-history file.
+// Returns nil when the vault is nil or no history exists.
+func CostReportForVault(v *vault.Vault) *CostReport {
+	if v == nil {
+		return nil
+	}
+	historyPath := filepath.Join(filepath.Dir(v.Path()), "prompt-history.jsonl")
+	shared := v.SharedConfig()
+	return BuildCostReport(historyPath, shared.Pricing)
 }
 
 func providersFromVault(v *vault.Vault) []agent.Provider {
@@ -426,13 +434,21 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 		TokenUsage       *agent.PromptTokenUsage `json:"token_usage"`
 		EstimatedCostUSD float64                 `json:"estimated_cost_usd"`
 		Success          bool                    `json:"success"`
+		RecordedAt       time.Time               `json:"recorded_at"`
 	}
 
+	now := time.Now().UTC()
+	thisYear, thisMonth := now.Year(), now.Month()
+
 	byProvider := make(map[string]float64)
+	byProviderThisMonth := make(map[string]float64)
 	var total float64
 	var count int
 
+	// Use a 4 MB scanner buffer so large prompt/response records don't silently truncate.
+	const maxScanBuf = 4 * 1024 * 1024
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, maxScanBuf), maxScanBuf)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -451,9 +467,17 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 		if cost > 0 {
 			byProvider[rec.Provider] += cost
 			total += cost
+			// Track this-month spend separately for budget alert evaluation.
+			if !rec.RecordedAt.IsZero() &&
+				rec.RecordedAt.UTC().Year() == thisYear &&
+				rec.RecordedAt.UTC().Month() == thisMonth {
+				byProviderThisMonth[rec.Provider] += cost
+			}
 		}
 		count++
 	}
+	// Partial results are acceptable; don't fail on scanner buffer overflow.
+	_ = scanner.Err()
 
 	if count == 0 {
 		return nil
@@ -465,8 +489,8 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 		RecordCount: count,
 	}
 
-	// Check budget alerts against per-provider monthly budget from pricing config.
-	for prov, spent := range byProvider {
+	// Check budget alerts using current-month spend only (budget is monthly).
+	for prov, spent := range byProviderThisMonth {
 		for _, p := range pricing {
 			if string(p.Provider) == prov && p.MonthlyBudgetUSD > 0 && spent >= p.MonthlyBudgetUSD*0.8 {
 				report.BudgetAlerts = append(report.BudgetAlerts, BudgetAlert{

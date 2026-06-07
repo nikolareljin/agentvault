@@ -620,6 +620,18 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 	}
 	// Only import parallel limit when current session config is otherwise empty.
 	// This avoids overwriting an intentional existing 0 (unlimited) setting.
+	// merge model capabilities (don't overwrite existing by endpoint+model key)
+	seenCaps := make(map[string]struct{}, len(v.modelCapabilities))
+	for _, c := range v.modelCapabilities {
+		seenCaps[c.EndpointURL+"\x00"+c.ModelName] = struct{}{}
+	}
+	for _, c := range vd.ModelCapabilities {
+		key := c.EndpointURL + "\x00" + c.ModelName
+		if _, ok := seenCaps[key]; !ok {
+			v.modelCapabilities = append(v.modelCapabilities, c)
+			seenCaps[key] = struct{}{}
+		}
+	}
 	if wasSessionConfigUnset && importedParallelLimitDefined {
 		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
 		v.sessions.ParallelLimitSet = true

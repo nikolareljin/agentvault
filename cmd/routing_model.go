@@ -99,7 +99,11 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "downloading %s\n  from: %s\n  to:   %s\n\n",
 		bitnetModelFilename, modelURL, destPath)
 
-	resp, err := http.Get(modelURL) //nolint:noctx
+	dlReq, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, modelURL, nil)
+	if err != nil {
+		return fmt.Errorf("create download request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(dlReq)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
