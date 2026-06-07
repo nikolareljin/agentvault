@@ -49,7 +49,7 @@ var capabilityRemoveCmd = &cobra.Command{
 
 var capabilityDiscoverCmd = &cobra.Command{
 	Use:   "discover",
-	Short: "Auto-discover model capabilities from an endpoint's /health response",
+	Short: "Auto-discover model capabilities from an endpoint (/v1/models or /health)",
 	RunE:  runCapabilityDiscover,
 }
 
