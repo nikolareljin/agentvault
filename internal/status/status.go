@@ -445,10 +445,10 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 	var total float64
 	var count int
 
-	// Use a 4 MB scanner buffer so large prompt/response records don't silently truncate.
+	// Use a modest initial buffer but allow growth up to 4 MB for large prompt/response records.
 	const maxScanBuf = 4 * 1024 * 1024
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, maxScanBuf), maxScanBuf)
+	scanner.Buffer(make([]byte, 64*1024), maxScanBuf)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
