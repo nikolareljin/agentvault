@@ -9,14 +9,23 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/nikolareljin/agentvault/internal/localllm"
 )
 
 // LLMRouterConfig holds settings for the llm-router routing mode.
+// Either URL (HTTP server) or ModelPath (embedded inference) must be set.
 type LLMRouterConfig struct {
 	URL           string
 	Model         string
 	TimeoutSecs   int
 	EnableCostEst bool
+
+	// Embedded inference fields (requires -tags localllm build).
+	ModelPath   string
+	ContextSize int
+	Threads     int
+	GPULayers   int
 }
 
 // RoutingFactors captures the analysis dimensions returned by the routing model.
@@ -159,35 +168,62 @@ func callLLMServer(ctx context.Context, baseURL, systemPrompt, userMsg, model st
 		return LLMRouterDecision{}, fmt.Errorf("llm-router: empty choices in response")
 	}
 
-	rawContent := stripJSONFences(strings.TrimSpace(out.Choices[0].Message.Content))
+	rawContent := strings.TrimSpace(out.Choices[0].Message.Content)
+	return parseLLMDecision(rawContent)
+}
+
+// parseLLMDecision parses a raw model output string into a LLMRouterDecision.
+// It strips markdown code fences and normalises the decision before returning.
+func parseLLMDecision(raw string) (LLMRouterDecision, error) {
+	cleaned := stripJSONFences(strings.TrimSpace(raw))
 	var decision LLMRouterDecision
-	if err := json.Unmarshal([]byte(rawContent), &decision); err != nil {
+	if err := json.Unmarshal([]byte(cleaned), &decision); err != nil {
 		return LLMRouterDecision{}, fmt.Errorf("llm-router: parse decision JSON: %w", err)
 	}
-
 	return normalizeLLMRouterDecision(decision), nil
 }
 
-// AnalyzeWithLLMRouter sends the prompt and candidate list to a local llama.cpp or bitnet.cpp inference
-// server and returns a structured routing decision. Returns an error when the server is unreachable or
-// returns an unparseable response — the caller must fall back to heuristic routing.
+// analyzeLocal runs inference using the embedded llama.cpp engine (requires -tags localllm).
+func analyzeLocal(ctx context.Context, sysPrompt, usrMsg string, cfg LLMRouterConfig) (LLMRouterDecision, error) {
+	eng, err := localllm.New(cfg.ModelPath, cfg.ContextSize, cfg.Threads, cfg.GPULayers)
+	if err != nil {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router local: %w", err)
+	}
+	defer eng.Close()
+
+	raw, err := eng.Route(ctx, sysPrompt, usrMsg)
+	if err != nil {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router local: %w", err)
+	}
+	return parseLLMDecision(raw)
+}
+
+// AnalyzeWithLLMRouter returns a structured routing decision for the given prompt.
+// When cfg.ModelPath is non-empty, inference runs in-process via the embedded llama.cpp
+// engine (requires -tags localllm build). Otherwise, cfg.URL must point to an
+// OpenAI-compatible HTTP server. Returns an error on failure; the caller falls back
+// to heuristic routing.
 func AnalyzeWithLLMRouter(ctx context.Context, prompt string, candidates []Candidate, cfg LLMRouterConfig) (LLMRouterDecision, error) {
+	inputEst := estimateTokens(prompt)
+	sysPrompt := buildRoutingSystemPrompt(candidates)
+	usrMsg := buildRoutingUserMessage(prompt, inputEst)
+
+	if strings.TrimSpace(cfg.ModelPath) != "" {
+		return analyzeLocal(ctx, sysPrompt, usrMsg, cfg)
+	}
+
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
 	if baseURL == "" {
-		return LLMRouterDecision{}, fmt.Errorf("llm-router: URL is required")
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: set --llm-router-url or --llm-router-model-path")
 	}
 	timeout := time.Duration(cfg.TimeoutSecs) * time.Second
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	inputEst := estimateTokens(prompt)
-	systemPrompt := buildRoutingSystemPrompt(candidates)
-	userMsg := buildRoutingUserMessage(prompt, inputEst)
-	return callLLMServer(ctx, baseURL, systemPrompt, userMsg, cfg.Model)
+	return callLLMServer(ctx, baseURL, sysPrompt, usrMsg, cfg.Model)
 }
 
 // enrichIntentFromLLMDecision updates a heuristic Intent with analysis from the LLM router.

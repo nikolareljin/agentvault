@@ -3,12 +3,14 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/localllm"
 )
 
 func llmRouterTestCandidates() []Candidate {
@@ -155,12 +157,57 @@ func TestAnalyzeWithLLMRouter_Unreachable(t *testing.T) {
 	}
 }
 
-func TestAnalyzeWithLLMRouter_EmptyURL(t *testing.T) {
+func TestAnalyzeWithLLMRouter_EmptyURLAndNoModelPath(t *testing.T) {
 	candidates := llmRouterTestCandidates()
-	cfg := LLMRouterConfig{URL: "", TimeoutSecs: 5}
+	cfg := LLMRouterConfig{URL: "", ModelPath: "", TimeoutSecs: 5}
 	_, err := AnalyzeWithLLMRouter(context.Background(), "hello", candidates, cfg)
 	if err == nil {
-		t.Error("expected error for empty URL, got nil")
+		t.Error("expected error when neither URL nor ModelPath configured, got nil")
+	}
+}
+
+func TestAnalyzeWithLLMRouter_ModelPathSetReturnsErrNotBuilt(t *testing.T) {
+	candidates := llmRouterTestCandidates()
+	cfg := LLMRouterConfig{ModelPath: "/tmp/model.gguf", ContextSize: 512, TimeoutSecs: 5}
+	_, err := AnalyzeWithLLMRouter(context.Background(), "hello", candidates, cfg)
+	// Without -tags localllm the engine stub always returns ErrNotBuilt.
+	if err == nil {
+		t.Fatal("expected error when ModelPath set but engine not built, got nil")
+	}
+	if !errors.Is(err, localllm.ErrNotBuilt) {
+		t.Errorf("expected errors.Is(err, ErrNotBuilt), got: %v", err)
+	}
+}
+
+func TestParseLLMDecision_ValidJSON(t *testing.T) {
+	raw := llmDecisionJSON("codex-agent")
+	d, err := parseLLMDecision(raw)
+	if err != nil {
+		t.Fatalf("parseLLMDecision() error = %v", err)
+	}
+	if d.SelectedAgent != "codex-agent" {
+		t.Errorf("SelectedAgent = %q, want codex-agent", d.SelectedAgent)
+	}
+	if d.Confidence != 0.9 {
+		t.Errorf("Confidence = %v, want 0.9", d.Confidence)
+	}
+}
+
+func TestParseLLMDecision_StrippedMarkdown(t *testing.T) {
+	raw := "```json\n" + llmDecisionJSON("ollama-local") + "\n```"
+	d, err := parseLLMDecision(raw)
+	if err != nil {
+		t.Fatalf("parseLLMDecision() with fences error = %v", err)
+	}
+	if d.SelectedAgent != "ollama-local" {
+		t.Errorf("SelectedAgent = %q, want ollama-local", d.SelectedAgent)
+	}
+}
+
+func TestParseLLMDecision_InvalidJSON(t *testing.T) {
+	_, err := parseLLMDecision("not json at all")
+	if err == nil {
+		t.Error("expected error for invalid JSON, got nil")
 	}
 }
 

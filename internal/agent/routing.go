@@ -79,6 +79,14 @@ type RouterConfig struct {
 	LLMRouterModel         string `json:"llm_router_model,omitempty"           yaml:"llm_router_model"`
 	LLMRouterTimeoutSecs   int    `json:"llm_router_timeout_secs,omitempty"    yaml:"llm_router_timeout_secs"`
 	LLMRouterEnableCostEst bool   `json:"llm_router_enable_cost_est,omitempty" yaml:"llm_router_enable_cost_est"`
+
+	// llm-router embedded mode: path to a local GGUF model file for in-process inference.
+	// When set, inference runs inside the binary (no HTTP server required).
+	// Requires agentvault built with `make build-bitnet` (-tags localllm).
+	LLMRouterModelPath   string `json:"llm_router_model_path,omitempty"    yaml:"llm_router_model_path"`
+	LLMRouterContextSize int    `json:"llm_router_context_size,omitempty"  yaml:"llm_router_context_size"`
+	LLMRouterThreads     int    `json:"llm_router_threads,omitempty"       yaml:"llm_router_threads"`
+	LLMRouterGPULayers   int    `json:"llm_router_gpu_layers,omitempty"    yaml:"llm_router_gpu_layers"`
 }
 
 func (cfg RouterConfig) IsZero() bool {
@@ -171,6 +179,9 @@ func (cfg RouterConfig) WithDefaults() RouterConfig {
 	}
 	if out.LLMRouterTimeoutSecs == 0 {
 		out.LLMRouterTimeoutSecs = 30
+	}
+	if out.LLMRouterContextSize == 0 {
+		out.LLMRouterContextSize = 512
 	}
 	return out
 }
