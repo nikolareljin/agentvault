@@ -208,6 +208,14 @@ func AnalyzeWithLLMRouter(ctx context.Context, prompt string, candidates []Candi
 	sysPrompt := buildRoutingSystemPrompt(candidates)
 	usrMsg := buildRoutingUserMessage(prompt, inputEst)
 
+	// Apply timeout to both embedded and HTTP paths so --llm-router-timeout is honoured uniformly.
+	timeout := time.Duration(cfg.TimeoutSecs) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	if strings.TrimSpace(cfg.ModelPath) != "" {
 		return analyzeLocal(ctx, sysPrompt, usrMsg, cfg)
 	}
@@ -216,13 +224,6 @@ func AnalyzeWithLLMRouter(ctx context.Context, prompt string, candidates []Candi
 	if baseURL == "" {
 		return LLMRouterDecision{}, fmt.Errorf("llm-router: set --llm-router-url or --llm-router-model-path")
 	}
-	timeout := time.Duration(cfg.TimeoutSecs) * time.Second
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	return callLLMServer(ctx, baseURL, sysPrompt, usrMsg, cfg.Model)
 }
 
