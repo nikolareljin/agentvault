@@ -14,20 +14,28 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"sync"
 	"unsafe"
 )
+
+// backendOnce guards the global llama_backend_init — called exactly once per process.
+// llama_backend_free is intentionally omitted; process exit reclaims resources.
+var backendOnce sync.Once
 
 type llamaEngine struct {
 	model *C.struct_llama_model
 	ctx   *C.struct_llama_context
 }
 
+// IsBuilt reports whether embedded inference was compiled in.
+func IsBuilt() bool { return true }
+
 // New loads a GGUF model file and creates an inference context.
 // ctxSize is the context window in tokens (0 = model default, 512 is fine for routing).
 // threads is the number of CPU threads (0 = use NumCPU).
 // gpuLayers is the number of transformer layers to offload to GPU (0 = CPU-only).
 func New(modelPath string, ctxSize, threads, gpuLayers int) (Engine, error) {
-	C.llama_backend_init()
+	backendOnce.Do(func() { C.llama_backend_init() })
 
 	mparams := C.llama_model_default_params()
 	mparams.n_gpu_layers = C.int32_t(gpuLayers)
@@ -37,7 +45,6 @@ func New(modelPath string, ctxSize, threads, gpuLayers int) (Engine, error) {
 
 	model := C.llama_load_model_from_file(cpath, mparams)
 	if model == nil {
-		C.llama_backend_free()
 		return nil, fmt.Errorf("localllm: cannot load model from %q", modelPath)
 	}
 
@@ -52,7 +59,6 @@ func New(modelPath string, ctxSize, threads, gpuLayers int) (Engine, error) {
 	ctx := C.llama_new_context_with_model(model, cparams)
 	if ctx == nil {
 		C.llama_free_model(model)
-		C.llama_backend_free()
 		return nil, fmt.Errorf("localllm: cannot create inference context")
 	}
 
@@ -130,5 +136,5 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 func (e *llamaEngine) Close() {
 	C.llama_free(e.ctx)
 	C.llama_free_model(e.model)
-	C.llama_backend_free()
+	// Backend lifetime = process lifetime; llama_backend_free is not called here.
 }

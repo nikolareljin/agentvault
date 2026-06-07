@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,11 +55,10 @@ func init() {
 }
 
 func runRoutingModelStatus(cmd *cobra.Command, _ []string) error {
-	_, err := localllm.New("", 0, 0, 0)
-	if errors.Is(err, localllm.ErrNotBuilt) {
-		fmt.Fprintln(cmd.OutOrStdout(), "embedded inference: disabled (build with 'make build-bitnet' to enable)")
-	} else {
+	if localllm.IsBuilt() {
 		fmt.Fprintln(cmd.OutOrStdout(), "embedded inference: enabled")
+	} else {
+		fmt.Fprintln(cmd.OutOrStdout(), "embedded inference: disabled (build with 'make build-bitnet' to enable)")
 	}
 
 	modelDir := defaultModelDir()
