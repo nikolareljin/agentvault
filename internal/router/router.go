@@ -979,6 +979,19 @@ func chooseNonEmpty(value, fallback string) string {
 	return fallback
 }
 
+// normalizeCapTag maps legacy/synonym capability tags to the routing vocabulary
+// so registry entries created before the vocabulary was fixed still score correctly.
+func normalizeCapTag(tag string) string {
+	switch strings.ToLower(strings.TrimSpace(tag)) {
+	case "code", "coder", "codex":
+		return "coding"
+	case "reasoning", "think":
+		return "analysis"
+	default:
+		return strings.ToLower(strings.TrimSpace(tag))
+	}
+}
+
 func mergeCapabilities(existing, additional []string) []string {
 	seen := make(map[string]bool, len(existing))
 	for _, c := range existing {
@@ -986,10 +999,10 @@ func mergeCapabilities(existing, additional []string) []string {
 	}
 	out := append([]string(nil), existing...)
 	for _, c := range additional {
-		lc := strings.ToLower(c)
-		if !seen[lc] {
-			out = append(out, lc)
-			seen[lc] = true
+		normalized := normalizeCapTag(c)
+		if !seen[normalized] {
+			out = append(out, normalized)
+			seen[normalized] = true
 		}
 	}
 	return out
