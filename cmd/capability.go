@@ -24,7 +24,7 @@ which local or remote endpoints host which models and what they can do.
 
 Examples:
   agentvault capability list
-  agentvault capability add --endpoint http://localhost:8080 --model llama3.2-1b --context 2048 --caps code,general
+  agentvault capability add --endpoint http://localhost:8080 --model llama3.2-1b --context 2048 --caps coding,general
   agentvault capability remove --endpoint http://localhost:8080 --model llama3.2-1b
   agentvault capability discover --endpoint http://localhost:8080`,
 }
@@ -65,7 +65,7 @@ func init() {
 	capabilityAddCmd.Flags().String("endpoint", "", "endpoint base URL (required)")
 	capabilityAddCmd.Flags().String("model", "", "model name (required)")
 	capabilityAddCmd.Flags().Int("context", 0, "context window size in tokens")
-	capabilityAddCmd.Flags().StringSlice("caps", nil, "capabilities: code,vision,embedding,reasoning,general")
+	capabilityAddCmd.Flags().StringSlice("caps", nil, "capability tags: routing labels (coding,review,analysis,general) plus informational (vision,embedding)")
 	_ = capabilityAddCmd.MarkFlagRequired("endpoint")
 	_ = capabilityAddCmd.MarkFlagRequired("model")
 

@@ -336,7 +336,7 @@ type ModelCapabilityEntry struct {
 	EndpointURL  string    `json:"endpoint_url"`
 	ModelName    string    `json:"model_name"`
 	ContextSize  int       `json:"context_size,omitempty"`
-	Capabilities []string  `json:"capabilities"` // code, vision, embedding, reasoning, general
+	Capabilities []string  `json:"capabilities"` // routing: coding,review,analysis,general; informational: vision,embedding
 	Source       string    `json:"source"`       // manual | auto-discovered
 	UpdatedAt    time.Time `json:"updated_at"`
 }
