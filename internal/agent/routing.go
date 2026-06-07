@@ -73,6 +73,12 @@ type RouterConfig struct {
 	Deadline         string `json:"deadline,omitempty"`            // immediate|normal|background
 	LocalAIModel     string `json:"local_ai_model,omitempty"`      // model used for local-ai routing classification
 	LocalAIOllamaURL string `json:"local_ai_ollama_url,omitempty"` // ollama base URL override for local-ai routing
+
+	// llm-router mode: calls a local llama.cpp or bitnet.cpp server
+	LLMRouterURL           string `json:"llm_router_url,omitempty"             yaml:"llm_router_url"`
+	LLMRouterModel         string `json:"llm_router_model,omitempty"           yaml:"llm_router_model"`
+	LLMRouterTimeoutSecs   int    `json:"llm_router_timeout_secs,omitempty"    yaml:"llm_router_timeout_secs"`
+	LLMRouterEnableCostEst bool   `json:"llm_router_enable_cost_est,omitempty" yaml:"llm_router_enable_cost_est"`
 }
 
 func (cfg RouterConfig) IsZero() bool {
@@ -83,7 +89,7 @@ func (cfg RouterConfig) Validate() error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 	if mode != "" {
 		switch mode {
-		case "heuristic", "langgraph", "local-ai":
+		case "heuristic", "langgraph", "local-ai", "llm-router":
 		default:
 			return fmt.Errorf("unknown router mode: %s", cfg.Mode)
 		}
@@ -162,6 +168,9 @@ func (cfg RouterConfig) WithDefaults() RouterConfig {
 	hasDeadlineIntent := dl != "" && dl != "normal"
 	if !out.PreferLocal && !out.PreferFast && !out.PreferLowCost && !out.LocalOnly && !hasImportanceIntent && !hasDeadlineIntent {
 		out.PreferLocal = true
+	}
+	if out.LLMRouterTimeoutSecs == 0 {
+		out.LLMRouterTimeoutSecs = 30
 	}
 	return out
 }

@@ -1,0 +1,251 @@
+package router
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// LLMRouterConfig holds settings for the llm-router routing mode.
+type LLMRouterConfig struct {
+	URL           string
+	Model         string
+	TimeoutSecs   int
+	EnableCostEst bool
+}
+
+// RoutingFactors captures the analysis dimensions returned by the routing model.
+type RoutingFactors struct {
+	Complexity       int    `json:"complexity"`        // 1–10
+	TaskType         string `json:"task_type"`         // coding|review|analysis|general
+	RequiresTools    bool   `json:"requires_tools"`
+	PrivacySensitive bool   `json:"privacy_sensitive"`
+	TimeSensitive    bool   `json:"time_sensitive"`
+}
+
+// LLMRouterDecision is the structured routing decision from the local inference server.
+type LLMRouterDecision struct {
+	SelectedAgent   string         `json:"selected_agent"`
+	FallbackAgents  []string       `json:"fallback_agents"`
+	Reasoning       string         `json:"reasoning"`
+	Confidence      float64        `json:"confidence"`
+	RoutingFactors  RoutingFactors `json:"routing_factors"`
+	EstInputTokens  int            `json:"estimated_input_tokens"`
+	EstOutputTokens int            `json:"estimated_output_tokens"`
+}
+
+// estimateTokens returns a rough token count using the 4-chars-per-token heuristic.
+func estimateTokens(text string) int {
+	r := []rune(text)
+	if len(r) == 0 {
+		return 0
+	}
+	est := len(r) / 4
+	if est == 0 {
+		return 1
+	}
+	return est
+}
+
+// buildRoutingSystemPrompt builds the system prompt listing all candidate agents with their tiers.
+func buildRoutingSystemPrompt(candidates []Candidate) string {
+	var sb strings.Builder
+	sb.WriteString("You are an intelligent AI routing agent. Select the best agent for the task.\n\nAvailable agents:\n")
+	for _, c := range candidates {
+		caps := strings.Join(c.Route.Capabilities, ",")
+		if caps == "" {
+			caps = "general"
+		}
+		sb.WriteString(fmt.Sprintf("- name=%q capabilities=[%s] latency=%s cost=%s privacy=%s priority=%d\n",
+			c.Agent.Name, caps,
+			defaultTier(c.Route.LatencyTier, "medium"),
+			defaultTier(c.Route.CostTier, "medium"),
+			defaultTier(c.Route.PrivacyTier, "remote"),
+			c.Route.Priority,
+		))
+	}
+	sb.WriteString(`
+Consider: task complexity, privacy requirements, cost (prefer local for simple tasks), tool availability, latency sensitivity.
+
+Respond ONLY with valid JSON (no markdown, no extra text):
+{
+  "selected_agent": "<name from list above>",
+  "fallback_agents": ["<name>"],
+  "reasoning": "<one sentence>",
+  "confidence": 0.85,
+  "routing_factors": {
+    "complexity": 5,
+    "task_type": "coding|review|analysis|general",
+    "requires_tools": false,
+    "privacy_sensitive": false,
+    "time_sensitive": false
+  },
+  "estimated_input_tokens": 0,
+  "estimated_output_tokens": 0
+}`)
+	return sb.String()
+}
+
+func buildRoutingUserMessage(prompt string, inputEst int) string {
+	return fmt.Sprintf("Task (estimated %d input tokens):\n%s", inputEst, strings.TrimSpace(prompt))
+}
+
+func defaultTier(val, fallback string) string {
+	v := strings.TrimSpace(val)
+	if v == "" {
+		return fallback
+	}
+	return v
+}
+
+// callLLMServer POSTs to an OpenAI-compatible /v1/chat/completions endpoint and returns the parsed decision.
+func callLLMServer(ctx context.Context, baseURL, systemPrompt, userMsg, model string) (LLMRouterDecision, error) {
+	type message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	payload := map[string]any{
+		"messages": []message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+		"temperature": 0.1,
+	}
+	if strings.TrimSpace(model) != "" {
+		payload["model"] = model
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: marshal request: %w", err)
+	}
+
+	url := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/v1/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: call server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		const maxErrBody = 4096
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: server error %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: decode response: %w", err)
+	}
+	if len(out.Choices) == 0 {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: empty choices in response")
+	}
+
+	rawContent := stripJSONFences(strings.TrimSpace(out.Choices[0].Message.Content))
+	var decision LLMRouterDecision
+	if err := json.Unmarshal([]byte(rawContent), &decision); err != nil {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: parse decision JSON: %w", err)
+	}
+
+	return normalizeLLMRouterDecision(decision), nil
+}
+
+// AnalyzeWithLLMRouter sends the prompt and candidate list to a local llama.cpp or bitnet.cpp inference
+// server and returns a structured routing decision. Returns an error when the server is unreachable or
+// returns an unparseable response — the caller must fall back to heuristic routing.
+func AnalyzeWithLLMRouter(ctx context.Context, prompt string, candidates []Candidate, cfg LLMRouterConfig) (LLMRouterDecision, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.URL), "/")
+	if baseURL == "" {
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: URL is required")
+	}
+	timeout := time.Duration(cfg.TimeoutSecs) * time.Second
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	inputEst := estimateTokens(prompt)
+	systemPrompt := buildRoutingSystemPrompt(candidates)
+	userMsg := buildRoutingUserMessage(prompt, inputEst)
+	return callLLMServer(ctx, baseURL, systemPrompt, userMsg, cfg.Model)
+}
+
+// enrichIntentFromLLMDecision updates a heuristic Intent with analysis from the LLM router.
+func enrichIntentFromLLMDecision(intent *Intent, d LLMRouterDecision) {
+	f := d.RoutingFactors
+	if f.PrivacySensitive {
+		intent.PrivacySensitive = true
+	}
+	if f.TimeSensitive {
+		intent.LatencySensitive = true
+	}
+	switch strings.ToLower(strings.TrimSpace(f.TaskType)) {
+	case "coding":
+		intent.Coding = true
+		intent.Review = false
+		intent.Analysis = false
+		intent.TaskClass = "coding"
+	case "review":
+		intent.Coding = false
+		intent.Review = true
+		intent.Analysis = false
+		intent.TaskClass = "review"
+	case "analysis":
+		intent.Coding = false
+		intent.Review = false
+		intent.Analysis = true
+		intent.TaskClass = "analysis"
+	default:
+		intent.Coding = false
+		intent.Review = false
+		intent.Analysis = false
+		intent.TaskClass = "general"
+	}
+	// High complexity tasks benefit from analysis capability even within coding tasks.
+	if f.Complexity >= 8 && !intent.Analysis {
+		intent.Analysis = true
+	}
+}
+
+func normalizeLLMRouterDecision(d LLMRouterDecision) LLMRouterDecision {
+	if d.Confidence < 0 {
+		d.Confidence = 0
+	}
+	if d.Confidence > 1 {
+		d.Confidence = 1
+	}
+	f := &d.RoutingFactors
+	if f.Complexity < 1 {
+		f.Complexity = 1
+	}
+	if f.Complexity > 10 {
+		f.Complexity = 10
+	}
+	switch strings.ToLower(strings.TrimSpace(f.TaskType)) {
+	case "coding", "review", "analysis", "general":
+		f.TaskType = strings.ToLower(strings.TrimSpace(f.TaskType))
+	default:
+		f.TaskType = "general"
+	}
+	return d
+}
