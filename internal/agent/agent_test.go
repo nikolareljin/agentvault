@@ -275,3 +275,103 @@ func TestBuildEffectivePromptPrioritizesRoleRules(t *testing.T) {
 		t.Fatalf("role rule should be prioritized ahead of non-role rules, got: %q", prompt)
 	}
 }
+
+func TestComputeCostUSD(t *testing.T) {
+	pricing := []ProviderPricing{
+		{Provider: ProviderClaude, ModelPattern: "haiku", InputPer1KTokens: 0.00025, OutputPer1KTokens: 0.00125, CachedPer1KTokens: 0.00003},
+		{Provider: ProviderClaude, ModelPattern: "sonnet", InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015, CachedPer1KTokens: 0.00030},
+		{Provider: ProviderClaude, InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015},
+		{Provider: ProviderOllama, InputPer1KTokens: 0, OutputPer1KTokens: 0},
+	}
+
+	tests := []struct {
+		name     string
+		usage    *PromptTokenUsage
+		provider Provider
+		model    string
+		pricing  []ProviderPricing
+		want     float64
+	}{
+		{
+			name:     "nil usage returns zero",
+			usage:    nil,
+			provider: ProviderClaude,
+			model:    "claude-3-5-sonnet",
+			pricing:  pricing,
+			want:     0,
+		},
+		{
+			name:     "empty pricing returns zero",
+			usage:    &PromptTokenUsage{InputTokens: 1000, OutputTokens: 500},
+			provider: ProviderClaude,
+			model:    "claude-3-5-sonnet",
+			pricing:  nil,
+			want:     0,
+		},
+		{
+			name:     "provider not in pricing returns zero",
+			usage:    &PromptTokenUsage{InputTokens: 1000, OutputTokens: 500},
+			provider: ProviderCodex,
+			model:    "gpt-4o",
+			pricing:  pricing,
+			want:     0,
+		},
+		{
+			name:     "catch-all claude match",
+			usage:    &PromptTokenUsage{InputTokens: 1000, OutputTokens: 1000},
+			provider: ProviderClaude,
+			model:    "claude-3-opus",
+			pricing:  pricing,
+			// 1000/1000*0.003 + 1000/1000*0.015 = 0.018
+			want: 0.018,
+		},
+		{
+			name:     "specific model pattern beats catch-all",
+			usage:    &PromptTokenUsage{InputTokens: 1000, OutputTokens: 1000},
+			provider: ProviderClaude,
+			model:    "claude-3-5-sonnet-20241022",
+			pricing:  pricing,
+			// sonnet: 1000/1000*0.003 + 1000/1000*0.015 = 0.018 (same rates here but uses sonnet entry)
+			want: 0.018,
+		},
+		{
+			name:     "haiku pricing with cached tokens",
+			usage:    &PromptTokenUsage{InputTokens: 1000, CachedInputTokens: 500, OutputTokens: 200},
+			provider: ProviderClaude,
+			model:    "claude-3-haiku",
+			pricing:  pricing,
+			// 1000/1000*0.00025 + 500/1000*0.00003 + 200/1000*0.00125 = 0.00025 + 0.000015 + 0.00025 = 0.000515
+			want: 0.000515,
+		},
+		{
+			name:     "ollama returns zero",
+			usage:    &PromptTokenUsage{InputTokens: 10000, OutputTokens: 5000},
+			provider: ProviderOllama,
+			model:    "llama3",
+			pricing:  pricing,
+			want:     0,
+		},
+		{
+			name:     "longer model pattern wins over shorter",
+			usage:    &PromptTokenUsage{InputTokens: 1000, OutputTokens: 0},
+			provider: ProviderClaude,
+			model:    "claude-3-5-haiku-20241022",
+			pricing: []ProviderPricing{
+				{Provider: ProviderClaude, ModelPattern: "haiku", InputPer1KTokens: 0.001, OutputPer1KTokens: 0},
+				{Provider: ProviderClaude, ModelPattern: "3-5-haiku", InputPer1KTokens: 0.002, OutputPer1KTokens: 0},
+				{Provider: ProviderClaude, InputPer1KTokens: 0.003, OutputPer1KTokens: 0},
+			},
+			// "3-5-haiku" is longer than "haiku" — should win
+			want: 0.002,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ComputeCostUSD(tt.usage, tt.provider, tt.model, tt.pricing)
+			if got != tt.want {
+				t.Errorf("ComputeCostUSD() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

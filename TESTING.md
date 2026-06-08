@@ -549,10 +549,7 @@ echo "Custom workflow template" > /tmp/test-project/implement_issue.txt
 # Export setup to JSON
 ./agentvault setup export test-setup.json
 
-# Export with API keys (careful!)
-./agentvault setup export test-setup-full.json --include-keys
-
-# Export with env-var keys (keys from ANTHROPIC_API_KEY etc. if vault key is empty)
+# Export with API keys (vault-stored keys + env-var fallback via ANTHROPIC_API_KEY etc.)
 ./agentvault setup export test-setup-full.json --include-keys
 
 # Export encrypted bundle
