@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
+
+func approxEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
 func TestValidate(t *testing.T) {
 	tests := []struct {
@@ -369,7 +372,7 @@ func TestComputeCostUSD(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ComputeCostUSD(tt.usage, tt.provider, tt.model, tt.pricing)
-			if got != tt.want {
+			if !approxEq(got, tt.want) {
 				t.Errorf("ComputeCostUSD() = %v, want %v", got, tt.want)
 			}
 		})

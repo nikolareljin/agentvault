@@ -16,6 +16,10 @@ import (
 func newLLMRouterMockServer(t *testing.T, selectedAgent string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.Error(w, "unexpected path: "+r.URL.Path, http.StatusNotFound)
+			return
+		}
 		d := LLMRouterDecision{
 			SelectedAgent: selectedAgent,
 			Reasoning:     "best for the task",
