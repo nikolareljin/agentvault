@@ -311,7 +311,8 @@ func inferCapabilities(model string) []string {
 	if strings.Contains(m, "embed") {
 		caps = append(caps, "embedding")
 	}
-	if strings.Contains(m, "reasoning") || strings.Contains(m, "think") || strings.Contains(m, "r1") {
+	if strings.Contains(m, "reasoning") || strings.Contains(m, "think") ||
+		strings.Contains(m, "deepseek-r1") || strings.Contains(m, "-r1") || strings.Contains(m, "_r1") {
 		caps = append(caps, "analysis")
 	}
 	return caps

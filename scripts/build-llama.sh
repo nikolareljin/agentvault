@@ -21,8 +21,11 @@ if [ -z "${LLAMA_TAG}" ]; then
     echo "         Set LLAMA_TAG=bNNNN to pin to a specific release tag."
 fi
 
-if [ -f "${OUT_DIR}/lib/libllama.a" ]; then
-    echo "llama.cpp static library already built at ${OUT_DIR}/lib/libllama.a"
+if [ -f "${OUT_DIR}/lib/libllama.a" ] && \
+   [ -f "${OUT_DIR}/lib/libggml.a" ] && \
+   [ -f "${OUT_DIR}/lib/libggml-cpu.a" ] && \
+   [ -f "${OUT_DIR}/include/llama.h" ]; then
+    echo "llama.cpp already built at ${OUT_DIR} (lib + headers present)"
     echo "Remove third_party/llama/ to force a rebuild."
     exit 0
 fi
