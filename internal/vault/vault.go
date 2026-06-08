@@ -671,6 +671,9 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 	for _, c := range vd.ModelCapabilities {
 		c.EndpointURL = strings.TrimRight(strings.TrimSpace(c.EndpointURL), "/")
 		c.ModelName = strings.TrimSpace(c.ModelName)
+		if c.EndpointURL == "" || c.ModelName == "" {
+			continue
+		}
 		key := c.EndpointURL + "\x00" + c.ModelName
 		if _, ok := seenCaps[key]; !ok {
 			v.modelCapabilities = append(v.modelCapabilities, c)
