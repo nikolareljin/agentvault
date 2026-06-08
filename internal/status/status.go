@@ -476,8 +476,10 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 		}
 		count++
 	}
-	// Partial results are acceptable; don't fail on scanner buffer overflow.
-	_ = scanner.Err()
+	// Partial results are acceptable on buffer overflow; abort on real I/O errors.
+	if err := scanner.Err(); err != nil && err != bufio.ErrTooLong {
+		return nil
+	}
 
 	if count == 0 {
 		return nil

@@ -93,7 +93,19 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 		C.bool(true), // parse_special tokens
 	)
 	if nTokens < 0 {
-		return "", fmt.Errorf("localllm: tokenize failed (input too long?)")
+		// llama_tokenize returns -(required_count) when the buffer is too small; retry.
+		required := int(-nTokens)
+		tokens = make([]C.llama_token, required)
+		nTokens = C.llama_tokenize(
+			e.model,
+			ccombined, C.int32_t(len(combined)),
+			&tokens[0], C.int32_t(required),
+			C.bool(true),
+			C.bool(true),
+		)
+		if nTokens < 0 {
+			return "", fmt.Errorf("localllm: tokenize failed")
+		}
 	}
 
 	// Prefill: process all prompt tokens in one batch.
