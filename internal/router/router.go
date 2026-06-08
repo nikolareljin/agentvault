@@ -703,8 +703,8 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		}
 		hDecision.Mode = "heuristic-fallback"
 		errMsg := err.Error()
-		if len(errMsg) > 120 {
-			errMsg = errMsg[:120] + "..."
+		if runes := []rune(errMsg); len(runes) > 120 {
+			errMsg = string(runes[:120]) + "..."
 		}
 		fallbackReason := fmt.Sprintf("llm-router unavailable (%s), used heuristic fallback", errMsg)
 		hDecision.Selected.Reasons = append([]string{fallbackReason}, hDecision.Selected.Reasons...)
