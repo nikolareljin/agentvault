@@ -445,40 +445,37 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 	var total float64
 	var count int
 
-	// Use a modest initial buffer but allow growth up to 4 MB for large prompt/response records.
-	const maxScanBuf = 4 * 1024 * 1024
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), maxScanBuf)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var rec historyRecord
-		if err := json.Unmarshal([]byte(line), &rec); err != nil || !rec.Success {
-			continue
-		}
-		cost := rec.EstimatedCostUSD
-		if cost == 0 && rec.TokenUsage != nil {
-			// Re-compute for records written before cost tracking landed.
-			p := agent.Provider(rec.Provider)
-			cost = agent.ComputeCostUSD(rec.TokenUsage, p, rec.Model, pricing)
-		}
-		if cost > 0 {
-			byProvider[rec.Provider] += cost
-			total += cost
-			// Track this-month spend separately for budget alert evaluation.
-			if !rec.Timestamp.IsZero() &&
-				rec.Timestamp.UTC().Year() == thisYear &&
-				rec.Timestamp.UTC().Month() == thisMonth {
-				byProviderThisMonth[rec.Provider] += cost
+	// ReadString handles lines of any size (prompt history can include large
+	// original_prompt / response fields that exceed a fixed scanner buffer).
+	reader := bufio.NewReaderSize(f, 64*1024)
+	for {
+		rawLine, err := reader.ReadString('\n')
+		line := strings.TrimSpace(rawLine)
+		if line != "" {
+			var rec historyRecord
+			if jsonErr := json.Unmarshal([]byte(line), &rec); jsonErr == nil && rec.Success {
+				cost := rec.EstimatedCostUSD
+				if cost == 0 && rec.TokenUsage != nil {
+					// Re-compute for records written before cost tracking landed.
+					p := agent.Provider(rec.Provider)
+					cost = agent.ComputeCostUSD(rec.TokenUsage, p, rec.Model, pricing)
+				}
+				if cost > 0 {
+					byProvider[rec.Provider] += cost
+					total += cost
+					// Track this-month spend separately for budget alert evaluation.
+					if !rec.Timestamp.IsZero() &&
+						rec.Timestamp.UTC().Year() == thisYear &&
+						rec.Timestamp.UTC().Month() == thisMonth {
+						byProviderThisMonth[rec.Provider] += cost
+					}
+				}
+				count++
 			}
 		}
-		count++
-	}
-	// Partial results are acceptable on buffer overflow; abort on real I/O errors.
-	if err := scanner.Err(); err != nil && err != bufio.ErrTooLong {
-		return nil
+		if err != nil {
+			break
+		}
 	}
 
 	if count == 0 {

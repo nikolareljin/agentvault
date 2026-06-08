@@ -40,7 +40,7 @@ type LLMRouterConfig struct {
 // RoutingFactors captures the analysis dimensions returned by the routing model.
 type RoutingFactors struct {
 	Complexity       int    `json:"complexity"` // 1–10
-	TaskType         string `json:"task_type"`  // coding|review|analysis|general
+	TaskType         string `json:"task_type"`  // one of: coding, documentation, review, analysis, general
 	RequiresTools    bool   `json:"requires_tools"`
 	PrivacySensitive bool   `json:"privacy_sensitive"`
 	TimeSensitive    bool   `json:"time_sensitive"`
@@ -94,6 +94,13 @@ func buildRoutingSystemPrompt(candidates []Candidate) string {
 	sb.WriteString(`
 Consider: task complexity, privacy requirements, cost (prefer local for simple tasks), tool availability, latency sensitivity.
 
+task_type must be exactly one of: coding, documentation, review, analysis, general
+  coding       - write or modify source code
+  documentation - write or update docs, README, docstrings, specs, changelogs
+  review       - review code, diffs, or pull requests
+  analysis     - investigate, compare, or design architecture/strategy
+  general      - anything that does not fit the above
+
 Respond ONLY with valid JSON (no markdown, no extra text):
 {
   "selected_agent": "<name from list above>",
@@ -102,7 +109,7 @@ Respond ONLY with valid JSON (no markdown, no extra text):
   "confidence": 0.85,
   "routing_factors": {
     "complexity": 5,
-    "task_type": "coding|review|analysis|general",
+    "task_type": "coding",
     "requires_tools": false,
     "privacy_sensitive": false,
     "time_sensitive": false
@@ -269,21 +276,31 @@ func enrichIntentFromLLMDecision(intent *Intent, d LLMRouterDecision) {
 		intent.Coding = true
 		intent.Review = false
 		intent.Analysis = false
+		intent.Documentation = false
 		intent.TaskClass = "coding"
+	case "documentation":
+		intent.Coding = false
+		intent.Review = false
+		intent.Analysis = false
+		intent.Documentation = true
+		intent.TaskClass = "documentation"
 	case "review":
 		intent.Coding = false
 		intent.Review = true
 		intent.Analysis = false
+		intent.Documentation = false
 		intent.TaskClass = "review"
 	case "analysis":
 		intent.Coding = false
 		intent.Review = false
 		intent.Analysis = true
+		intent.Documentation = false
 		intent.TaskClass = "analysis"
 	default:
 		intent.Coding = false
 		intent.Review = false
 		intent.Analysis = false
+		intent.Documentation = false
 		intent.TaskClass = "general"
 	}
 	// High complexity tasks benefit from analysis capability even within coding tasks.
@@ -307,7 +324,7 @@ func normalizeLLMRouterDecision(d LLMRouterDecision) LLMRouterDecision {
 		f.Complexity = 10
 	}
 	switch strings.ToLower(strings.TrimSpace(f.TaskType)) {
-	case "coding", "review", "analysis", "general":
+	case "coding", "documentation", "review", "analysis", "general":
 		f.TaskType = strings.ToLower(strings.TrimSpace(f.TaskType))
 	default:
 		f.TaskType = "general"
