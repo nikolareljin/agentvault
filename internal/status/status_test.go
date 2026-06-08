@@ -3,6 +3,7 @@ package status
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
+
+func approxEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
 func TestCollectCodexStatus(t *testing.T) {
 	home := t.TempDir()
@@ -112,13 +115,13 @@ func TestBuildCostReportAggregation(t *testing.T) {
 		t.Errorf("RecordCount = %d, want 3", report.RecordCount)
 	}
 	want := 0.01 + 0.02 + 0.05
-	if report.TotalUSD != want {
+	if !approxEq(report.TotalUSD, want) {
 		t.Errorf("TotalUSD = %v, want %v", report.TotalUSD, want)
 	}
-	if report.ByProvider["claude"] != 0.03 {
+	if !approxEq(report.ByProvider["claude"], 0.03) {
 		t.Errorf("ByProvider[claude] = %v, want 0.03", report.ByProvider["claude"])
 	}
-	if report.ByProvider["openai"] != 0.05 {
+	if !approxEq(report.ByProvider["openai"], 0.05) {
 		t.Errorf("ByProvider[openai] = %v, want 0.05", report.ByProvider["openai"])
 	}
 }
@@ -141,7 +144,7 @@ func TestBuildCostReportLegacyRecompute(t *testing.T) {
 		t.Fatal("expected non-nil report")
 	}
 	// 1000/1000*1.0 + 500/1000*2.0 = 1.0 + 1.0 = 2.0
-	if report.TotalUSD != 2.0 {
+	if !approxEq(report.TotalUSD, 2.0) {
 		t.Errorf("TotalUSD = %v, want 2.0 (recomputed from token_usage)", report.TotalUSD)
 	}
 }

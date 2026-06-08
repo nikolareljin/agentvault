@@ -74,10 +74,12 @@ for lib in libllama.a libggml.a libggml-cpu.a libggml-base.a; do
     fi
 done
 
-if [ ! -f "${OUT_DIR}/lib/libllama.a" ]; then
-    echo "ERROR: libllama.a not found after build — cmake layout may have changed" >&2
-    exit 1
-fi
+for required_lib in libllama.a libggml.a libggml-cpu.a; do
+    if [ ! -f "${OUT_DIR}/lib/${required_lib}" ]; then
+        echo "ERROR: ${required_lib} not found after build — cmake layout may have changed" >&2
+        exit 1
+    fi
+done
 
 echo "==> Done. Libraries at ${OUT_DIR}/lib/"
 ls -lh "${OUT_DIR}/lib/"

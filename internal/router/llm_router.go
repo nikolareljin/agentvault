@@ -138,7 +138,7 @@ func callLLMServer(ctx context.Context, baseURL, systemPrompt, userMsg, model st
 		},
 		"temperature": 0.1,
 		"stream":      false,
-		"max_tokens":  64,
+		"max_tokens":  128,
 	}
 	if strings.TrimSpace(model) != "" {
 		payload["model"] = model
