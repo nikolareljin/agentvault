@@ -22,11 +22,12 @@ var execLookPath = exec.LookPath
 var llmBalancer = NewBalancer()
 
 var (
-	codingTerms   = []string{"code", "coding", "implement", "bug", "fix", "refactor", "test", "function", "compile", "build", "issue", "repository", "repo", "golang", "python", "javascript", "rust"}
-	reviewTerms   = []string{"review", "diff", "pull request", "regression", "risk", "edge case"}
-	analysisTerms = []string{"analyze", "investigate", "compare", "architecture", "design", "tradeoff", "strategy"}
-	latencyTerms  = []string{"urgent", "asap", "quickly", "immediately", "fast", "time-sensitive"}
-	privacyTerms  = []string{"private", "confidential", "local only", "offline", "air-gapped", "airgapped", "no network"}
+	codingTerms        = []string{"code", "coding", "implement", "bug", "fix", "refactor", "test", "function", "compile", "build", "issue", "repository", "repo", "golang", "python", "javascript", "rust"}
+	reviewTerms        = []string{"review", "diff", "pull request", "regression", "risk", "edge case"}
+	analysisTerms      = []string{"analyze", "investigate", "compare", "architecture", "design", "tradeoff", "strategy"}
+	documentationTerms = []string{"document", "documentation", "readme", "docs", "docstring", "comment", "explain", "spec", "specification", "changelog", "wiki", "write up", "writeup"}
+	latencyTerms       = []string{"urgent", "asap", "quickly", "immediately", "fast", "time-sensitive"}
+	privacyTerms       = []string{"private", "confidential", "local only", "offline", "air-gapped", "airgapped", "no network"}
 )
 
 // Request captures one routing decision request.
@@ -44,6 +45,7 @@ type Intent struct {
 	Coding           bool   `json:"coding"`
 	Review           bool   `json:"review"`
 	Analysis         bool   `json:"analysis"`
+	Documentation    bool   `json:"documentation"`
 	LatencySensitive bool   `json:"latency_sensitive"`
 	PrivacySensitive bool   `json:"privacy_sensitive"`
 }
@@ -250,15 +252,14 @@ func buildCandidates(agents []agent.Agent, intent Intent, cfg agent.RouterConfig
 		if profile.Disabled {
 			continue
 		}
-		// Augment profile capabilities from the capability registry when the
-		// agent's BaseURL matches a registered endpoint.
+		// Augment profile capabilities from all matching registry entries; iterate
+		// without breaking so a wildcard entry (ModelName="") does not mask a more-specific model entry.
 		if len(caps) > 0 && strings.TrimSpace(a.BaseURL) != "" {
 			normalizedBase := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
 			for _, cap := range caps {
 				if strings.TrimRight(cap.EndpointURL, "/") == normalizedBase &&
 					(cap.ModelName == "" || cap.ModelName == a.Model) {
 					profile.Capabilities = mergeCapabilities(profile.Capabilities, cap.Capabilities)
-					break
 				}
 			}
 		}
@@ -479,6 +480,8 @@ func requiredCapability(intent Intent) string {
 	switch {
 	case intent.Review:
 		return agent.RouteCapabilityReview
+	case intent.Documentation:
+		return agent.RouteCapabilityDocumentation
 	case intent.Coding:
 		return agent.RouteCapabilityCoding
 	case intent.Analysis:
@@ -493,6 +496,7 @@ func classifyPrompt(prompt string) Intent {
 	normalized := normalizePromptText(lower)
 	tokens := tokenizePrompt(normalized)
 	intent := Intent{TaskClass: "general"}
+	intent.Documentation = containsAnyTerm(normalized, tokens, documentationTerms)
 	intent.Coding = containsAnyTerm(normalized, tokens, codingTerms)
 	intent.Review = containsAnyTerm(normalized, tokens, reviewTerms)
 	intent.Analysis = containsAnyTerm(normalized, tokens, analysisTerms)
@@ -502,6 +506,10 @@ func classifyPrompt(prompt string) Intent {
 	switch {
 	case intent.Review:
 		intent.TaskClass = "review"
+	case intent.Documentation:
+		// Documentation checked before coding: "document the code" should route to
+		// documentation-capable agents, not generic coding agents.
+		intent.TaskClass = "documentation"
 	case intent.Coding:
 		intent.TaskClass = "coding"
 	case intent.Analysis:
