@@ -16,6 +16,11 @@ OUT_DIR="${PROJECT_DIR}/third_party/llama"
 LLAMA_REPO="${LLAMA_REPO:-https://github.com/ggerganov/llama.cpp}"
 LLAMA_TAG="${LLAMA_TAG:-}"   # empty = clone latest master
 
+if [ -z "${LLAMA_TAG}" ]; then
+    echo "WARNING: LLAMA_TAG is unset — building against llama.cpp master (not reproducible)."
+    echo "         Set LLAMA_TAG=bNNNN to pin to a specific release tag."
+fi
+
 if [ -f "${OUT_DIR}/lib/libllama.a" ]; then
     echo "llama.cpp static library already built at ${OUT_DIR}/lib/libllama.a"
     echo "Remove third_party/llama/ to force a rebuild."
