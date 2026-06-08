@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -52,6 +55,7 @@ func init() {
 
 	routingModelDownloadCmd.Flags().String("output", "", "directory to save the model (default: ~/.local/share/agentvault/models/)")
 	routingModelDownloadCmd.Flags().String("url", bitnetModelURL, "model download URL override")
+	routingModelDownloadCmd.Flags().String("sha256", "", "expected SHA256 hex digest; verified after download")
 }
 
 func runRoutingModelStatus(cmd *cobra.Command, _ []string) error {
@@ -118,7 +122,8 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 
 	total := resp.ContentLength
 	pr := &progressReader{r: resp.Body, total: total, out: cmd.OutOrStdout()}
-	if _, err := io.Copy(f, pr); err != nil {
+	hasher := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(f, hasher), pr); err != nil {
 		f.Close()
 		os.Remove(tmp)
 		return fmt.Errorf("write model: %w", err)
@@ -126,12 +131,20 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	f.Close()
 	fmt.Fprintln(cmd.OutOrStdout())
 
+	got := hex.EncodeToString(hasher.Sum(nil))
+	expectedSHA, _ := cmd.Flags().GetString("sha256")
+	if expectedSHA != "" && !strings.EqualFold(got, expectedSHA) {
+		os.Remove(tmp)
+		return fmt.Errorf("SHA256 mismatch: got %s, want %s", got, expectedSHA)
+	}
+
 	if err := os.Rename(tmp, destPath); err != nil {
 		return fmt.Errorf("finalize model: %w", err)
 	}
 
 	info, _ := os.Stat(destPath)
 	fmt.Fprintf(cmd.OutOrStdout(), "\ndownloaded: %s (%s)\n", destPath, formatBytes(info.Size()))
+	fmt.Fprintf(cmd.OutOrStdout(), "SHA256:     %s\n", got)
 	fmt.Fprintf(cmd.OutOrStdout(), "use with:   --llm-router-model-path %s\n", destPath)
 	return nil
 }
