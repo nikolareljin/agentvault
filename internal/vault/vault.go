@@ -307,6 +307,12 @@ func (v *Vault) ListCapabilities() []agent.ModelCapabilityEntry {
 func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
 	entry.EndpointURL = strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/")
 	entry.ModelName = strings.TrimSpace(entry.ModelName)
+	if entry.EndpointURL == "" {
+		return fmt.Errorf("capability entry requires a non-empty EndpointURL")
+	}
+	if entry.ModelName == "" {
+		return fmt.Errorf("capability entry requires a non-empty ModelName")
+	}
 	for _, e := range v.modelCapabilities {
 		if e.EndpointURL == entry.EndpointURL && e.ModelName == entry.ModelName {
 			return fmt.Errorf("capability entry for %s/%s already exists; remove it first with 'agentvault capability remove'", entry.EndpointURL, entry.ModelName)
