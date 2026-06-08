@@ -38,8 +38,21 @@ if [ ! -d "${OUT_DIR}/src/.git" ]; then
     else
         git clone --depth 1 "${LLAMA_REPO}" "${OUT_DIR}/src"
     fi
+elif [ -n "${LLAMA_TAG}" ]; then
+    # Repo exists: verify the checked-out revision matches the requested tag.
+    current=$(git -C "${OUT_DIR}/src" describe --tags --exact-match HEAD 2>/dev/null \
+              || git -C "${OUT_DIR}/src" rev-parse --short HEAD)
+    if [ "${current}" != "${LLAMA_TAG}" ]; then
+        echo "    Tag mismatch (have ${current}, want ${LLAMA_TAG}) — fetching..."
+        git -C "${OUT_DIR}/src" fetch --depth 1 origin \
+            "refs/tags/${LLAMA_TAG}:refs/tags/${LLAMA_TAG}" 2>/dev/null \
+            || git -C "${OUT_DIR}/src" fetch --depth 1 origin "${LLAMA_TAG}"
+        git -C "${OUT_DIR}/src" checkout "${LLAMA_TAG}"
+    else
+        echo "    Source already at ${LLAMA_TAG} — skipping fetch"
+    fi
 else
-    echo "    Source already cloned — skipping fetch"
+    echo "    Source already cloned (no LLAMA_TAG set) — skipping fetch"
 fi
 
 echo "==> Configuring cmake..."
