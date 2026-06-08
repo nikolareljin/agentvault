@@ -736,7 +736,17 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		return candidates[i].Score > candidates[j].Score
 	})
 
-	selected, err := llmBalancer.PickBest(context.Background(), decision, candidates)
+	allowed := make([]Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if candidateAllowed(c, overrideCfg) {
+			allowed = append(allowed, c)
+		}
+	}
+	if len(allowed) == 0 {
+		return Decision{}, errors.New("no candidates satisfy routing policy after llm-router decision")
+	}
+
+	selected, err := llmBalancer.PickBest(context.Background(), decision, allowed)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -753,7 +763,7 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 	if overrideCfg.AllowFallbacks {
 		for _, name := range decision.FallbackAgents {
 			for _, c := range candidates {
-				if c.Agent.Name == name && c.Agent.Name != selected.Agent.Name {
+				if c.Agent.Name == name && c.Agent.Name != selected.Agent.Name && candidateAllowed(c, overrideCfg) {
 					fallbacks = append(fallbacks, c)
 					break
 				}
