@@ -304,7 +304,8 @@ func inferCapabilities(model string) []string {
 	if strings.Contains(m, "code") || strings.Contains(m, "codex") || strings.Contains(m, "coder") || strings.Contains(m, "starcoder") || strings.Contains(m, "deepseek-coder") {
 		caps = append(caps, "coding")
 	}
-	if strings.Contains(m, "vision") || strings.Contains(m, "vl") || strings.Contains(m, "llava") || strings.Contains(m, "visual") {
+	if strings.Contains(m, "vision") || strings.Contains(m, "llava") || strings.Contains(m, "visual") ||
+		strings.Contains(m, "-vl") || strings.Contains(m, "vl-") || strings.Contains(m, "_vl") || strings.Contains(m, "vl_") {
 		caps = append(caps, "vision")
 	}
 	if strings.Contains(m, "embed") {

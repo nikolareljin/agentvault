@@ -333,6 +333,9 @@ func (v *Vault) AddCapabilities(entries []agent.ModelCapabilityEntry) (int, erro
 	for _, entry := range entries {
 		entry.EndpointURL = strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/")
 		entry.ModelName = strings.TrimSpace(entry.ModelName)
+		if entry.EndpointURL == "" || entry.ModelName == "" {
+			continue
+		}
 		dup := false
 		for _, e := range v.modelCapabilities {
 			if e.EndpointURL == entry.EndpointURL && e.ModelName == entry.ModelName {
