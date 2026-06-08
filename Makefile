@@ -32,7 +32,8 @@ build-llama:
 	bash scripts/build-llama.sh
 
 # Build agentvault with embedded BitNet/llama.cpp inference engine.
-# Skips build-llama when $(LLAMA_DIR)/lib/libllama.a already exists (e.g. custom LLAMA_DIR).
+# Skips build-llama when $(LLAMA_DIR)/lib/libllama.a already exists.
+# Override LLAMA_DIR only when libllama.a is already present there; build-llama always outputs to third_party/llama.
 build-bitnet:
 	@test -f "$(LLAMA_DIR)/lib/libllama.a" || $(MAKE) build-llama
 	$(LLAMA_CGO) go build -tags localllm \

@@ -702,7 +702,11 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 			return Decision{}, hErr
 		}
 		hDecision.Mode = "heuristic-fallback"
-		fallbackReason := fmt.Sprintf("llm-router unavailable (%s), used heuristic fallback", err.Error())
+		errMsg := err.Error()
+		if len(errMsg) > 120 {
+			errMsg = errMsg[:120] + "..."
+		}
+		fallbackReason := fmt.Sprintf("llm-router unavailable (%s), used heuristic fallback", errMsg)
 		hDecision.Selected.Reasons = append([]string{fallbackReason}, hDecision.Selected.Reasons...)
 		return hDecision, nil
 	}
@@ -993,11 +997,15 @@ func normalizeCapTag(tag string) string {
 }
 
 func mergeCapabilities(existing, additional []string) []string {
-	seen := make(map[string]bool, len(existing))
+	seen := make(map[string]bool, len(existing)+len(additional))
+	out := make([]string, 0, len(existing)+len(additional))
 	for _, c := range existing {
-		seen[strings.ToLower(c)] = true
+		normalized := normalizeCapTag(c)
+		if !seen[normalized] {
+			out = append(out, normalized)
+			seen[normalized] = true
+		}
 	}
-	out := append([]string(nil), existing...)
 	for _, c := range additional {
 		normalized := normalizeCapTag(c)
 		if !seen[normalized] {
