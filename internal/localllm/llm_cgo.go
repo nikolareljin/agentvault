@@ -135,9 +135,17 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 		var pieceBuf [256]C.char
 		n := C.llama_token_to_piece(e.model, tok, &pieceBuf[0], C.int32_t(len(pieceBuf)), 0, C.bool(true))
 		if n < 0 {
-			return string(out), fmt.Errorf("localllm: token piece buffer too small (need %d bytes)", -n)
-		}
-		if n > 0 {
+			// Buffer too small; retry with the exact required size (API returns -(needed)).
+			needed := int(-n)
+			largeBuf := make([]C.char, needed)
+			n = C.llama_token_to_piece(e.model, tok, &largeBuf[0], C.int32_t(needed), 0, C.bool(true))
+			if n < 0 {
+				return string(out), fmt.Errorf("localllm: token piece buffer too small (need %d bytes)", -n)
+			}
+			if n > 0 {
+				out = append(out, C.GoStringN(&largeBuf[0], C.int(n))...)
+			}
+		} else if n > 0 {
 			out = append(out, C.GoStringN(&pieceBuf[0], C.int(n))...)
 		}
 

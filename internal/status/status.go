@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -445,8 +446,9 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 	var total float64
 	var count int
 
-	// ReadString handles lines of any size (prompt history can include large
-	// original_prompt / response fields that exceed a fixed scanner buffer).
+	// bufio.Reader.ReadString accumulates across internal refills so there is no
+	// fixed line-length cap (unlike bufio.Scanner). Break only on io.EOF; on any
+	// other I/O error return partial results rather than silently truncating.
 	reader := bufio.NewReaderSize(f, 64*1024)
 	for {
 		rawLine, err := reader.ReadString('\n')
@@ -474,6 +476,9 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 			}
 		}
 		if err != nil {
+			if err != io.EOF {
+				return nil
+			}
 			break
 		}
 	}

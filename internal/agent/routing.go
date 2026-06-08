@@ -24,11 +24,11 @@ const (
 
 // Routing capability labels used by heuristic and LangGraph routing.
 const (
-	RouteCapabilityGeneral        = "general"
-	RouteCapabilityCoding         = "coding"
-	RouteCapabilityReview         = "review"
-	RouteCapabilityAnalysis       = "analysis"
-	RouteCapabilityDocumentation  = "documentation"
+	RouteCapabilityGeneral       = "general"
+	RouteCapabilityCoding        = "coding"
+	RouteCapabilityReview        = "review"
+	RouteCapabilityAnalysis      = "analysis"
+	RouteCapabilityDocumentation = "documentation"
 )
 
 var validRouteCapabilities = map[string]struct{}{
