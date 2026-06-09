@@ -45,13 +45,16 @@ func (b *Balancer) getOrCreate(name string) *ProviderHealth {
 	return h
 }
 
-// CheckHealth pings the candidate's HTTP endpoint. Agents with no BaseURL (CLI runners) are
-// assumed always healthy. Updates the circuit breaker state: marks unavailable after
-// balancerMaxFailures consecutive failures; allows re-check after balancerCooldown.
+// CheckHealth pings the candidate's HTTP endpoint. Agents with no BaseURL (CLI runners such
+// as Aider or script-based agents) are assumed always healthy because they have no HTTP
+// endpoint to probe. HTTP agents (Ollama, llama-server, etc.) must have BaseURL set
+// explicitly; an empty BaseURL is never interpreted as a default HTTP address.
+// Updates the circuit breaker state: marks unavailable after balancerMaxFailures consecutive
+// failures; allows re-check after balancerCooldown.
 func (b *Balancer) CheckHealth(ctx context.Context, c Candidate) bool {
 	baseURL := strings.TrimSpace(c.Target.BaseURL)
 	if baseURL == "" {
-		// CLI-launched agents have no HTTP endpoint; assume healthy.
+		// CLI-launched subprocess agents have no HTTP endpoint; treat as always healthy.
 		return true
 	}
 
