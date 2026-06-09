@@ -682,14 +682,26 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		return Decision{}, errors.New("no routing candidates available")
 	}
 
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].Score == candidates[j].Score {
-			if candidates[i].Target.Local != candidates[j].Target.Local {
-				return candidates[i].Target.Local
-			}
-			return candidates[i].Agent.Name < candidates[j].Agent.Name
+	// Pre-filter to policy-allowed candidates so the LLM only reasons about agents
+	// that can actually be selected (e.g. respects --local-only, supported runners).
+	llmCandidates := make([]Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if candidateAllowed(c, overrideCfg) {
+			llmCandidates = append(llmCandidates, c)
 		}
-		return candidates[i].Score > candidates[j].Score
+	}
+	if len(llmCandidates) == 0 {
+		return Decision{}, errors.New("no candidates satisfy routing policy for llm-router")
+	}
+
+	sort.SliceStable(llmCandidates, func(i, j int) bool {
+		if llmCandidates[i].Score == llmCandidates[j].Score {
+			if llmCandidates[i].Target.Local != llmCandidates[j].Target.Local {
+				return llmCandidates[i].Target.Local
+			}
+			return llmCandidates[i].Agent.Name < llmCandidates[j].Agent.Name
+		}
+		return llmCandidates[i].Score > llmCandidates[j].Score
 	})
 
 	llmCfg := LLMRouterConfig{
@@ -703,7 +715,7 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		GPULayers:     cfg.LLMRouterGPULayers,
 	}
 
-	decision, err := AnalyzeWithLLMRouter(context.Background(), trimmedPrompt, candidates, llmCfg)
+	decision, err := AnalyzeWithLLMRouter(context.Background(), trimmedPrompt, llmCandidates, llmCfg)
 	if err != nil {
 		// Graceful degradation: fall through to heuristic, never surface the error to the caller.
 		hDecision, hErr := routeHeuristic(req, overrideCfg)
