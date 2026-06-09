@@ -33,6 +33,11 @@ fi
 echo "==> Cloning llama.cpp..."
 mkdir -p "${OUT_DIR}"
 if [ ! -d "${OUT_DIR}/src/.git" ]; then
+    # Remove any non-git remnant (e.g. from a failed prior run) so git clone has a clean target.
+    if [ -d "${OUT_DIR}/src" ]; then
+        echo "    Removing non-git ${OUT_DIR}/src from a prior failed run..."
+        rm -rf "${OUT_DIR}/src"
+    fi
     if [ -n "${LLAMA_TAG}" ]; then
         git clone --depth 1 --branch "${LLAMA_TAG}" "${LLAMA_REPO}" "${OUT_DIR}/src"
     else

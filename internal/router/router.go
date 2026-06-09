@@ -710,7 +710,9 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 			return Decision{}, hErr
 		}
 		hDecision.Mode = "heuristic-fallback"
-		errMsg := err.Error()
+		// Collapse whitespace (newlines, tabs from HTTP error bodies) to keep
+		// the reason string single-line in CLI output and JSON logs.
+		errMsg := strings.Join(strings.Fields(err.Error()), " ")
 		if runes := []rune(errMsg); len(runes) > 120 {
 			errMsg = string(runes[:120]) + "..."
 		}
