@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -172,13 +173,14 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	baseURL := strings.TrimRight(strings.TrimSpace(endpoint), "/")
 
 	client := &http.Client{Timeout: timeout}
+	ctx := cmd.Context()
 
 	// Try OpenAI-compat /v1/models first (llama.cpp, bitnet.cpp, Ollama).
-	entries, modelsErr := discoverFromModelsEndpoint(client, baseURL)
+	entries, modelsErr := discoverFromModelsEndpoint(ctx, client, baseURL)
 	if modelsErr != nil {
 		// Fall back to /health (llm-gateway-helpers).
 		var healthErr error
-		entries, healthErr = discoverFromHealthEndpoint(client, baseURL)
+		entries, healthErr = discoverFromHealthEndpoint(ctx, client, baseURL)
 		if healthErr != nil {
 			return fmt.Errorf("discover: could not query %s — /v1/models: %v; /health: %v", baseURL, modelsErr, healthErr)
 		}
@@ -222,8 +224,12 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func discoverFromModelsEndpoint(client *http.Client, baseURL string) ([]agent.ModelCapabilityEntry, error) {
-	resp, err := client.Get(baseURL + "/v1/models")
+func discoverFromModelsEndpoint(ctx context.Context, client *http.Client, baseURL string) ([]agent.ModelCapabilityEntry, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -259,8 +265,12 @@ func discoverFromModelsEndpoint(client *http.Client, baseURL string) ([]agent.Mo
 	return entries, nil
 }
 
-func discoverFromHealthEndpoint(client *http.Client, baseURL string) ([]agent.ModelCapabilityEntry, error) {
-	resp, err := client.Get(baseURL + "/health")
+func discoverFromHealthEndpoint(ctx context.Context, client *http.Client, baseURL string) ([]agent.ModelCapabilityEntry, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
