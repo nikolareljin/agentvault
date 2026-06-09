@@ -209,10 +209,13 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// Track printed keys to avoid duplicates when the endpoint returns the same model ID twice.
+	printed := make(map[string]bool)
 	for _, entry := range entries {
 		key := strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/") + "\x00" + strings.TrimSpace(entry.ModelName)
-		if !existing[key] {
+		if !existing[key] && !printed[key] {
 			fmt.Printf("  + %s (%s)\n", entry.ModelName, strings.Join(entry.Capabilities, ","))
+			printed[key] = true
 		}
 	}
 	skipped := total - added
