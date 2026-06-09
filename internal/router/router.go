@@ -252,13 +252,14 @@ func buildCandidates(agents []agent.Agent, intent Intent, cfg agent.RouterConfig
 		if profile.Disabled {
 			continue
 		}
-		// Augment profile capabilities from all matching registry entries; iterate
-		// without breaking so a wildcard entry (ModelName="") does not mask a more-specific model entry.
+		// Augment profile capabilities from matching registry entries (same endpoint + model).
+		// Iterates all entries rather than stopping at first so multiple entries for the
+		// same endpoint accumulate their capabilities correctly.
 		if len(caps) > 0 && strings.TrimSpace(a.BaseURL) != "" {
 			normalizedBase := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
 			for _, cap := range caps {
 				if strings.TrimRight(cap.EndpointURL, "/") == normalizedBase &&
-					(cap.ModelName == "" || cap.ModelName == a.Model) {
+					cap.ModelName == a.Model {
 					profile.Capabilities = mergeCapabilities(profile.Capabilities, cap.Capabilities)
 				}
 			}
