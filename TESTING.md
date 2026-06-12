@@ -431,7 +431,7 @@ After several `prompt` executions, `status --cost-report` aggregates cost estima
 # Add capability entries manually
 ./agentvault capability add \
   --endpoint http://localhost:11434 \
-  --model llama3.1:8b \
+  --model llama3.1 \
   --context 8192 \
   --caps coding,general
 
@@ -462,8 +462,8 @@ After several `prompt` executions, `status --cost-report` aggregates cost estima
 # Remove a specific entry
 ./agentvault capability remove \
   --endpoint http://localhost:11434 \
-  --model llama3.1:8b
-# Expected: "Removed: http://localhost:11434 / llama3.1:8b"
+  --model llama3.1
+# Expected: "Removed: http://localhost:11434 / llama3.1"
 
 # Verify routing uses registry: after adding capabilities,
 # route with llm-router mode — the router receives capability context

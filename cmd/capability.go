@@ -33,24 +33,28 @@ Examples:
 var capabilityListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all model capability entries",
+	Args:  cobra.NoArgs,
 	RunE:  runCapabilityList,
 }
 
 var capabilityAddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a model capability entry",
+	Args:  cobra.NoArgs,
 	RunE:  runCapabilityAdd,
 }
 
 var capabilityRemoveCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Remove a model capability entry",
+	Args:  cobra.NoArgs,
 	RunE:  runCapabilityRemove,
 }
 
 var capabilityDiscoverCmd = &cobra.Command{
 	Use:   "discover",
 	Short: "Auto-discover model capabilities from an endpoint (/v1/models or /health)",
+	Args:  cobra.NoArgs,
 	RunE:  runCapabilityDiscover,
 }
 
