@@ -303,7 +303,7 @@ agentvault capability list --json
 # Add manually
 agentvault capability add \
   --endpoint http://localhost:11434 \
-  --model llama3.1:8b \
+  --model llama3.1 \
   --context 8192 \
   --caps coding,general
 
@@ -314,7 +314,7 @@ agentvault capability discover --endpoint http://localhost:8080 --timeout 30s
 # Remove one entry
 agentvault capability remove \
   --endpoint http://localhost:11434 \
-  --model llama3.1:8b
+  --model llama3.1
 ```
 
 Capability tags inferred from model names during discovery:

@@ -5,7 +5,7 @@ package localllm
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../third_party/llama/include -std=c11
 #cgo linux LDFLAGS: -L${SRCDIR}/../../third_party/llama/lib -lllama -lggml -lggml-cpu -lstdc++ -lm -lgomp
-#cgo darwin LDFLAGS: -L${SRCDIR}/../../third_party/llama/lib -lllama -lggml -lggml-cpu -lstdc++ -lm
+#cgo darwin LDFLAGS: -L${SRCDIR}/../../third_party/llama/lib -lllama -lggml -lggml-cpu -lc++ -lm
 #include "llama.h"
 #include <stdbool.h>
 #include <stdlib.h>
@@ -89,8 +89,8 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 		e.model,
 		ccombined, C.int32_t(len(combined)),
 		&tokens[0], C.int32_t(maxTokens),
-		C.bool(true), // add_special (BOS)
-		C.bool(true), // parse_special tokens
+		C.bool(false), // add_special=false: BOS already in the template string
+		C.bool(true),  // parse_special tokens
 	)
 	if nTokens < 0 {
 		// llama_tokenize returns -(required_count) when the buffer is too small; retry.
@@ -100,7 +100,7 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 			e.model,
 			ccombined, C.int32_t(len(combined)),
 			&tokens[0], C.int32_t(required),
-			C.bool(true),
+			C.bool(false),
 			C.bool(true),
 		)
 		if nTokens < 0 {

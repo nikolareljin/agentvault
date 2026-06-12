@@ -14,7 +14,7 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
   LLAMA_CGO = CGO_ENABLED=1 \
     CGO_CFLAGS="-I$(LLAMA_DIR)/include" \
-    CGO_LDFLAGS="-L$(LLAMA_DIR)/lib -lllama -lggml -lggml-cpu -lstdc++ -lm"
+    CGO_LDFLAGS="-L$(LLAMA_DIR)/lib -lllama -lggml -lggml-cpu -lc++ -lm"
 else
   LLAMA_CGO = CGO_ENABLED=1 \
     CGO_CFLAGS="-I$(LLAMA_DIR)/include" \
@@ -54,7 +54,7 @@ vet:
 	go vet ./...
 
 clean:
-	rm -f $(APP_NAME)
+	rm -f $(APP_NAME) $(APP_NAME)-bitnet
 
 install: build
 	@target_bin="$$(go env GOBIN)"; \
