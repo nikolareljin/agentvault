@@ -183,7 +183,8 @@ func callLLMServer(ctx context.Context, baseURL, systemPrompt, userMsg, model st
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	const maxRespBody = 1 << 20 // 1 MiB — routing decisions are small JSON
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRespBody)).Decode(&out); err != nil {
 		return LLMRouterDecision{}, fmt.Errorf("llm-router: decode response: %w", err)
 	}
 	if len(out.Choices) == 0 {

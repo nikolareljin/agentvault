@@ -18,10 +18,12 @@ import (
 var capabilityCmd = &cobra.Command{
 	Use:   "capability",
 	Short: "Manage the model capability registry",
-	Long: `Manage the model capability registry used by the llm-router to select agents.
+	Long: `Manage the model capability registry used by all routing modes to score agents.
 
 The registry stores endpoint → model → capability mappings so the router knows
 which local or remote endpoints host which models and what they can do.
+Registry entries are merged into candidate scoring for every routing mode, not
+just llm-router.
 
 Examples:
   agentvault capability list

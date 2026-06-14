@@ -33,9 +33,9 @@ build-llama:
 
 # Build agentvault with embedded BitNet/llama.cpp inference engine.
 # Skips build-llama when $(LLAMA_DIR)/lib/libllama.a already exists.
-# Note: CGO_CFLAGS/CGO_LDFLAGS set here are combined with the hardcoded #cgo paths in
-# internal/localllm/llm_cgo.go (which always include third_party/llama). Overriding
-# LLAMA_DIR uses a pre-built library at that location and skips running build-llama.
+# Note: internal/localllm/llm_cgo.go hardcodes third_party/llama in its #cgo directives,
+# so that directory must always be present regardless of LLAMA_DIR. Changing LLAMA_DIR
+# affects only the CGO_CFLAGS/CGO_LDFLAGS env vars set here and the build-llama step.
 build-bitnet:
 	@test -f "$(LLAMA_DIR)/lib/libllama.a" || $(MAKE) build-llama
 	$(LLAMA_CGO) go build -tags localllm \

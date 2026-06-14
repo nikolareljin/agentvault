@@ -233,7 +233,8 @@ Requires a running OpenAI-compatible server (llama-server, bitnet-server, Ollama
   --text "refactor this service to use dependency injection"
 # Mode: llm-router, includes confidence and routing factors
 
-# With cost estimation enabled
+# Token cost is estimated from usage metadata returned by the server;
+# enable per-agent via llm_router_enable_cost_est: true in the agent router config.
 ./agentvault route --router llm-router \
   --llm-router-url http://localhost:8080 \
   --text "write tests for this module"

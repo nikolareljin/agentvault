@@ -253,13 +253,13 @@ func buildCandidates(agents []agent.Agent, intent Intent, cfg agent.RouterConfig
 			continue
 		}
 		// Augment profile capabilities from matching registry entries (same endpoint + model).
-		// Iterates all entries rather than stopping at first so multiple entries for the
-		// same endpoint accumulate their capabilities correctly.
+		// The vault enforces uniqueness per (endpoint, model) pair, so at most one entry
+		// matches; the full iteration is needed to find it without a secondary index.
 		if len(caps) > 0 && strings.TrimSpace(a.BaseURL) != "" {
 			normalizedBase := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
 			for _, cap := range caps {
-				if strings.TrimRight(cap.EndpointURL, "/") == normalizedBase &&
-					cap.ModelName == a.Model {
+				if strings.TrimRight(strings.TrimSpace(cap.EndpointURL), "/") == normalizedBase &&
+					strings.TrimSpace(cap.ModelName) == strings.TrimSpace(a.Model) {
 					profile.Capabilities = mergeCapabilities(profile.Capabilities, cap.Capabilities)
 				}
 			}
