@@ -132,7 +132,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
 	v.sessions = vd.Sessions
-	v.modelCapabilities = vd.ModelCapabilities
+	v.modelCapabilities = normalizeCapabilityEntries(vd.ModelCapabilities)
 	if v.sessions.ParallelLimit != 0 {
 		v.sessions.ParallelLimitSet = true
 	} else if sessionParallelLimitDefined(plaintext) {
@@ -356,6 +356,26 @@ func (v *Vault) AddCapabilities(entries []agent.ModelCapabilityEntry) (int, erro
 		return 0, nil
 	}
 	return added, v.Save()
+}
+
+// normalizeCapabilityEntries returns entries with EndpointURL and ModelName trimmed
+// to their canonical form and with exact-duplicate (endpoint,model) pairs removed.
+// Called on vault load so all in-memory entries are in canonical form regardless of
+// how they were written (direct edit, older version, import).
+func normalizeCapabilityEntries(entries []agent.ModelCapabilityEntry) []agent.ModelCapabilityEntry {
+	seen := make(map[string]struct{}, len(entries))
+	out := make([]agent.ModelCapabilityEntry, 0, len(entries))
+	for _, e := range entries {
+		e.EndpointURL = strings.TrimRight(strings.TrimSpace(e.EndpointURL), "/")
+		e.ModelName = strings.TrimSpace(e.ModelName)
+		key := e.EndpointURL + "\x00" + e.ModelName
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, e)
+	}
+	return out
 }
 
 // RemoveCapability removes a capability entry by endpoint URL and model name.

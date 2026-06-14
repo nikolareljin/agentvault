@@ -208,7 +208,8 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	// Pre-check which entries already exist so we can report accurately.
 	existing := map[string]bool{}
 	for _, e := range v.ListCapabilities() {
-		existing[e.EndpointURL+"\x00"+e.ModelName] = true
+		key := strings.TrimRight(strings.TrimSpace(e.EndpointURL), "/") + "\x00" + strings.TrimSpace(e.ModelName)
+		existing[key] = true
 	}
 
 	added, err := v.AddCapabilities(entries)
