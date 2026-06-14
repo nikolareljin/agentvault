@@ -255,8 +255,11 @@ func buildCandidates(agents []agent.Agent, intent Intent, cfg agent.RouterConfig
 		// Augment profile capabilities from matching registry entries (same endpoint + model).
 		// The vault enforces uniqueness per (endpoint, model) pair, so at most one entry
 		// matches; the full iteration is needed to find it without a secondary index.
-		if len(caps) > 0 && strings.TrimSpace(a.BaseURL) != "" {
-			normalizedBase := strings.TrimRight(strings.TrimSpace(a.BaseURL), "/")
+		// Use the resolved URL (env var / provider default) so agents with an empty stored
+		// BaseURL (e.g. Ollama using OLLAMA_HOST) can still match registry entries.
+		effectiveBase := agent.ResolvePromptRuntimeConfig(a).BaseURL.Value
+		if len(caps) > 0 && effectiveBase != "" {
+			normalizedBase := strings.TrimRight(effectiveBase, "/")
 			for _, cap := range caps {
 				if strings.TrimRight(strings.TrimSpace(cap.EndpointURL), "/") == normalizedBase &&
 					strings.TrimSpace(cap.ModelName) == strings.TrimSpace(a.Model) {

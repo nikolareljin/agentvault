@@ -3,8 +3,8 @@
 # Outputs: third_party/llama/lib/libllama.a  third_party/llama/include/llama.h
 #
 # Usage:
-#   bash scripts/build-llama.sh              # latest master
-#   LLAMA_TAG=b4760 bash scripts/build-llama.sh   # pin to a build tag
+#   bash scripts/build-llama.sh              # clone default branch (first run only; no-op if already cloned)
+#   LLAMA_TAG=b4760 bash scripts/build-llama.sh   # pin to a specific build tag
 #
 # Re-running is a no-op if the library already exists (remove third_party/llama/ to rebuild).
 
@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 OUT_DIR="${PROJECT_DIR}/third_party/llama"
 LLAMA_REPO="${LLAMA_REPO:-https://github.com/ggerganov/llama.cpp}"
-LLAMA_TAG="${LLAMA_TAG:-}"   # empty = clone latest master
+LLAMA_TAG="${LLAMA_TAG:-}"   # empty = clone default branch on first run; no fetch on re-run
 
 if [ -z "${LLAMA_TAG}" ]; then
     echo "WARNING: LLAMA_TAG is unset — building against llama.cpp master (not reproducible)."
