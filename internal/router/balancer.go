@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/nikolareljin/agentvault/internal/agent"
 )
 
 const (
@@ -45,16 +47,30 @@ func (b *Balancer) getOrCreate(name string) *ProviderHealth {
 	return h
 }
 
-// CheckHealth pings the candidate's HTTP endpoint. Agents with no BaseURL (CLI runners such
-// as Aider or script-based agents) are assumed always healthy because they have no HTTP
-// endpoint to probe. HTTP agents (Ollama, llama-server, etc.) must have BaseURL set
-// explicitly; an empty BaseURL is never interpreted as a default HTTP address.
+// CheckHealth pings the candidate's HTTP endpoint. CLI runners (Claude, Codex, Gemini)
+// have no HTTP endpoint to probe and are always considered healthy. HTTP runners (Ollama,
+// OpenAI-compat) are probed using their effective BaseURL, which is resolved from the
+// stored agent value → OLLAMA_HOST env → provider default, so agents that omit BaseURL
+// (relying on the env or localhost default) are still subject to circuit-breaker health checks.
 // Updates the circuit breaker state: marks unavailable after balancerMaxFailures consecutive
 // failures; allows re-check after balancerCooldown.
 func (b *Balancer) CheckHealth(ctx context.Context, c Candidate) bool {
-	baseURL := strings.TrimSpace(c.Target.BaseURL)
+	// CLI-launched subprocess agents have no HTTP endpoint; always healthy.
+	switch c.Target.Runner {
+	case agent.RunnerCodexCLI, agent.RunnerClaudeCLI, agent.RunnerGeminiCLI, agent.RunnerBedrockAPI:
+		return true
+	}
+
+	// Determine the effective endpoint to probe.
+	// Use the stored Target.BaseURL when present; fall back to the resolved runtime
+	// config URL (handles OLLAMA_HOST env / provider default) for HTTP agents that
+	// omit BaseURL in the vault.
+	baseURL := c.Target.BaseURL
 	if baseURL == "" {
-		// CLI-launched subprocess agents have no HTTP endpoint; treat as always healthy.
+		baseURL = strings.TrimSpace(agent.ResolvePromptRuntimeConfig(c.AgentConfig()).BaseURL.Value)
+	}
+	if baseURL == "" {
+		// No URL resolvable — no HTTP endpoint to probe; assume healthy.
 		return true
 	}
 
