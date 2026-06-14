@@ -510,16 +510,27 @@ func classifyPrompt(prompt string) Intent {
 	switch {
 	case intent.Review:
 		intent.TaskClass = "review"
+		intent.Documentation = false
+		intent.Coding = false
+		intent.Analysis = false
 	case intent.Documentation:
 		// Documentation checked before coding: "document the code" should route to
 		// documentation-capable agents, not generic coding agents.
 		intent.TaskClass = "documentation"
+		intent.Coding = false
+		intent.Analysis = false
 	case intent.Coding:
 		intent.TaskClass = "coding"
+		intent.Documentation = false
 	case intent.Analysis:
 		intent.TaskClass = "analysis"
+		intent.Documentation = false
+		intent.Coding = false
 	default:
 		intent.TaskClass = "general"
+		intent.Documentation = false
+		intent.Coding = false
+		intent.Analysis = false
 	}
 	return intent
 }

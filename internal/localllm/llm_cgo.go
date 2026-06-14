@@ -14,6 +14,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"unsafe"
 )
@@ -52,9 +53,10 @@ func New(modelPath string, ctxSize, threads, gpuLayers int) (Engine, error) {
 	if ctxSize > 0 {
 		cparams.n_ctx = C.uint32_t(ctxSize)
 	}
-	if threads > 0 {
-		cparams.n_threads = C.int32_t(threads)
+	if threads <= 0 {
+		threads = runtime.NumCPU()
 	}
+	cparams.n_threads = C.int32_t(threads)
 
 	ctx := C.llama_new_context_with_model(model, cparams)
 	if ctx == nil {
