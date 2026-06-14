@@ -298,9 +298,6 @@ func discoverFromHealthEndpoint(ctx context.Context, client *http.Client, baseUR
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, err
 	}
-	if len(out.Models) == 0 {
-		return nil, errors.New("no models in /health response")
-	}
 	entries := make([]agent.ModelCapabilityEntry, 0, len(out.Models))
 	for _, m := range out.Models {
 		if strings.TrimSpace(m) == "" {
