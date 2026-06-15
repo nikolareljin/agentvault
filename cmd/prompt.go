@@ -292,11 +292,21 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	}
 	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout, executionWorkspace.Path, stream, cmd.OutOrStdout(), cmd.ErrOrStderr())
 
+	// Derive the execution provider from the resolved runner so that cost attribution
+	// and history records reflect what actually ran (e.g. Claude+Ollama → ollama, free).
+	execProvider := a.Provider
+	switch target.Runner {
+	case agent.RunnerOllamaHTTP:
+		execProvider = agent.ProviderOllama
+	case agent.RunnerBedrockAPI:
+		execProvider = agent.ProviderBedrock
+	}
+
 	record := PromptRecord{
 		ID:                  fmt.Sprintf("prompt-%d", time.Now().UnixNano()),
 		Timestamp:           time.Now().UTC(),
 		AgentName:           a.Name,
-		Provider:            string(a.Provider),
+		Provider:            string(execProvider),
 		Runner:              string(target.Runner),
 		Model:               a.Model,
 		Optimized:           optimized,
@@ -317,7 +327,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		if len(pricing) == 0 {
 			pricing = agent.DefaultPricing()
 		}
-		record.EstimatedCostUSD = agent.ComputeCostUSD(record.TokenUsage, a.Provider, a.Model, pricing)
+		record.EstimatedCostUSD = agent.ComputeCostUSD(record.TokenUsage, execProvider, a.Model, pricing)
 	} else {
 		record.Error = execErr.Error()
 	}
