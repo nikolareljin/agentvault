@@ -742,10 +742,11 @@ func TestRouteLLMRouterUnreachableFallsBackToHeuristic(t *testing.T) {
 			Mode:                 "llm-router",
 			LLMRouterURL:         "http://localhost:19999",
 			LLMRouterTimeoutSecs: 1,
+			AllowFallbacks:       true,
 		},
 	})
 	if err != nil {
-		t.Fatalf("llm-router unreachable should not return error, got: %v", err)
+		t.Fatalf("llm-router unreachable should not return error when AllowFallbacks=true, got: %v", err)
 	}
 	if decision.Mode != "heuristic-fallback" {
 		t.Fatalf("expected heuristic-fallback mode, got %q", decision.Mode)
@@ -753,6 +754,30 @@ func TestRouteLLMRouterUnreachableFallsBackToHeuristic(t *testing.T) {
 	reasonsStr := strings.Join(decision.Selected.Reasons, " ")
 	if !strings.Contains(reasonsStr, "fallback") {
 		t.Errorf("expected fallback reason, got reasons: %v", decision.Selected.Reasons)
+	}
+}
+
+func TestRouteLLMRouterErrorsWhenFallbacksDisabled(t *testing.T) {
+	// AllowFallbacks defaults to false; llm-router must respect it and return an error.
+	_, err := Route(Request{
+		Prompt: "write a sort function in Go",
+		Agents: []agent.Agent{
+			{Name: "codex", Provider: agent.ProviderCodex},
+			{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"},
+		},
+		Shared: agent.SharedConfig{},
+		Config: agent.RouterConfig{
+			Mode:                 "llm-router",
+			LLMRouterURL:         "http://localhost:19999",
+			LLMRouterTimeoutSecs: 1,
+			// AllowFallbacks is false (default)
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error when AllowFallbacks=false and llm-router unreachable, got nil")
+	}
+	if !strings.Contains(err.Error(), "llm-router analysis failed") {
+		t.Fatalf("unexpected error message: %v", err)
 	}
 }
 
