@@ -792,8 +792,12 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		return Decision{}, err
 	}
 
+	reasoning := strings.Join(strings.Fields(decision.Reasoning), " ")
+	if runes := []rune(reasoning); len(runes) > 120 {
+		reasoning = string(runes[:120]) + "..."
+	}
 	llmReason := fmt.Sprintf("llm-router: %s (confidence=%.2f complexity=%d/10 task=%s)",
-		decision.Reasoning, decision.Confidence,
+		reasoning, decision.Confidence,
 		decision.RoutingFactors.Complexity, decision.RoutingFactors.TaskType)
 	if llmCfg.EnableCostEst && (decision.EstInputTokens > 0 || decision.EstOutputTokens > 0) {
 		llmReason += fmt.Sprintf(" est_tokens=in:%d out:%d", decision.EstInputTokens, decision.EstOutputTokens)
