@@ -224,8 +224,8 @@ agentvault status --json
 # Non-interactive with cost breakdown
 AGENTVAULT_PASSWORD=... agentvault status --cost-report --json
 
-# Human-readable cost report
-agentvault status --cost-report
+# Human-readable cost report (status defaults to --json=true; pass --json=false for text output)
+agentvault status --cost-report --json=false
 ```
 
 ## 3.3b Intelligent Routing
@@ -288,7 +288,8 @@ make build-bitnet          # produces ./agentvault-bitnet
 ```
 
 The default `make build` binary uses a pure-Go stub: `--llm-router-model-path` is accepted
-but the engine falls back to heuristic routing with an explanatory reason string.
+but the engine returns an error unless `--allow-fallbacks` is set, in which case it falls back
+to heuristic routing with an explanatory reason string.
 
 ## 3.3c Capability Registry
 

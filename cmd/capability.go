@@ -226,7 +226,7 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	}
 	skipped := total - added
 	if skipped > 0 {
-		fmt.Printf("Added %d of %d model(s) from %s (%d already in registry)\n", added, total, baseURL, skipped)
+		fmt.Printf("Added %d of %d model(s) from %s (%d already present or duplicate)\n", added, total, baseURL, skipped)
 	} else {
 		fmt.Printf("Added %d model(s) from %s\n", added, baseURL)
 	}

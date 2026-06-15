@@ -44,6 +44,7 @@ func init() {
 	routeCmd.Flags().Int("llm-router-context-size", 0, "context window in tokens for embedded inference (default 512)")
 	routeCmd.Flags().Int("llm-router-threads", 0, "CPU threads for embedded inference (default: all available)")
 	routeCmd.Flags().Int("llm-router-gpu-layers", 0, "transformer layers to offload to GPU for embedded inference (default 0, CPU-only)")
+	routeCmd.Flags().Bool("allow-fallbacks", false, "fall back to heuristic routing when llm-router or local-ai is unreachable (also enables fallback candidates in results)")
 }
 
 func runRoute(cmd *cobra.Command, args []string) error {

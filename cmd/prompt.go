@@ -147,6 +147,7 @@ func init() {
 	promptCmd.Flags().Int("llm-router-context-size", 0, "context window in tokens for embedded inference (default 512)")
 	promptCmd.Flags().Int("llm-router-threads", 0, "CPU threads for embedded inference (default: all available)")
 	promptCmd.Flags().Int("llm-router-gpu-layers", 0, "transformer layers to offload to GPU for embedded inference (default 0, CPU-only)")
+	promptCmd.Flags().Bool("allow-fallbacks", false, "fall back to heuristic routing when llm-router or local-ai is unreachable (also enables fallback candidates in results)")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "text")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "file")
@@ -451,6 +452,7 @@ func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
 	llmRouterContextSize, _ := cmd.Flags().GetInt("llm-router-context-size")
 	llmRouterThreads, _ := cmd.Flags().GetInt("llm-router-threads")
 	llmRouterGPULayers, _ := cmd.Flags().GetInt("llm-router-gpu-layers")
+	allowFallbacks, _ := cmd.Flags().GetBool("allow-fallbacks")
 	return agent.RouterConfig{
 		Mode:                 mode,
 		LangGraphCmd:         langGraphCmd,
@@ -469,6 +471,7 @@ func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
 		LLMRouterContextSize: llmRouterContextSize,
 		LLMRouterThreads:     llmRouterThreads,
 		LLMRouterGPULayers:   llmRouterGPULayers,
+		AllowFallbacks:       allowFallbacks,
 	}
 }
 

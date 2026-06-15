@@ -267,10 +267,11 @@ Requires `agentvault-bitnet` binary built with `make build-bitnet`.
   --llm-router-threads 4 \
   --text "fix the null pointer exception in the parser"
 
-# Verify stub fallback on default binary (no CGo)
+# Verify stub fallback on default binary (no CGo); requires --allow-fallbacks to degrade gracefully
 ./agentvault route \
   --router llm-router \
   --llm-router-model-path /tmp/fake.gguf \
+  --allow-fallbacks \
   --text "any task"
 # Expected: falls back to heuristic with reason mentioning embedded inference not compiled
 ```
@@ -407,8 +408,8 @@ Requires `git` and `gh` installed and `gh` authenticated for the target repo.
 # Non-interactive (for automation)
 AGENTVAULT_PASSWORD=testpass123 ./agentvault status --cost-report --json
 
-# Human-readable (without --json)
-./agentvault status --cost-report
+# Human-readable (pass --json=false; status defaults to --json=true)
+./agentvault status --cost-report --json=false
 # Shows:
 #   Cost (from N prompt records):
 #     Total estimated: $X.XXXXXX
