@@ -375,6 +375,9 @@ func normalizeCapabilityEntries(entries []agent.ModelCapabilityEntry) []agent.Mo
 	for _, e := range entries {
 		e.EndpointURL = strings.TrimRight(strings.TrimSpace(e.EndpointURL), "/")
 		e.ModelName = strings.TrimSpace(e.ModelName)
+		if e.EndpointURL == "" || e.ModelName == "" {
+			continue
+		}
 		key := e.EndpointURL + "\x00" + e.ModelName
 		if _, dup := seen[key]; dup {
 			continue
