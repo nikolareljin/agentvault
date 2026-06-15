@@ -230,9 +230,9 @@ Behavior:
 - inspects all configured agents, their routing metadata, and the vault capability registry
 - selects the best agent/runner/model combination without executing the prompt
 - defaults to a local-first routing policy when none of `--prefer-local`, `--prefer-fast`, or `--prefer-low-cost` are set
-- `local-ai` mode sends prompt to a local Ollama model for structured classification, then scores agents; falls back to heuristic if Ollama is unreachable
-- `llm-router` mode calls an external OpenAI-compatible server OR an embedded GGUF engine (when `--llm-router-model-path` is set) for intelligent cost-aware routing; falls back to heuristic on error
-- returns fallback candidates when available and when enabled in the router configuration
+- `local-ai` mode sends prompt to a local Ollama model for structured classification, then scores agents; falls back to heuristic if Ollama is unreachable and `--allow-fallbacks` is set, otherwise returns an error
+- `llm-router` mode calls an external OpenAI-compatible server OR an embedded GGUF engine (when `--llm-router-model-path` is set) for intelligent cost-aware routing; falls back to heuristic on error when `--allow-fallbacks` is set, otherwise returns an error
+- returns fallback candidates when `--allow-fallbacks` is set
 - output includes: Mode, Importance, Deadline, task class, top reasons, and fallback list
 
 ## Capability registry

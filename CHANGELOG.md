@@ -7,7 +7,9 @@
 ### Added
 - **`llm-router` routing mode** (#36): new fourth routing mode that calls a local llama.cpp or
   bitnet.cpp inference server (`/v1/chat/completions`) to make intelligent, cost-aware routing
-  decisions. Falls back silently to heuristic when the server is unreachable.
+  decisions. Falls back to heuristic when the server is unreachable and `--allow-fallbacks` is set;
+  otherwise returns an error. New `--allow-fallbacks` flag enables graceful degradation for both
+  `llm-router` and `local-ai` modes.
   Flags: `--router llm-router --llm-router-url URL --llm-router-model NAME --llm-router-timeout N`.
   Compatible with any model produced by the finetorch → shrink-llm GGUF pipeline.
 - **`internal/router/llm_router.go`**: token estimator, system-prompt builder, OpenAI-compat HTTP

@@ -112,7 +112,7 @@ The Python router is optional. If LangGraph is installed, the sidecar uses a sma
 
 ## Local-AI router (Ollama classification)
 
-Sends the prompt to a local Ollama model for structured classification (complexity 1–10, task type, urgency, privacy sensitivity) before routing. Falls back silently to heuristic if Ollama is unreachable.
+Sends the prompt to a local Ollama model for structured classification (complexity 1–10, task type, urgency, privacy sensitivity) before routing. Falls back to heuristic if Ollama is unreachable and `--allow-fallbacks` is set; otherwise returns an error.
 
 ```bash
 agentvault route --router local-ai --text "implement JWT authentication middleware"
@@ -191,8 +191,8 @@ agentvault route --importance high --deadline immediate \
 agentvault prompt my-claude --text "review this pull request"
 agentvault prompt local-ollama --text "generate test cases"
 
-# Human-readable cost report
-agentvault status --cost-report
+# Human-readable cost report (status defaults to --json=true; pass --json=false for text output)
+agentvault status --cost-report --json=false
 
 # JSON for CI/orchestration (exits non-zero if budget alerts exist)
 AGENTVAULT_PASSWORD='...' agentvault status --cost-report --json | \
