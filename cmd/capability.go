@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -260,7 +259,7 @@ func discoverFromModelsEndpoint(ctx context.Context, client *http.Client, baseUR
 		return nil, err
 	}
 	if len(out.Data) == 0 {
-		return nil, errors.New("no models in response")
+		return nil, nil
 	}
 	entries := make([]agent.ModelCapabilityEntry, 0, len(out.Data))
 	for _, m := range out.Data {

@@ -87,7 +87,7 @@ func (b *Balancer) CheckHealth(ctx context.Context, c Candidate) bool {
 	defer cancel()
 
 	pingURL := strings.TrimRight(baseURL, "/") + "/"
-	req, err := http.NewRequestWithContext(hctx, http.MethodGet, pingURL, nil)
+	req, err := http.NewRequestWithContext(hctx, http.MethodHead, pingURL, nil)
 	if err != nil {
 		b.RecordFailure(c.Agent.Name)
 		return false
@@ -99,7 +99,7 @@ func (b *Balancer) CheckHealth(ctx context.Context, c Candidate) bool {
 		b.RecordFailure(c.Agent.Name)
 		return false
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 	if resp.StatusCode >= 500 {
 		b.RecordFailure(c.Agent.Name)
 		return false
