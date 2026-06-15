@@ -37,7 +37,10 @@ build-llama:
 # so that directory must always be present regardless of LLAMA_DIR. Changing LLAMA_DIR
 # affects only the CGO_CFLAGS/CGO_LDFLAGS env vars set here and the build-llama step.
 build-bitnet:
-	@test -f "$(LLAMA_DIR)/lib/libllama.a" || $(MAKE) build-llama
+	@{ test -f "$(LLAMA_DIR)/lib/libllama.a" && \
+	   test -f "$(LLAMA_DIR)/lib/libggml.a" && \
+	   test -f "$(LLAMA_DIR)/lib/libggml-cpu.a" && \
+	   test -f "$(LLAMA_DIR)/include/llama.h"; } || $(MAKE) build-llama
 	$(LLAMA_CGO) go build -tags localllm \
 	  -ldflags "$(LDFLAGS)" -o $(APP_NAME)-bitnet .
 
