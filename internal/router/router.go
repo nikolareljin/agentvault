@@ -731,7 +731,10 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	decision, err := AnalyzeWithLLMRouter(context.Background(), trimmedPrompt, llmCandidates, llmCfg)
 	if err != nil {
-		// Graceful degradation: fall through to heuristic, never surface the error to the caller.
+		if !overrideCfg.AllowFallbacks {
+			return Decision{}, fmt.Errorf("llm-router analysis failed: %w", err)
+		}
+		// Graceful degradation: fall through to heuristic when fallbacks are allowed.
 		hDecision, hErr := routeHeuristic(req, overrideCfg)
 		if hErr != nil {
 			return Decision{}, hErr
