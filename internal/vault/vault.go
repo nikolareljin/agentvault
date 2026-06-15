@@ -298,8 +298,15 @@ func (v *Vault) Save() error {
 }
 
 // ListCapabilities returns all model capability entries.
+// Each entry is a deep copy: callers may modify the returned Capabilities slice
+// without affecting in-memory vault state.
 func (v *Vault) ListCapabilities() []agent.ModelCapabilityEntry {
-	return append([]agent.ModelCapabilityEntry(nil), v.modelCapabilities...)
+	out := make([]agent.ModelCapabilityEntry, len(v.modelCapabilities))
+	for i, e := range v.modelCapabilities {
+		out[i] = e
+		out[i].Capabilities = append([]string(nil), e.Capabilities...)
+	}
+	return out
 }
 
 // AddCapability adds a new model capability entry. Returns an error if an entry

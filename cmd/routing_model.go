@@ -150,11 +150,18 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 }
 
 func defaultModelDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "."
+	// XDG Base Directory Specification: use XDG_DATA_HOME when set, otherwise
+	// fall back to ~/.local/share — consistent with how the rest of the project
+	// resolves XDG_CONFIG_HOME for config paths.
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "."
+		}
+		dataHome = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Join(home, ".local", "share", "agentvault", "models")
+	return filepath.Join(dataHome, "agentvault", "models")
 }
 
 func formatBytes(n int64) string {
