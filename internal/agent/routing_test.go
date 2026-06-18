@@ -255,17 +255,25 @@ func TestBuildGeminiExecArgs(t *testing.T) {
 	}
 }
 
-func TestInferredRouteCapabilitiesIncludesGeminiCodingReviewAndAnalysis(t *testing.T) {
+func TestInferredRouteCapabilitiesIncludesGeminiCodingReviewAnalysisAndDocumentation(t *testing.T) {
 	got := inferredRouteCapabilities(Agent{Name: "gemini", Provider: ProviderGemini})
 	for _, want := range []string{
 		RouteCapabilityGeneral,
 		RouteCapabilityCoding,
 		RouteCapabilityReview,
 		RouteCapabilityAnalysis,
+		RouteCapabilityDocumentation,
 	} {
 		if !containsString(got, want) {
 			t.Fatalf("inferredRouteCapabilities() missing %q in %#v", want, got)
 		}
+	}
+}
+
+func TestInferredRouteCapabilitiesIncludesOllamaDocumentation(t *testing.T) {
+	got := inferredRouteCapabilities(Agent{Name: "ollama", Provider: ProviderOllama})
+	if !containsString(got, RouteCapabilityDocumentation) {
+		t.Fatalf("inferredRouteCapabilities() missing documentation in %#v", got)
 	}
 }
 
