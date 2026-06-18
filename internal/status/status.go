@@ -416,7 +416,7 @@ func findNewestJSONL(root string) (string, error) {
 }
 
 // BuildCostReport reads the prompt history JSONL file and aggregates estimated cost by provider.
-// Returns nil if the history file cannot be opened (e.g. not found, permission error) or is empty.
+// Returns nil if the history file cannot be opened (e.g. not found, permission error), is empty, or contains no successful records.
 func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostReport {
 	f, err := os.Open(historyPath)
 	if err != nil {
