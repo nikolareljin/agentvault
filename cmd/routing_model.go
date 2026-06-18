@@ -121,7 +121,8 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	}
 
 	total := resp.ContentLength
-	pr := &progressReader{r: resp.Body, total: total, out: cmd.OutOrStdout()}
+	showProgress := isInteractiveWriter(cmd.OutOrStdout())
+	pr := &progressReader{r: resp.Body, total: total, out: cmd.OutOrStdout(), enabled: showProgress}
 	hasher := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(f, hasher), pr); err != nil {
 		f.Close()
@@ -129,7 +130,9 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("write model: %w", err)
 	}
 	f.Close()
-	fmt.Fprintln(cmd.OutOrStdout())
+	if showProgress {
+		fmt.Fprintln(cmd.OutOrStdout())
+	}
 
 	got := hex.EncodeToString(hasher.Sum(nil))
 	expectedSHA, _ := cmd.Flags().GetString("sha256")
@@ -189,11 +192,27 @@ type progressReader struct {
 	total   int64
 	written int64
 	out     io.Writer
+	enabled bool
+}
+
+func isInteractiveWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func (pr *progressReader) Read(p []byte) (int, error) {
 	n, err := pr.r.Read(p)
 	pr.written += int64(n)
+	if !pr.enabled {
+		return n, err
+	}
 	if pr.total > 0 {
 		pct := float64(pr.written) / float64(pr.total) * 100
 		fmt.Fprintf(pr.out, "\r  %s / %s  (%.1f%%)",
