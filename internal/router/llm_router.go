@@ -213,13 +213,14 @@ func analyzeLocal(ctx context.Context, sysPrompt, usrMsg string, cfg LLMRouterCo
 	localEngMu.Lock()
 	defer localEngMu.Unlock()
 
-	cfgKey := fmt.Sprintf("%s:%d:%d:%d", cfg.ModelPath, cfg.ContextSize, cfg.Threads, cfg.GPULayers)
+	modelPath := strings.TrimSpace(cfg.ModelPath)
+	cfgKey := fmt.Sprintf("%s:%d:%d:%d", modelPath, cfg.ContextSize, cfg.Threads, cfg.GPULayers)
 	if localEng == nil || localEngCfgKey != cfgKey {
 		if localEng != nil {
 			localEng.Close()
 			localEng = nil
 		}
-		eng, err := localllm.New(cfg.ModelPath, cfg.ContextSize, cfg.Threads, cfg.GPULayers)
+		eng, err := localllm.New(modelPath, cfg.ContextSize, cfg.Threads, cfg.GPULayers)
 		if err != nil {
 			return LLMRouterDecision{}, fmt.Errorf("llm-router local: %w", err)
 		}

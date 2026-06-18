@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -163,6 +164,42 @@ func TestAnalyzeWithLLMRouter_EmptyURLAndNoModelPath(t *testing.T) {
 	_, err := AnalyzeWithLLMRouter(context.Background(), "hello", candidates, cfg)
 	if err == nil {
 		t.Error("expected error when neither URL nor ModelPath configured, got nil")
+	}
+}
+
+type stubLocalEngine struct {
+	out string
+}
+
+func (e *stubLocalEngine) Route(context.Context, string, string) (string, error) {
+	return e.out, nil
+}
+
+func (e *stubLocalEngine) Close() {}
+
+func TestAnalyzeWithLLMRouter_TrimsModelPathForLocalCache(t *testing.T) {
+	candidates := llmRouterTestCandidates()
+	cfg := LLMRouterConfig{ModelPath: "  /tmp/model.gguf  ", ContextSize: 512, TimeoutSecs: 5}
+
+	localEngMu.Lock()
+	oldEng := localEng
+	oldKey := localEngCfgKey
+	localEng = &stubLocalEngine{out: llmDecisionJSON("codex-agent")}
+	localEngCfgKey = fmt.Sprintf("%s:%d:%d:%d", strings.TrimSpace(cfg.ModelPath), cfg.ContextSize, cfg.Threads, cfg.GPULayers)
+	localEngMu.Unlock()
+	t.Cleanup(func() {
+		localEngMu.Lock()
+		localEng = oldEng
+		localEngCfgKey = oldKey
+		localEngMu.Unlock()
+	})
+
+	decision, err := AnalyzeWithLLMRouter(context.Background(), "hello", candidates, cfg)
+	if err != nil {
+		t.Fatalf("AnalyzeWithLLMRouter() error = %v", err)
+	}
+	if decision.SelectedAgent != "codex-agent" {
+		t.Fatalf("SelectedAgent = %q, want codex-agent", decision.SelectedAgent)
 	}
 }
 
