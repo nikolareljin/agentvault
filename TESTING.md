@@ -24,7 +24,7 @@ go build -o agentvault .
 ### Embedded-inference build (optional — needed for llm-router with local GGUF model)
 
 The embedded BitNet/llama.cpp engine is compiled in only when you use `make build-bitnet`.
-The default `make build` binary uses a stub that falls back to heuristic routing.
+The default `make build` binary uses a stub; embedded llm-router requests return an error unless `--allow-fallbacks` is set, in which case they fall back to heuristic routing.
 
 ```bash
 # 1. Build the llama.cpp static library (one-time, ~5 min, ~2 GB build tree)

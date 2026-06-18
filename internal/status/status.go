@@ -455,11 +455,12 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 		if line != "" {
 			var rec historyRecord
 			if jsonErr := json.Unmarshal([]byte(line), &rec); jsonErr == nil && rec.Success {
-				provider := rec.Provider
-				if strings.TrimSpace(provider) != "" {
-					if _, ok := byProvider[provider]; !ok {
-						byProvider[provider] = 0
-					}
+				provider := strings.TrimSpace(rec.Provider)
+				if provider == "" {
+					continue
+				}
+				if _, ok := byProvider[provider]; !ok {
+					byProvider[provider] = 0
 				}
 				cost := rec.EstimatedCostUSD
 				if cost == 0 && rec.TokenUsage != nil {
