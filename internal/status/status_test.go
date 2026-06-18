@@ -175,6 +175,19 @@ func TestBuildCostReportIncludesZeroCostProviders(t *testing.T) {
 	}
 }
 
+func TestBuildCostReportSkipsBlankProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	writeHistoryLine(t, path, "  ", "unknown", 0.05, nil, now)
+
+	report := BuildCostReport(path, nil)
+	if report != nil {
+		t.Fatalf("expected nil report when all successful records have blank providers, got %+v", report)
+	}
+}
+
 func TestBuildCostReportSkipsFailedRecords(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "history.jsonl")
