@@ -99,6 +99,9 @@ func TestPromptRecordJSON_OmitsEmptyTokenUsage(t *testing.T) {
 	if strings.Contains(string(raw), "token_usage") {
 		t.Fatalf("expected token_usage to be omitted, got: %s", string(raw))
 	}
+	if !strings.Contains(string(raw), "estimated_cost_usd") {
+		t.Fatalf("expected estimated_cost_usd to be written even when zero, got: %s", string(raw))
+	}
 }
 
 func TestPromptRecordJSON_IncludesNonEmptyTokenUsage(t *testing.T) {
@@ -232,6 +235,8 @@ func (s stubPromptVault) Get(name string) (agent.Agent, bool) {
 func (s stubPromptVault) List() []agent.Agent { return append([]agent.Agent(nil), s.agents...) }
 
 func (s stubPromptVault) SharedConfig() agent.SharedConfig { return s.shared }
+
+func (s stubPromptVault) ListCapabilities() []agent.ModelCapabilityEntry { return nil }
 
 func TestResolvePromptAgentAutoUsesProvidedPromptText(t *testing.T) {
 	cmd := newPromptOptimizationTestCommand()

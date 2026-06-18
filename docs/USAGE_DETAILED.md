@@ -30,7 +30,10 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `remove`
 - `run`
 - `prompt`
+- `route`
 - `status`
+- `capability`
+- `routing-model`
 - `rules`
 - `roles`
 - `session`
@@ -123,7 +126,7 @@ Flags:
 Route prompt through AgentVault (gateway) to provider, with optimization + logging.
 
 Input rules:
-- `[agent-name]` is required as the first positional argument.
+- `[agent-name]` is required as the first positional argument, **unless** `--auto` is used.
 - Use one of:
   - `--text <prompt>`
   - `--file <path>`
@@ -133,19 +136,30 @@ Input rules:
 Common error:
 - `agentvault prompt --text "create a demo app in Scala that says 'Hello World'"`
 - This fails with `accepts 1 arg(s), received 0` because `[agent-name]` is missing.
-- Run `agentvault list` to find available agent names first.
+- Run `agentvault list` to find available agent names, or use `--auto`.
 
 Flags:
 - `--text <prompt>`
 - `--file <path>`
+- `--auto` (default: `false`): Let AgentVault select the best agent via routing — no positional agent argument needed.
 - `--json` (default: `false`): Machine-readable response + record.
 - `--optimize` (default: `true`): Enable prompt rewrite/structuring.
 - `--optimize-profile <profile>` (default: `auto`): `auto|generic|ollama|codex|copilot|claude`.
 - `--optimize-ollama` (default: `true`): Deprecated compatibility switch.
 - `--dry-run` (default: `false`): Show effective prompt, do not execute.
+- `--validate-only` (default: `false`): Validate provider/backend connectivity without sending a prompt.
 - `--no-log` (default: `false`): Disable run history write.
 - `--history-file <path>`: Override default `~/.config/agentvault/prompt-history.jsonl`.
 - `--timeout <duration>` (default: `5m`): Provider call timeout.
+
+Routing flags (used when `--auto` is set or router mode overrides are desired):
+- `--router <mode>`: `heuristic|langgraph|local-ai|llm-router`
+- `--importance <level>`: `low|medium|high|critical`
+- `--deadline <level>`: `immediate|normal|background`
+- `--prefer-local`, `--prefer-fast`, `--prefer-low-cost`, `--local-only`
+- `--local-ai-model`, `--local-ai-url`
+- `--llm-router-url`, `--llm-router-model`, `--llm-router-timeout`
+- `--llm-router-model-path`, `--llm-router-context-size`, `--llm-router-threads`, `--llm-router-gpu-layers`
 
 Runtime value precedence:
 - local agent value in vault
@@ -200,6 +214,116 @@ Flags:
 - `--json` (default: `true`)
 - `--no-vault` (default: `false`): Skip vault unlock and only report provider status.
 - `--vault-password-env <ENV_VAR>` (default: `AGENTVAULT_PASSWORD`): Non-interactive unlock env var.
+- `--cost-report` (default: `false`): Include estimated cost breakdown aggregated from `prompt-history.jsonl`. Shows per-provider spend and fires budget alerts when spend exceeds 80% of `MonthlyBudgetUSD`.
+
+Examples:
+```bash
+# Basic status
+agentvault status --json
+
+# Non-interactive with cost breakdown
+AGENTVAULT_PASSWORD=... agentvault status --cost-report --json
+
+# Human-readable cost report (status defaults to --json=true; pass --json=false for text output)
+agentvault status --cost-report --json=false
+```
+
+## 3.3b Intelligent Routing
+
+### Routing modes
+
+| Mode | Description | External requirement |
+|------|-------------|---------------------|
+| `heuristic` | Scores agents by capabilities, tiers, priority | None |
+| `langgraph` | Python sidecar for graph-based routing | `python/langgraph_router.py` |
+| `local-ai` | Sends prompt to local Ollama for classification, then scores | Ollama running |
+| `llm-router` | Calls OpenAI-compat HTTP server OR embedded GGUF engine | Server or `make build-bitnet` + GGUF file |
+
+### `agentvault route`
+Inspect routing decision without executing the prompt.
+
+```bash
+# Basic inspection
+agentvault route --text "write a sorting algorithm"
+
+# With importance and deadline signals
+agentvault route --text "critical production fix" --importance critical --deadline immediate
+agentvault route --text "background analysis job" --importance low --deadline background
+
+# Local-AI classification (requires Ollama)
+agentvault route --router local-ai --text "implement JWT auth"
+
+# LLM-router via HTTP server
+agentvault route --router llm-router \
+  --llm-router-url http://localhost:8080 \
+  --text "refactor this service"
+
+# LLM-router via embedded engine (agentvault-bitnet binary)
+./agentvault-bitnet route \
+  --router llm-router \
+  --llm-router-model-path ~/.local/share/agentvault/models/bitnet_b1_58-2B-4T.gguf \
+  --text "write a parser in Go"
+```
+
+### Embedded BitNet engine
+
+The `llm-router` mode supports in-process GGUF inference — no external server needed.
+Requires a one-time build step:
+
+```bash
+# 1. Build llama.cpp static library (~5 min)
+make build-llama
+
+# 2. Build the bitnet-enabled binary
+make build-bitnet          # produces ./agentvault-bitnet
+
+# 3. Download model (~400 MB)
+./agentvault-bitnet routing-model download
+
+# 4. Route via embedded engine
+./agentvault-bitnet route \
+  --router llm-router \
+  --llm-router-model-path ~/.local/share/agentvault/models/bitnet_b1_58-2B-4T.gguf \
+  --text "implement binary search"
+```
+
+The default `make build` binary uses a pure-Go stub: `--llm-router-model-path` is accepted
+but the engine returns an error unless `--allow-fallbacks` is set, in which case it falls back
+to heuristic routing with an explanatory reason string.
+
+## 3.3c Capability Registry
+
+### `agentvault capability`
+Manage the model capability registry used by all routing modes to augment agent scoring.
+
+```bash
+# List all entries
+agentvault capability list
+agentvault capability list --json
+
+# Add manually
+agentvault capability add \
+  --endpoint http://localhost:11434 \
+  --model llama3.1 \
+  --context 8192 \
+  --caps coding,general
+
+# Auto-discover from endpoint (/v1/models or /health)
+agentvault capability discover --endpoint http://localhost:11434
+agentvault capability discover --endpoint http://localhost:8080 --timeout 30s
+
+# Remove one entry
+agentvault capability remove \
+  --endpoint http://localhost:11434 \
+  --model llama3.1
+```
+
+Capability tags inferred from model names during discovery:
+- `coding` — model name contains `code`, `codex`, `coder`, `starcoder`, `deepseek-coder`
+- `vision` — contains `vision`, `vl`, `llava`, `visual`
+- `embedding` — contains `embed`
+- `analysis` — contains `reasoning`, `think`, `r1`
+- `general` — always added
 
 ## 3.4 Rules
 
@@ -657,6 +781,9 @@ Provider note:
 agentvault status --json
 agentvault status --no-vault --json
 AGENTVAULT_PASSWORD='***' agentvault status --json
+
+# With cost breakdown
+AGENTVAULT_PASSWORD='***' agentvault status --cost-report --json
 ```
 
 ## 5.5 Cross-machine sync
@@ -668,4 +795,81 @@ agentvault setup export team.bundle --encrypted --include-status
 # target machine
 agentvault init
 agentvault setup import team.bundle --merge --apply-provider-configs
+```
+
+## 5.6 Automatic routing with intelligent selection
+
+```bash
+# Heuristic routing (default)
+agentvault prompt --auto --text "implement and test this Go refactor"
+
+# LangGraph sidecar
+export AGENTVAULT_LANGGRAPH_ROUTER_CMD="./python/langgraph_router.py"
+agentvault prompt --auto --router langgraph --text "choose target for this task"
+
+# Local Ollama classification
+agentvault prompt --auto --router local-ai --text "implement JWT authentication"
+
+# Embedded engine (bitnet binary)
+./agentvault-bitnet prompt --auto \
+  --router llm-router \
+  --llm-router-model-path ~/.local/share/agentvault/models/bitnet_b1_58-2B-4T.gguf \
+  --text "refactor this service to use interfaces"
+
+# Routing with importance/deadline
+agentvault prompt --auto --importance critical --deadline immediate \
+  --text "fix production outage in auth service"
+agentvault prompt --auto --importance low --deadline background \
+  --text "add docstrings to utility module"
+```
+
+## 5.7 Cost tracking and capability registry setup
+
+```bash
+# First, populate capability registry from running endpoints
+agentvault capability discover --endpoint http://localhost:11434   # Ollama
+agentvault capability discover --endpoint http://localhost:8080    # llama-server
+
+# Manually add an entry with context window override
+agentvault capability add \
+  --endpoint http://localhost:11434 \
+  --model llama3.1:70b \
+  --context 32768 \
+  --caps coding,general,analysis
+
+# Run some prompts — cost is tracked automatically per execution
+agentvault prompt my-claude --text "review this PR"
+agentvault prompt local-ollama --text "generate unit tests"
+
+# View cost breakdown
+agentvault status --cost-report
+# Shows: total estimated cost, per-provider breakdown, budget alerts (>80% of monthly budget)
+```
+
+## 5.8 Embedded inference engine setup (one-time)
+
+```bash
+# Build llama.cpp static library (requires cmake, gcc, ~2 GB temp disk)
+make build-llama
+
+# Build bitnet-enabled agentvault binary
+make build-bitnet
+# Produces: ./agentvault-bitnet
+
+# Download the BitNet routing model (~400 MB)
+./agentvault-bitnet routing-model download
+# Saved to: ~/.local/share/agentvault/models/bitnet_b1_58-2B-4T.gguf
+
+# Verify everything is ready
+./agentvault-bitnet routing-model status
+# Expected:
+#   embedded inference: enabled
+#   model file:         ~/.local/share/agentvault/models/bitnet_b1_58-2B-4T.gguf
+#   model size:         ~400 MB
+
+# Use embedded engine for routing (no server needed)
+./agentvault-bitnet route \
+  --router llm-router \
+  --llm-router-model-path ~/.local/share/agentvault/models/bitnet_b1_58-2B-4T.gguf \
+  --text "write a binary search implementation"
 ```

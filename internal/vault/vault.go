@@ -35,21 +35,23 @@ import (
 // vaultData is the JSON structure persisted inside the encrypted file.
 // All fields are serialized together as a single encrypted blob.
 type vaultData struct {
-	Agents          []agent.Agent        `json:"agents"`
-	Shared          agent.SharedConfig   `json:"shared"`
-	ProviderConfigs agent.ProviderConfig `json:"provider_configs"`
-	Sessions        agent.SessionConfig  `json:"sessions"`
+	Agents            []agent.Agent                `json:"agents"`
+	Shared            agent.SharedConfig           `json:"shared"`
+	ProviderConfigs   agent.ProviderConfig         `json:"provider_configs"`
+	Sessions          agent.SessionConfig          `json:"sessions"`
+	ModelCapabilities []agent.ModelCapabilityEntry `json:"model_capabilities,omitempty"`
 }
 
 // Vault represents the encrypted agent store.
 type Vault struct {
-	path            string
-	agents          []agent.Agent
-	shared          agent.SharedConfig
-	providerConfigs agent.ProviderConfig
-	sessions        agent.SessionConfig
-	key             []byte // derived key, set after Init or Unlock
-	salt            []byte // persisted salt
+	path              string
+	agents            []agent.Agent
+	shared            agent.SharedConfig
+	providerConfigs   agent.ProviderConfig
+	sessions          agent.SessionConfig
+	modelCapabilities []agent.ModelCapabilityEntry
+	key               []byte // derived key, set after Init or Unlock
+	salt              []byte // persisted salt
 }
 
 // New creates a Vault instance at the given path.
@@ -130,6 +132,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
 	v.sessions = vd.Sessions
+	v.modelCapabilities = normalizeCapabilityEntries(vd.ModelCapabilities)
 	if v.sessions.ParallelLimit != 0 {
 		v.sessions.ParallelLimitSet = true
 	} else if sessionParallelLimitDefined(plaintext) {
@@ -294,6 +297,111 @@ func (v *Vault) Save() error {
 	return v.write()
 }
 
+// ListCapabilities returns all model capability entries.
+// Each entry is a deep copy: callers may modify the returned Capabilities slice
+// without affecting in-memory vault state.
+func (v *Vault) ListCapabilities() []agent.ModelCapabilityEntry {
+	out := make([]agent.ModelCapabilityEntry, len(v.modelCapabilities))
+	for i, e := range v.modelCapabilities {
+		out[i] = e
+		out[i].Capabilities = append([]string(nil), e.Capabilities...)
+	}
+	return out
+}
+
+// AddCapability adds a new model capability entry. Returns an error if an entry
+// for the same endpoint+model combination already exists.
+func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
+	entry.EndpointURL = strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/")
+	entry.ModelName = strings.TrimSpace(entry.ModelName)
+	if entry.EndpointURL == "" {
+		return fmt.Errorf("capability entry requires a non-empty EndpointURL")
+	}
+	if entry.ModelName == "" {
+		return fmt.Errorf("capability entry requires a non-empty ModelName")
+	}
+	for _, e := range v.modelCapabilities {
+		if e.EndpointURL == entry.EndpointURL && e.ModelName == entry.ModelName {
+			return fmt.Errorf("capability entry for %s/%s already exists; remove it first with 'agentvault capability remove'", entry.EndpointURL, entry.ModelName)
+		}
+	}
+	if entry.UpdatedAt.IsZero() {
+		entry.UpdatedAt = time.Now().UTC()
+	}
+	v.modelCapabilities = append(v.modelCapabilities, entry)
+	return v.Save()
+}
+
+// AddCapabilities adds multiple capability entries in a single vault save.
+// Duplicate entries (same endpoint+model) are skipped; the returned int is the
+// number actually added.
+func (v *Vault) AddCapabilities(entries []agent.ModelCapabilityEntry) (int, error) {
+	added := 0
+	for _, entry := range entries {
+		entry.EndpointURL = strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/")
+		entry.ModelName = strings.TrimSpace(entry.ModelName)
+		if entry.EndpointURL == "" || entry.ModelName == "" {
+			continue
+		}
+		dup := false
+		for _, e := range v.modelCapabilities {
+			if e.EndpointURL == entry.EndpointURL && e.ModelName == entry.ModelName {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		if entry.UpdatedAt.IsZero() {
+			entry.UpdatedAt = time.Now().UTC()
+		}
+		v.modelCapabilities = append(v.modelCapabilities, entry)
+		added++
+	}
+	if added == 0 {
+		return 0, nil
+	}
+	return added, v.Save()
+}
+
+// normalizeCapabilityEntries returns entries with EndpointURL and ModelName trimmed
+// to their canonical form and with exact-duplicate (endpoint,model) pairs removed.
+// Called on vault load so all in-memory entries are in canonical form regardless of
+// how they were written (direct edit, older version, import).
+func normalizeCapabilityEntries(entries []agent.ModelCapabilityEntry) []agent.ModelCapabilityEntry {
+	seen := make(map[string]struct{}, len(entries))
+	out := make([]agent.ModelCapabilityEntry, 0, len(entries))
+	for _, e := range entries {
+		e.EndpointURL = strings.TrimRight(strings.TrimSpace(e.EndpointURL), "/")
+		e.ModelName = strings.TrimSpace(e.ModelName)
+		if e.EndpointURL == "" || e.ModelName == "" {
+			continue
+		}
+		key := e.EndpointURL + "\x00" + e.ModelName
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, e)
+	}
+	return out
+}
+
+// RemoveCapability removes a capability entry by endpoint URL and model name.
+// Returns an error if not found.
+func (v *Vault) RemoveCapability(endpointURL, modelName string) error {
+	endpointURL = strings.TrimRight(strings.TrimSpace(endpointURL), "/")
+	modelName = strings.TrimSpace(modelName)
+	for i, e := range v.modelCapabilities {
+		if e.EndpointURL == endpointURL && e.ModelName == modelName {
+			v.modelCapabilities = append(v.modelCapabilities[:i], v.modelCapabilities[i+1:]...)
+			return v.Save()
+		}
+	}
+	return fmt.Errorf("no capability entry found for %s/%s", endpointURL, modelName)
+}
+
 // GetInstruction returns a stored instruction file by name. When multiple
 // scoped variants exist, the global-scope variant is returned first; otherwise
 // the first match is returned. Use GetInstructionByKey for an exact lookup.
@@ -425,7 +533,7 @@ func (v *Vault) ListInstructions() []agent.InstructionFile {
 
 // ExportData returns the vault contents as JSON (for export to a file).
 func (v *Vault) ExportData() ([]byte, error) {
-	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities}
 	return json.MarshalIndent(vd, "", "  ")
 }
 
@@ -583,8 +691,27 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 			v.sessions.ActiveSession = vd.Sessions.ActiveSession
 		}
 	}
-	// Only import parallel limit when current session config is otherwise empty.
-	// This avoids overwriting an intentional existing 0 (unlimited) setting.
+	// Merge model capabilities: keep existing entries; add imported ones not already present (keyed by endpoint+model).
+	// Normalize the same way AddCapability does so import and direct-add produce identical keys.
+	seenCaps := make(map[string]struct{}, len(v.modelCapabilities))
+	for _, c := range v.modelCapabilities {
+		k := strings.TrimRight(strings.TrimSpace(c.EndpointURL), "/") + "\x00" + strings.TrimSpace(c.ModelName)
+		seenCaps[k] = struct{}{}
+	}
+	for _, c := range vd.ModelCapabilities {
+		c.EndpointURL = strings.TrimRight(strings.TrimSpace(c.EndpointURL), "/")
+		c.ModelName = strings.TrimSpace(c.ModelName)
+		if c.EndpointURL == "" || c.ModelName == "" {
+			continue
+		}
+		key := c.EndpointURL + "\x00" + c.ModelName
+		if _, ok := seenCaps[key]; !ok {
+			v.modelCapabilities = append(v.modelCapabilities, c)
+			seenCaps[key] = struct{}{}
+		}
+	}
+	// Only import parallel limit when current session config is otherwise empty,
+	// to avoid overwriting an intentional existing 0 (unlimited) setting.
 	if wasSessionConfigUnset && importedParallelLimitDefined {
 		v.sessions.ParallelLimit = vd.Sessions.ParallelLimit
 		v.sessions.ParallelLimitSet = true
@@ -703,7 +830,7 @@ func sessionParallelLimitDefined(data []byte) bool {
 // write encrypts the entire vault state and writes it atomically to disk.
 // The output format is: [salt bytes][nonce + AES-256-GCM ciphertext].
 func (v *Vault) write() error {
-	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities}
 	plaintext, err := json.Marshal(vd)
 	if err != nil {
 		return fmt.Errorf("encoding vault: %w", err)
