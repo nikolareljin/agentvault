@@ -55,11 +55,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	costReportFlag, _ := cmd.Flags().GetBool("cost-report")
 	report := statuspkg.BuildReport(v, homeDir)
-	if costReportFlag {
+	if costReportFlag && v != nil {
 		report.Cost = statuspkg.CostReportForVault(v)
-		if report.Cost == nil {
-			report.Cost = &statuspkg.CostReport{ByProvider: make(map[string]float64)}
-		}
 	}
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)

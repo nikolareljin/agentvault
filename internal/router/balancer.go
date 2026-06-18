@@ -38,13 +38,22 @@ func NewBalancer() *Balancer {
 	return &Balancer{health: make(map[string]*ProviderHealth)}
 }
 
-func (b *Balancer) getOrCreate(name string) *ProviderHealth {
-	h, ok := b.health[name]
+func (b *Balancer) getOrCreate(key string) *ProviderHealth {
+	h, ok := b.health[key]
 	if !ok {
 		h = &ProviderHealth{Available: true}
-		b.health[name] = h
+		b.health[key] = h
 	}
 	return h
+}
+
+func balancerHealthKey(c Candidate, baseURL string) string {
+	parts := []string{
+		string(c.Target.Runner),
+		strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		strings.TrimSpace(c.Target.Model),
+	}
+	return strings.Join(parts, "|")
 }
 
 // CheckHealth pings the candidate's HTTP endpoint. CLI runners (Claude, Codex, Gemini)
@@ -74,8 +83,10 @@ func (b *Balancer) CheckHealth(ctx context.Context, c Candidate) bool {
 		return true
 	}
 
+	healthKey := balancerHealthKey(c, baseURL)
+
 	b.mu.Lock()
-	h := b.getOrCreate(c.Agent.Name)
+	h := b.getOrCreate(healthKey)
 	if !h.Available && time.Since(h.LastCheck) < balancerCooldown {
 		b.mu.Unlock()
 		return false
@@ -89,23 +100,23 @@ func (b *Balancer) CheckHealth(ctx context.Context, c Candidate) bool {
 	pingURL := strings.TrimRight(baseURL, "/") + "/"
 	req, err := http.NewRequestWithContext(hctx, http.MethodHead, pingURL, nil)
 	if err != nil {
-		b.RecordFailure(c.Agent.Name)
+		b.RecordFailure(healthKey)
 		return false
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	latencyMs := float64(time.Since(start).Milliseconds())
 	if err != nil {
-		b.RecordFailure(c.Agent.Name)
+		b.RecordFailure(healthKey)
 		return false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 500 {
-		b.RecordFailure(c.Agent.Name)
+		b.RecordFailure(healthKey)
 		return false
 	}
 
-	b.RecordSuccess(c.Agent.Name, latencyMs)
+	b.RecordSuccess(healthKey, latencyMs)
 	return true
 }
 

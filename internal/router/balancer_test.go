@@ -101,17 +101,37 @@ func TestBalancerEWMALatency(t *testing.T) {
 
 func TestBalancerCooldown_BlocksRecheckBeforeCooldown(t *testing.T) {
 	b := NewBalancer()
+	c := candidateWithURL("cool-agent", "http://localhost:19996")
+	key := balancerHealthKey(c, c.Target.BaseURL)
 	for i := 0; i < balancerMaxFailures; i++ {
-		b.RecordFailure("cool-agent")
+		b.RecordFailure(key)
 	}
 	// Set LastCheck to just now — cooldown not expired.
 	b.mu.Lock()
-	b.health["cool-agent"].LastCheck = time.Now()
+	b.health[key].LastCheck = time.Now()
 	b.mu.Unlock()
 
-	c := candidateWithURL("cool-agent", "http://localhost:19996")
 	if b.CheckHealth(context.Background(), c) {
 		t.Error("should not recheck during cooldown period")
+	}
+}
+
+func TestBalancerHealthKeySeparatesSameAgentDifferentEndpoints(t *testing.T) {
+	b := NewBalancer()
+	oldEndpoint := candidateWithURL("shared-agent", "http://localhost:19996")
+	oldKey := balancerHealthKey(oldEndpoint, oldEndpoint.Target.BaseURL)
+	for i := 0; i < balancerMaxFailures; i++ {
+		b.RecordFailure(oldKey)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	newEndpoint := candidateWithURL("shared-agent", srv.URL)
+	if !b.CheckHealth(context.Background(), newEndpoint) {
+		t.Fatal("same agent name with a different healthy endpoint should not inherit old cooldown state")
 	}
 }
 
