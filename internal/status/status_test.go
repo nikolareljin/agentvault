@@ -149,6 +149,32 @@ func TestBuildCostReportLegacyRecompute(t *testing.T) {
 	}
 }
 
+func TestBuildCostReportIncludesZeroCostProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	writeHistoryLine(t, path, "ollama", "llama3.2", 0, nil, now)
+
+	report := BuildCostReport(path, nil)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if report.RecordCount != 1 {
+		t.Fatalf("RecordCount = %d, want 1", report.RecordCount)
+	}
+	cost, ok := report.ByProvider["ollama"]
+	if !ok {
+		t.Fatalf("ByProvider missing zero-cost ollama entry: %#v", report.ByProvider)
+	}
+	if cost != 0 {
+		t.Fatalf("ByProvider[ollama] = %v, want 0", cost)
+	}
+	if report.TotalUSD != 0 {
+		t.Fatalf("TotalUSD = %v, want 0", report.TotalUSD)
+	}
+}
+
 func TestBuildCostReportSkipsFailedRecords(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "history.jsonl")

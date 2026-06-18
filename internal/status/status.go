@@ -455,20 +455,26 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 		if line != "" {
 			var rec historyRecord
 			if jsonErr := json.Unmarshal([]byte(line), &rec); jsonErr == nil && rec.Success {
+				provider := rec.Provider
+				if strings.TrimSpace(provider) != "" {
+					if _, ok := byProvider[provider]; !ok {
+						byProvider[provider] = 0
+					}
+				}
 				cost := rec.EstimatedCostUSD
 				if cost == 0 && rec.TokenUsage != nil {
 					// Re-compute for records written before cost tracking landed.
-					p := agent.Provider(rec.Provider)
+					p := agent.Provider(provider)
 					cost = agent.ComputeCostUSD(rec.TokenUsage, p, rec.Model, pricing)
 				}
 				if cost > 0 {
-					byProvider[rec.Provider] += cost
+					byProvider[provider] += cost
 					total += cost
 					// Track this-month spend separately for budget alert evaluation.
 					if !rec.Timestamp.IsZero() &&
 						rec.Timestamp.UTC().Year() == thisYear &&
 						rec.Timestamp.UTC().Month() == thisMonth {
-						byProviderThisMonth[rec.Provider] += cost
+						byProviderThisMonth[provider] += cost
 					}
 				}
 				count++
