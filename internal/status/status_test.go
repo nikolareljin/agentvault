@@ -77,6 +77,26 @@ func writeHistoryLine(t *testing.T, path string, provider, model string, cost fl
 	fmt.Fprintf(f, "%s\n", b)
 }
 
+func writeLegacyHistoryLine(t *testing.T, path string, provider, model string, tokens *agent.PromptTokenUsage, ts time.Time) {
+	t.Helper()
+	rec := map[string]any{
+		"provider":  provider,
+		"model":     model,
+		"success":   true,
+		"timestamp": ts.Format(time.RFC3339),
+	}
+	if tokens != nil {
+		rec["token_usage"] = tokens
+	}
+	b, _ := json.Marshal(rec)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open history: %v", err)
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s\n", b)
+}
+
 func TestBuildCostReportFileNotFound(t *testing.T) {
 	if got := BuildCostReport("/nonexistent/path.jsonl", nil); got != nil {
 		t.Fatalf("expected nil for missing file, got %+v", got)
@@ -127,7 +147,7 @@ func TestBuildCostReportAggregation(t *testing.T) {
 }
 
 func TestBuildCostReportLegacyRecompute(t *testing.T) {
-	// Records with estimated_cost_usd=0 but token_usage set should be recomputed.
+	// Records missing estimated_cost_usd but containing token_usage should be recomputed.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "history.jsonl")
 	now := time.Now().UTC()
@@ -137,7 +157,7 @@ func TestBuildCostReportLegacyRecompute(t *testing.T) {
 	}
 
 	tokens := &agent.PromptTokenUsage{InputTokens: 1000, OutputTokens: 500}
-	writeHistoryLine(t, path, "claude", "claude-3-5-sonnet", 0, tokens, now)
+	writeLegacyHistoryLine(t, path, "claude", "claude-3-5-sonnet", tokens, now)
 
 	report := BuildCostReport(path, pricing)
 	if report == nil {
@@ -146,6 +166,29 @@ func TestBuildCostReportLegacyRecompute(t *testing.T) {
 	// 1000/1000*1.0 + 500/1000*2.0 = 1.0 + 1.0 = 2.0
 	if !approxEq(report.TotalUSD, 2.0) {
 		t.Errorf("TotalUSD = %v, want 2.0 (recomputed from token_usage)", report.TotalUSD)
+	}
+}
+
+func TestBuildCostReportPreservesExplicitZeroCost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	pricing := []agent.ProviderPricing{
+		{Provider: agent.ProviderClaude, InputPer1KTokens: 1.0, OutputPer1KTokens: 2.0},
+	}
+	tokens := &agent.PromptTokenUsage{InputTokens: 1000, OutputTokens: 500}
+	writeHistoryLine(t, path, "claude", "claude-3-5-sonnet", 0, tokens, now)
+
+	report := BuildCostReport(path, pricing)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if report.TotalUSD != 0 {
+		t.Fatalf("TotalUSD = %v, want explicit zero preserved", report.TotalUSD)
+	}
+	if got := report.ByProvider["claude"]; got != 0 {
+		t.Fatalf("ByProvider[claude] = %v, want 0", got)
 	}
 }
 
