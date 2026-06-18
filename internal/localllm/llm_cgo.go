@@ -112,8 +112,8 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 
 	// Prefill: process all prompt tokens in one batch.
 	prefillBatch := C.llama_batch_get_one(&tokens[0], nTokens)
-	if C.llama_decode(e.ctx, prefillBatch) != 0 {
-		return "", fmt.Errorf("localllm: prefill decode failed")
+	if rc := C.llama_decode(e.ctx, prefillBatch); rc != 0 {
+		return "", fmt.Errorf("localllm: prefill decode failed: rc=%d prompt_tokens=%d; try increasing --llm-router-context-size", int(rc), int(nTokens))
 	}
 
 	// Autoregressive generation — greedy sampler for deterministic JSON output.

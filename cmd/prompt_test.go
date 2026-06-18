@@ -99,6 +99,9 @@ func TestPromptRecordJSON_OmitsEmptyTokenUsage(t *testing.T) {
 	if strings.Contains(string(raw), "token_usage") {
 		t.Fatalf("expected token_usage to be omitted, got: %s", string(raw))
 	}
+	if !strings.Contains(string(raw), "estimated_cost_usd") {
+		t.Fatalf("expected estimated_cost_usd to be written even when zero, got: %s", string(raw))
+	}
 }
 
 func TestPromptRecordJSON_IncludesNonEmptyTokenUsage(t *testing.T) {

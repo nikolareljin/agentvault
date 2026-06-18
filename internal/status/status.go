@@ -432,7 +432,7 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 		Provider         string                  `json:"provider"`
 		Model            string                  `json:"model"`
 		TokenUsage       *agent.PromptTokenUsage `json:"token_usage"`
-		EstimatedCostUSD float64                 `json:"estimated_cost_usd"`
+		EstimatedCostUSD *float64                `json:"estimated_cost_usd"`
 		Success          bool                    `json:"success"`
 		Timestamp        time.Time               `json:"timestamp"`
 	}
@@ -462,8 +462,10 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 				if _, ok := byProvider[provider]; !ok {
 					byProvider[provider] = 0
 				}
-				cost := rec.EstimatedCostUSD
-				if cost == 0 && rec.TokenUsage != nil {
+				var cost float64
+				if rec.EstimatedCostUSD != nil {
+					cost = *rec.EstimatedCostUSD
+				} else if rec.TokenUsage != nil {
 					// Re-compute for records written before cost tracking landed.
 					p := agent.Provider(provider)
 					cost = agent.ComputeCostUSD(rec.TokenUsage, p, rec.Model, pricing)

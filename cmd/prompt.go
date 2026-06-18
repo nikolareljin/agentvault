@@ -45,7 +45,7 @@ type PromptRecord struct {
 	OriginalPrompt      string                  `json:"original_prompt"`
 	EffectivePrompt     string                  `json:"effective_prompt"`
 	TokenUsage          *agent.PromptTokenUsage `json:"token_usage,omitempty"`
-	EstimatedCostUSD    float64                 `json:"estimated_cost_usd,omitempty"`
+	EstimatedCostUSD    float64                 `json:"estimated_cost_usd"`
 	ResponsePreview     string                  `json:"response_preview,omitempty"`
 	Success             bool                    `json:"success"`
 	Error               string                  `json:"error,omitempty"`
