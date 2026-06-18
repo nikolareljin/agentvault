@@ -409,12 +409,12 @@ func inferredRouteCapabilities(a Agent) []string {
 	target := ResolveExecutionTarget(a)
 	switch a.Provider {
 	case ProviderCodex, ProviderClaude, ProviderOpenAI, ProviderGemini:
-		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview, RouteCapabilityAnalysis)
+		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview, RouteCapabilityAnalysis, RouteCapabilityDocumentation)
 	case ProviderOllama:
-		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityAnalysis)
+		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityAnalysis, RouteCapabilityDocumentation)
 	}
 	if target.Runner == RunnerClaudeCLI {
-		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview)
+		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview, RouteCapabilityDocumentation)
 	}
 	return normalizeRouteCapabilities(capabilities)
 }
