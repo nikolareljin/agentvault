@@ -1,11 +1,18 @@
 package status
 
 import (
+	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/nikolareljin/agentvault/internal/agent"
 )
+
+func approxEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
 func TestCollectCodexStatus(t *testing.T) {
 	home := t.TempDir()
@@ -46,6 +53,251 @@ func TestCollectCodexStatusNoSessions(t *testing.T) {
 	}
 	if st.Error == "" {
 		t.Fatalf("expected error message")
+	}
+}
+
+func writeHistoryLine(t *testing.T, path string, provider, model string, cost float64, tokens *agent.PromptTokenUsage, ts time.Time) {
+	t.Helper()
+	rec := map[string]any{
+		"provider":           provider,
+		"model":              model,
+		"estimated_cost_usd": cost,
+		"success":            true,
+		"timestamp":          ts.Format(time.RFC3339),
+	}
+	if tokens != nil {
+		rec["token_usage"] = tokens
+	}
+	b, _ := json.Marshal(rec)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open history: %v", err)
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s\n", b)
+}
+
+func writeLegacyHistoryLine(t *testing.T, path string, provider, model string, tokens *agent.PromptTokenUsage, ts time.Time) {
+	t.Helper()
+	rec := map[string]any{
+		"provider":  provider,
+		"model":     model,
+		"success":   true,
+		"timestamp": ts.Format(time.RFC3339),
+	}
+	if tokens != nil {
+		rec["token_usage"] = tokens
+	}
+	b, _ := json.Marshal(rec)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open history: %v", err)
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s\n", b)
+}
+
+func TestBuildCostReportFileNotFound(t *testing.T) {
+	if got := BuildCostReport("/nonexistent/path.jsonl", nil); got != nil {
+		t.Fatalf("expected nil for missing file, got %+v", got)
+	}
+}
+
+func TestBuildCostReportEmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	if err := os.WriteFile(path, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := BuildCostReport(path, nil); got != nil {
+		t.Fatalf("expected nil for empty file, got %+v", got)
+	}
+}
+
+func TestBuildCostReportAggregation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	pricing := []agent.ProviderPricing{
+		{Provider: agent.ProviderClaude, InputPer1KTokens: 0.003, OutputPer1KTokens: 0.015},
+	}
+
+	writeHistoryLine(t, path, "claude", "claude-3-5-sonnet", 0.01, nil, now)
+	writeHistoryLine(t, path, "claude", "claude-3-5-sonnet", 0.02, nil, now)
+	writeHistoryLine(t, path, "openai", "gpt-4o", 0.05, nil, now)
+
+	report := BuildCostReport(path, pricing)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if report.RecordCount != 3 {
+		t.Errorf("RecordCount = %d, want 3", report.RecordCount)
+	}
+	want := 0.01 + 0.02 + 0.05
+	if !approxEq(report.TotalUSD, want) {
+		t.Errorf("TotalUSD = %v, want %v", report.TotalUSD, want)
+	}
+	if !approxEq(report.ByProvider["claude"], 0.03) {
+		t.Errorf("ByProvider[claude] = %v, want 0.03", report.ByProvider["claude"])
+	}
+	if !approxEq(report.ByProvider["openai"], 0.05) {
+		t.Errorf("ByProvider[openai] = %v, want 0.05", report.ByProvider["openai"])
+	}
+}
+
+func TestBuildCostReportLegacyRecompute(t *testing.T) {
+	// Records missing estimated_cost_usd but containing token_usage should be recomputed.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	pricing := []agent.ProviderPricing{
+		{Provider: agent.ProviderClaude, InputPer1KTokens: 1.0, OutputPer1KTokens: 2.0},
+	}
+
+	tokens := &agent.PromptTokenUsage{InputTokens: 1000, OutputTokens: 500}
+	writeLegacyHistoryLine(t, path, "claude", "claude-3-5-sonnet", tokens, now)
+
+	report := BuildCostReport(path, pricing)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	// 1000/1000*1.0 + 500/1000*2.0 = 1.0 + 1.0 = 2.0
+	if !approxEq(report.TotalUSD, 2.0) {
+		t.Errorf("TotalUSD = %v, want 2.0 (recomputed from token_usage)", report.TotalUSD)
+	}
+}
+
+func TestBuildCostReportPreservesExplicitZeroCost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	pricing := []agent.ProviderPricing{
+		{Provider: agent.ProviderClaude, InputPer1KTokens: 1.0, OutputPer1KTokens: 2.0},
+	}
+	tokens := &agent.PromptTokenUsage{InputTokens: 1000, OutputTokens: 500}
+	writeHistoryLine(t, path, "claude", "claude-3-5-sonnet", 0, tokens, now)
+
+	report := BuildCostReport(path, pricing)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if report.TotalUSD != 0 {
+		t.Fatalf("TotalUSD = %v, want explicit zero preserved", report.TotalUSD)
+	}
+	if got := report.ByProvider["claude"]; got != 0 {
+		t.Fatalf("ByProvider[claude] = %v, want 0", got)
+	}
+}
+
+func TestBuildCostReportIncludesZeroCostProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	writeHistoryLine(t, path, "ollama", "llama3.2", 0, nil, now)
+
+	report := BuildCostReport(path, nil)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if report.RecordCount != 1 {
+		t.Fatalf("RecordCount = %d, want 1", report.RecordCount)
+	}
+	cost, ok := report.ByProvider["ollama"]
+	if !ok {
+		t.Fatalf("ByProvider missing zero-cost ollama entry: %#v", report.ByProvider)
+	}
+	if cost != 0 {
+		t.Fatalf("ByProvider[ollama] = %v, want 0", cost)
+	}
+	if report.TotalUSD != 0 {
+		t.Fatalf("TotalUSD = %v, want 0", report.TotalUSD)
+	}
+}
+
+func TestBuildCostReportSkipsBlankProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	writeHistoryLine(t, path, "  ", "unknown", 0.05, nil, now)
+
+	report := BuildCostReport(path, nil)
+	if report != nil {
+		t.Fatalf("expected nil report when all successful records have blank providers, got %+v", report)
+	}
+}
+
+func TestBuildCostReportSkipsFailedRecords(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	// success=false record should be ignored
+	rec := map[string]any{
+		"provider":           "claude",
+		"model":              "sonnet",
+		"estimated_cost_usd": 99.0,
+		"success":            false,
+		"timestamp":          now.Format(time.RFC3339),
+	}
+	b, _ := json.Marshal(rec)
+	if err := os.WriteFile(path, append(b, '\n'), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	report := BuildCostReport(path, nil)
+	if report != nil {
+		t.Fatalf("expected nil report when all records are failures, got %+v", report)
+	}
+}
+
+func TestBuildCostReportBudgetAlerts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+
+	pricing := []agent.ProviderPricing{
+		{Provider: agent.ProviderClaude, InputPer1KTokens: 0.001, OutputPer1KTokens: 0.002, MonthlyBudgetUSD: 1.0},
+	}
+
+	// Spend 0.90 USD this month — should trigger >=80% alert.
+	writeHistoryLine(t, path, "claude", "sonnet", 0.90, nil, now)
+
+	report := BuildCostReport(path, pricing)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if len(report.BudgetAlerts) != 1 {
+		t.Fatalf("BudgetAlerts len = %d, want 1", len(report.BudgetAlerts))
+	}
+	if report.BudgetAlerts[0].Provider != "claude" {
+		t.Errorf("BudgetAlerts[0].Provider = %q, want claude", report.BudgetAlerts[0].Provider)
+	}
+}
+
+func TestBuildCostReportBudgetAlertIgnoresPastMonths(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.jsonl")
+	now := time.Now().UTC()
+	lastMonth := now.AddDate(0, -1, 0)
+
+	pricing := []agent.ProviderPricing{
+		{Provider: agent.ProviderClaude, InputPer1KTokens: 0.001, OutputPer1KTokens: 0.002, MonthlyBudgetUSD: 1.0},
+	}
+
+	// All spend in last month — should NOT trigger this-month budget alert.
+	writeHistoryLine(t, path, "claude", "sonnet", 0.95, nil, lastMonth)
+
+	report := BuildCostReport(path, pricing)
+	if report == nil {
+		t.Fatal("expected non-nil report")
+	}
+	if len(report.BudgetAlerts) != 0 {
+		t.Fatalf("BudgetAlerts should be empty for past-month spend, got %v", report.BudgetAlerts)
 	}
 }
 

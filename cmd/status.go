@@ -32,6 +32,7 @@ func init() {
 	statusCmd.Flags().Bool("json", true, "output as JSON")
 	statusCmd.Flags().Bool("no-vault", false, "skip vault unlock and report provider status only")
 	statusCmd.Flags().String("vault-password-env", "AGENTVAULT_PASSWORD", "environment variable containing vault password for non-interactive status calls")
+	statusCmd.Flags().Bool("cost-report", false, "include cost breakdown in output")
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
@@ -52,7 +53,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	costReportFlag, _ := cmd.Flags().GetBool("cost-report")
 	report := statuspkg.BuildReport(v, homeDir)
+	if costReportFlag && v != nil {
+		report.Cost = statuspkg.CostReportForVault(v)
+	}
 	if jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -102,6 +107,28 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				model = "-"
 			}
 			fmt.Printf("  - %s (%s, model=%s): %s\n", a.Name, a.Provider, model, a.Status)
+		}
+	}
+
+	if costReportFlag && report.Cost != nil {
+		c := report.Cost
+		fmt.Printf("Cost (from %d prompt records):\n", c.RecordCount)
+		fmt.Printf("  Total estimated: $%.6f\n", c.TotalUSD)
+		provNames := make([]string, 0, len(c.ByProvider))
+		for p := range c.ByProvider {
+			provNames = append(provNames, p)
+		}
+		sort.Strings(provNames)
+		for _, p := range provNames {
+			fmt.Printf("  - %s: $%.6f\n", p, c.ByProvider[p])
+		}
+		if len(c.BudgetAlerts) > 0 {
+			fmt.Println("  Budget alerts:")
+			for _, alert := range c.BudgetAlerts {
+				fmt.Printf("    WARNING: %s spent $%.4f of $%.4f monthly budget (%.0f%%)\n",
+					alert.Provider, alert.SpentUSD, alert.BudgetUSD,
+					alert.SpentUSD/alert.BudgetUSD*100)
+			}
 		}
 	}
 

@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-06-06
+
+### Added
+- **`llm-router` routing mode** (#36): new fourth routing mode that calls a local llama.cpp or
+  bitnet.cpp inference server (`/v1/chat/completions`) to make intelligent, cost-aware routing
+  decisions. Falls back to heuristic when the server is unreachable and `--allow-fallbacks` is set;
+  otherwise returns an error. New `--allow-fallbacks` flag enables graceful degradation for both
+  `llm-router` and `local-ai` modes.
+  Flags: `--router llm-router --llm-router-url URL --llm-router-model NAME --llm-router-timeout N`.
+  Compatible with any model produced by the finetorch → shrink-llm GGUF pipeline.
+- **`internal/router/llm_router.go`**: token estimator, system-prompt builder, OpenAI-compat HTTP
+  client, `AnalyzeWithLLMRouter`, `enrichIntentFromLLMDecision`. Follows `local_ai.go` patterns.
+- **`internal/router/balancer.go`**: `Balancer` with circuit breaker (3 consecutive failures →
+  60 s cooldown) and EWMA latency tracking (`avg = avg×0.8 + sample×0.2`). `PickBest` prefers
+  the LLM-chosen agent, falls back to highest-scored healthy candidate.
+- **Cost projection dashboard** (#39): `ProviderPricing` struct + `DefaultPricing()` with
+  well-known public rates for Claude, OpenAI, Gemini, Codex, Bedrock, and Ollama. Cost computed
+  per-execution via `ComputeCostUSD` (model-pattern aware, most-specific-match wins).
+  `PromptRecord.EstimatedCostUSD` logged to history. `agentvault status --cost-report` shows
+  per-provider breakdown and fires budget alerts when spend exceeds 80% of `MonthlyBudgetUSD`.
+- **Model capability registry** (#38): `ModelCapabilityEntry` vault CRUD (`AddCapability`,
+  `RemoveCapability`, `ListCapabilities`). New `agentvault capability` subcommand with
+  `list`, `add`, `remove`, and `discover` (auto-populates from `/v1/models` or `/health`).
+  Registry augments agent `RouteConfig.Capabilities` at routing time for all modes.
+- **`RouterConfig` fields**: `LLMRouterURL`, `LLMRouterModel`, `LLMRouterTimeoutSecs` (default 30),
+  `LLMRouterEnableCostEst` added to `RouterConfig`; all merged via `mergeRouterConfig`.
+- **`Request.ModelCapabilities`**: vault capability registry threaded through all routing modes
+  (`heuristic`, `local-ai`, `llm-router`, `langgraph`).
+- **Embedded BitNet/llama.cpp inference engine**: `llm-router` mode now supports in-process
+  GGUF inference with no external server required. Build with `make build-bitnet` (CGo +
+  llama.cpp static library). `--llm-router-model-path PATH` points to any GGUF model file.
+  Falls back to heuristic routing when the embedded engine is not compiled in.
+- **`internal/localllm` package**: `Engine` interface + CGo implementation (`-tags localllm`)
+  using llama.cpp's stable C API; pure-Go stub (`!localllm`) for default cross-compilable builds.
+- **`scripts/build-llama.sh`**: one-time cmake build of `ggerganov/llama.cpp` into
+  `third_party/llama/` (gitignored). Re-running is a no-op once the library exists.
+- **`Makefile` targets**: `make build-llama` (compile static library) and `make build-bitnet`
+  (output: `agentvault-bitnet`).
+- **`RouterConfig` fields**: `LLMRouterModelPath`, `LLMRouterContextSize` (default 512),
+  `LLMRouterThreads`, `LLMRouterGPULayers` — all wired through `mergeRouterConfig` and
+  exposed as CLI flags on `route` and `prompt`.
+- **`agentvault routing-model`** subcommand: `status` (engine state + model file info) and
+  `download` (stream BitNet-b1.58-2B-4T.gguf from Hugging Face with progress display).
+
+### Changed
+- `RouterConfig.Validate()` now accepts `"llm-router"` as a valid mode.
+- `agentvault route --router` help text updated to include `llm-router`.
+- `vaultData` schema extended with `model_capabilities` field (backward-compatible, `omitempty`).
+- `SharedConfig` extended with `pricing` field (backward-compatible, `omitempty`).
+- `agentvault status` now includes a `cost` section in JSON output.
+- `agentvault prompt` token output line now shows `est. cost: $X.XXXXXX` when cost is non-zero.
+
 ## [0.11.0] - 2026-04-30
 
 ### Added

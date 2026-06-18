@@ -109,3 +109,110 @@ agentvault prompt --auto --router langgraph --text "implement this feature with 
 ```
 
 The Python router is optional. If LangGraph is installed, the sidecar uses a small `StateGraph`; otherwise the script falls back to a Python-only ranking path and still returns a valid routing decision.
+
+## Local-AI router (Ollama classification)
+
+Sends the prompt to a local Ollama model for structured classification (complexity 1–10, task type, urgency, privacy sensitivity) before routing. Falls back to heuristic if Ollama is unreachable and `--allow-fallbacks` is set; otherwise returns an error.
+
+```bash
+agentvault route --router local-ai --text "implement JWT authentication middleware"
+agentvault prompt --auto --router local-ai --text "analyze security vulnerabilities in this module"
+
+# Override model or endpoint
+agentvault route --router local-ai \
+  --local-ai-model llama3.2:3b \
+  --local-ai-url http://localhost:11434 \
+  --text "refactor this service"
+```
+
+## LLM-router mode (HTTP server)
+
+Calls any OpenAI-compatible `/v1/chat/completions` server for intelligent routing decisions.
+Compatible with llama-server, bitnet-server, Ollama, and any llm-gateway-helpers deployment.
+
+```bash
+agentvault route --router llm-router \
+  --llm-router-url http://localhost:8080 \
+  --text "write unit tests for the authentication module"
+
+agentvault prompt --auto \
+  --router llm-router \
+  --llm-router-url http://localhost:8080 \
+  --text "implement the feature from issue #42"
+```
+
+## Embedded BitNet inference (no external server)
+
+Build once; the engine stays compiled into the binary. No server process required at runtime.
+
+```bash
+# One-time build (requires cmake + gcc, ~5 min)
+make build-llama
+make build-bitnet        # → ./agentvault-bitnet
+
+# One-time model download (~400 MB)
+./agentvault-bitnet routing-model download
+
+# Route without any server
+./agentvault-bitnet route \
+  --router llm-router \
+  --llm-router-model-path ~/.local/share/agentvault/models/bitnet_b1_58-2B-4T.gguf \
+  --text "implement binary search in Rust"
+
+# Execute with embedded routing
+./agentvault-bitnet prompt --auto \
+  --router llm-router \
+  --llm-router-model-path ~/.local/share/agentvault/models/bitnet_b1_58-2B-4T.gguf \
+  --text "refactor this service to use interfaces"
+```
+
+## Importance and deadline routing
+
+```bash
+# Critical + immediate → strongly prefers cloud runners with low latency
+agentvault prompt --auto \
+  --importance critical --deadline immediate \
+  --text "production authentication service is returning 500s"
+
+# Low + background → prefers local/low-cost targets
+agentvault prompt --auto \
+  --importance low --deadline background \
+  --text "add docstrings to the utility module"
+
+# Inspect the routing decision without executing
+agentvault route --importance high --deadline immediate \
+  --text "deploy this hotfix"
+```
+
+## Cost tracking and budget workflow
+
+```bash
+# Run prompts — cost is tracked automatically in prompt-history.jsonl
+agentvault prompt my-claude --text "review this pull request"
+agentvault prompt local-ollama --text "generate test cases"
+
+# Human-readable cost report (status defaults to --json=true; pass --json=false for text output)
+agentvault status --cost-report --json=false
+
+# JSON for CI/orchestration (exits non-zero if budget alerts exist)
+AGENTVAULT_PASSWORD='...' agentvault status --cost-report --json | \
+  jq -e '.cost.budget_alerts | length == 0'
+```
+
+## Model capability registry workflow
+
+```bash
+# Auto-discover from running endpoints
+agentvault capability discover --endpoint http://localhost:11434
+agentvault capability discover --endpoint http://localhost:8080
+
+# Add with explicit context window
+agentvault capability add \
+  --endpoint http://localhost:11434 \
+  --model llama3.1:70b \
+  --context 32768 \
+  --caps code,general,reasoning
+
+# The registry augments all routing modes at scoring time
+agentvault route --text "generate embeddings for this text"
+```

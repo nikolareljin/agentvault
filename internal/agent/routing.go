@@ -24,17 +24,19 @@ const (
 
 // Routing capability labels used by heuristic and LangGraph routing.
 const (
-	RouteCapabilityGeneral  = "general"
-	RouteCapabilityCoding   = "coding"
-	RouteCapabilityReview   = "review"
-	RouteCapabilityAnalysis = "analysis"
+	RouteCapabilityGeneral       = "general"
+	RouteCapabilityCoding        = "coding"
+	RouteCapabilityReview        = "review"
+	RouteCapabilityAnalysis      = "analysis"
+	RouteCapabilityDocumentation = "documentation"
 )
 
 var validRouteCapabilities = map[string]struct{}{
-	RouteCapabilityGeneral:  {},
-	RouteCapabilityCoding:   {},
-	RouteCapabilityReview:   {},
-	RouteCapabilityAnalysis: {},
+	RouteCapabilityGeneral:       {},
+	RouteCapabilityCoding:        {},
+	RouteCapabilityReview:        {},
+	RouteCapabilityAnalysis:      {},
+	RouteCapabilityDocumentation: {},
 }
 
 var validRouteTiers = map[string]struct{}{
@@ -73,6 +75,20 @@ type RouterConfig struct {
 	Deadline         string `json:"deadline,omitempty"`            // immediate|normal|background
 	LocalAIModel     string `json:"local_ai_model,omitempty"`      // model used for local-ai routing classification
 	LocalAIOllamaURL string `json:"local_ai_ollama_url,omitempty"` // ollama base URL override for local-ai routing
+
+	// llm-router mode: calls a local llama.cpp or bitnet.cpp server
+	LLMRouterURL           string `json:"llm_router_url,omitempty"             yaml:"llm_router_url"`
+	LLMRouterModel         string `json:"llm_router_model,omitempty"           yaml:"llm_router_model"`
+	LLMRouterTimeoutSecs   int    `json:"llm_router_timeout_secs,omitempty"    yaml:"llm_router_timeout_secs"`
+	LLMRouterEnableCostEst bool   `json:"llm_router_enable_cost_est,omitempty" yaml:"llm_router_enable_cost_est"`
+
+	// llm-router embedded mode: path to a local GGUF model file for in-process inference.
+	// When set, inference runs inside the binary (no HTTP server required).
+	// Requires agentvault built with `make build-bitnet` (-tags localllm).
+	LLMRouterModelPath   string `json:"llm_router_model_path,omitempty"    yaml:"llm_router_model_path"`
+	LLMRouterContextSize int    `json:"llm_router_context_size,omitempty"  yaml:"llm_router_context_size"`
+	LLMRouterThreads     int    `json:"llm_router_threads,omitempty"       yaml:"llm_router_threads"`
+	LLMRouterGPULayers   int    `json:"llm_router_gpu_layers,omitempty"    yaml:"llm_router_gpu_layers"`
 }
 
 func (cfg RouterConfig) IsZero() bool {
@@ -83,10 +99,15 @@ func (cfg RouterConfig) Validate() error {
 	mode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 	if mode != "" {
 		switch mode {
-		case "heuristic", "langgraph", "local-ai":
+		case "heuristic", "langgraph", "local-ai", "llm-router":
 		default:
 			return fmt.Errorf("unknown router mode: %s", cfg.Mode)
 		}
+	}
+	if mode == "llm-router" &&
+		strings.TrimSpace(cfg.LLMRouterURL) == "" &&
+		strings.TrimSpace(cfg.LLMRouterModelPath) == "" {
+		return fmt.Errorf("llm-router mode requires --llm-router-url (HTTP server) or --llm-router-model-path (embedded inference)")
 	}
 	if imp := strings.ToLower(strings.TrimSpace(cfg.Importance)); imp != "" {
 		switch imp {
@@ -162,6 +183,12 @@ func (cfg RouterConfig) WithDefaults() RouterConfig {
 	hasDeadlineIntent := dl != "" && dl != "normal"
 	if !out.PreferLocal && !out.PreferFast && !out.PreferLowCost && !out.LocalOnly && !hasImportanceIntent && !hasDeadlineIntent {
 		out.PreferLocal = true
+	}
+	if out.LLMRouterTimeoutSecs == 0 {
+		out.LLMRouterTimeoutSecs = 30
+	}
+	if out.LLMRouterContextSize == 0 {
+		out.LLMRouterContextSize = 512
 	}
 	return out
 }
@@ -382,12 +409,12 @@ func inferredRouteCapabilities(a Agent) []string {
 	target := ResolveExecutionTarget(a)
 	switch a.Provider {
 	case ProviderCodex, ProviderClaude, ProviderOpenAI, ProviderGemini:
-		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview, RouteCapabilityAnalysis)
+		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview, RouteCapabilityAnalysis, RouteCapabilityDocumentation)
 	case ProviderOllama:
-		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityAnalysis)
+		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityAnalysis, RouteCapabilityDocumentation)
 	}
 	if target.Runner == RunnerClaudeCLI {
-		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview)
+		capabilities = append(capabilities, RouteCapabilityCoding, RouteCapabilityReview, RouteCapabilityDocumentation)
 	}
 	return normalizeRouteCapabilities(capabilities)
 }

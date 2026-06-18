@@ -45,6 +45,7 @@ type PromptRecord struct {
 	OriginalPrompt      string                  `json:"original_prompt"`
 	EffectivePrompt     string                  `json:"effective_prompt"`
 	TokenUsage          *agent.PromptTokenUsage `json:"token_usage,omitempty"`
+	EstimatedCostUSD    float64                 `json:"estimated_cost_usd"`
 	ResponsePreview     string                  `json:"response_preview,omitempty"`
 	Success             bool                    `json:"success"`
 	Error               string                  `json:"error,omitempty"`
@@ -120,7 +121,7 @@ func init() {
 	promptCmd.Flags().String("pr", "", "pull request reference for --workflow implement_pr")
 	promptCmd.Flags().Bool("json", false, "output machine-readable JSON")
 	promptCmd.Flags().Bool("auto", false, "route the prompt automatically instead of selecting an agent manually (defaults to local-first routing when no other preferences are set)")
-	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph|local-ai")
+	promptCmd.Flags().String("router", "", "router mode override: heuristic|langgraph|local-ai|llm-router")
 	promptCmd.Flags().String("langgraph-cmd", "", "langgraph router script path override (or set AGENTVAULT_LANGGRAPH_ROUTER_CMD)")
 	promptCmd.Flags().Bool("prefer-local", false, "prefer local execution targets during routing (effective default when no other routing preferences are set)")
 	promptCmd.Flags().Bool("prefer-fast", false, "prefer lower-latency targets during routing")
@@ -139,6 +140,14 @@ func init() {
 	promptCmd.Flags().Bool("no-stream", false, "disable live output streaming; buffer response and print after completion")
 	promptCmd.Flags().String("local-ai-model", "", "ollama model used for local-ai routing classification (default: llama3.2)")
 	promptCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: http://localhost:11434)")
+	promptCmd.Flags().String("llm-router-url", "", "URL of local llama-server or bitnet-server for llm-router mode (e.g. http://localhost:8080)")
+	promptCmd.Flags().String("llm-router-model", "", "model name override for llm-router mode (uses server default if empty)")
+	promptCmd.Flags().Int("llm-router-timeout", 0, "llm-router request timeout in seconds (default 30)")
+	promptCmd.Flags().String("llm-router-model-path", "", "path to GGUF model file for embedded in-process inference (requires build-bitnet)")
+	promptCmd.Flags().Int("llm-router-context-size", 0, "context window in tokens for embedded inference (default 512)")
+	promptCmd.Flags().Int("llm-router-threads", 0, "CPU threads for embedded inference (default: all available)")
+	promptCmd.Flags().Int("llm-router-gpu-layers", 0, "transformer layers to offload to GPU for embedded inference (default 0, CPU-only)")
+	promptCmd.Flags().Bool("allow-fallbacks", false, "fall back to heuristic routing when llm-router or local-ai is unreachable (also enables fallback candidates in results)")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "text")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "file")
@@ -284,11 +293,21 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	}
 	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout, executionWorkspace.Path, stream, cmd.OutOrStdout(), cmd.ErrOrStderr())
 
+	// Derive the execution provider from the resolved runner so that cost attribution
+	// and history records reflect what actually ran (e.g. Claude+Ollama → ollama, free).
+	execProvider := a.Provider
+	switch target.Runner {
+	case agent.RunnerOllamaHTTP:
+		execProvider = agent.ProviderOllama
+	case agent.RunnerBedrockAPI:
+		execProvider = agent.ProviderBedrock
+	}
+
 	record := PromptRecord{
 		ID:                  fmt.Sprintf("prompt-%d", time.Now().UnixNano()),
 		Timestamp:           time.Now().UTC(),
 		AgentName:           a.Name,
-		Provider:            string(a.Provider),
+		Provider:            string(execProvider),
 		Runner:              string(target.Runner),
 		Model:               a.Model,
 		Optimized:           optimized,
@@ -305,6 +324,11 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if execErr == nil {
 		record.TokenUsage = optionalTokenUsage(result.Usage)
 		record.ResponsePreview = truncateForHistory(result.Response)
+		pricing := shared.Pricing
+		if len(pricing) == 0 {
+			pricing = agent.DefaultPricing()
+		}
+		record.EstimatedCostUSD = agent.ComputeCostUSD(record.TokenUsage, execProvider, a.Model, pricing)
 	} else {
 		record.Error = execErr.Error()
 	}
@@ -351,8 +375,13 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		fmt.Println(result.Response)
 	}
 	if usage := record.TokenUsage; usage != nil {
-		fmt.Fprintf(os.Stderr, "tokens used: input=%d output=%d total=%d\n",
-			usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
+		if record.EstimatedCostUSD > 0 {
+			fmt.Fprintf(os.Stderr, "tokens used: input=%d output=%d total=%d  est. cost: $%.6f\n",
+				usage.InputTokens, usage.OutputTokens, usage.TotalTokens, record.EstimatedCostUSD)
+		} else {
+			fmt.Fprintf(os.Stderr, "tokens used: input=%d output=%d total=%d\n",
+				usage.InputTokens, usage.OutputTokens, usage.TotalTokens)
+		}
 	}
 	return nil
 }
@@ -373,10 +402,11 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptTe
 	routerCfg := promptRouterOverride(cmd)
 	routingAgents := resolvedRoutingAgents(v.List())
 	decision, err := routerpkg.Route(routerpkg.Request{
-		Prompt: promptText,
-		Agents: routingAgents,
-		Shared: v.SharedConfig(),
-		Config: routerCfg,
+		Prompt:            promptText,
+		Agents:            routingAgents,
+		Shared:            v.SharedConfig(),
+		Config:            routerCfg,
+		ModelCapabilities: v.ListCapabilities(),
 	})
 	if err != nil {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, err
@@ -415,17 +445,33 @@ func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
 	deadline, _ := cmd.Flags().GetString("deadline")
 	localAIModel, _ := cmd.Flags().GetString("local-ai-model")
 	localAIOllamaURL, _ := cmd.Flags().GetString("local-ai-url")
+	llmRouterURL, _ := cmd.Flags().GetString("llm-router-url")
+	llmRouterModel, _ := cmd.Flags().GetString("llm-router-model")
+	llmRouterTimeout, _ := cmd.Flags().GetInt("llm-router-timeout")
+	llmRouterModelPath, _ := cmd.Flags().GetString("llm-router-model-path")
+	llmRouterContextSize, _ := cmd.Flags().GetInt("llm-router-context-size")
+	llmRouterThreads, _ := cmd.Flags().GetInt("llm-router-threads")
+	llmRouterGPULayers, _ := cmd.Flags().GetInt("llm-router-gpu-layers")
+	allowFallbacks, _ := cmd.Flags().GetBool("allow-fallbacks")
 	return agent.RouterConfig{
-		Mode:             mode,
-		LangGraphCmd:     langGraphCmd,
-		PreferLocal:      preferLocal,
-		PreferFast:       preferFast,
-		PreferLowCost:    preferLowCost,
-		LocalOnly:        localOnly,
-		Importance:       importance,
-		Deadline:         deadline,
-		LocalAIModel:     localAIModel,
-		LocalAIOllamaURL: localAIOllamaURL,
+		Mode:                 mode,
+		LangGraphCmd:         langGraphCmd,
+		PreferLocal:          preferLocal,
+		PreferFast:           preferFast,
+		PreferLowCost:        preferLowCost,
+		LocalOnly:            localOnly,
+		Importance:           importance,
+		Deadline:             deadline,
+		LocalAIModel:         localAIModel,
+		LocalAIOllamaURL:     localAIOllamaURL,
+		LLMRouterURL:         llmRouterURL,
+		LLMRouterModel:       llmRouterModel,
+		LLMRouterTimeoutSecs: llmRouterTimeout,
+		LLMRouterModelPath:   llmRouterModelPath,
+		LLMRouterContextSize: llmRouterContextSize,
+		LLMRouterThreads:     llmRouterThreads,
+		LLMRouterGPULayers:   llmRouterGPULayers,
+		AllowFallbacks:       allowFallbacks,
 	}
 }
 
@@ -433,6 +479,7 @@ type vaultLike interface {
 	Get(name string) (agent.Agent, bool)
 	List() []agent.Agent
 	SharedConfig() agent.SharedConfig
+	ListCapabilities() []agent.ModelCapabilityEntry
 }
 
 // shouldStream returns true when live output should be piped to the terminal.
