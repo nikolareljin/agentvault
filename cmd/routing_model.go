@@ -133,7 +133,9 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 
 	got := hex.EncodeToString(hasher.Sum(nil))
 	expectedSHA, _ := cmd.Flags().GetString("sha256")
-	if expectedSHA != "" && !strings.EqualFold(got, expectedSHA) {
+	if expectedSHA == "" {
+		fmt.Fprintln(cmd.OutOrStdout(), "warning: no SHA256 provided; download integrity was not verified")
+	} else if !strings.EqualFold(got, expectedSHA) {
 		os.Remove(tmp)
 		return fmt.Errorf("SHA256 mismatch: got %s, want %s", got, expectedSHA)
 	}
