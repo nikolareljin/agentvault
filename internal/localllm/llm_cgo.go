@@ -153,8 +153,8 @@ func (e *llamaEngine) Route(ctx context.Context, systemPrompt, userPrompt string
 
 		nextTok := tok
 		nextBatch := C.llama_batch_get_one(&nextTok, 1)
-		if C.llama_decode(e.ctx, nextBatch) != 0 {
-			break
+		if rc := C.llama_decode(e.ctx, nextBatch); rc != 0 {
+			return string(out), fmt.Errorf("localllm: generation decode failed: %d", int(rc))
 		}
 	}
 
