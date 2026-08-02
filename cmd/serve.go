@@ -57,8 +57,16 @@ PROMPT INJECTION
 
 A caller sending a prompt that contains text it did not author -- retrieved
 documents, a scraped page, an email body -- should set "untrusted_content":
-true. Agentic runners are then refused outright, before and regardless of
-AGENTVAULT_SERVE_ALLOW_AGENTIC.
+true. Routing then avoids agentic runners: if the best target runs an agentic
+session, the highest-ranked safe fallback is used instead, and the response
+names what it was rerouted from. If no safe target exists the request is
+refused. Either way an agentic runner cannot be reached, before and regardless
+of AGENTVAULT_SERVE_ALLOW_AGENTIC.
+
+Rerouting needs allow_fallbacks, since the fallback list is what has been
+filtered against the caller's own constraints -- rerouting off the full
+candidate pool could send a local_only prompt to a remote provider, which
+trades a shell for a privacy breach.
 
 This is the only defence here that is not advisory. Wrapping content in
 delimiters and instructing a model to ignore instructions inside them is worth
@@ -304,22 +312,32 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			return
 		}
 
-		if req.UntrustedContent && !httpSafeRunners[decision.Selected.Target.Runner] {
-			// Answered at routing time rather than leaving the caller to
-			// discover it at execution time: a caller that routes, then
-			// prompts, should not be told yes and then no.
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
-				"error": fmt.Sprintf(
-					"the best target for this prompt is runner %q, which runs an agentic "+
-						"session and cannot be used for untrusted content",
-					decision.Selected.Target.Runner),
-				"code":     "untrusted_content_needs_a_safe_runner",
-				"selected": decision.Selected.Agent.Name,
-			})
-			return
+		reroutedFrom := ""
+		if req.UntrustedContent {
+			safe, ok := safeCandidateFor(decision)
+			if !ok {
+				// Answered at routing time rather than leaving the caller to
+				// discover it at execution time: a caller that routes, then
+				// prompts, should not be told yes and then no.
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+					"error": fmt.Sprintf(
+						"the best target for this prompt is runner %q, which runs an agentic "+
+							"session and cannot be used for untrusted content, and no "+
+							"fallback runner can be. Set allow_fallbacks to let routing "+
+							"choose a safe target.",
+						decision.Selected.Target.Runner),
+					"code":     "untrusted_content_needs_a_safe_runner",
+					"selected": decision.Selected.Agent.Name,
+				})
+				return
+			}
+			if !strings.EqualFold(safe.Agent.Name, decision.Selected.Agent.Name) {
+				reroutedFrom = decision.Selected.Agent.Name
+				decision.Selected = safe
+			}
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
+		payload := map[string]any{
 			"mode":              decision.Mode,
 			"intent":            decision.Intent,
 			"selected":          decision.Selected,
@@ -329,7 +347,16 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			// decision nobody can inspect is one nobody can debug when it
 			// picks something surprising.
 			"candidates": decision.Candidates,
-		})
+		}
+		if reroutedFrom != "" {
+			// Named, not silent. The caller asked which agent would handle
+			// this; being handed a different one than the router's first
+			// choice is exactly the kind of thing that has to appear in the
+			// answer rather than in a log nobody reads.
+			payload["rerouted_from"] = reroutedFrom
+			payload["rerouted_reason"] = "untrusted_content"
+		}
+		writeJSON(w, http.StatusOK, payload)
 	}))
 
 	// POST /api/v1/prompt
@@ -400,6 +427,28 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 				}
 				return
 			}
+			// Untrusted content reroutes around agentic runners rather than
+			// failing on them. The caller described its data, not its
+			// preferred runner, so picking a different target is the router
+			// doing its job -- unlike the named-agent path below, where a
+			// silent substitution really would be a surprise.
+			if req.UntrustedContent {
+				safe, ok := safeCandidateFor(decision)
+				if !ok {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error": fmt.Sprintf(
+							"runner %q runs an agentic session and cannot be used for a prompt "+
+								"marked untrusted_content, and no fallback runner can be. Set "+
+								"allow_fallbacks to let routing choose a safe target.",
+							decision.Selected.Target.Runner),
+						"code":     "untrusted_content_needs_a_safe_runner",
+						"selected": decision.Selected.Agent.Name,
+					})
+					return
+				}
+				decision.Selected = safe
+			}
+
 			// The decision carries a redacted AgentView by design -- it never
 			// includes credentials, which is what keeps the routing response
 			// safe to return. So the executable agent is looked up by name.
@@ -577,9 +626,14 @@ type routeRequest struct {
 	// but it is a request to a system whose whole purpose is following
 	// instructions written in text, and a sufficiently determined injection
 	// gets through. What an injection cannot do is reach a capability that was
-	// never offered: when this is set, agentic runners are refused outright,
-	// regardless of AGENTVAULT_SERVE_ALLOW_AGENTIC, so the worst outcome is a
-	// wrong answer rather than a command run on this machine.
+	// never offered: when this is set, routing avoids agentic runners
+	// entirely, regardless of AGENTVAULT_SERVE_ALLOW_AGENTIC, so the worst
+	// outcome is a wrong answer rather than a command run on this machine.
+	//
+	// It reroutes rather than refuses. The caller is describing its data, not
+	// asking for a particular runner, so choosing a different target is the
+	// router doing its job. Refusal is reserved for when no safe target
+	// exists, which needs allow_fallbacks to be set.
 	//
 	// Callers should set it whenever any part of the prompt came from content
 	// they did not author. Erring towards true costs a routing option; erring
@@ -644,6 +698,33 @@ type promptRequest struct {
 var httpSafeRunners = map[agent.RunnerKind]bool{
 	agent.RunnerOllamaHTTP: true,
 	agent.RunnerOpenAIHTTP: true,
+}
+
+// safeCandidateFor returns the highest-ranked candidate that can be used for a
+// prompt carrying untrusted content, preferring the router's own choice.
+//
+// Refusing outright when the winner happens to be agentic was the wrong shape.
+// The caller that sets untrusted_content is describing its data, and a corpus
+// service asking a routine question would have had its request rejected purely
+// because the router liked a CLI agent for it -- with a perfectly good HTTP
+// model sitting in the fallback list. The capability was safe and unusable.
+//
+// Fallbacks rather than Candidates on purpose. Candidates is the full ranked
+// pool including entries the caller's own config excludes, so a local_only
+// request could be rerouted to a remote provider -- trading a shell for a
+// privacy breach. Fallbacks has already been filtered against that config.
+// The cost is that allow_fallbacks must be set for rerouting to happen, which
+// the refusal message says.
+func safeCandidateFor(d router.Decision) (router.Candidate, bool) {
+	if httpSafeRunners[d.Selected.Target.Runner] {
+		return d.Selected, true
+	}
+	for _, c := range d.Fallbacks {
+		if httpSafeRunners[c.Target.Runner] {
+			return c, true
+		}
+	}
+	return router.Candidate{}, false
 }
 
 const (
