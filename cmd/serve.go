@@ -36,11 +36,27 @@ Endpoints:
   POST /api/v1/route           Choose a target for a prompt, without running it
   POST /api/v1/prompt          Route, execute, and return the text with usage
 
-Agentic CLI runners (claude, codex, gemini) run sessions with filesystem
-access and are refused by /api/v1/prompt unless BOTH
-AGENTVAULT_SERVE_ALLOW_AGENTIC=true and AGENTVAULT_SERVE_WORKSPACE=<dir> are
-set. Enabling the capability and choosing where it may write are one decision,
-so neither is enough on its own.
+SECURITY
+
+/api/v1/route and /api/v1/prompt execute work on this machine, so they carry
+guards the read-only endpoints do not:
+
+  - AGENTVAULT_SERVE_KEY is mandatory for them, including on loopback.
+  - Requests carrying an Origin header are refused: they came from a browser,
+    and a cross-origin form post is a CORS simple request that no preflight
+    would have stopped.
+  - Content-Type must be application/json, which a cross-origin form cannot
+    set.
+
+Agentic CLI runners (claude, codex, gemini) run sessions with filesystem access
+and are refused by /api/v1/prompt unless BOTH AGENTVAULT_SERVE_ALLOW_AGENTIC=true
+and AGENTVAULT_SERVE_WORKSPACE=<dir> are set.
+
+AGENTVAULT_SERVE_WORKSPACE is NOT a sandbox. It sets the working directory; an
+auto-approved agent can still write absolute paths, read ~/.ssh and run any
+command as this user. Enabling agentic runners grants shell access to whoever
+holds the API key. Confinement needs a container or a separate account, which
+this process does not provide.
   GET /api/v1/agents           List agents (API keys never exposed)
   GET /api/v1/agents/{name}    Get agent by name
 
@@ -78,8 +94,12 @@ Example:
 			Handler:           mux,
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       60 * time.Second,
+			// Longer than maxPromptTimeout, or the server truncates a response
+			// the handler is still allowed to be producing -- which would make
+			// the prompt timeout cap meaningless and look like a provider
+			// failure rather than a server one.
+			WriteTimeout: maxPromptTimeout + 30*time.Second,
+			IdleTimeout:  60 * time.Second,
 		}
 		return server.ListenAndServe()
 	},
@@ -221,6 +241,10 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			return
 		}
 
+		if !requireStrongAuth(w, r, apiKey, writeJSON) {
+			return
+		}
+
 		var req routeRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
@@ -285,6 +309,10 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 	mux.HandleFunc("/api/v1/prompt", auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		if !requireStrongAuth(w, r, apiKey, writeJSON) {
 			return
 		}
 
@@ -414,6 +442,19 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 
 		// The request's context, so a client that disconnects ends the upstream
 		// call rather than leaving it running unwatched.
+		// Logged before execution, not after. If the process is killed mid-run
+		// -- or the agent kills it -- an after-the-fact log records nothing,
+		// and "what did this server run?" becomes unanswerable. The prompt is
+		// deliberately not logged: it can contain the contents of private
+		// documents, and this line exists to answer what ran, not what was
+		// asked.
+		if !httpSafeRunners[target.Runner] {
+			log.Printf(
+				"AGENTIC EXECUTION agent=%s runner=%s workspace=%s prompt_bytes=%d remote=%s",
+				selected.Name, target.Runner, executionDir, len(req.Prompt), r.RemoteAddr,
+			)
+		}
+
 		result, err := executePromptTarget(r.Context(), target, selected, req.Prompt, timeout, executionDir, false, io.Discard, io.Discard)
 		if err != nil {
 			// Detail to the log, not to the caller. A provider error can carry
@@ -537,6 +578,53 @@ func agenticRunnersAllowed() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("AGENTVAULT_SERVE_ALLOW_AGENTIC")), "true")
 }
 
+// requireStrongAuth reports whether this request may reach an endpoint that
+// executes anything.
+//
+// Two checks the read-only endpoints do not need.
+//
+// An API key is mandatory here even on loopback. `serve` defaults to loopback
+// and the key is otherwise optional, which means an unconfigured server running
+// agentic runners would execute commands for any local process that can reach
+// the port -- including one running as a different user on a shared machine.
+//
+// And a request carrying an Origin header is refused outright, because it came
+// from a browser. A cross-origin form with enctype="text/plain" is a CORS
+// simple request: no preflight, so CORS never gets a chance to block it, and
+// its body can be crafted as valid JSON. Without this check any page you visit
+// can POST to localhost and run commands on your machine. "It only listens on
+// loopback" is not a defence against the browser you are reading this in.
+func requireStrongAuth(w http.ResponseWriter, r *http.Request, apiKey string, writeJSON func(http.ResponseWriter, int, any)) bool {
+	if apiKey == "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "this endpoint requires AGENTVAULT_SERVE_KEY to be set, including on loopback",
+			"code":  "auth_not_configured",
+		})
+		return false
+	}
+
+	if origin := r.Header.Get("Origin"); origin != "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "browser-originated requests are not accepted by this endpoint",
+			"code":  "origin_rejected",
+		})
+		return false
+	}
+
+	// Belt and braces on the same attack: a simple request cannot set this
+	// header, so requiring it excludes form-based cross-origin posts even if an
+	// Origin header is somehow absent.
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "application/json") {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{
+			"error": "Content-Type must be application/json",
+			"code":  "unsupported_media_type",
+		})
+		return false
+	}
+
+	return true
+}
+
 // agenticWorkspace is the directory a CLI runner is allowed to work in.
 //
 // Required, not optional, and deliberately not defaulted. An empty executionDir
@@ -544,6 +632,13 @@ func agenticRunnersAllowed() bool {
 // server process happens to have been started from -- for claude that is a
 // session with --permission-mode auto, so "wherever systemd put us" is not an
 // acceptable answer. An operator enabling agentic runners has to say where.
+//
+// It is NOT a sandbox, and must not be described as one. cmd.Dir sets the
+// working directory; an auto-approved agent can still write absolute paths,
+// read ~/.ssh and run arbitrary commands as this user. Actual confinement needs
+// a container, a separate account, or seccomp -- none of which this process
+// does. Treat enabling agentic runners as granting shell access to whoever
+// holds the API key.
 func agenticWorkspace() string {
 	return strings.TrimSpace(os.Getenv("AGENTVAULT_SERVE_WORKSPACE"))
 }

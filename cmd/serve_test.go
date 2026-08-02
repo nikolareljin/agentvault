@@ -156,6 +156,7 @@ func TestRouteRequiresAuthLikeEveryOtherEndpoint(t *testing.T) {
 	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "secret-key"))
 	defer srv.Close()
 
+	// Deliberately sends no key.
 	resp := postRoute(t, srv, "", `{"prompt":"hello"}`)
 	defer resp.Body.Close()
 
@@ -182,10 +183,10 @@ func TestRouteRejectsGet(t *testing.T) {
 
 func TestRouteRejectsAnEmptyPrompt(t *testing.T) {
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
-	resp := postRoute(t, srv, "", `{"prompt":"   "}`)
+	resp := postRoute(t, srv, testKey, `{"prompt":"   "}`)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -195,10 +196,10 @@ func TestRouteRejectsAnEmptyPrompt(t *testing.T) {
 
 func TestRouteRejectsMalformedJSON(t *testing.T) {
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
-	resp := postRoute(t, srv, "", `{"prompt":`)
+	resp := postRoute(t, srv, testKey, `{"prompt":`)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusBadRequest {
@@ -208,10 +209,10 @@ func TestRouteRejectsMalformedJSON(t *testing.T) {
 
 func TestRouteReturnsADecisionWithItsCandidates(t *testing.T) {
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
-	resp := postRoute(t, srv, "", `{"prompt":"refactor this function","allow_fallbacks":true}`)
+	resp := postRoute(t, srv, testKey, `{"prompt":"refactor this function","allow_fallbacks":true}`)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -241,10 +242,10 @@ func TestRouteDoesNotLeakApiKeys(t *testing.T) {
 	// endpoint that serialises agents has to be equally careful, and it is
 	// easy for that to regress unnoticed.
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
-	resp := postRoute(t, srv, "", `{"prompt":"anything"}`)
+	resp := postRoute(t, srv, testKey, `{"prompt":"anything"}`)
 	defer resp.Body.Close()
 
 	// Assert success first. Without this the test passes when routing starts
@@ -270,11 +271,11 @@ func TestRouteDoesNotLeakApiKeys(t *testing.T) {
 func TestUnsatisfiableConstraintsAre422(t *testing.T) {
 	// The caller asked for something no agent can do. That is their answer.
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
 	// The only agent is a remote provider, and local_only excludes it.
-	resp := postRoute(t, srv, "", `{"prompt":"review this","local_only":true}`)
+	resp := postRoute(t, srv, testKey, `{"prompt":"review this","local_only":true}`)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusUnprocessableEntity {
@@ -287,11 +288,11 @@ func TestAMisconfiguredRouterIs500Not422(t *testing.T) {
 	// as 422 would tell the caller they got their input wrong and send whoever
 	// is debugging it looking in the wrong place.
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
 	t.Setenv("AGENTVAULT_LANGGRAPH_ROUTER_CMD", "")
-	resp := postRoute(t, srv, "", `{"prompt":"anything","mode":"langgraph"}`)
+	resp := postRoute(t, srv, testKey, `{"prompt":"anything","mode":"langgraph"}`)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusInternalServerError {
@@ -311,6 +312,11 @@ func TestLocalOnlyImpliesPreferLocal(t *testing.T) {
 
 // --- POST /api/v1/prompt -----------------------------------------------------
 
+// testKey is the key every execute-endpoint test server is configured with.
+// The endpoints now require one even on loopback, so a keyless server is a
+// deliberate case rather than the default.
+const testKey = "secret-key"
+
 func postPrompt(t *testing.T, srv *httptest.Server, body string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/prompt", strings.NewReader(body))
@@ -318,6 +324,7 @@ func postPrompt(t *testing.T, srv *httptest.Server, body string) *http.Response 
 		t.Fatalf("http.NewRequest() error = %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", testKey)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Do() error = %v", err)
@@ -333,7 +340,7 @@ func TestPromptRefusesAgenticRunnersByDefault(t *testing.T) {
 	// obtains it later. An operator should choose that deliberately rather than
 	// inherit it by starting a server.
 	v := testServeVault(t) // its only agent is a claude CLI agent
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
 	// Cleared explicitly: inherited from the environment this test would pass
@@ -363,7 +370,7 @@ func TestPromptRefusesRatherThanSilentlyPickingAnotherAgent(t *testing.T) {
 	// Downgrading a coding agent to a chat model without saying so would be a
 	// worse surprise than being told no.
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
 	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "")
@@ -395,7 +402,7 @@ func TestAgenticWithoutAWorkspaceIsStillRefused(t *testing.T) {
 	// with filesystem access in whatever directory the server was started from
 	// -- for claude, a session with --permission-mode auto.
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
 	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "true")
@@ -419,7 +426,7 @@ func TestAgenticWithoutAWorkspaceIsStillRefused(t *testing.T) {
 
 func TestPromptRequiresAPrompt(t *testing.T) {
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
 	resp := postPrompt(t, srv, `{"prompt":"  "}`)
@@ -432,7 +439,7 @@ func TestPromptRequiresAPrompt(t *testing.T) {
 
 func TestPromptRejectsAnUnknownNamedAgent(t *testing.T) {
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
 	defer srv.Close()
 
 	resp := postPrompt(t, srv, `{"prompt":"hi","agent":"not-a-real-agent"}`)
@@ -445,7 +452,7 @@ func TestPromptRejectsAnUnknownNamedAgent(t *testing.T) {
 
 func TestPromptRequiresAuth(t *testing.T) {
 	v := testServeVault(t)
-	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "secret-key"))
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "a-different-key"))
 	defer srv.Close()
 
 	resp := postPrompt(t, srv, `{"prompt":"hi"}`)
@@ -541,5 +548,108 @@ func TestPromptExecutionIsCancelledWhenTheClientDisconnects(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want it to wrap context.Canceled", err)
+	}
+}
+
+// --- Guards on the endpoints that execute -----------------------------------
+
+func TestExecutingEndpointsRequireAKeyEvenOnLoopback(t *testing.T) {
+	// serve defaults to loopback and the key is otherwise optional, so an
+	// unconfigured server running agentic runners would execute commands for
+	// any local process that can reach the port -- including one running as a
+	// different user on a shared machine.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "")) // no key
+	defer srv.Close()
+
+	for _, path := range []string{"/api/v1/route", "/api/v1/prompt"} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+path, strings.NewReader(`{"prompt":"hi"}`))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s status = %d, want 403 when no key is configured", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestBrowserOriginatedRequestsAreRefused(t *testing.T) {
+	// The attack "it only listens on loopback" does not stop: a cross-origin
+	// form with enctype="text/plain" is a CORS simple request, so no preflight
+	// happens and CORS never gets a chance to block it. Its body can be crafted
+	// as valid JSON. Without this check any page the user visits can POST here
+	// and run commands on their machine.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "secret-key"))
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/prompt", strings.NewReader(`{"prompt":"rm -rf /"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", "secret-key")
+	req.Header.Set("Origin", "https://evil.example")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a browser-originated request", resp.StatusCode)
+	}
+}
+
+func TestFormContentTypesAreRefused(t *testing.T) {
+	// The exact content types a cross-origin form can send without a preflight.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "secret-key"))
+	defer srv.Close()
+
+	for _, ct := range []string{
+		"text/plain",
+		"application/x-www-form-urlencoded",
+		"multipart/form-data",
+		"",
+	} {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/prompt", strings.NewReader(`{"prompt":"hi"}`))
+		req.Header.Set("x-api-key", "secret-key")
+		if ct != "" {
+			req.Header.Set("Content-Type", ct)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do() error = %v", err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("Content-Type %q gave status %d, want 415", ct, resp.StatusCode)
+		}
+	}
+}
+
+func TestAWellFormedRequestStillGetsThrough(t *testing.T) {
+	// The guards must not break the legitimate caller they exist to protect.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "secret-key"))
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/route", strings.NewReader(`{"prompt":"summarise this"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", "secret-key")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a well-formed authenticated request", resp.StatusCode)
 	}
 }
