@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/router"
@@ -33,6 +35,29 @@ Endpoints:
   GET /health                  Health check
   GET /api/v1/status           Server and vault status
   POST /api/v1/route           Choose a target for a prompt, without running it
+  POST /api/v1/prompt          Route, execute, and return the text with usage
+
+SECURITY
+
+/api/v1/route and /api/v1/prompt execute work on this machine, so they carry
+guards the read-only endpoints do not:
+
+  - AGENTVAULT_SERVE_KEY is mandatory for them, including on loopback.
+  - Requests carrying an Origin header are refused: they came from a browser,
+    and a cross-origin form post is a CORS simple request that no preflight
+    would have stopped.
+  - Content-Type must be application/json, which a cross-origin form cannot
+    set.
+
+Agentic CLI runners (claude, codex, gemini) run sessions with filesystem access
+and are refused by /api/v1/prompt unless BOTH AGENTVAULT_SERVE_ALLOW_AGENTIC=true
+and AGENTVAULT_SERVE_WORKSPACE=<dir> are set.
+
+AGENTVAULT_SERVE_WORKSPACE is NOT a sandbox. It sets the working directory; an
+auto-approved agent can still write absolute paths, read ~/.ssh and run any
+command as this user. Enabling agentic runners grants shell access to whoever
+holds the API key. Confinement needs a container or a separate account, which
+this process does not provide.
   GET /api/v1/agents           List agents (API keys never exposed)
   GET /api/v1/agents/{name}    Get agent by name
 
@@ -70,8 +95,12 @@ Example:
 			Handler:           mux,
 			ReadHeaderTimeout: 10 * time.Second,
 			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      30 * time.Second,
-			IdleTimeout:       60 * time.Second,
+			// Longer than maxPromptTimeout, or the server truncates a response
+			// the handler is still allowed to be producing -- which would make
+			// the prompt timeout cap meaningless and look like a provider
+			// failure rather than a server one.
+			WriteTimeout: maxPromptTimeout + 30*time.Second,
+			IdleTimeout:  60 * time.Second,
 		}
 		return server.ListenAndServe()
 	},
@@ -213,6 +242,10 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			return
 		}
 
+		if !requireStrongAuth(w, r, apiKey, writeJSON) {
+			return
+		}
+
 		var req routeRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
@@ -250,7 +283,7 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 				// a client that closed its own connection.
 				writeJSON(w, 499, map[string]string{"error": "client closed the request"})
 			default:
-				log.Printf("routing failed: %v", err)
+				log.Printf("routing failed: %s", sanitizeForLog(err.Error()))
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing failed"})
 			}
 			return
@@ -266,6 +299,209 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			// picks something surprising.
 			"candidates": decision.Candidates,
 		})
+	}))
+
+	// POST /api/v1/prompt
+	//
+	// Routes and executes, returning the text along with token usage and cost.
+	// The usage is the point as much as the answer: a caller that has to
+	// reconstruct what a call cost will get it wrong, and every service that
+	// shipped its own provider layer got it wrong differently.
+	mux.HandleFunc("/api/v1/prompt", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		if !requireStrongAuth(w, r, apiKey, writeJSON) {
+			return
+		}
+
+		var req promptRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if strings.TrimSpace(req.Prompt) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "prompt is required"})
+			return
+		}
+
+		agents := v.List()
+		shared := v.SharedConfig()
+
+		var selected agent.Agent
+		var decision router.Decision
+		var routed bool
+
+		if name := strings.TrimSpace(req.Agent); name != "" {
+			found := false
+			for _, a := range agents {
+				if strings.EqualFold(a.Name, name) {
+					selected, found = a, true
+					break
+				}
+			}
+			if !found {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("no agent named %q", name)})
+				return
+			}
+		} else {
+			var err error
+			decision, err = router.RouteContext(r.Context(), router.Request{
+				Prompt:            req.Prompt,
+				Agents:            agents,
+				Shared:            shared,
+				Config:            req.toRouterConfig(),
+				ModelCapabilities: v.ListCapabilities(),
+			})
+			if err != nil {
+				switch {
+				case errors.Is(err, router.ErrEmptyPrompt),
+					errors.Is(err, router.ErrNoCandidates),
+					errors.Is(err, router.ErrPolicyUnsatisfiable):
+					writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+				case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+					writeJSON(w, 499, map[string]string{"error": "client closed the request"})
+				default:
+					log.Printf("routing failed: %s", sanitizeForLog(err.Error()))
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing failed"})
+				}
+				return
+			}
+			// The decision carries a redacted AgentView by design -- it never
+			// includes credentials, which is what keeps the routing response
+			// safe to return. So the executable agent is looked up by name.
+			found := false
+			for _, a := range agents {
+				if strings.EqualFold(a.Name, decision.Selected.Agent.Name) {
+					selected, found = a, true
+					break
+				}
+			}
+			if !found {
+				log.Printf("router selected unknown agent %q", sanitizeForLog(decision.Selected.Agent.Name))
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing selected an unknown agent"})
+				return
+			}
+			routed = true
+		}
+
+		target := agent.ResolveExecutionTarget(selected)
+		if !target.Supported {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
+				"error": fmt.Sprintf("runner %q is not supported for execution", target.Runner),
+			})
+			return
+		}
+
+		executionDir := ""
+		if !httpSafeRunners[target.Runner] {
+			// Refused rather than quietly downgraded to another agent: a caller
+			// asking for a coding agent and silently getting a chat model back
+			// would be a worse surprise than being told no.
+			if !agenticRunnersAllowed() {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": fmt.Sprintf(
+						"runner %q runs an agentic CLI session with filesystem access and is not "+
+							"exposed over HTTP by default; set AGENTVAULT_SERVE_ALLOW_AGENTIC=true "+
+							"to permit it", target.Runner),
+					"agent":  selected.Name,
+					"runner": string(target.Runner),
+				})
+				return
+			}
+
+			executionDir = agenticWorkspace()
+			if executionDir == "" {
+				// Permitting the runner without saying where it may work would
+				// run an agent with filesystem access in whatever directory the
+				// server was started from. Enabling the capability and choosing
+				// its blast radius are one decision, so both are required.
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": "AGENTVAULT_SERVE_ALLOW_AGENTIC is set but " +
+						"AGENTVAULT_SERVE_WORKSPACE is not; a CLI runner would execute in the " +
+						"server's own working directory",
+					"agent":  selected.Name,
+					"runner": string(target.Runner),
+				})
+				return
+			}
+		}
+
+		// Bounded. An unbounded timeout on an authenticated endpoint lets one
+		// caller hold a goroutine and an upstream connection for as long as it
+		// likes -- a slow request is fine, an indefinite one is a way to
+		// exhaust the server with a handful of calls.
+		timeout := time.Duration(req.TimeoutSec) * time.Second
+		if timeout <= 0 {
+			timeout = defaultPromptTimeout
+		}
+		if timeout > maxPromptTimeout {
+			timeout = maxPromptTimeout
+		}
+
+		// The request's context, so a client that disconnects ends the upstream
+		// call rather than leaving it running unwatched.
+		// Logged before execution, not after. If the process is killed mid-run
+		// -- or the agent kills it -- an after-the-fact log records nothing,
+		// and "what did this server run?" becomes unanswerable. The prompt is
+		// deliberately not logged: it can contain the contents of private
+		// documents, and this line exists to answer what ran, not what was
+		// asked.
+		if !httpSafeRunners[target.Runner] {
+			log.Printf(
+				"AGENTIC EXECUTION agent=%q runner=%q workspace=%q prompt_bytes=%d remote=%q",
+				sanitizeForLog(selected.Name),
+				sanitizeForLog(string(target.Runner)),
+				sanitizeForLog(executionDir),
+				len(req.Prompt),
+				sanitizeForLog(r.RemoteAddr),
+			)
+		}
+
+		result, err := executePromptTarget(r.Context(), target, selected, req.Prompt, timeout, executionDir, false, io.Discard, io.Discard)
+		if err != nil {
+			// Detail to the log, not to the caller. A provider error can carry
+			// endpoint URLs, filesystem paths and occasionally a fragment of a
+			// credential, and none of that is stable enough for a client to
+			// depend on either. The code is what a caller branches on.
+			log.Printf(
+				"prompt execution failed for agent %q (runner %q): %s",
+				sanitizeForLog(selected.Name),
+				sanitizeForLog(string(target.Runner)),
+				sanitizeForLog(err.Error()),
+			)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				writeJSON(w, 499, map[string]string{"error": "client closed the request", "code": "cancelled"})
+				return
+			}
+			writeJSON(w, http.StatusBadGateway, map[string]string{
+				"error": "the provider could not be reached or failed to respond",
+				"code":  "execution_failed",
+				"agent": selected.Name,
+			})
+			return
+		}
+
+		cost := agent.ComputeCostUSD(&result.Usage, selected.Provider, selected.Model, shared.Pricing)
+
+		payload := map[string]any{
+			"text":     result.Response,
+			"agent":    selected.Name,
+			"provider": string(selected.Provider),
+			"model":    selected.Model,
+			"runner":   string(target.Runner),
+			"usage":    result.Usage,
+			"cost_usd": cost,
+			"routed":   routed,
+			"local":    target.Local,
+		}
+		if routed {
+			payload["mode"] = decision.Mode
+			payload["reasons"] = decision.Selected.Reasons
+		}
+		writeJSON(w, http.StatusOK, payload)
 	}))
 
 	return mux
@@ -313,6 +549,136 @@ func (rr routeRequest) toRouterConfig() agent.RouterConfig {
 		cfg.PreferLocal = true
 	}
 	return cfg
+}
+
+// promptRequest is the POST /api/v1/prompt body.
+type promptRequest struct {
+	routeRequest
+	// Agent names the target directly and skips routing. Useful when the
+	// caller has already routed, or is reproducing a previous decision.
+	Agent      string `json:"agent,omitempty"`
+	TimeoutSec int    `json:"timeout_seconds,omitempty"`
+}
+
+// Runners this endpoint will execute over HTTP without being asked twice.
+//
+// These call a model API and return text. The CLI runners do something
+// categorically different: claude runs with --permission-mode auto, codex with
+// workspace-write, gemini with --approval-mode auto_edit. Those are agentic
+// sessions with filesystem access, so exposing them on a socket turns this into
+// remote code execution -- for anyone holding the API key, and for anyone who
+// obtains it later.
+//
+// That is a decision an operator should make deliberately, not one they inherit
+// by starting a server.
+var httpSafeRunners = map[agent.RunnerKind]bool{
+	agent.RunnerOllamaHTTP: true,
+	agent.RunnerOpenAIHTTP: true,
+}
+
+const (
+	defaultPromptTimeout = 120 * time.Second
+	// A ceiling rather than a suggestion. A caller asking for longer is
+	// silently given this, because failing the request would be worse for a
+	// legitimately slow model and the cap is the point either way.
+	maxPromptTimeout = 10 * time.Minute
+)
+
+func agenticRunnersAllowed() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("AGENTVAULT_SERVE_ALLOW_AGENTIC")), "true")
+}
+
+// sanitizeForLog strips anything that could forge a log line.
+//
+// This matters most for the audit line, whose whole value is being trustworthy:
+// a value carrying a newline could append a second, fabricated
+// "AGENTIC EXECUTION" record, and an audit trail an attacker can write to is
+// worse than none, because it is believed. Control characters go too -- a
+// terminal reading the log should not be steered by its contents.
+func sanitizeForLog(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		case unicode.IsControl(r):
+			// Dropped rather than replaced: a control character in an agent
+			// name or a path is not information anyone needs in a log.
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if len(out) > 256 {
+		return out[:256] + "…"
+	}
+	return out
+}
+
+// requireStrongAuth reports whether this request may reach an endpoint that
+// executes anything.
+//
+// Two checks the read-only endpoints do not need.
+//
+// An API key is mandatory here even on loopback. `serve` defaults to loopback
+// and the key is otherwise optional, which means an unconfigured server running
+// agentic runners would execute commands for any local process that can reach
+// the port -- including one running as a different user on a shared machine.
+//
+// And a request carrying an Origin header is refused outright, because it came
+// from a browser. A cross-origin form with enctype="text/plain" is a CORS
+// simple request: no preflight, so CORS never gets a chance to block it, and
+// its body can be crafted as valid JSON. Without this check any page you visit
+// can POST to localhost and run commands on your machine. "It only listens on
+// loopback" is not a defence against the browser you are reading this in.
+func requireStrongAuth(w http.ResponseWriter, r *http.Request, apiKey string, writeJSON func(http.ResponseWriter, int, any)) bool {
+	if apiKey == "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "this endpoint requires AGENTVAULT_SERVE_KEY to be set, including on loopback",
+			"code":  "auth_not_configured",
+		})
+		return false
+	}
+
+	if origin := r.Header.Get("Origin"); origin != "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "browser-originated requests are not accepted by this endpoint",
+			"code":  "origin_rejected",
+		})
+		return false
+	}
+
+	// Belt and braces on the same attack: a simple request cannot set this
+	// header, so requiring it excludes form-based cross-origin posts even if an
+	// Origin header is somehow absent.
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "application/json") {
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{
+			"error": "Content-Type must be application/json",
+			"code":  "unsupported_media_type",
+		})
+		return false
+	}
+
+	return true
+}
+
+// agenticWorkspace is the directory a CLI runner is allowed to work in.
+//
+// Required, not optional, and deliberately not defaulted. An empty executionDir
+// leaves cmd.Dir empty, which means the agent runs in whatever directory the
+// server process happens to have been started from -- for claude that is a
+// session with --permission-mode auto, so "wherever systemd put us" is not an
+// acceptable answer. An operator enabling agentic runners has to say where.
+//
+// It is NOT a sandbox, and must not be described as one. cmd.Dir sets the
+// working directory; an auto-approved agent can still write absolute paths,
+// read ~/.ssh and run arbitrary commands as this user. Actual confinement needs
+// a container, a separate account, or seccomp -- none of which this process
+// does. Treat enabling agentic runners as granting shell access to whoever
+// holds the API key.
+func agenticWorkspace() string {
+	return strings.TrimSpace(os.Getenv("AGENTVAULT_SERVE_WORKSPACE"))
 }
 
 func isLoopbackHost(host string) bool {
