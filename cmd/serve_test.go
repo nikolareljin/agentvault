@@ -244,12 +244,55 @@ func TestRouteDoesNotLeakApiKeys(t *testing.T) {
 	resp := postRoute(t, srv, "", `{"prompt":"anything"}`)
 	defer resp.Body.Close()
 
+	// Assert success first. Without this the test passes when routing starts
+	// erroring, having never exercised the payload where a leak would appear.
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; the leak check never saw a real payload", resp.StatusCode)
+	}
+
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("ReadAll() error = %v", err)
 	}
 	if strings.Contains(string(raw), "sk-sensitive") {
 		t.Fatal("the routing response contained an agent API key")
+	}
+	// The field name too: a serialiser that starts emitting an empty api_key
+	// today is one that emits a populated one after the next change.
+	if strings.Contains(string(raw), "api_key") {
+		t.Fatalf("the routing response contained an api_key field: %s", string(raw))
+	}
+}
+
+func TestUnsatisfiableConstraintsAre422(t *testing.T) {
+	// The caller asked for something no agent can do. That is their answer.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	defer srv.Close()
+
+	// The only agent is a remote provider, and local_only excludes it.
+	resp := postRoute(t, srv, "", `{"prompt":"review this","local_only":true}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+}
+
+func TestAMisconfiguredRouterIs500Not422(t *testing.T) {
+	// langgraph mode with no script path is an operator problem. Reporting it
+	// as 422 would tell the caller they got their input wrong and send whoever
+	// is debugging it looking in the wrong place.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	defer srv.Close()
+
+	t.Setenv("AGENTVAULT_LANGGRAPH_ROUTER_CMD", "")
+	resp := postRoute(t, srv, "", `{"prompt":"anything","mode":"langgraph"}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
 	}
 }
 

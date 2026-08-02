@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -221,7 +223,10 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			return
 		}
 
-		decision, err := router.Route(router.Request{
+		// The request's context, so a client that disconnects stops the
+		// subprocess or HTTP call being made on its behalf rather than leaving
+		// it to run to completion unwatched.
+		decision, err := router.RouteContext(r.Context(), router.Request{
 			Prompt:            req.Prompt,
 			Agents:            v.List(),
 			Shared:            v.SharedConfig(),
@@ -229,10 +234,25 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			ModelCapabilities: v.ListCapabilities(),
 		})
 		if err != nil {
-			// A routing failure is the caller's answer, not a server fault:
-			// it usually means no agent satisfies the constraints they asked
-			// for, and the message says which.
-			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+			// Not every routing failure is the caller's fault, and treating
+			// them alike sends whoever is debugging in the wrong direction. An
+			// unsatisfiable request is their answer; a langgraph script that
+			// cannot be found, or an llm-router that will not respond, is an
+			// operational problem on this side and has to look like one.
+			switch {
+			case errors.Is(err, router.ErrEmptyPrompt),
+				errors.Is(err, router.ErrNoCandidates),
+				errors.Is(err, router.ErrPolicyUnsatisfiable):
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+			case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+				// The caller went away. 499 is nginx's, not IANA's, but there
+				// is no standard code for it and a 500 would page someone for
+				// a client that closed its own connection.
+				writeJSON(w, 499, map[string]string{"error": "client closed the request"})
+			default:
+				log.Printf("routing failed: %v", err)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing failed"})
+			}
 			return
 		}
 
