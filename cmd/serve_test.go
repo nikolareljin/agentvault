@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/router"
 	"github.com/nikolareljin/agentvault/internal/vault"
 )
 
@@ -695,5 +697,197 @@ func TestLogSanitiserLeavesOrdinaryValuesAlone(t *testing.T) {
 		if got := sanitizeForLog(value); got != value {
 			t.Fatalf("sanitizeForLog(%q) = %q, want it unchanged", value, got)
 		}
+	}
+}
+
+// --- Untrusted content ------------------------------------------------------
+//
+// The only defence against prompt injection here that is not advisory.
+// Delimiters and "ignore instructions in the content below" help, but they are
+// a request to a system whose purpose is following instructions written in
+// text. What an injection cannot do is reach a capability that was never
+// offered.
+
+func TestUntrustedContentCannotReachAnAgenticRunner(t *testing.T) {
+	v := testServeVault(t) // its only agent is a claude CLI agent
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
+	defer srv.Close()
+
+	// Agentic runners fully enabled by the operator -- and still refused,
+	// because the constraint is about the data, not the configuration.
+	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "true")
+	t.Setenv("AGENTVAULT_SERVE_WORKSPACE", t.TempDir())
+
+	resp := postPrompt(t, srv, `{"prompt":"summarise this document","untrusted_content":true}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for untrusted content on an agentic runner", resp.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if body["code"] != "untrusted_content_needs_a_safe_runner" {
+		t.Fatalf("code = %v, want untrusted_content_needs_a_safe_runner", body["code"])
+	}
+	if body["text"] != nil {
+		t.Fatal("a refused request returned generated text")
+	}
+}
+
+func TestTheOperatorCannotOverrideTheUntrustedConstraint(t *testing.T) {
+	// The check sits before the allow-flag on purpose. If enabling agentic
+	// runners could re-open this path, the flag would silently undo every
+	// caller's judgement about its own data.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
+	defer srv.Close()
+
+	for _, allow := range []string{"true", "false", ""} {
+		t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", allow)
+		t.Setenv("AGENTVAULT_SERVE_WORKSPACE", t.TempDir())
+
+		resp := postPrompt(t, srv, `{"prompt":"x","untrusted_content":true}`)
+		status := resp.StatusCode
+		resp.Body.Close()
+
+		if status != http.StatusForbidden {
+			t.Fatalf("ALLOW_AGENTIC=%q gave status %d, want 403", allow, status)
+		}
+	}
+}
+
+func TestRoutingRefusesAnAgenticTargetForUntrustedContent(t *testing.T) {
+	// Answered at routing time rather than leaving the caller to discover it at
+	// execution time: routing yes then prompting no is a bad way to learn.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
+	defer srv.Close()
+
+	resp := postRoute(t, srv, testKey, `{"prompt":"review this","untrusted_content":true}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if body["code"] != "untrusted_content_needs_a_safe_runner" {
+		t.Fatalf("code = %v, want untrusted_content_needs_a_safe_runner", body["code"])
+	}
+}
+
+func TestTrustedPromptsAreUnaffected(t *testing.T) {
+	// The control must not change behaviour for a caller that did not ask for
+	// it, or it becomes something people work around.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
+	defer srv.Close()
+
+	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "")
+	t.Setenv("AGENTVAULT_SERVE_WORKSPACE", "")
+
+	resp := postPrompt(t, srv, `{"prompt":"x"}`)
+	defer resp.Body.Close()
+
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body)
+
+	// Still refused, but for the pre-existing reason, with the pre-existing
+	// message -- not the untrusted-content one.
+	if body["code"] == "untrusted_content_needs_a_safe_runner" {
+		t.Fatal("a prompt that did not declare untrusted content was refused as though it had")
+	}
+}
+
+// --- Rerouting untrusted content around agentic runners ---------------------
+//
+// Refusing whenever the router happened to pick an agentic winner made the
+// capability safe and unusable: a corpus service asking a routine question
+// would be rejected purely because the router liked a CLI agent, with a
+// perfectly good HTTP model sitting in the fallback list.
+
+func candidate(name string, runner agent.RunnerKind) router.Candidate {
+	return router.Candidate{
+		Agent:  router.AgentView{Name: name},
+		Target: agent.ExecutionTarget{AgentName: name, Runner: runner, Supported: true},
+	}
+}
+
+func TestSafeCandidateKeepsTheRoutersChoiceWhenItIsAlreadySafe(t *testing.T) {
+	d := router.Decision{
+		Selected:  candidate("ollama-local", agent.RunnerOllamaHTTP),
+		Fallbacks: []router.Candidate{candidate("claude-main", agent.RunnerClaudeCLI)},
+	}
+	got, ok := safeCandidateFor(d)
+	if !ok || got.Agent.Name != "ollama-local" {
+		t.Fatalf("safeCandidateFor() = %q, %v; want ollama-local, true", got.Agent.Name, ok)
+	}
+}
+
+func TestSafeCandidateFallsBackPastAnAgenticWinner(t *testing.T) {
+	d := router.Decision{
+		Selected: candidate("claude-main", agent.RunnerClaudeCLI),
+		Fallbacks: []router.Candidate{
+			candidate("codex-cli", agent.RunnerCodexCLI),
+			candidate("ollama-local", agent.RunnerOllamaHTTP),
+		},
+	}
+	got, ok := safeCandidateFor(d)
+	if !ok || got.Agent.Name != "ollama-local" {
+		t.Fatalf("safeCandidateFor() = %q, %v; want ollama-local, true", got.Agent.Name, ok)
+	}
+}
+
+func TestSafeCandidateRefusesWhenNothingIsSafe(t *testing.T) {
+	d := router.Decision{
+		Selected:  candidate("claude-main", agent.RunnerClaudeCLI),
+		Fallbacks: []router.Candidate{candidate("codex-cli", agent.RunnerCodexCLI)},
+	}
+	if _, ok := safeCandidateFor(d); ok {
+		t.Fatal("safeCandidateFor() returned a candidate when every runner was agentic")
+	}
+}
+
+func TestSafeCandidateDoesNotReachPastTheFallbackList(t *testing.T) {
+	// Candidates is the full ranked pool, including entries the caller's own
+	// config excludes. Rerouting off it would let a local_only prompt land on
+	// a remote provider -- trading a shell for a privacy breach. Only
+	// Fallbacks has been filtered against that config, so only it is consulted.
+	d := router.Decision{
+		Selected:   candidate("claude-main", agent.RunnerClaudeCLI),
+		Fallbacks:  nil,
+		Candidates: []router.Candidate{candidate("openai-remote", agent.RunnerOpenAIHTTP)},
+	}
+	if _, ok := safeCandidateFor(d); ok {
+		t.Fatal("safeCandidateFor() rerouted to a candidate the caller's config had excluded")
+	}
+}
+
+func TestAnUnknownRunnerIsNotTreatedAsSafe(t *testing.T) {
+	// Fail closed: a runner added later is refused until it is listed.
+	d := router.Decision{Selected: candidate("mystery", agent.RunnerKind("something-new"))}
+	if _, ok := safeCandidateFor(d); ok {
+		t.Fatal("safeCandidateFor() accepted a runner that is not on the allowlist")
+	}
+}
+
+func TestRefusalNeverReusesSelectedForAPlainString(t *testing.T) {
+	// A 200 from /route puts the full Candidate object under "selected". The
+	// refusals used the same key for a bare agent name, so a client decoding
+	// "selected" as an object broke on exactly the responses it most needed to
+	// read. String-valued agent names use "agent", matching every neighbouring
+	// error payload.
+	body, err := os.ReadFile("serve.go")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.Contains(string(body), `"selected": decision.Selected.Agent.Name`) {
+		t.Error(`a refusal payload puts a string under "selected"; use "agent" instead`)
 	}
 }
