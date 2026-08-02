@@ -305,3 +305,137 @@ func TestLocalOnlyImpliesPreferLocal(t *testing.T) {
 		t.Fatalf("local_only=true gave LocalOnly=%v PreferLocal=%v, want both true", cfg.LocalOnly, cfg.PreferLocal)
 	}
 }
+
+// --- POST /api/v1/prompt -----------------------------------------------------
+
+func postPrompt(t *testing.T, srv *httptest.Server, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/prompt", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("http.NewRequest() error = %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	return resp
+}
+
+func TestPromptRefusesAgenticRunnersByDefault(t *testing.T) {
+	// The important one. claude runs with --permission-mode auto, codex with
+	// workspace-write, gemini with --approval-mode auto_edit. Those are agentic
+	// sessions with filesystem access, so putting them on a socket is remote
+	// code execution for anyone holding the API key -- including anyone who
+	// obtains it later. An operator should choose that deliberately rather than
+	// inherit it by starting a server.
+	v := testServeVault(t) // its only agent is a claude CLI agent
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	defer srv.Close()
+
+	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "")
+	resp := postPrompt(t, srv, `{"prompt":"write a file"}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	// The message has to name the opt-in, or an operator cannot act on it.
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "AGENTVAULT_SERVE_ALLOW_AGENTIC") {
+		t.Fatalf("error does not say how to permit it: %v", body["error"])
+	}
+}
+
+func TestPromptRefusesRatherThanSilentlyPickingAnotherAgent(t *testing.T) {
+	// Downgrading a coding agent to a chat model without saying so would be a
+	// worse surprise than being told no.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	defer srv.Close()
+
+	resp := postPrompt(t, srv, `{"prompt":"write a file"}`)
+	defer resp.Body.Close()
+
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body)
+
+	if body["text"] != nil {
+		t.Fatal("a refused request returned generated text")
+	}
+	if body["agent"] == nil {
+		t.Fatal("the refusal does not say which agent was selected")
+	}
+}
+
+func TestPromptRequiresAPrompt(t *testing.T) {
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	defer srv.Close()
+
+	resp := postPrompt(t, srv, `{"prompt":"  "}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestPromptRejectsAnUnknownNamedAgent(t *testing.T) {
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	defer srv.Close()
+
+	resp := postPrompt(t, srv, `{"prompt":"hi","agent":"not-a-real-agent"}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestPromptRequiresAuth(t *testing.T) {
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "secret-key"))
+	defer srv.Close()
+
+	resp := postPrompt(t, srv, `{"prompt":"hi"}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestPromptRejectsGet(t *testing.T) {
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/prompt")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestHTTPSafeRunnersAreOnlyTheNonAgenticOnes(t *testing.T) {
+	// A new runner must not become HTTP-reachable by default just because it
+	// was added; this is the list an operator is trusting.
+	for _, runner := range []agent.RunnerKind{agent.RunnerClaudeCLI, agent.RunnerCodexCLI, agent.RunnerGeminiCLI} {
+		if httpSafeRunners[runner] {
+			t.Fatalf("runner %q is agentic and must not be HTTP-safe by default", runner)
+		}
+	}
+	if !httpSafeRunners[agent.RunnerOllamaHTTP] || !httpSafeRunners[agent.RunnerOpenAIHTTP] {
+		t.Fatal("the model-API runners should be permitted")
+	}
+}

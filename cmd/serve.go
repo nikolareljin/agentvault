@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -33,6 +34,11 @@ Endpoints:
   GET /health                  Health check
   GET /api/v1/status           Server and vault status
   POST /api/v1/route           Choose a target for a prompt, without running it
+  POST /api/v1/prompt          Route, execute, and return the text with usage
+
+Agentic CLI runners (claude, codex, gemini) run sessions with filesystem
+access and are refused by /api/v1/prompt unless AGENTVAULT_SERVE_ALLOW_AGENTIC
+is set to true.
   GET /api/v1/agents           List agents (API keys never exposed)
   GET /api/v1/agents/{name}    Get agent by name
 
@@ -268,6 +274,146 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 		})
 	}))
 
+	// POST /api/v1/prompt
+	//
+	// Routes and executes, returning the text along with token usage and cost.
+	// The usage is the point as much as the answer: a caller that has to
+	// reconstruct what a call cost will get it wrong, and every service that
+	// shipped its own provider layer got it wrong differently.
+	mux.HandleFunc("/api/v1/prompt", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		var req promptRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if strings.TrimSpace(req.Prompt) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "prompt is required"})
+			return
+		}
+
+		agents := v.List()
+		shared := v.SharedConfig()
+
+		var selected agent.Agent
+		var decision router.Decision
+		var routed bool
+
+		if name := strings.TrimSpace(req.Agent); name != "" {
+			found := false
+			for _, a := range agents {
+				if strings.EqualFold(a.Name, name) {
+					selected, found = a, true
+					break
+				}
+			}
+			if !found {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("no agent named %q", name)})
+				return
+			}
+		} else {
+			var err error
+			decision, err = router.RouteContext(r.Context(), router.Request{
+				Prompt:            req.Prompt,
+				Agents:            agents,
+				Shared:            shared,
+				Config:            req.toRouterConfig(),
+				ModelCapabilities: v.ListCapabilities(),
+			})
+			if err != nil {
+				switch {
+				case errors.Is(err, router.ErrEmptyPrompt),
+					errors.Is(err, router.ErrNoCandidates),
+					errors.Is(err, router.ErrPolicyUnsatisfiable):
+					writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+				case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+					writeJSON(w, 499, map[string]string{"error": "client closed the request"})
+				default:
+					log.Printf("routing failed: %v", err)
+					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing failed"})
+				}
+				return
+			}
+			// The decision carries a redacted AgentView by design -- it never
+			// includes credentials, which is what keeps the routing response
+			// safe to return. So the executable agent is looked up by name.
+			found := false
+			for _, a := range agents {
+				if strings.EqualFold(a.Name, decision.Selected.Agent.Name) {
+					selected, found = a, true
+					break
+				}
+			}
+			if !found {
+				log.Printf("router selected unknown agent %q", decision.Selected.Agent.Name)
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing selected an unknown agent"})
+				return
+			}
+			routed = true
+		}
+
+		target := agent.ResolveExecutionTarget(selected)
+		if !target.Supported {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
+				"error": fmt.Sprintf("runner %q is not supported for execution", target.Runner),
+			})
+			return
+		}
+
+		if !httpSafeRunners[target.Runner] && !agenticRunnersAllowed() {
+			// Refused rather than quietly downgraded to another agent: a caller
+			// asking for a coding agent and silently getting a chat model back
+			// would be a worse surprise than being told no.
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": fmt.Sprintf(
+					"runner %q runs an agentic CLI session with filesystem access and is not "+
+						"exposed over HTTP by default; set AGENTVAULT_SERVE_ALLOW_AGENTIC=true "+
+						"to permit it", target.Runner),
+				"agent":  selected.Name,
+				"runner": string(target.Runner),
+			})
+			return
+		}
+
+		timeout := time.Duration(req.TimeoutSec) * time.Second
+		if timeout <= 0 {
+			timeout = 120 * time.Second
+		}
+
+		result, err := executePromptTarget(target, selected, req.Prompt, timeout, "", false, io.Discard, io.Discard)
+		if err != nil {
+			log.Printf("prompt execution failed for agent %s: %v", selected.Name, err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{
+				"error": fmt.Sprintf("execution failed: %v", err),
+				"agent": selected.Name,
+			})
+			return
+		}
+
+		cost := agent.ComputeCostUSD(&result.Usage, selected.Provider, selected.Model, shared.Pricing)
+
+		payload := map[string]any{
+			"text":     result.Response,
+			"agent":    selected.Name,
+			"provider": string(selected.Provider),
+			"model":    selected.Model,
+			"runner":   string(target.Runner),
+			"usage":    result.Usage,
+			"cost_usd": cost,
+			"routed":   routed,
+			"local":    target.Local,
+		}
+		if routed {
+			payload["mode"] = decision.Mode
+			payload["reasons"] = decision.Selected.Reasons
+		}
+		writeJSON(w, http.StatusOK, payload)
+	}))
+
 	return mux
 }
 
@@ -313,6 +459,35 @@ func (rr routeRequest) toRouterConfig() agent.RouterConfig {
 		cfg.PreferLocal = true
 	}
 	return cfg
+}
+
+// promptRequest is the POST /api/v1/prompt body.
+type promptRequest struct {
+	routeRequest
+	// Agent names the target directly and skips routing. Useful when the
+	// caller has already routed, or is reproducing a previous decision.
+	Agent      string `json:"agent,omitempty"`
+	TimeoutSec int    `json:"timeout_seconds,omitempty"`
+}
+
+// Runners this endpoint will execute over HTTP without being asked twice.
+//
+// These call a model API and return text. The CLI runners do something
+// categorically different: claude runs with --permission-mode auto, codex with
+// workspace-write, gemini with --approval-mode auto_edit. Those are agentic
+// sessions with filesystem access, so exposing them on a socket turns this into
+// remote code execution -- for anyone holding the API key, and for anyone who
+// obtains it later.
+//
+// That is a decision an operator should make deliberately, not one they inherit
+// by starting a server.
+var httpSafeRunners = map[agent.RunnerKind]bool{
+	agent.RunnerOllamaHTTP: true,
+	agent.RunnerOpenAIHTTP: true,
+}
+
+func agenticRunnersAllowed() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("AGENTVAULT_SERVE_ALLOW_AGENTIC")), "true")
 }
 
 func isLoopbackHost(host string) bool {
