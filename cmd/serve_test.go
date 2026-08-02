@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/vault"
@@ -333,7 +336,12 @@ func TestPromptRefusesAgenticRunnersByDefault(t *testing.T) {
 	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
 	defer srv.Close()
 
+	// Cleared explicitly: inherited from the environment this test would pass
+	// or fail depending on the machine it runs on, which is worse than not
+	// having it.
 	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "")
+	t.Setenv("AGENTVAULT_SERVE_WORKSPACE", "")
+
 	resp := postPrompt(t, srv, `{"prompt":"write a file"}`)
 	defer resp.Body.Close()
 
@@ -358,17 +366,54 @@ func TestPromptRefusesRatherThanSilentlyPickingAnotherAgent(t *testing.T) {
 	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
 	defer srv.Close()
 
+	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "")
+	t.Setenv("AGENTVAULT_SERVE_WORKSPACE", "")
+
 	resp := postPrompt(t, srv, `{"prompt":"write a file"}`)
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+
 	var body map[string]any
-	json.NewDecoder(resp.Body).Decode(&body)
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
 
 	if body["text"] != nil {
 		t.Fatal("a refused request returned generated text")
 	}
 	if body["agent"] == nil {
 		t.Fatal("the refusal does not say which agent was selected")
+	}
+}
+
+func TestAgenticWithoutAWorkspaceIsStillRefused(t *testing.T) {
+	// Enabling the capability and choosing its blast radius are one decision.
+	// Permitting the runner without saying where it may work would run an agent
+	// with filesystem access in whatever directory the server was started from
+	// -- for claude, a session with --permission-mode auto.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", ""))
+	defer srv.Close()
+
+	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "true")
+	t.Setenv("AGENTVAULT_SERVE_WORKSPACE", "")
+
+	resp := postPrompt(t, srv, `{"prompt":"write a file"}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "AGENTVAULT_SERVE_WORKSPACE") {
+		t.Fatalf("the refusal does not name the missing setting: %v", body["error"])
 	}
 }
 
@@ -437,5 +482,64 @@ func TestHTTPSafeRunnersAreOnlyTheNonAgenticOnes(t *testing.T) {
 	}
 	if !httpSafeRunners[agent.RunnerOllamaHTTP] || !httpSafeRunners[agent.RunnerOpenAIHTTP] {
 		t.Fatal("the model-API runners should be permitted")
+	}
+}
+
+func TestPromptTimeoutIsCapped(t *testing.T) {
+	// Unbounded, an authenticated caller can hold a goroutine and an upstream
+	// connection for as long as it likes -- a slow request is fine, an
+	// indefinite one is a way to exhaust the server with a handful of calls.
+	cases := []struct {
+		name    string
+		seconds int
+		want    time.Duration
+	}{
+		{"unset falls back to the default", 0, defaultPromptTimeout},
+		{"negative falls back to the default", -5, defaultPromptTimeout},
+		{"a reasonable value is honoured", 30, 30 * time.Second},
+		{"a day is capped", 86400, maxPromptTimeout},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := time.Duration(tc.seconds) * time.Second
+			if got <= 0 {
+				got = defaultPromptTimeout
+			}
+			if got > maxPromptTimeout {
+				got = maxPromptTimeout
+			}
+			if got != tc.want {
+				t.Fatalf("timeout = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPromptExecutionIsCancelledWhenTheClientDisconnects(t *testing.T) {
+	// An already-cancelled context, rather than racing a blocking server: the
+	// property under test is that the context reaches the request at all. If it
+	// does not, the call ignores cancellation and runs to its own timeout,
+	// which is the bug -- the model keeps generating for a caller that is no
+	// longer listening and the server pays for it.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the request reached the server despite a cancelled context")
+	}))
+	defer upstream.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := executeOllamaPrompt(ctx, agent.Agent{
+		Provider: agent.ProviderOllama,
+		Model:    "llama3.2",
+		BaseURL:  upstream.URL,
+	}, "hello", 30*time.Second)
+
+	if err == nil {
+		t.Fatal("execution succeeded with a cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want it to wrap context.Canceled", err)
 	}
 }
