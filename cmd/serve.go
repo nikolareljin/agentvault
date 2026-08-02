@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/router"
@@ -282,7 +283,7 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 				// a client that closed its own connection.
 				writeJSON(w, 499, map[string]string{"error": "client closed the request"})
 			default:
-				log.Printf("routing failed: %v", err)
+				log.Printf("routing failed: %s", sanitizeForLog(err.Error()))
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing failed"})
 			}
 			return
@@ -363,7 +364,7 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 				case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 					writeJSON(w, 499, map[string]string{"error": "client closed the request"})
 				default:
-					log.Printf("routing failed: %v", err)
+					log.Printf("routing failed: %s", sanitizeForLog(err.Error()))
 					writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing failed"})
 				}
 				return
@@ -379,7 +380,7 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 				}
 			}
 			if !found {
-				log.Printf("router selected unknown agent %q", decision.Selected.Agent.Name)
+				log.Printf("router selected unknown agent %q", sanitizeForLog(decision.Selected.Agent.Name))
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "routing selected an unknown agent"})
 				return
 			}
@@ -450,8 +451,12 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 		// asked.
 		if !httpSafeRunners[target.Runner] {
 			log.Printf(
-				"AGENTIC EXECUTION agent=%s runner=%s workspace=%s prompt_bytes=%d remote=%s",
-				selected.Name, target.Runner, executionDir, len(req.Prompt), r.RemoteAddr,
+				"AGENTIC EXECUTION agent=%q runner=%q workspace=%q prompt_bytes=%d remote=%q",
+				sanitizeForLog(selected.Name),
+				sanitizeForLog(string(target.Runner)),
+				sanitizeForLog(executionDir),
+				len(req.Prompt),
+				sanitizeForLog(r.RemoteAddr),
 			)
 		}
 
@@ -461,7 +466,12 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			// endpoint URLs, filesystem paths and occasionally a fragment of a
 			// credential, and none of that is stable enough for a client to
 			// depend on either. The code is what a caller branches on.
-			log.Printf("prompt execution failed for agent %s (runner %s): %v", selected.Name, target.Runner, err)
+			log.Printf(
+				"prompt execution failed for agent %q (runner %q): %s",
+				sanitizeForLog(selected.Name),
+				sanitizeForLog(string(target.Runner)),
+				sanitizeForLog(err.Error()),
+			)
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				writeJSON(w, 499, map[string]string{"error": "client closed the request", "code": "cancelled"})
 				return
@@ -576,6 +586,34 @@ const (
 
 func agenticRunnersAllowed() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("AGENTVAULT_SERVE_ALLOW_AGENTIC")), "true")
+}
+
+// sanitizeForLog strips anything that could forge a log line.
+//
+// This matters most for the audit line, whose whole value is being trustworthy:
+// a value carrying a newline could append a second, fabricated
+// "AGENTIC EXECUTION" record, and an audit trail an attacker can write to is
+// worse than none, because it is believed. Control characters go too -- a
+// terminal reading the log should not be steered by its contents.
+func sanitizeForLog(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		case unicode.IsControl(r):
+			// Dropped rather than replaced: a control character in an agent
+			// name or a path is not information anyone needs in a log.
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if len(out) > 256 {
+		return out[:256] + "…"
+	}
+	return out
 }
 
 // requireStrongAuth reports whether this request may reach an endpoint that
