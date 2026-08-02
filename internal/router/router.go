@@ -86,10 +86,43 @@ type Decision struct {
 	EffectiveDeadline   string      `json:"effective_deadline,omitempty"`
 }
 
+// Errors a caller can act on, as opposed to ones that mean something is
+// misconfigured or broken on this side.
+//
+// The distinction exists because they call for opposite responses. A prompt
+// that no agent can satisfy is the caller's answer -- they asked for something
+// impossible under the current policy, and telling them so is the correct
+// result. A langgraph script that cannot be found is an operator's problem, and
+// reporting it as though the caller got their input wrong sends whoever is
+// debugging it in the wrong direction.
+var (
+	// ErrEmptyPrompt means there was nothing to route.
+	ErrEmptyPrompt = errors.New("routing requires non-empty prompt")
+	// ErrNoCandidates means no agent was available to consider at all.
+	ErrNoCandidates = errors.New("no routing candidates available")
+	// ErrPolicyUnsatisfiable means candidates existed, but none satisfy the
+	// constraints asked for.
+	ErrPolicyUnsatisfiable = errors.New("no routing target satisfies the current policy")
+)
+
 // Route chooses an execution target using either heuristic, LangGraph, or local-ai mode.
+//
+// Equivalent to RouteContext with a background context. Kept so existing
+// callers are unchanged; anything serving a request should use RouteContext so
+// a caller going away stops the work being done on its behalf.
 func Route(req Request) (Decision, error) {
+	return RouteContext(context.Background(), req)
+}
+
+// RouteContext is Route with cancellation.
+//
+// The langgraph and llm-router modes shell out to a subprocess and call an HTTP
+// service respectively. Both already accepted a context internally; until now
+// nothing passed one in, so they were started from context.Background() and a
+// client that disconnected left the work running to completion regardless.
+func RouteContext(ctx context.Context, req Request) (Decision, error) {
 	if strings.TrimSpace(req.Prompt) == "" {
-		return Decision{}, errors.New("routing requires non-empty prompt")
+		return Decision{}, ErrEmptyPrompt
 	}
 	cfg := mergeRouterConfig(req.Shared.Router, req.Config).WithDefaults()
 	if err := cfg.Validate(); err != nil {
@@ -98,7 +131,7 @@ func Route(req Request) (Decision, error) {
 	mode := cfg.EffectiveMode()
 	switch mode {
 	case "langgraph":
-		decision, err := routeWithLangGraph(req, cfg)
+		decision, err := routeWithLangGraph(ctx, req, cfg)
 		if err == nil {
 			return decision, nil
 		}
@@ -114,7 +147,7 @@ func Route(req Request) (Decision, error) {
 	case "local-ai":
 		return routeWithLocalAI(req, cfg)
 	case "llm-router":
-		return routeWithLLMRouter(req, cfg)
+		return routeWithLLMRouter(ctx, req, cfg)
 	default:
 		return routeHeuristic(req, cfg)
 	}
@@ -188,12 +221,12 @@ func mergeRouterConfig(base, override agent.RouterConfig) agent.RouterConfig {
 func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		return Decision{}, errors.New("routing requires non-empty prompt")
+		return Decision{}, ErrEmptyPrompt
 	}
 	intent := classifyPrompt(prompt)
 	candidates := buildCandidates(req.Agents, intent, cfg, prompt, req.ModelCapabilities)
 	if len(candidates) == 0 {
-		return Decision{}, errors.New("no routing candidates available")
+		return Decision{}, ErrNoCandidates
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].Score == candidates[j].Score {
@@ -213,7 +246,7 @@ func routeHeuristic(req Request, cfg agent.RouterConfig) (Decision, error) {
 		}
 	}
 	if selectedIdx == -1 {
-		return Decision{}, errors.New("no supported routing target satisfies the current policy")
+		return Decision{}, ErrPolicyUnsatisfiable
 	}
 
 	selected := candidates[selectedIdx]
@@ -633,7 +666,7 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 
 	candidates := buildCandidates(req.Agents, intent, overrideCfg, trimmedPrompt, req.ModelCapabilities)
 	if len(candidates) == 0 {
-		return Decision{}, errors.New("no routing candidates available")
+		return Decision{}, ErrNoCandidates
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -654,7 +687,7 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 		}
 	}
 	if selectedIdx == -1 {
-		return Decision{}, errors.New("no supported routing target satisfies the current policy")
+		return Decision{}, ErrPolicyUnsatisfiable
 	}
 
 	selected := candidates[selectedIdx]
@@ -687,14 +720,14 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 	}, nil
 }
 
-func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
+func routeWithLLMRouter(ctx context.Context, req Request, cfg agent.RouterConfig) (Decision, error) {
 	trimmedPrompt := strings.TrimSpace(req.Prompt)
 	intent := classifyPrompt(trimmedPrompt)
 	overrideCfg := cfg
 
 	candidates := buildCandidates(req.Agents, intent, overrideCfg, trimmedPrompt, req.ModelCapabilities)
 	if len(candidates) == 0 {
-		return Decision{}, errors.New("no routing candidates available")
+		return Decision{}, ErrNoCandidates
 	}
 
 	// Pre-filter to policy-allowed candidates so the LLM only reasons about agents
@@ -706,7 +739,7 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		}
 	}
 	if len(llmCandidates) == 0 {
-		return Decision{}, errors.New("no candidates satisfy routing policy for llm-router")
+		return Decision{}, fmt.Errorf("%w (llm-router)", ErrPolicyUnsatisfiable)
 	}
 
 	sort.SliceStable(llmCandidates, func(i, j int) bool {
@@ -730,7 +763,7 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		GPULayers:     cfg.LLMRouterGPULayers,
 	}
 
-	decision, err := AnalyzeWithLLMRouter(context.Background(), trimmedPrompt, llmCandidates, llmCfg)
+	decision, err := AnalyzeWithLLMRouter(ctx, trimmedPrompt, llmCandidates, llmCfg)
 	if err != nil {
 		if !overrideCfg.AllowFallbacks {
 			return Decision{}, fmt.Errorf("llm-router analysis failed: %w", err)
@@ -765,7 +798,7 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 	// fallback selection scores reflect the same signals the LLM decision was based on.
 	candidates = buildCandidates(req.Agents, intent, overrideCfg, trimmedPrompt, req.ModelCapabilities)
 	if len(candidates) == 0 {
-		return Decision{}, errors.New("no routing candidates after intent enrichment")
+		return Decision{}, fmt.Errorf("%w: none remained after intent enrichment", ErrNoCandidates)
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].Score == candidates[j].Score {
@@ -784,7 +817,7 @@ func routeWithLLMRouter(req Request, cfg agent.RouterConfig) (Decision, error) {
 		}
 	}
 	if len(allowed) == 0 {
-		return Decision{}, errors.New("no candidates satisfy routing policy after llm-router decision")
+		return Decision{}, fmt.Errorf("%w (after the llm-router decision)", ErrPolicyUnsatisfiable)
 	}
 
 	selected, err := llmBalancer.PickBest(context.Background(), decision, allowed)
@@ -843,7 +876,7 @@ type langGraphOutput struct {
 	Reasons       []string `json:"reasons,omitempty"`
 }
 
-func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
+func routeWithLangGraph(ctx context.Context, req Request, cfg agent.RouterConfig) (Decision, error) {
 	trimmedPrompt := strings.TrimSpace(req.Prompt)
 	intent := classifyPrompt(trimmedPrompt)
 	scriptPath := strings.TrimSpace(cfg.LangGraphCmd)
@@ -855,7 +888,7 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 	}
 	candidates := buildCandidates(req.Agents, intent, cfg, trimmedPrompt, req.ModelCapabilities)
 	if len(candidates) == 0 {
-		return Decision{}, errors.New("no routing candidates available")
+		return Decision{}, ErrNoCandidates
 	}
 	resolvedScriptPath, err := resolveLangGraphScriptPath(scriptPath)
 	if err != nil {
@@ -868,7 +901,9 @@ func routeWithLangGraph(req Request, cfg agent.RouterConfig) (Decision, error) {
 		return Decision{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// Derived from the caller's context, so a client disconnect cancels the
+	// subprocess rather than leaving it to run out its own 15 seconds.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	pythonCmd, err := resolvePythonInterpreter()
 	if err != nil {

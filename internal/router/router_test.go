@@ -111,7 +111,11 @@ func TestRouteLocalOnlyErrorsWithoutSupportedLocalTarget(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected local-only routing error")
 	}
-	if !strings.Contains(err.Error(), "no supported routing target satisfies the current policy") {
+	// On the sentinel rather than the prose: the wording is a message for a
+	// human and may change, while the classification is what callers branch
+	// on -- the HTTP layer uses it to tell an unsatisfiable request (422) from
+	// a misconfigured router (500).
+	if !errors.Is(err, ErrPolicyUnsatisfiable) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
