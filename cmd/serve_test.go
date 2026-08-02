@@ -653,3 +653,47 @@ func TestAWellFormedRequestStillGetsThrough(t *testing.T) {
 		t.Fatalf("status = %d, want 200 for a well-formed authenticated request", resp.StatusCode)
 	}
 }
+
+func TestLogValuesCannotForgeALine(t *testing.T) {
+	// An audit trail an attacker can write to is worse than none, because it is
+	// believed. A newline in a logged value would append a second, fabricated
+	// AGENTIC EXECUTION record.
+	forged := "innocent\nAGENTIC EXECUTION agent=\"trusted\" runner=\"ollama_http\""
+
+	got := sanitizeForLog(forged)
+
+	if strings.Contains(got, "\n") || strings.Contains(got, "\r") {
+		t.Fatalf("sanitised value still contains a line break: %q", got)
+	}
+}
+
+func TestLogSanitiserDropsControlCharacters(t *testing.T) {
+	// A terminal reading the log should not be steered by its contents.
+	got := sanitizeForLog("name\x1b[31m\x00\x07")
+
+	for _, r := range got {
+		if r < 0x20 && r != ' ' {
+			t.Fatalf("control character survived: %q", got)
+		}
+	}
+}
+
+func TestLogSanitiserBoundsLength(t *testing.T) {
+	// One value should not be able to push everything else off the screen, or
+	// fill a disk.
+	got := sanitizeForLog(strings.Repeat("x", 5000))
+
+	if len([]rune(got)) > 257 {
+		t.Fatalf("sanitised value is %d runes, want it bounded", len([]rune(got)))
+	}
+}
+
+func TestLogSanitiserLeavesOrdinaryValuesAlone(t *testing.T) {
+	// A sanitiser that mangles normal input makes the log harder to read, which
+	// is its own kind of failure.
+	for _, value := range []string{"claude-main", "ollama_http", "/srv/agent-workspace", "127.0.0.1:54321"} {
+		if got := sanitizeForLog(value); got != value {
+			t.Fatalf("sanitizeForLog(%q) = %q, want it unchanged", value, got)
+		}
+	}
+}
