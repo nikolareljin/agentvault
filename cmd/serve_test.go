@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -873,5 +874,20 @@ func TestAnUnknownRunnerIsNotTreatedAsSafe(t *testing.T) {
 	d := router.Decision{Selected: candidate("mystery", agent.RunnerKind("something-new"))}
 	if _, ok := safeCandidateFor(d); ok {
 		t.Fatal("safeCandidateFor() accepted a runner that is not on the allowlist")
+	}
+}
+
+func TestRefusalNeverReusesSelectedForAPlainString(t *testing.T) {
+	// A 200 from /route puts the full Candidate object under "selected". The
+	// refusals used the same key for a bare agent name, so a client decoding
+	// "selected" as an object broke on exactly the responses it most needed to
+	// read. String-valued agent names use "agent", matching every neighbouring
+	// error payload.
+	body, err := os.ReadFile("serve.go")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.Contains(string(body), `"selected": decision.Selected.Agent.Name`) {
+		t.Error(`a refusal payload puts a string under "selected"; use "agent" instead`)
 	}
 }
