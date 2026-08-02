@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/router"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -28,6 +30,7 @@ via the AGENTVAULT_SERVE_KEY environment variable.
 Endpoints:
   GET /health                  Health check
   GET /api/v1/status           Server and vault status
+  POST /api/v1/route           Choose a target for a prompt, without running it
   GET /api/v1/agents           List agents (API keys never exposed)
   GET /api/v1/agents/{name}    Get agent by name
 
@@ -197,7 +200,99 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 		})
 	}))
 
+	// POST /api/v1/route
+	//
+	// Decides who should handle a prompt without executing it. Useful on its
+	// own: a caller can plan, estimate cost, or show the user which model is
+	// about to see their data before anything is sent to it.
+	mux.HandleFunc("/api/v1/route", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+
+		var req routeRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+			return
+		}
+		if strings.TrimSpace(req.Prompt) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "prompt is required"})
+			return
+		}
+
+		decision, err := router.Route(router.Request{
+			Prompt:            req.Prompt,
+			Agents:            v.List(),
+			Shared:            v.SharedConfig(),
+			Config:            req.toRouterConfig(),
+			ModelCapabilities: v.ListCapabilities(),
+		})
+		if err != nil {
+			// A routing failure is the caller's answer, not a server fault:
+			// it usually means no agent satisfies the constraints they asked
+			// for, and the message says which.
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"mode":      decision.Mode,
+			"intent":    decision.Intent,
+			"selected":  decision.Selected,
+			"fallbacks": decision.Fallbacks,
+			// Every candidate considered, not only the winner. A routing
+			// decision nobody can inspect is one nobody can debug when it
+			// picks something surprising.
+			"candidates": decision.Candidates,
+		})
+	}))
+
 	return mux
+}
+
+// routeRequest is the POST /api/v1/route body.
+//
+// Deliberately the routing hints the CLI already accepts, under the same
+// names. A second vocabulary for the same concepts would mean the HTTP and CLI
+// paths could disagree about what "prefer local" means, and only one of them
+// would be documented.
+type routeRequest struct {
+	Prompt         string `json:"prompt"`
+	Mode           string `json:"mode,omitempty"`
+	PreferLocal    bool   `json:"prefer_local,omitempty"`
+	LocalOnly      bool   `json:"local_only,omitempty"`
+	PreferFast     bool   `json:"prefer_fast,omitempty"`
+	PreferLowCost  bool   `json:"prefer_low_cost,omitempty"`
+	AllowFallbacks bool   `json:"allow_fallbacks,omitempty"`
+	Importance     string `json:"importance,omitempty"` // low|medium|high|critical
+	Deadline       string `json:"deadline,omitempty"`   // immediate|normal|background
+}
+
+func (rr routeRequest) toRouterConfig() agent.RouterConfig {
+	cfg := agent.RouterConfig{}
+	if rr.Mode != "" {
+		cfg.Mode = rr.Mode
+	}
+	if rr.Importance != "" {
+		cfg.Importance = rr.Importance
+	}
+	if rr.Deadline != "" {
+		cfg.Deadline = rr.Deadline
+	}
+	cfg.PreferFast = rr.PreferFast
+	cfg.PreferLowCost = rr.PreferLowCost
+	cfg.AllowFallbacks = rr.AllowFallbacks
+	if rr.LocalOnly {
+		// local_only is the stronger claim and implies the weaker one, so a
+		// caller cannot end up with local_only set and prefer_local unset and
+		// wonder which won.
+		cfg.LocalOnly = true
+		cfg.PreferLocal = true
+	} else if rr.PreferLocal {
+		cfg.PreferLocal = true
+	}
+	return cfg
 }
 
 func isLoopbackHost(host string) bool {
