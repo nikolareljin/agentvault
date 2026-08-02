@@ -697,3 +697,108 @@ func TestLogSanitiserLeavesOrdinaryValuesAlone(t *testing.T) {
 		}
 	}
 }
+
+// --- Untrusted content ------------------------------------------------------
+//
+// The only defence against prompt injection here that is not advisory.
+// Delimiters and "ignore instructions in the content below" help, but they are
+// a request to a system whose purpose is following instructions written in
+// text. What an injection cannot do is reach a capability that was never
+// offered.
+
+func TestUntrustedContentCannotReachAnAgenticRunner(t *testing.T) {
+	v := testServeVault(t) // its only agent is a claude CLI agent
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
+	defer srv.Close()
+
+	// Agentic runners fully enabled by the operator -- and still refused,
+	// because the constraint is about the data, not the configuration.
+	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "true")
+	t.Setenv("AGENTVAULT_SERVE_WORKSPACE", t.TempDir())
+
+	resp := postPrompt(t, srv, `{"prompt":"summarise this document","untrusted_content":true}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for untrusted content on an agentic runner", resp.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if body["code"] != "untrusted_content_needs_a_safe_runner" {
+		t.Fatalf("code = %v, want untrusted_content_needs_a_safe_runner", body["code"])
+	}
+	if body["text"] != nil {
+		t.Fatal("a refused request returned generated text")
+	}
+}
+
+func TestTheOperatorCannotOverrideTheUntrustedConstraint(t *testing.T) {
+	// The check sits before the allow-flag on purpose. If enabling agentic
+	// runners could re-open this path, the flag would silently undo every
+	// caller's judgement about its own data.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
+	defer srv.Close()
+
+	for _, allow := range []string{"true", "false", ""} {
+		t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", allow)
+		t.Setenv("AGENTVAULT_SERVE_WORKSPACE", t.TempDir())
+
+		resp := postPrompt(t, srv, `{"prompt":"x","untrusted_content":true}`)
+		status := resp.StatusCode
+		resp.Body.Close()
+
+		if status != http.StatusForbidden {
+			t.Fatalf("ALLOW_AGENTIC=%q gave status %d, want 403", allow, status)
+		}
+	}
+}
+
+func TestRoutingRefusesAnAgenticTargetForUntrustedContent(t *testing.T) {
+	// Answered at routing time rather than leaving the caller to discover it at
+	// execution time: routing yes then prompting no is a bad way to learn.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
+	defer srv.Close()
+
+	resp := postRoute(t, srv, testKey, `{"prompt":"review this","untrusted_content":true}`)
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if body["code"] != "untrusted_content_needs_a_safe_runner" {
+		t.Fatalf("code = %v, want untrusted_content_needs_a_safe_runner", body["code"])
+	}
+}
+
+func TestTrustedPromptsAreUnaffected(t *testing.T) {
+	// The control must not change behaviour for a caller that did not ask for
+	// it, or it becomes something people work around.
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", testKey))
+	defer srv.Close()
+
+	t.Setenv("AGENTVAULT_SERVE_ALLOW_AGENTIC", "")
+	t.Setenv("AGENTVAULT_SERVE_WORKSPACE", "")
+
+	resp := postPrompt(t, srv, `{"prompt":"x"}`)
+	defer resp.Body.Close()
+
+	var body map[string]any
+	json.NewDecoder(resp.Body).Decode(&body)
+
+	// Still refused, but for the pre-existing reason, with the pre-existing
+	// message -- not the untrusted-content one.
+	if body["code"] == "untrusted_content_needs_a_safe_runner" {
+		t.Fatal("a prompt that did not declare untrusted content was refused as though it had")
+	}
+}

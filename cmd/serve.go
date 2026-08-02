@@ -53,6 +53,21 @@ Agentic CLI runners (claude, codex, gemini) run sessions with filesystem access
 and are refused by /api/v1/prompt unless BOTH AGENTVAULT_SERVE_ALLOW_AGENTIC=true
 and AGENTVAULT_SERVE_WORKSPACE=<dir> are set.
 
+PROMPT INJECTION
+
+A caller sending a prompt that contains text it did not author -- retrieved
+documents, a scraped page, an email body -- should set "untrusted_content":
+true. Agentic runners are then refused outright, before and regardless of
+AGENTVAULT_SERVE_ALLOW_AGENTIC.
+
+This is the only defence here that is not advisory. Wrapping content in
+delimiters and instructing a model to ignore instructions inside them is worth
+doing, and callers should do it, but it is a request to a system whose entire
+purpose is following instructions written in text. An injection that gets
+through still cannot use a capability that was never offered.
+
+Erring towards true costs a routing option. Erring towards false costs a shell.
+
 AGENTVAULT_SERVE_WORKSPACE is NOT a sandbox. It sets the working directory; an
 auto-approved agent can still write absolute paths, read ~/.ssh and run any
 command as this user. Enabling agentic runners grants shell access to whoever
@@ -289,11 +304,27 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			return
 		}
 
+		if req.UntrustedContent && !httpSafeRunners[decision.Selected.Target.Runner] {
+			// Answered at routing time rather than leaving the caller to
+			// discover it at execution time: a caller that routes, then
+			// prompts, should not be told yes and then no.
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+				"error": fmt.Sprintf(
+					"the best target for this prompt is runner %q, which runs an agentic "+
+						"session and cannot be used for untrusted content",
+					decision.Selected.Target.Runner),
+				"code":     "untrusted_content_needs_a_safe_runner",
+				"selected": decision.Selected.Agent.Name,
+			})
+			return
+		}
+
 		writeJSON(w, http.StatusOK, map[string]any{
-			"mode":      decision.Mode,
-			"intent":    decision.Intent,
-			"selected":  decision.Selected,
-			"fallbacks": decision.Fallbacks,
+			"mode":              decision.Mode,
+			"intent":            decision.Intent,
+			"selected":          decision.Selected,
+			"fallbacks":         decision.Fallbacks,
+			"untrusted_content": req.UntrustedContent,
 			// Every candidate considered, not only the winner. A routing
 			// decision nobody can inspect is one nobody can debug when it
 			// picks something surprising.
@@ -391,6 +422,28 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 		if !target.Supported {
 			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
 				"error": fmt.Sprintf("runner %q is not supported for execution", target.Runner),
+			})
+			return
+		}
+
+		// Checked before the operator's allow-flag, so enabling agentic runners
+		// cannot re-open this path. A caller declaring its content untrusted is
+		// making a statement about the data, and no server configuration should
+		// be able to override it.
+		if req.UntrustedContent && !httpSafeRunners[target.Runner] {
+			log.Printf(
+				"refused untrusted-content prompt for agentic runner agent=%q runner=%q remote=%q",
+				sanitizeForLog(selected.Name),
+				sanitizeForLog(string(target.Runner)),
+				sanitizeForLog(r.RemoteAddr),
+			)
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": fmt.Sprintf(
+					"runner %q runs an agentic session and cannot be used for a prompt "+
+						"marked untrusted_content", target.Runner),
+				"code":   "untrusted_content_needs_a_safe_runner",
+				"agent":  selected.Name,
+				"runner": string(target.Runner),
 			})
 			return
 		}
@@ -514,15 +567,32 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 // paths could disagree about what "prefer local" means, and only one of them
 // would be documented.
 type routeRequest struct {
-	Prompt         string `json:"prompt"`
-	Mode           string `json:"mode,omitempty"`
-	PreferLocal    bool   `json:"prefer_local,omitempty"`
-	LocalOnly      bool   `json:"local_only,omitempty"`
-	PreferFast     bool   `json:"prefer_fast,omitempty"`
-	PreferLowCost  bool   `json:"prefer_low_cost,omitempty"`
-	AllowFallbacks bool   `json:"allow_fallbacks,omitempty"`
-	Importance     string `json:"importance,omitempty"` // low|medium|high|critical
-	Deadline       string `json:"deadline,omitempty"`   // immediate|normal|background
+	Prompt string `json:"prompt"`
+	// UntrustedContent marks a prompt that carries text this caller did not
+	// write -- retrieved documents, a scraped page, an email body, anything a
+	// third party influenced.
+	//
+	// It is the only defence here that is not advisory. Wrapping content in
+	// delimiters and telling a model to ignore instructions inside them helps,
+	// but it is a request to a system whose whole purpose is following
+	// instructions written in text, and a sufficiently determined injection
+	// gets through. What an injection cannot do is reach a capability that was
+	// never offered: when this is set, agentic runners are refused outright,
+	// regardless of AGENTVAULT_SERVE_ALLOW_AGENTIC, so the worst outcome is a
+	// wrong answer rather than a command run on this machine.
+	//
+	// Callers should set it whenever any part of the prompt came from content
+	// they did not author. Erring towards true costs a routing option; erring
+	// towards false costs a shell.
+	UntrustedContent bool   `json:"untrusted_content,omitempty"`
+	Mode             string `json:"mode,omitempty"`
+	PreferLocal      bool   `json:"prefer_local,omitempty"`
+	LocalOnly        bool   `json:"local_only,omitempty"`
+	PreferFast       bool   `json:"prefer_fast,omitempty"`
+	PreferLowCost    bool   `json:"prefer_low_cost,omitempty"`
+	AllowFallbacks   bool   `json:"allow_fallbacks,omitempty"`
+	Importance       string `json:"importance,omitempty"` // low|medium|high|critical
+	Deadline         string `json:"deadline,omitempty"`   // immediate|normal|background
 }
 
 func (rr routeRequest) toRouterConfig() agent.RouterConfig {
