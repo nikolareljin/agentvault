@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/router"
 	"github.com/nikolareljin/agentvault/internal/vault"
 )
 
@@ -800,5 +801,77 @@ func TestTrustedPromptsAreUnaffected(t *testing.T) {
 	// message -- not the untrusted-content one.
 	if body["code"] == "untrusted_content_needs_a_safe_runner" {
 		t.Fatal("a prompt that did not declare untrusted content was refused as though it had")
+	}
+}
+
+// --- Rerouting untrusted content around agentic runners ---------------------
+//
+// Refusing whenever the router happened to pick an agentic winner made the
+// capability safe and unusable: a corpus service asking a routine question
+// would be rejected purely because the router liked a CLI agent, with a
+// perfectly good HTTP model sitting in the fallback list.
+
+func candidate(name string, runner agent.RunnerKind) router.Candidate {
+	return router.Candidate{
+		Agent:  router.AgentView{Name: name},
+		Target: agent.ExecutionTarget{AgentName: name, Runner: runner, Supported: true},
+	}
+}
+
+func TestSafeCandidateKeepsTheRoutersChoiceWhenItIsAlreadySafe(t *testing.T) {
+	d := router.Decision{
+		Selected:  candidate("ollama-local", agent.RunnerOllamaHTTP),
+		Fallbacks: []router.Candidate{candidate("claude-main", agent.RunnerClaudeCLI)},
+	}
+	got, ok := safeCandidateFor(d)
+	if !ok || got.Agent.Name != "ollama-local" {
+		t.Fatalf("safeCandidateFor() = %q, %v; want ollama-local, true", got.Agent.Name, ok)
+	}
+}
+
+func TestSafeCandidateFallsBackPastAnAgenticWinner(t *testing.T) {
+	d := router.Decision{
+		Selected: candidate("claude-main", agent.RunnerClaudeCLI),
+		Fallbacks: []router.Candidate{
+			candidate("codex-cli", agent.RunnerCodexCLI),
+			candidate("ollama-local", agent.RunnerOllamaHTTP),
+		},
+	}
+	got, ok := safeCandidateFor(d)
+	if !ok || got.Agent.Name != "ollama-local" {
+		t.Fatalf("safeCandidateFor() = %q, %v; want ollama-local, true", got.Agent.Name, ok)
+	}
+}
+
+func TestSafeCandidateRefusesWhenNothingIsSafe(t *testing.T) {
+	d := router.Decision{
+		Selected:  candidate("claude-main", agent.RunnerClaudeCLI),
+		Fallbacks: []router.Candidate{candidate("codex-cli", agent.RunnerCodexCLI)},
+	}
+	if _, ok := safeCandidateFor(d); ok {
+		t.Fatal("safeCandidateFor() returned a candidate when every runner was agentic")
+	}
+}
+
+func TestSafeCandidateDoesNotReachPastTheFallbackList(t *testing.T) {
+	// Candidates is the full ranked pool, including entries the caller's own
+	// config excludes. Rerouting off it would let a local_only prompt land on
+	// a remote provider -- trading a shell for a privacy breach. Only
+	// Fallbacks has been filtered against that config, so only it is consulted.
+	d := router.Decision{
+		Selected:   candidate("claude-main", agent.RunnerClaudeCLI),
+		Fallbacks:  nil,
+		Candidates: []router.Candidate{candidate("openai-remote", agent.RunnerOpenAIHTTP)},
+	}
+	if _, ok := safeCandidateFor(d); ok {
+		t.Fatal("safeCandidateFor() rerouted to a candidate the caller's config had excluded")
+	}
+}
+
+func TestAnUnknownRunnerIsNotTreatedAsSafe(t *testing.T) {
+	// Fail closed: a runner added later is refused until it is listed.
+	d := router.Decision{Selected: candidate("mystery", agent.RunnerKind("something-new"))}
+	if _, ok := safeCandidateFor(d); ok {
+		t.Fatal("safeCandidateFor() accepted a runner that is not on the allowlist")
 	}
 }
