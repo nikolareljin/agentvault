@@ -326,8 +326,8 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 							"fallback runner can be. Set allow_fallbacks to let routing "+
 							"choose a safe target.",
 						decision.Selected.Target.Runner),
-					"code":     "untrusted_content_needs_a_safe_runner",
-					"selected": decision.Selected.Agent.Name,
+					"code":  "untrusted_content_needs_a_safe_runner",
+					"agent": decision.Selected.Agent.Name,
 				})
 				return
 			}
@@ -441,8 +441,8 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 								"marked untrusted_content, and no fallback runner can be. Set "+
 								"allow_fallbacks to let routing choose a safe target.",
 							decision.Selected.Target.Runner),
-						"code":     "untrusted_content_needs_a_safe_runner",
-						"selected": decision.Selected.Agent.Name,
+						"code":  "untrusted_content_needs_a_safe_runner",
+						"agent": decision.Selected.Agent.Name,
 					})
 					return
 				}
@@ -475,10 +475,16 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			return
 		}
 
-		// Checked before the operator's allow-flag, so enabling agentic runners
-		// cannot re-open this path. A caller declaring its content untrusted is
-		// making a statement about the data, and no server configuration should
-		// be able to override it.
+		// The routed case has already been rerouted to a safe target above, so
+		// what reaches here is a caller that named an agentic agent itself.
+		// That one is refused rather than substituted: asking for a coding
+		// agent and silently getting a chat model back is the surprise the
+		// rerouting rule does not apply to.
+		//
+		// It is also the backstop for the whole policy. Checked before the
+		// operator's allow-flag, so enabling agentic runners cannot re-open the
+		// path, and positioned after target resolution so no route into
+		// execution bypasses it.
 		if req.UntrustedContent && !httpSafeRunners[target.Runner] {
 			log.Printf(
 				"refused untrusted-content prompt for agentic runner agent=%q runner=%q remote=%q",
