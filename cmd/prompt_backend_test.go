@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -214,7 +215,7 @@ func TestExecuteOpenAIPrompt(t *testing.T) {
 	for _, baseURL := range []string{server.URL, server.URL + "/v1"} {
 		baseURL := baseURL
 		t.Run("ok:"+baseURL, func(t *testing.T) {
-			result, err := executeOpenAIPrompt(agent.Agent{
+			result, err := executeOpenAIPrompt(context.Background(), agent.Agent{
 				Provider: agent.ProviderOpenAI,
 				Model:    "gpt-5",
 				APIKey:   apiKey,
@@ -263,7 +264,7 @@ func TestExecuteOpenAIPromptReturnsStatusError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := executeOpenAIPrompt(agent.Agent{
+	_, err := executeOpenAIPrompt(context.Background(), agent.Agent{
 		Provider: agent.ProviderOpenAI,
 		Model:    "gpt-5",
 		BaseURL:  server.URL,

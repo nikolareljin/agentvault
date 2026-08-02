@@ -37,8 +37,10 @@ Endpoints:
   POST /api/v1/prompt          Route, execute, and return the text with usage
 
 Agentic CLI runners (claude, codex, gemini) run sessions with filesystem
-access and are refused by /api/v1/prompt unless AGENTVAULT_SERVE_ALLOW_AGENTIC
-is set to true.
+access and are refused by /api/v1/prompt unless BOTH
+AGENTVAULT_SERVE_ALLOW_AGENTIC=true and AGENTVAULT_SERVE_WORKSPACE=<dir> are
+set. Enabling the capability and choosing where it may write are one decision,
+so neither is enough on its own.
   GET /api/v1/agents           List agents (API keys never exposed)
   GET /api/v1/agents/{name}    Get agent by name
 
@@ -364,31 +366,68 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			return
 		}
 
-		if !httpSafeRunners[target.Runner] && !agenticRunnersAllowed() {
+		executionDir := ""
+		if !httpSafeRunners[target.Runner] {
 			// Refused rather than quietly downgraded to another agent: a caller
 			// asking for a coding agent and silently getting a chat model back
 			// would be a worse surprise than being told no.
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error": fmt.Sprintf(
-					"runner %q runs an agentic CLI session with filesystem access and is not "+
-						"exposed over HTTP by default; set AGENTVAULT_SERVE_ALLOW_AGENTIC=true "+
-						"to permit it", target.Runner),
-				"agent":  selected.Name,
-				"runner": string(target.Runner),
-			})
-			return
+			if !agenticRunnersAllowed() {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": fmt.Sprintf(
+						"runner %q runs an agentic CLI session with filesystem access and is not "+
+							"exposed over HTTP by default; set AGENTVAULT_SERVE_ALLOW_AGENTIC=true "+
+							"to permit it", target.Runner),
+					"agent":  selected.Name,
+					"runner": string(target.Runner),
+				})
+				return
+			}
+
+			executionDir = agenticWorkspace()
+			if executionDir == "" {
+				// Permitting the runner without saying where it may work would
+				// run an agent with filesystem access in whatever directory the
+				// server was started from. Enabling the capability and choosing
+				// its blast radius are one decision, so both are required.
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": "AGENTVAULT_SERVE_ALLOW_AGENTIC is set but " +
+						"AGENTVAULT_SERVE_WORKSPACE is not; a CLI runner would execute in the " +
+						"server's own working directory",
+					"agent":  selected.Name,
+					"runner": string(target.Runner),
+				})
+				return
+			}
 		}
 
+		// Bounded. An unbounded timeout on an authenticated endpoint lets one
+		// caller hold a goroutine and an upstream connection for as long as it
+		// likes -- a slow request is fine, an indefinite one is a way to
+		// exhaust the server with a handful of calls.
 		timeout := time.Duration(req.TimeoutSec) * time.Second
 		if timeout <= 0 {
-			timeout = 120 * time.Second
+			timeout = defaultPromptTimeout
+		}
+		if timeout > maxPromptTimeout {
+			timeout = maxPromptTimeout
 		}
 
-		result, err := executePromptTarget(target, selected, req.Prompt, timeout, "", false, io.Discard, io.Discard)
+		// The request's context, so a client that disconnects ends the upstream
+		// call rather than leaving it running unwatched.
+		result, err := executePromptTarget(r.Context(), target, selected, req.Prompt, timeout, executionDir, false, io.Discard, io.Discard)
 		if err != nil {
-			log.Printf("prompt execution failed for agent %s: %v", selected.Name, err)
+			// Detail to the log, not to the caller. A provider error can carry
+			// endpoint URLs, filesystem paths and occasionally a fragment of a
+			// credential, and none of that is stable enough for a client to
+			// depend on either. The code is what a caller branches on.
+			log.Printf("prompt execution failed for agent %s (runner %s): %v", selected.Name, target.Runner, err)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				writeJSON(w, 499, map[string]string{"error": "client closed the request", "code": "cancelled"})
+				return
+			}
 			writeJSON(w, http.StatusBadGateway, map[string]string{
-				"error": fmt.Sprintf("execution failed: %v", err),
+				"error": "the provider could not be reached or failed to respond",
+				"code":  "execution_failed",
 				"agent": selected.Name,
 			})
 			return
@@ -486,8 +525,27 @@ var httpSafeRunners = map[agent.RunnerKind]bool{
 	agent.RunnerOpenAIHTTP: true,
 }
 
+const (
+	defaultPromptTimeout = 120 * time.Second
+	// A ceiling rather than a suggestion. A caller asking for longer is
+	// silently given this, because failing the request would be worse for a
+	// legitimately slow model and the cap is the point either way.
+	maxPromptTimeout = 10 * time.Minute
+)
+
 func agenticRunnersAllowed() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("AGENTVAULT_SERVE_ALLOW_AGENTIC")), "true")
+}
+
+// agenticWorkspace is the directory a CLI runner is allowed to work in.
+//
+// Required, not optional, and deliberately not defaulted. An empty executionDir
+// leaves cmd.Dir empty, which means the agent runs in whatever directory the
+// server process happens to have been started from -- for claude that is a
+// session with --permission-mode auto, so "wherever systemd put us" is not an
+// acceptable answer. An operator enabling agentic runners has to say where.
+func agenticWorkspace() string {
+	return strings.TrimSpace(os.Getenv("AGENTVAULT_SERVE_WORKSPACE"))
 }
 
 func isLoopbackHost(host string) bool {
