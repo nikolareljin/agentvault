@@ -291,7 +291,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if decision != nil && !jsonOut {
 		printRoutingDecision(cmd.ErrOrStderr(), a, target, decision)
 	}
-	result, execErr := executePromptTarget(target, a, effectivePrompt, timeout, executionWorkspace.Path, stream, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	result, execErr := executePromptTarget(cmd.Context(), target, a, effectivePrompt, timeout, executionWorkspace.Path, stream, cmd.OutOrStdout(), cmd.ErrOrStderr())
 
 	// Derive the execution provider from the resolved runner so that cost attribution
 	// and history records reflect what actually ran (e.g. Claude+Ollama → ollama, free).
@@ -584,13 +584,13 @@ func executePrompt(a agent.Agent, prompt string, timeout time.Duration) (promptR
 	if err != nil {
 		return promptResult{}, err
 	}
-	return executePromptTarget(target, a, prompt, timeout, executionDir, false, os.Stdout, os.Stderr)
+	return executePromptTarget(context.Background(), target, a, prompt, timeout, executionDir, false, os.Stdout, os.Stderr)
 }
 
-func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
+func executePromptTarget(ctx context.Context, target agent.ExecutionTarget, a agent.Agent, prompt string, timeout time.Duration, executionDir string, stream bool, stdout, stderr io.Writer) (promptResult, error) {
 	switch target.Runner {
 	case agent.RunnerOllamaHTTP:
-		return executeOllamaPrompt(a, prompt, timeout)
+		return executeOllamaPrompt(ctx, a, prompt, timeout)
 	case agent.RunnerCodexCLI:
 		return executeCodexPrompt(a, prompt, timeout, executionDir, stream, stdout, stderr)
 	case agent.RunnerClaudeCLI:
@@ -598,7 +598,7 @@ func executePromptTarget(target agent.ExecutionTarget, a agent.Agent, prompt str
 	case agent.RunnerGeminiCLI:
 		return executeGeminiPrompt(a, prompt, timeout, executionDir, stream, stdout, stderr)
 	case agent.RunnerOpenAIHTTP:
-		return executeOpenAIPrompt(a, prompt, timeout)
+		return executeOpenAIPrompt(ctx, a, prompt, timeout)
 	case agent.RunnerBedrockAPI:
 		return promptResult{}, errors.New("bedrock backend execution is not supported yet")
 	default:
@@ -671,7 +671,7 @@ func validateOllamaEndpoint(baseURL string, timeout time.Duration, operationName
 	return nil
 }
 
-func executeOllamaPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+func executeOllamaPrompt(ctx context.Context, a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
 	if strings.TrimSpace(a.Model) == "" {
 		return promptResult{}, errors.New("ollama agent requires model")
 	}
@@ -688,7 +688,7 @@ func executeOllamaPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	body, _ := json.Marshal(payload)
 
 	client := &http.Client{Timeout: timeout}
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/generate", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/generate", bytes.NewReader(body))
 	if err != nil {
 		return promptResult{}, err
 	}
@@ -722,7 +722,7 @@ func executeOllamaPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 	return promptResult{Response: strings.TrimSpace(out.Response), Usage: usage}, nil
 }
 
-func executeOpenAIPrompt(a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
+func executeOpenAIPrompt(ctx context.Context, a agent.Agent, prompt string, timeout time.Duration) (promptResult, error) {
 	if strings.TrimSpace(a.Model) == "" {
 		return promptResult{}, errors.New("openai agent requires model")
 	}
@@ -742,7 +742,7 @@ func executeOpenAIPrompt(a agent.Agent, prompt string, timeout time.Duration) (p
 		return promptResult{}, fmt.Errorf("marshalling openai request payload: %w", err)
 	}
 	client := &http.Client{Timeout: timeout}
-	req, err := http.NewRequest(http.MethodPost, endpointURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(body))
 	if err != nil {
 		return promptResult{}, err
 	}
