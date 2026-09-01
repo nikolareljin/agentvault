@@ -147,7 +147,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// Encryption is decided by --encrypt/--plain or the wizard, never by the file
 	// extension, so the same command always produces the same kind of file.
 	if !opts.Encrypt && opts.IncludeSecrets {
-		if err := confirmPlaintextExport(opts.Confirm, isTerminal, os.Stdin, cmd.ErrOrStderr()); err != nil {
+		if err := confirmPlaintextExport(opts.Confirm, isTerminal, os.Stdin, cmd.ErrOrStderr(), "--encrypt"); err != nil {
 			return err
 		}
 	}

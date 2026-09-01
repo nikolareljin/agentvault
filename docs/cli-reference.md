@@ -553,7 +553,7 @@ pressing Enter through the wizard exports everything, encrypted, to
 
 Every config directory on the machine that holds a `vault.enc` becomes a named
 profile in the bundle. Discovery covers the active config dir, `~/.config/agentvault`,
-`~/.agentvault`, sibling `agentvault-*` directories, and every path in
+`~/.agentvault`, sibling `agentvault*` directories (including hidden ones under `$HOME`), and every path in
 `AGENTVAULT_CONFIG_DIRS`. Each profile's vault is unlocked separately, trying
 `AGENTVAULT_PASSWORD` before prompting.
 
