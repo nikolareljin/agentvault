@@ -3,11 +3,14 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/spf13/cobra"
 )
 
 func TestSetupBundleMarshalIncludesWorkflowTemplatesField(t *testing.T) {
@@ -249,14 +252,14 @@ func TestAgentKeyStatus_EnvKey(t *testing.T) {
 
 func TestConfirmPlaintextExport_ConfirmFlagBypasses(t *testing.T) {
 	var w bytes.Buffer
-	if err := confirmPlaintextExport(true, false, strings.NewReader(""), &w); err != nil {
+	if err := confirmPlaintextExport(true, false, strings.NewReader(""), &w, "--encrypted"); err != nil {
 		t.Fatalf("confirmFlag=true should bypass all checks, got error: %v", err)
 	}
 }
 
 func TestConfirmPlaintextExport_NonTTYErrors(t *testing.T) {
 	var w bytes.Buffer
-	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w)
+	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w, "--encrypted")
 	if err == nil {
 		t.Fatal("non-TTY without --confirm should return error")
 	}
@@ -268,7 +271,7 @@ func TestConfirmPlaintextExport_NonTTYErrors(t *testing.T) {
 func TestConfirmPlaintextExport_TTYAcceptsYes(t *testing.T) {
 	for _, input := range []string{"y\n", "yes\n", "Y\n", "YES\n"} {
 		var w bytes.Buffer
-		if err := confirmPlaintextExport(false, true, strings.NewReader(input), &w); err != nil {
+		if err := confirmPlaintextExport(false, true, strings.NewReader(input), &w, "--encrypted"); err != nil {
 			t.Fatalf("input %q should be accepted, got error: %v", input, err)
 		}
 	}
@@ -277,7 +280,7 @@ func TestConfirmPlaintextExport_TTYAcceptsYes(t *testing.T) {
 func TestConfirmPlaintextExport_TTYRejectsCancels(t *testing.T) {
 	for _, input := range []string{"n\n", "no\n", "\n", "maybe\n"} {
 		var w bytes.Buffer
-		err := confirmPlaintextExport(false, true, strings.NewReader(input), &w)
+		err := confirmPlaintextExport(false, true, strings.NewReader(input), &w, "--encrypted")
 		if err == nil {
 			t.Fatalf("input %q should cancel export, but got nil error", input)
 		}
@@ -315,5 +318,44 @@ func TestSetupImportMergesSharedRouterConfig(t *testing.T) {
 	}
 	if empty.Router.Mode != "langgraph" {
 		t.Fatalf("router config for empty shared config = %#v, want imported router", empty.Router)
+	}
+}
+
+func TestSetupImportRejectsMultiProfileBundle(t *testing.T) {
+	bundle := PortableBundle{
+		SchemaVersion: PortableBundleSchemaVersion,
+		Profiles: []PortableProfile{
+			{Name: "default"},
+			{Name: "work"},
+		},
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("Marshal error = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "multi.avbundle")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "import"}
+	cmd.Flags().AddFlagSet(setupImportCmd.Flags())
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err = runSetupImport(cmd, []string{path})
+	if err == nil || !strings.Contains(err.Error(), "agentvault import") {
+		t.Fatalf("runSetupImport() error = %v, want it to redirect to 'agentvault import --profile'", err)
+	}
+}
+
+func TestConfirmPlaintextExport_NamesTheCallersEncryptFlag(t *testing.T) {
+	var w bytes.Buffer
+	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w, "--encrypt")
+	if err == nil || !strings.Contains(err.Error(), "--encrypt ") {
+		t.Fatalf("confirmPlaintextExport() error = %v, want it to name the caller's --encrypt flag", err)
+	}
+	if strings.Contains(err.Error(), "--encrypted") {
+		t.Fatalf("confirmPlaintextExport() error = %v, must not mention a flag the caller does not have", err)
 	}
 }

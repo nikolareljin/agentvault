@@ -7,8 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
-	"sort"
 	"strings"
 	"time"
 
@@ -25,22 +23,23 @@ import (
 // across machines. It captures everything needed to recreate the environment:
 // agents, sessions, rules, roles, instructions, provider configs, and an installation guide.
 type SetupBundle struct {
-	Version              string                   `json:"version"`
-	CreatedAt            time.Time                `json:"created_at"`
-	SourceMachine        string                   `json:"source_machine"`
-	SourceOS             string                   `json:"source_os"`
-	Agents               []agent.Agent            `json:"agents"`
-	Sessions             agent.SessionConfig      `json:"sessions,omitempty"`
-	SharedConfig         agent.SharedConfig       `json:"shared_config"`
-	ProviderConfigs      agent.ProviderConfig     `json:"provider_configs"`
-	Templates            workflowtemplates.Bundle `json:"workflow_templates"`
-	ProviderFiles        []SetupAsset             `json:"provider_files"`
-	ProjectFiles         []SetupAsset             `json:"project_files"`
-	InstructionOverrides []SetupAsset             `json:"instruction_overrides"`
-	SkillAssets          []SetupAsset             `json:"skill_assets"`
-	StatusSnapshot       *statuspkg.Report        `json:"status_snapshot,omitempty"`
-	DetectedAgents       []DetectedAgent          `json:"detected_agents,omitempty"`
-	InstallGuide         InstallGuide             `json:"install_guide"`
+	Version              string                       `json:"version"`
+	CreatedAt            time.Time                    `json:"created_at"`
+	SourceMachine        string                       `json:"source_machine"`
+	SourceOS             string                       `json:"source_os"`
+	Agents               []agent.Agent                `json:"agents"`
+	Sessions             agent.SessionConfig          `json:"sessions,omitempty"`
+	SharedConfig         agent.SharedConfig           `json:"shared_config"`
+	ProviderConfigs      agent.ProviderConfig         `json:"provider_configs"`
+	Templates            workflowtemplates.Bundle     `json:"workflow_templates"`
+	ProviderFiles        []SetupAsset                 `json:"provider_files"`
+	ProjectFiles         []SetupAsset                 `json:"project_files"`
+	InstructionOverrides []SetupAsset                 `json:"instruction_overrides"`
+	SkillAssets          []SetupAsset                 `json:"skill_assets"`
+	ModelCapabilities    []agent.ModelCapabilityEntry `json:"model_capabilities,omitempty"`
+	StatusSnapshot       *statuspkg.Report            `json:"status_snapshot,omitempty"`
+	DetectedAgents       []DetectedAgent              `json:"detected_agents,omitempty"`
+	InstallGuide         InstallGuide                 `json:"install_guide"`
 }
 
 // MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.
@@ -129,8 +128,9 @@ Examples:
   agentvault setup export setup.json --include-status # Include token/quota snapshot
   agentvault setup export setup.json --detect     # Include detected agent info
   agentvault setup export setup.json --agent my-codex --project .`,
-	Args: cobra.ExactArgs(1),
-	RunE: runSetupExport,
+	Args:       cobra.ExactArgs(1),
+	RunE:       runSetupExport,
+	Deprecated: "use 'agentvault export' instead; it covers every config profile on this machine",
 }
 
 var setupImportCmd = &cobra.Command{
@@ -145,8 +145,9 @@ Examples:
   agentvault setup import my-setup.bundle    # Encrypted bundle
   agentvault setup import setup.json --merge # Update existing agents
   agentvault setup import setup.json --apply-provider-configs # Apply provider configs and assets`,
-	Args: cobra.ExactArgs(1),
-	RunE: runSetupImport,
+	Args:       cobra.ExactArgs(1),
+	RunE:       runSetupImport,
+	Deprecated: "use 'agentvault import' instead; it adds --strategy merge|replace|mirror",
 }
 
 var setupShowCmd = &cobra.Command{
@@ -221,6 +222,9 @@ func init() {
 	setupPullCmd.Flags().Bool("ollama", false, "pull only Ollama config")
 }
 
+// runSetupExport implements the deprecated `setup export`. It keeps writing the
+// v1 bundle layout for compatibility with older readers, but shares its
+// collection path with `agentvault export`.
 func runSetupExport(cmd *cobra.Command, args []string) error {
 	v, err := openVault()
 	if err != nil {
@@ -243,88 +247,27 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		encrypted = true
 	}
 	if includeSecrets && !encrypted {
-		if err := confirmPlaintextExport(confirmFlag, term.IsTerminal(stdinFD()), os.Stdin, cmd.ErrOrStderr()); err != nil {
+		if err := confirmPlaintextExport(confirmFlag, term.IsTerminal(stdinFD()), os.Stdin, cmd.ErrOrStderr(), "--encrypted"); err != nil {
 			return err
 		}
 	}
 
-	hostname, _ := os.Hostname()
-	bundle := SetupBundle{
-		Version:         "1.0",
-		CreatedAt:       time.Now(),
-		SourceMachine:   hostname,
-		SourceOS:        runtime.GOOS + "/" + runtime.GOARCH,
-		Agents:          v.List(),
-		Sessions:        v.Sessions(),
-		SharedConfig:    v.SharedConfig(),
-		ProviderConfigs: v.ProviderConfigs(),
-	}
-	if strings.TrimSpace(agentName) != "" {
-		selected, err := selectAgentsForExport(bundle.Agents, agentName)
-		if err != nil {
-			return err
-		}
-		bundle.Agents = selected
-		bundle.Sessions = filterSessionsForAgents(bundle.Sessions, bundle.Agents)
-	}
-	templateBundle, templateWarnings, err := workflowtemplates.ExportBundle(resolveConfigDir())
-	if err != nil {
-		return fmt.Errorf("loading workflow templates for export: %w", err)
-	}
-	bundle.Templates = templateBundle
-	for _, warn := range templateWarnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
-	}
-	collectedAssets, assetWarnings, err := collectSetupAssets(setupAssetOptions{
-		ProjectDir:     projectDir,
-		IncludeSecrets: includeSecrets,
+	collected, err := collectSetupBundle(cmd, v, resolveConfigDir(), setupCollectOptions{
+		IncludeKeys:          includeKeys,
+		IncludeSecrets:       includeSecrets,
+		IncludeSessions:      true,
+		IncludeTemplates:     true,
+		IncludeProviderFiles: true,
+		IncludeSkills:        true,
+		IncludeStatus:        includeStatus,
+		IncludeDetected:      detect,
+		ProjectDir:           projectDir,
+		AgentName:            agentName,
 	})
 	if err != nil {
-		return fmt.Errorf("collecting portable setup assets: %w", err)
+		return err
 	}
-	bundle.ProviderFiles = collectedAssets.ProviderFiles
-	bundle.ProjectFiles = collectedAssets.ProjectFiles
-	bundle.InstructionOverrides = collectedAssets.InstructionOverrides
-	bundle.SkillAssets = collectedAssets.SkillAssets
-	for _, warn := range assetWarnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
-	}
-
-	// Resolve and optionally include API keys.
-	// When --include-keys is set, fill empty vault keys from environment variables
-	// so that env-var-sourced credentials are preserved in the exported bundle.
-	// envKeyFilled tracks which agents had their key sourced from the environment
-	// rather than the vault, so agentKeyStatus can label them correctly.
-	envKeyFilled := make([]bool, len(bundle.Agents))
-	if includeKeys {
-		for i := range bundle.Agents {
-			if bundle.Agents[i].APIKey == "" {
-				if k := resolveAgentEnvAPIKey(bundle.Agents[i]); k != "" {
-					bundle.Agents[i].APIKey = k
-					envKeyFilled[i] = true
-				}
-			}
-		}
-	} else {
-		for i := range bundle.Agents {
-			bundle.Agents[i].APIKey = ""
-		}
-	}
-
-	// Detect installed agents if requested
-	if detect {
-		bundle.DetectedAgents = detectAllAgents()
-	}
-	if includeStatus {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			report := statuspkg.BuildReport(v, home)
-			bundle.StatusSnapshot = &report
-		}
-	}
-
-	// Generate installation guide
-	bundle.InstallGuide = generateInstallGuide(bundle)
+	bundle := collected.Bundle
 
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
@@ -343,23 +286,9 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		if password != confirm {
 			return fmt.Errorf("passwords do not match")
 		}
-		if len(password) < 8 {
-			return fmt.Errorf("password must be at least 8 characters")
-		}
-
-		salt, err := crypto.GenerateSalt()
-		if err != nil {
+		if data, err = encryptBundlePayload(data, password); err != nil {
 			return err
 		}
-		key, err := crypto.DeriveKey(password, salt)
-		if err != nil {
-			return err
-		}
-		ciphertext, err := crypto.Encrypt(data, key)
-		if err != nil {
-			return err
-		}
-		data = append(salt, ciphertext...)
 	}
 
 	if err := os.WriteFile(outputFile, data, 0600); err != nil {
@@ -392,354 +321,77 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	if len(bundle.Agents) > 0 {
 		fmt.Println("  Agent keys:")
 		for i, a := range bundle.Agents {
-			keyStatus := agentKeyStatus(a, includeKeys, envKeyFilled[i])
+			keyStatus := agentKeyStatus(a, includeKeys, collected.EnvKeyFilled[i])
 			fmt.Printf("    %-20s %s\n", a.Name+":", keyStatus)
 		}
 	}
 	return nil
 }
 
+// runSetupImport implements the deprecated `setup import`. The historical
+// --merge flag maps onto the replace strategy, which is what it always meant.
 func runSetupImport(cmd *cobra.Command, args []string) error {
+	merge, _ := cmd.Flags().GetBool("merge")
+	applyConfigs, _ := cmd.Flags().GetBool("apply-provider-configs")
+
+	strategy := strategyMerge
+	if merge {
+		strategy = strategyReplace
+	}
+
+	raw, err := os.ReadFile(args[0])
+	if err != nil {
+		return fmt.Errorf("reading bundle: %w", err)
+	}
+	payload, err := decodeImportPayload(raw)
+	if err != nil {
+		return err
+	}
+	bundle, format, err := decodePortableBundle(payload)
+	if err != nil {
+		return err
+	}
+	// This legacy path has no profile selection, so folding several source-machine
+	// profiles into one vault would combine configurations the user never asked to
+	// merge. A single-profile bundle is unambiguous and still imports here.
+	if format == bundleFormatPortable && len(bundle.Profiles) > 1 {
+		return fmt.Errorf("bundle holds %d profiles (%s); 'setup import' cannot choose between them, use 'agentvault import %s --profile NAME'",
+			len(bundle.Profiles), strings.Join(bundle.ProfileNames(), ", "), args[0])
+	}
+
 	v, err := openVault()
 	if err != nil {
 		return err
 	}
 
-	merge, _ := cmd.Flags().GetBool("merge")
-	applyConfigs, _ := cmd.Flags().GetBool("apply-provider-configs")
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Importing setup from %s (created %s)\n",
+		bundleOrigin(bundle), bundle.CreatedAt.Format("2006-01-02 15:04"))
 
-	data, err := os.ReadFile(args[0])
-	if err != nil {
-		return fmt.Errorf("reading bundle: %w", err)
-	}
-
-	// Try to detect if encrypted
-	var bundle SetupBundle
-	if err := json.Unmarshal(data, &bundle); err != nil {
-		// Might be encrypted
-		if len(data) < crypto.SaltLen {
-			return fmt.Errorf("invalid bundle format")
+	now := time.Now()
+	total := importReport{}
+	for _, profile := range bundle.Profiles {
+		if len(bundle.Profiles) > 1 {
+			fmt.Fprintf(out, "\nProfile %q:\n", profile.Name)
 		}
-		password, err := readPassword("Bundle password: ")
-		if err != nil {
+		plan := planProfileImport(v, profile.Setup, strategy, now)
+		for _, line := range plan.Report.Lines {
+			fmt.Fprintln(out, line)
+		}
+		total.Added += plan.Report.Added
+		total.Updated += plan.Report.Updated
+		total.Skipped += plan.Report.Skipped
+		total.Removed += plan.Report.Removed
+		if err := commitProfileImport(v, plan); err != nil {
 			return err
 		}
-		salt := data[:crypto.SaltLen]
-		ciphertext := data[crypto.SaltLen:]
-		key, err := crypto.DeriveKey(password, salt)
-		if err != nil {
+		if err := importProfileAssets(cmd, profile.Setup, applyConfigs); err != nil {
 			return err
 		}
-		plaintext, err := crypto.Decrypt(ciphertext, key)
-		if err != nil {
-			return fmt.Errorf("decryption failed (wrong password?)")
-		}
-		if err := json.Unmarshal(plaintext, &bundle); err != nil {
-			return fmt.Errorf("decoding bundle: %w", err)
-		}
 	}
 
-	fmt.Printf("Importing setup from %s (created %s)\n",
-		bundle.SourceMachine, bundle.CreatedAt.Format("2006-01-02 15:04"))
-
-	// Import agents
-	added, updated, skipped := 0, 0, 0
-	for _, a := range bundle.Agents {
-		existing, exists := v.Get(a.Name)
-		if exists {
-			if merge {
-				// Preserve API key if not in bundle
-				if a.APIKey == "" {
-					a.APIKey = existing.APIKey
-				}
-				a.UpdatedAt = time.Now()
-				if err := v.Update(a); err != nil {
-					return fmt.Errorf("updating agent %s: %w", a.Name, err)
-				}
-				fmt.Printf("  Updated: %s\n", a.Name)
-				updated++
-			} else {
-				fmt.Printf("  Skipped: %s (exists)\n", a.Name)
-				skipped++
-			}
-		} else {
-			a.CreatedAt = time.Now()
-			a.UpdatedAt = time.Now()
-			if err := v.Add(a); err != nil {
-				return fmt.Errorf("adding agent %s: %w", a.Name, err)
-			}
-			fmt.Printf("  Added: %s\n", a.Name)
-			added++
-		}
-	}
-
-	// Import shared config
-	sc := v.SharedConfig()
-	if bundle.SharedConfig.SystemPrompt != "" && (sc.SystemPrompt == "" || merge) {
-		sc.SystemPrompt = bundle.SharedConfig.SystemPrompt
-		fmt.Println("  Imported: shared system prompt")
-	}
-	routerAction := mergeSharedRouterConfig(&sc, bundle.SharedConfig, merge)
-	if routerAction != "" {
-		fmt.Printf("  %s: shared router config\n", routerAction)
-	}
-
-	// Merge MCP servers
-	mcpIndex := make(map[string]int)
-	for i, s := range sc.MCPServers {
-		mcpIndex[s.Name] = i
-	}
-	for _, s := range bundle.SharedConfig.MCPServers {
-		if idx, ok := mcpIndex[s.Name]; !ok {
-			sc.MCPServers = append(sc.MCPServers, s)
-			mcpIndex[s.Name] = len(sc.MCPServers) - 1
-			fmt.Printf("  Imported: MCP server %s\n", s.Name)
-		} else if merge {
-			sc.MCPServers[idx] = s
-			fmt.Printf("  Updated: MCP server %s\n", s.Name)
-		}
-	}
-
-	// Merge instructions
-	instIndex := make(map[string]int)
-	for i, inst := range sc.Instructions {
-		instIndex[inst.Name] = i
-	}
-	for _, inst := range bundle.SharedConfig.Instructions {
-		if idx, ok := instIndex[inst.Name]; !ok {
-			sc.Instructions = append(sc.Instructions, inst)
-			instIndex[inst.Name] = len(sc.Instructions) - 1
-			fmt.Printf("  Imported: instruction %s\n", inst.Name)
-		} else if merge {
-			sc.Instructions[idx] = inst
-			fmt.Printf("  Updated: instruction %s\n", inst.Name)
-		}
-	}
-	for _, asset := range bundle.InstructionOverrides {
-		name := instructionNameForAsset(asset)
-		if name == "" || asset.Missing || !asset.ContentPresent {
-			continue
-		}
-		filename := asset.ProjectRelativePath
-		if filename == "" {
-			filename = asset.LogicalPath
-		}
-		filename, err = sanitizeAssetRelativePath(filename)
-		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: skipping instruction override %q due to unsafe filename: %v\n", name, err)
-			continue
-		}
-		inst := agent.InstructionFile{
-			Name:      name,
-			Filename:  filename,
-			Content:   string(asset.Content),
-			UpdatedAt: time.Now(),
-		}
-		if idx, ok := instIndex[inst.Name]; !ok {
-			sc.Instructions = append(sc.Instructions, inst)
-			instIndex[inst.Name] = len(sc.Instructions) - 1
-			fmt.Printf("  Imported: instruction override %s\n", inst.Name)
-		} else if merge || sc.Instructions[idx].Content == "" {
-			sc.Instructions[idx] = inst
-			fmt.Printf("  Updated: instruction override %s\n", inst.Name)
-		}
-	}
-
-	// Merge rules
-	ruleIndex := make(map[string]int)
-	for i, r := range sc.Rules {
-		ruleIndex[r.Name] = i
-	}
-	for _, r := range bundle.SharedConfig.Rules {
-		if idx, ok := ruleIndex[r.Name]; !ok {
-			sc.Rules = append(sc.Rules, r)
-			ruleIndex[r.Name] = len(sc.Rules) - 1
-			fmt.Printf("  Imported: rule %s\n", r.Name)
-		} else if merge {
-			sc.Rules[idx] = r
-			fmt.Printf("  Updated: rule %s\n", r.Name)
-		}
-	}
-	sort.Slice(sc.Rules, func(i, j int) bool {
-		return sc.Rules[i].Priority < sc.Rules[j].Priority
-	})
-
-	// Merge roles
-	roleIndex := make(map[string]int)
-	for i, r := range sc.Roles {
-		roleIndex[r.Name] = i
-	}
-	for _, r := range bundle.SharedConfig.Roles {
-		if idx, ok := roleIndex[r.Name]; !ok {
-			sc.Roles = append(sc.Roles, r)
-			roleIndex[r.Name] = len(sc.Roles) - 1
-			fmt.Printf("  Imported: role %s\n", r.Name)
-		} else if merge {
-			sc.Roles[idx] = r
-			fmt.Printf("  Updated: role %s\n", r.Name)
-		}
-	}
-
-	if err := v.SetSharedConfig(sc); err != nil {
-		return fmt.Errorf("updating shared config: %w", err)
-	}
-
-	// Import provider configs
-	pc := v.ProviderConfigs()
-	if bundle.ProviderConfigs.Claude != nil && (pc.Claude == nil || merge) {
-		pc.Claude = bundle.ProviderConfigs.Claude
-		fmt.Println("  Imported: Claude config")
-	}
-	if bundle.ProviderConfigs.Codex != nil && (pc.Codex == nil || merge) {
-		pc.Codex = bundle.ProviderConfigs.Codex
-		fmt.Println("  Imported: Codex config")
-	}
-	if bundle.ProviderConfigs.Ollama != nil && (pc.Ollama == nil || merge) {
-		pc.Ollama = bundle.ProviderConfigs.Ollama
-		fmt.Println("  Imported: Ollama config")
-	}
-	if err := v.SetProviderConfigs(pc); err != nil {
-		return fmt.Errorf("updating provider configs: %w", err)
-	}
-	// Backward compatibility: older bundles may not include workflow templates.
-	if bundle.Templates.SchemaVersion != "" || len(bundle.Templates.Assets) > 0 {
-		importedTemplates, templateWarnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), bundle.Templates)
-		if err != nil {
-			return fmt.Errorf("importing workflow templates: %w", err)
-		}
-		if importedTemplates > 0 {
-			fmt.Printf("  Imported: workflow templates (%d)\n", importedTemplates)
-		}
-		for _, warn := range templateWarnings {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
-		}
-	}
-	filteredProjectFiles := filterProjectFilesForStaging(bundle.ProjectFiles, bundle.InstructionOverrides)
-	stagedAssets, stageWarnings, err := stageImportedAssets(effectiveConfigDir(), append(append(append([]SetupAsset{}, bundle.ProviderFiles...), filteredProjectFiles...), bundle.SkillAssets...))
-	if err != nil {
-		return fmt.Errorf("staging imported portable assets: %w", err)
-	}
-	if stagedAssets > 0 {
-		fmt.Printf("  Imported: portable assets (%d staged)\n", stagedAssets)
-	}
-	for _, warn := range stageWarnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
-	}
-
-	// Import sessions
-	targetSessions := v.Sessions()
-	sessionByName := make(map[string]int)
-	sessionIDs := make(map[string]struct{})
-	for i, s := range targetSessions.Sessions {
-		sessionByName[s.Name] = i
-		sessionIDs[s.ID] = struct{}{}
-	}
-	sessionAdded, sessionUpdated, sessionSkipped := 0, 0, 0
-	for _, s := range bundle.Sessions.Sessions {
-		// Session process info is machine-local and should not be imported.
-		s.Status = agent.SessionStatusIdle
-		s.UpdatedAt = time.Now()
-		for i := range s.Agents {
-			s.Agents[i].PID = 0
-		}
-
-		if idx, ok := sessionByName[s.Name]; ok {
-			if merge {
-				s.ID = targetSessions.Sessions[idx].ID
-				targetSessions.Sessions[idx] = s
-				fmt.Printf("  Updated: session %s\n", s.Name)
-				sessionUpdated++
-			} else {
-				fmt.Printf("  Skipped: session %s (exists)\n", s.Name)
-				sessionSkipped++
-			}
-			continue
-		}
-
-		if s.ID == "" {
-			s.ID = agent.GenerateSessionID()
-		}
-		for {
-			if _, exists := sessionIDs[s.ID]; !exists {
-				break
-			}
-			s.ID = fmt.Sprintf("%s-%d", agent.GenerateSessionID(), time.Now().UnixNano()%1000)
-		}
-		targetSessions.Sessions = append(targetSessions.Sessions, s)
-		sessionByName[s.Name] = len(targetSessions.Sessions) - 1
-		sessionIDs[s.ID] = struct{}{}
-		fmt.Printf("  Added: session %s\n", s.Name)
-		sessionAdded++
-	}
-	if targetSessions.ActiveSession == "" && bundle.Sessions.ActiveSession != "" {
-		targetSessions.ActiveSession = bundle.Sessions.ActiveSession
-	}
-	if !targetSessions.ParallelLimitSet && (bundle.Sessions.ParallelLimitSet || bundle.Sessions.ParallelLimit > 0) {
-		targetSessions.ParallelLimit = bundle.Sessions.ParallelLimit
-		targetSessions.ParallelLimitSet = true
-	}
-	if len(targetSessions.DefaultAgents) == 0 && len(bundle.Sessions.DefaultAgents) > 0 {
-		targetSessions.DefaultAgents = append([]string(nil), bundle.Sessions.DefaultAgents...)
-	}
-	if err := v.SetSessions(targetSessions); err != nil {
-		return fmt.Errorf("updating sessions: %w", err)
-	}
-
-	fmt.Printf("\nSummary: %d added, %d updated, %d skipped\n", added, updated, skipped)
-	if sessionAdded+sessionUpdated+sessionSkipped > 0 {
-		fmt.Printf("Sessions: %d added, %d updated, %d skipped\n", sessionAdded, sessionUpdated, sessionSkipped)
-	}
-
-	// Apply provider configs to system if requested
-	if applyConfigs {
-		fmt.Println("\nApplying provider configs and provider assets to system...")
-		if pc.Claude != nil {
-			if err := agent.SaveClaudeConfig(pc.Claude); err != nil {
-				fmt.Printf("  Warning: could not apply Claude config: %v\n", err)
-			} else {
-				fmt.Println("  Applied: Claude config to ~/.claude/")
-			}
-		}
-		if pc.Codex != nil {
-			if err := agent.SaveCodexConfig(pc.Codex); err != nil {
-				fmt.Printf("  Warning: could not apply Codex config: %v\n", err)
-			} else {
-				fmt.Println("  Applied: Codex config to ~/.codex/")
-			}
-		}
-		homeDir, homeErr := os.UserHomeDir()
-		if homeErr != nil {
-			fmt.Printf("  Warning: could not resolve home directory for provider asset apply: %v\n", homeErr)
-		} else {
-			appliedAssets, assetWarnings, err := applyProviderAssetsToSystem(homeDir, append(bundle.ProviderFiles, providerSkillAssets(bundle.SkillAssets)...))
-			if err != nil {
-				return fmt.Errorf("applying provider assets: %w", err)
-			}
-			if appliedAssets > 0 {
-				fmt.Printf("  Applied: provider assets (%d)\n", appliedAssets)
-			}
-			for _, warn := range assetWarnings {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
-			}
-		}
-	}
-
-	// Show installation guide
-	if len(bundle.InstallGuide.Requirements) > 0 {
-		fmt.Println("\n--- Installation Guide ---")
-		fmt.Println("Requirements:")
-		for _, req := range bundle.InstallGuide.Requirements {
-			status := "optional"
-			if req.Required {
-				status = "required"
-			}
-			fmt.Printf("  • %s (%s)\n", req.Name, status)
-			if req.InstallCmd != "" {
-				fmt.Printf("    Install: %s\n", req.InstallCmd)
-			}
-		}
-	}
-
+	fmt.Fprintf(out, "\nSummary: %d added, %d updated, %d skipped\n", total.Added, total.Updated, total.Skipped)
+	printInstallGuide(cmd, bundle.Profiles)
 	return nil
 }
 
@@ -1206,14 +858,16 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 }
 
 // confirmPlaintextExport gates a plaintext --include-secrets export.
+// encryptFlag names the flag that would encrypt the output, because `export` and
+// the deprecated `setup export` spell it differently.
 // It returns nil when export should proceed (confirmFlag set or user typed y/yes).
 // isTerminal and r are injected so the function is testable without a real TTY.
-func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io.Writer) error {
+func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io.Writer, encryptFlag string) error {
 	if confirmFlag {
 		return nil
 	}
 	if !isTerminal {
-		return fmt.Errorf("--include-secrets without --encrypted requires interactive confirmation; use --confirm to bypass in non-interactive environments")
+		return fmt.Errorf("--include-secrets without %s requires interactive confirmation; use --confirm to bypass in non-interactive environments", encryptFlag)
 	}
 	fmt.Fprintln(w, "warning: --include-secrets will embed sensitive asset content in plaintext")
 	fmt.Fprint(w, "Confirm export with sensitive content? [y/N]: ")
@@ -1223,7 +877,7 @@ func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
 	if answer != "y" && answer != "yes" {
-		return fmt.Errorf("export cancelled: add --encrypted to protect sensitive content, or use --confirm to bypass this check")
+		return fmt.Errorf("export cancelled: add %s to protect sensitive content, or use --confirm to bypass this check", encryptFlag)
 	}
 	return nil
 }

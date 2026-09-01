@@ -550,7 +550,12 @@ Flags:
 ### `agentvault generate all`
 No flags.
 
-## 3.11 Setup (cross-machine full bundle)
+## 3.11 Setup (deprecated)
+
+`setup export` and `setup import` are superseded by `agentvault export` and
+`agentvault import` (section 3.13). They keep working and keep reading and writing the
+schema 1.x bundle, but they only ever see the single config directory `--config` points
+at, and `setup import` has no `mirror` strategy.
 
 ### `agentvault setup export [file]`
 Flags:
@@ -571,7 +576,11 @@ Flags:
 - `--merge` (default: `false`)
 - `--apply-provider-configs` (default: `false`)
 
-`setup import` restores shared router settings from exported bundles. Without `--merge`, an existing router config is preserved; with `--merge`, the imported router config replaces it.
+`setup import` restores shared router settings from exported bundles. Without `--merge`, an existing router config is preserved; with `--merge`, the imported router config replaces it (`--merge` maps onto `--strategy replace`).
+
+`setup import` has no profile selection, so it refuses a portable bundle carrying more than
+one profile rather than folding several machines' configurations into one vault. Use
+`agentvault import <file> --profile NAME` for those.
 
 ### `agentvault setup show [file]`
 No flags.
@@ -604,15 +613,103 @@ Use `agentvault templates show add_issue` to inspect the git-lantern-compatible 
 ### `agentvault templates refresh`
 Initialize or refresh config-stored templates from built-in defaults.
 
-## 3.13 Legacy vault export/import commands
+## 3.13 Portable export/import
 
 ### `agentvault export [file]`
+
+Exports every agentvault setting on the machine into one portable bundle (schema 2.x).
+
+Run with no arguments for an interactive wizard. Every question defaults to including
+the item, so pressing Enter through the whole wizard writes a complete, encrypted bundle
+to `<config dir>/exports/<host>-<timestamp>.avbundle`. When stdin is not a terminal the
+wizard is skipped and the same defaults apply.
+
+**Profiles.** Every agentvault config directory holding a `vault.enc` becomes a named
+profile inside the bundle. Discovery covers, in order: the active config dir,
+`~/.config/agentvault`, `~/.agentvault`, sibling `agentvault*` directories next to those,
+and every path in `AGENTVAULT_CONFIG_DIRS` (separated by the OS path list separator (`:` on Unix, `;` on Windows)). A directory called
+`agentvault-work` becomes the profile `work`; the canonical directory becomes `default`.
+Duplicate names get a numeric suffix. Passing `--config` restricts the export to that one
+directory. Each profile's vault is unlocked on its own, trying `AGENTVAULT_PASSWORD`
+before prompting, so a shared master password is typed at most once.
+
 Flags:
-- `--plain` (default: `false`): Export plaintext JSON.
+- `-y`, `--yes` (default: `false`): Accept every default and skip the wizard.
+- `--profile <name>` (repeatable; default: every discovered profile). `--profile all` is explicit.
+- `--include-keys` (default: `true`): Include API keys, filling empty vault keys from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`.
+- `--include-secrets` (default: `true`): Include secret-bearing provider and asset file content. Plaintext output with secrets requires interactive confirmation or `--confirm`.
+- `--include-sessions` (default: `true`)
+- `--include-templates` (default: `true`): Workflow templates from the profile's config storage.
+- `--include-provider-files` (default: `true`): `~/.claude`, `~/.codex`, `~/.copilot` files.
+- `--include-skills` (default: `true`)
+- `--include-status` (default: `false`): A token/quota reading is a snapshot, not a setting.
+- `--detect` (default: `true`): Record which agents are installed on this machine.
+- `--project <dir>`: Also capture project-local instruction, workflow and skill assets.
+- `--encrypt` (default: `true`)
+- `--plain` (default: `false`): Plaintext JSON; turns encryption off.
+- `--vault-only` (default: `false`): Write the legacy single-vault payload instead of a bundle. One profile only.
+- `--confirm` (default: `false`): Skip interactive confirmations.
+
+Bundle contents, per profile: agents, shared config (system prompt, MCP servers, rules,
+roles, instructions, router, provider pricing), provider configs, model capability
+registry, sessions, workflow templates, provider home files, skill assets, optional status
+snapshot, optional detected-agent list, and a generated installation guide.
+
+Stored prompt sessions are deliberately excluded. They are local run history and their
+entries hold prompt and response text, so they never travel in a bundle meant to be
+shared, and an import leaves the target machine's own history untouched.
+
+Encryption follows `--encrypt` / `--plain` and the wizard answer only. The output file's
+extension never changes it, so the same command always produces the same kind of file.
+
+Environment:
+- `AGENTVAULT_PASSWORD`: Master password tried before prompting, per profile.
+- `AGENTVAULT_EXPORT_PASSWORD`: Bundle password for non-interactive encrypted exports. Without it, an encrypted export on a non-terminal stdin fails rather than silently writing plaintext.
+- `AGENTVAULT_CONFIG_DIRS`: Extra config directories to treat as profiles.
 
 ### `agentvault import [file]`
+
+Imports a bundle. Portable bundles (schema 2.x), `setup export` bundles (schema 1.x) and
+legacy `export` vault payloads are all accepted; the format is detected from the payload,
+and encrypted files are decrypted first. With no file argument the newest export in
+`<config dir>/exports` is used.
+
 Flags:
-- `--plain` (default: `false`): Import plaintext JSON.
+- `--strategy <merge|replace|mirror>` (default: `merge`)
+- `--profile <name|all>`: Which bundle profile to apply. A multi-profile bundle prompts on a terminal and requires this flag otherwise. `mirror` accepts only one profile, since applying several in sequence to one vault would leave just the last.
+- `--list` (default: `false`): Print the bundle's profiles and exit without touching the vault.
+- `--dry-run` (default: `false`): Print every change the import would make, write nothing.
+- `--apply-provider-configs` (default: `false`): Write provider configs and provider asset files back to `~/.claude`, `~/.codex` after import.
+- `--confirm` (default: `false`): Skip the confirmation prompt that guards `mirror`.
+
+Strategies:
+
+| Strategy | On a collision | Items only in the vault |
+|----------|----------------|-------------------------|
+| `merge` | existing vault value wins | kept |
+| `replace` | bundle value wins | kept |
+| `mirror` | bundle value wins | deleted |
+
+`mirror` is how several machines converge on one configuration. It deletes agents, rules,
+roles, instructions, MCP servers, sessions, provider configs, pricing rows and model
+capability entries that the bundle does not contain, and clears the shared system prompt
+and router config when the bundle does not carry them. It prompts for the word `mirror` on
+a terminal and refuses to run non-interactively without `--confirm`. Stored prompt sessions
+are the one exception: a bundle never carries them, so they are left alone.
+
+An import writes only the sections it actually changes, and an item whose bundle value
+already matches the vault is reported as skipped rather than rewritten, so re-running the
+same import is a no-op.
+
+Import always strips machine-local session state: imported sessions come in idle with
+cleared PIDs, a session that already exists by name keeps its local ID, and an active
+session pointer that no longer resolves is cleared. Under `replace` and `mirror`, an agent
+whose bundle entry carries no API key keeps the key already in the vault, so an export
+taken with `--include-keys=false` cannot wipe working credentials.
+
+Environment:
+- `AGENTVAULT_PASSWORD`: Master password tried before prompting.
+- `AGENTVAULT_IMPORT_PASSWORD`: Bundle password for non-interactive imports.
 
 ## 4. TUI Detailed Reference
 
@@ -789,12 +886,26 @@ AGENTVAULT_PASSWORD='***' agentvault status --cost-report --json
 ## 5.5 Cross-machine sync
 
 ```bash
-# source machine
-agentvault setup export team.bundle --encrypted --include-status
+# source machine: wizard, or -y to take every default
+agentvault export
 
-# target machine
+# target machine: make it match the bundle exactly
 agentvault init
-agentvault setup import team.bundle --merge --apply-provider-configs
+agentvault import team.avbundle --strategy mirror --profile default --apply-provider-configs
+```
+
+Preview first with `--dry-run`, and inspect a bundle you did not create with
+`agentvault import team.avbundle --list`.
+
+Fully scripted:
+
+```bash
+export AGENTVAULT_PASSWORD='***'
+export AGENTVAULT_EXPORT_PASSWORD='***'
+agentvault export -y
+
+export AGENTVAULT_IMPORT_PASSWORD='***'
+agentvault import team.avbundle --strategy mirror --profile default --confirm
 ```
 
 ## 5.6 Automatic routing with intelligent selection
