@@ -105,7 +105,8 @@ type discoveredProfile struct {
 // only that directory is returned, because the caller asked for one profile.
 //
 // Discovery order is deterministic: the active config dir first, then the XDG
-// and home fallbacks, then sibling `agentvault-*` directories, then anything
+// and home fallbacks, then sibling `agentvault*` directories (hidden
+// `~/.agentvault*` ones included), then anything
 // listed in AGENTVAULT_CONFIG_DIRS. Duplicates are collapsed by resolved path.
 func discoverProfiles(explicitConfigDir string) []discoveredProfile {
 	if strings.TrimSpace(explicitConfigDir) != "" {

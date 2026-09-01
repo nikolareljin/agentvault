@@ -69,7 +69,8 @@ default export directory:
 
 Every agentvault config directory on this machine that holds a vault becomes a
 named profile in the bundle. Discovery covers the active config dir, the XDG and
-home fallbacks, sibling ` + "`agentvault-*`" + ` directories, and any directory listed in
+home fallbacks, sibling ` + "`agentvault*`" + ` directories (including hidden
+` + "`~/.agentvault*`" + ` ones), and any directory listed in
 AGENTVAULT_CONFIG_DIRS. Each profile's vault is unlocked separately; the value of
 AGENTVAULT_PASSWORD is tried first, so one shared master password needs no typing.
 

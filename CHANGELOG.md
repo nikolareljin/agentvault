@@ -71,6 +71,11 @@
 - Instructions derived from asset overrides were stamped with the current time on import, so
   a `replace` or `mirror` re-import of an unchanged bundle rewrote them every run. They now
   carry the bundle's own creation time, which keeps a repeat import a true no-op.
+- The `mirror` confirmation listed only some of what it deletes. It now names provider
+  configs, pricing rows and model capability entries too, and says the shared system prompt
+  and router config are cleared when the bundle does not carry them.
+- `export --help` and the discovery comment said sibling directories are `agentvault-*`;
+  the match is `agentvault*`, hidden `~/.agentvault*` included.
 
 ### Security
 - Stored prompt sessions are excluded from exported bundles. Their entries hold prompt and

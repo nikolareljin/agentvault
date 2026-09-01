@@ -691,9 +691,11 @@ Strategies:
 | `mirror` | bundle value wins | deleted |
 
 `mirror` is how several machines converge on one configuration. It deletes agents, rules,
-roles, instructions, MCP servers, sessions, provider configs and capability entries that
-the bundle does not contain, so it prompts for the word `mirror` on a terminal and refuses
-to run non-interactively without `--confirm`.
+roles, instructions, MCP servers, sessions, provider configs, pricing rows and model
+capability entries that the bundle does not contain, and clears the shared system prompt
+and router config when the bundle does not carry them. It prompts for the word `mirror` on
+a terminal and refuses to run non-interactively without `--confirm`. Stored prompt sessions
+are the one exception: a bundle never carries them, so they are left alone.
 
 An import writes only the sections it actually changes, and an item whose bundle value
 already matches the vault is reported as skipped rather than rewritten, so re-running the
