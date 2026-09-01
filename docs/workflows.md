@@ -88,17 +88,33 @@ AGENTVAULT_PASSWORD='***' agentvault status --json
 Source machine:
 
 ```bash
-agentvault setup export team.bundle --encrypted --include-status
+# wizard; every prompt defaults to "include it"
+agentvault export
+
+# or take every default without questions
+agentvault export -y --include-status
 ```
+
+The bundle carries every agentvault config directory on the machine as a named profile,
+so a host with both `~/.config/agentvault` and `~/.config/agentvault-work` produces one
+file holding both.
 
 Target machine:
 
 ```bash
 agentvault init
-agentvault setup import team.bundle --merge --apply-provider-configs
+agentvault import team.avbundle --list                      # inspect first
+agentvault import team.avbundle --strategy mirror --dry-run # preview the changes
+agentvault import team.avbundle --strategy mirror --profile default --apply-provider-configs
 ```
 
-With `--merge`, `setup import` also restores and merges shared router settings from the bundle, so imported prompt-routing policy survives cross-machine setup replication; existing router configuration is otherwise preserved unless the current router config is empty.
+`--strategy mirror` makes the target match the bundle exactly, deleting vault items the
+bundle does not contain; it needs `--confirm` to run non-interactively. Use
+`--strategy replace` to let the bundle win on collisions while keeping local-only items,
+or the default `--strategy merge` to add only what is missing.
+
+Shared router settings travel with the bundle. Under `merge` an existing router config is
+preserved; under `replace` and `mirror` the imported router config replaces it.
 
 ## LangGraph sidecar routing
 

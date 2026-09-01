@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-01
+
+### Added
+- **`agentvault export` is now the single export entry point.** Running it with no arguments
+  starts an interactive wizard whose every prompt defaults to "include it", so pressing Enter
+  through it writes a complete, encrypted bundle to
+  `<config dir>/exports/<host>-<timestamp>.avbundle`. `-y` takes the same defaults without asking.
+  When stdin is not a terminal the wizard is skipped and the defaults apply.
+- **Multi-profile bundles (schema 2.0).** Every agentvault config directory on a machine that
+  holds a `vault.enc` becomes a named profile inside one bundle. Discovery covers the active
+  config dir, `~/.config/agentvault`, `~/.agentvault`, sibling `agentvault*` directories, and
+  every path in the new `AGENTVAULT_CONFIG_DIRS` variable. Each profile's vault is unlocked
+  separately, trying `AGENTVAULT_PASSWORD` before prompting.
+- **`agentvault import --strategy merge|replace|mirror`.** `merge` (default) keeps existing vault
+  values, `replace` lets the bundle win on collisions, and `mirror` makes the vault match the
+  bundle exactly by also deleting local-only items. `mirror` prompts for confirmation on a
+  terminal and requires `--confirm` otherwise.
+- **Import ergonomics**: `--list` prints a bundle's profiles without touching the vault,
+  `--dry-run` reports every change it would make, `--profile NAME|all` selects profiles, and
+  omitting the file argument picks the newest export in the default export directory.
+- **Model capability registry travels with bundles.** `SetupBundle.model_capabilities` is
+  populated on export and reconciled on import; new `Vault.SetCapabilities` replaces the list
+  wholesale for `replace` and `mirror`.
+- **Non-interactive credentials**: `AGENTVAULT_EXPORT_PASSWORD` and `AGENTVAULT_IMPORT_PASSWORD`
+  supply the bundle password, and `openVault` now honors `AGENTVAULT_PASSWORD` like `serve` does,
+  so the whole export/import cycle can run without a terminal.
+
+### Changed
+- `agentvault export` defaults flipped to a full export: API keys, secret-bearing provider files,
+  sessions, workflow templates, provider home files, skill assets and detected-agent information
+  are all included, and the bundle is encrypted, unless a flag says otherwise. A quota status
+  snapshot stays opt-in (`--include-status`) because it is a reading, not a setting.
+- `agentvault import` detects the payload format automatically. Portable bundles (2.x),
+  `setup export` bundles (1.x) and legacy vault exports are all accepted; `--plain` is deprecated
+  and ignored.
+- Imported sessions are normalized: they arrive idle with cleared PIDs, a session that already
+  exists by name keeps its local ID, and an active-session pointer that no longer resolves is
+  cleared. Under `replace` and `mirror`, an agent whose bundle entry carries no API key keeps the
+  key already in the vault.
+- `setup export` and `setup import` are deprecated in favor of `export` and `import`. They keep
+  working and keep reading and writing the schema 1.x bundle, and now share their collection and
+  merge implementation with the new commands; `setup import --merge` maps onto `--strategy replace`.
+- The old vault-only export format is still writable with `agentvault export --vault-only` and
+  still readable by `agentvault import`.
+
 ## [0.12.0] - 2026-06-06
 
 ### Added
