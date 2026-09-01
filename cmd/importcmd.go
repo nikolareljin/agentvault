@@ -36,7 +36,8 @@ Conflict handling is chosen with --strategy:
   merge     keep the existing vault value, add only what is missing (default)
   replace   the bundle wins on every collision, local-only items are kept
   mirror    the bundle wins and local-only items are deleted, so this machine
-            ends up matching the bundle exactly
+            ends up matching the bundle exactly. Mirrors one profile at a time,
+            since mirroring several into one vault would leave only the last.
 
 Use --strategy mirror to make several machines converge on one configuration.
 Mirror deletes data, so it asks for confirmation unless --confirm is given.
@@ -111,6 +112,14 @@ func runImport(cmd *cobra.Command, args []string) error {
 	selected, err := selectProfilesForImport(cmd, bundle, profileName)
 	if err != nil {
 		return err
+	}
+
+	// Mirroring several profiles into one vault is incoherent: each profile would
+	// delete what the previous one just added, leaving only the last. Profiles are
+	// separate configurations, so ask which one this machine should match.
+	if strategy.deletesLocalOnly() && len(selected) > 1 {
+		return fmt.Errorf("--strategy mirror makes this vault match one profile exactly, but %d profiles are selected (%s); pick one with --profile NAME, or use --strategy replace to combine them",
+			len(selected), strings.Join(profileNamesOf(selected), ", "))
 	}
 
 	interactive := term.IsTerminal(stdinFD())
@@ -285,20 +294,26 @@ func selectProfilesForImport(cmd *cobra.Command, bundle PortableBundle, requeste
 	return nil, fmt.Errorf("profile %q not in bundle; available: %s", answer, strings.Join(bundle.ProfileNames(), ", "))
 }
 
+// profileNamesOf lists the names of the given profiles, in order.
+func profileNamesOf(profiles []PortableProfile) []string {
+	names := make([]string, 0, len(profiles))
+	for _, p := range profiles {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
 // confirmDestructiveImport gates mirror imports, which delete local-only items.
 func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w io.Writer, profiles []PortableProfile) error {
 	if confirmFlag {
 		return nil
 	}
-	names := make([]string, 0, len(profiles))
-	for _, p := range profiles {
-		names = append(names, p.Name)
-	}
+	names := profileNamesOf(profiles)
 	if !isTerminal {
 		return fmt.Errorf("--strategy mirror deletes vault items that are not in the bundle; re-run with --confirm to proceed non-interactively")
 	}
 	fmt.Fprintf(w, "Strategy 'mirror' makes this vault match the bundle exactly.\n")
-	fmt.Fprintf(w, "Anything not in profile(s) %s will be DELETED: agents, rules, roles,\n", strings.Join(names, ", "))
+	fmt.Fprintf(w, "Anything not in profile %s will be DELETED: agents, rules, roles,\n", strings.Join(names, ", "))
 	fmt.Fprintf(w, "instructions, MCP servers, sessions, provider configs, pricing rows and\n")
 	fmt.Fprintf(w, "model capability entries. The shared system prompt and router config are\n")
 	fmt.Fprintf(w, "cleared too when the bundle does not carry them.\n")

@@ -491,7 +491,7 @@ export AGENTVAULT_EXPORT_PASSWORD=...   # bundle password on export
 export AGENTVAULT_IMPORT_PASSWORD=...   # bundle password on import
 
 agentvault export -y
-agentvault import bundle.avbundle --strategy mirror --profile all --confirm
+agentvault import bundle.avbundle --strategy mirror --profile default --confirm
 ```
 
 Sessions can still be moved on their own:

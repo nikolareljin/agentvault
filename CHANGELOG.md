@@ -76,6 +76,12 @@
   and router config are cleared when the bundle does not carry them.
 - `export --help` and the discovery comment said sibling directories are `agentvault-*`;
   the match is `agentvault*`, hidden `~/.agentvault*` included.
+- `--strategy mirror` with more than one selected profile is refused. Profiles were applied
+  in sequence to the same vault, so each one deleted what the previous added and the result
+  matched only the last profile, while the confirmation implied the union of all of them.
+- Profile name deduplication reserves names case-insensitively, matching how selection
+  resolves them, and skips a suffix that is already taken, so `Work` and `work`, or a
+  directory literally named `agentvault-work-2`, can no longer shadow another profile.
 
 ### Security
 - Stored prompt sessions are excluded from exported bundles. Their entries hold prompt and

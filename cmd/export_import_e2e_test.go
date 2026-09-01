@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -369,5 +370,59 @@ func TestMirrorWarningNamesEverythingItDeletes(t *testing.T) {
 		if !strings.Contains(warning, want) {
 			t.Errorf("mirror warning does not mention %q; text was:\n%s", want, warning)
 		}
+	}
+}
+
+// TestImportMirrorRejectsMultipleProfiles pins that mirroring several profiles
+// into one vault is refused rather than silently leaving only the last one.
+func TestImportMirrorRejectsMultipleProfiles(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv(ConfigDirsEnv, "")
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+
+	bundle := PortableBundle{
+		SchemaVersion: PortableBundleSchemaVersion,
+		Profiles: []PortableProfile{
+			{Name: "default", Setup: SetupBundle{Agents: []agent.Agent{{Name: "a"}}}},
+			{Name: "work", Setup: SetupBundle{Agents: []agent.Agent{{Name: "b"}}}},
+		},
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("Marshal error = %v", err)
+	}
+	path := filepath.Join(root, "multi.avbundle")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	targetDir := filepath.Join(root, "machine-b")
+	seedProfileVault(t, targetDir, []agent.Agent{{Name: "local", Provider: agent.ProviderOllama}}, nil)
+	useConfigDir(t, targetDir)
+
+	var out bytes.Buffer
+	importCmd.SetOut(&out)
+	importCmd.SetErr(&out)
+	t.Cleanup(func() { importCmd.SetOut(nil); importCmd.SetErr(nil) })
+	withFlags(t, importCmd, map[string]string{
+		"strategy": string(strategyMirror),
+		"profile":  "all",
+		"confirm":  "true",
+	})
+
+	err = runImport(importCmd, []string{path})
+	if err == nil || !strings.Contains(err.Error(), "--profile NAME") {
+		t.Fatalf("runImport() error = %v, want mirror refused for multiple profiles", err)
+	}
+
+	// The vault must be untouched by the refusal.
+	target := vault.New(filepath.Join(targetDir, config.VaultFile))
+	if err := target.Unlock(e2eMasterPassword); err != nil {
+		t.Fatalf("Unlock() error = %v", err)
+	}
+	if agents := target.List(); len(agents) != 1 || agents[0].Name != "local" {
+		t.Fatalf("target agents = %#v, want the vault untouched", agents)
 	}
 }

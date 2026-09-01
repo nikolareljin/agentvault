@@ -598,7 +598,7 @@ Flags:
   - `mirror`: the bundle wins and local-only items are deleted, so the machine ends up
     matching the bundle exactly. Use this to converge several machines.
 - `--profile <name|all>`: Which bundle profile to import. Required for a multi-profile
-  bundle when stdin is not a terminal.
+  bundle when stdin is not a terminal. `mirror` accepts a single profile only.
 - `--list` (default: `false`): List the profiles in the bundle and exit.
 - `--dry-run` (default: `false`): Report what would change without writing.
 - `--apply-provider-configs` (default: `false`): Write provider configs and provider asset
