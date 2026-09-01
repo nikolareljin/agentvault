@@ -2,6 +2,94 @@
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-01
+
+### Added
+- **`agentvault export` is now the single export entry point.** Running it with no arguments
+  starts an interactive wizard whose every prompt defaults to "include it", so pressing Enter
+  through it writes a complete, encrypted bundle to
+  `<config dir>/exports/<host>-<timestamp>.avbundle`. `-y` takes the same defaults without asking.
+  When stdin is not a terminal the wizard is skipped and the defaults apply.
+- **Multi-profile bundles (schema 2.0).** Every agentvault config directory on a machine that
+  holds a `vault.enc` becomes a named profile inside one bundle. Discovery covers the active
+  config dir, `~/.config/agentvault`, `~/.agentvault`, sibling `agentvault*` directories, and
+  every path in the new `AGENTVAULT_CONFIG_DIRS` variable. Each profile's vault is unlocked
+  separately, trying `AGENTVAULT_PASSWORD` before prompting.
+- **`agentvault import --strategy merge|replace|mirror`.** `merge` (default) keeps existing vault
+  values, `replace` lets the bundle win on collisions, and `mirror` makes the vault match the
+  bundle exactly by also deleting local-only items. `mirror` prompts for confirmation on a
+  terminal and requires `--confirm` otherwise.
+- **Import ergonomics**: `--list` prints a bundle's profiles without touching the vault,
+  `--dry-run` reports every change it would make, `--profile NAME|all` selects profiles, and
+  omitting the file argument picks the newest export in the default export directory.
+- **Model capability registry travels with bundles.** `SetupBundle.model_capabilities` is
+  populated on export and reconciled on import; new `Vault.SetCapabilities` replaces the list
+  wholesale for `replace` and `mirror`.
+- **Non-interactive credentials**: `AGENTVAULT_EXPORT_PASSWORD` and `AGENTVAULT_IMPORT_PASSWORD`
+  supply the bundle password, and `openVault` now honors `AGENTVAULT_PASSWORD` like `serve` does,
+  so the whole export/import cycle can run without a terminal.
+
+### Changed
+- `agentvault export` defaults flipped to a full export: API keys, secret-bearing provider files,
+  sessions, workflow templates, provider home files, skill assets and detected-agent information
+  are all included, and the bundle is encrypted, unless a flag says otherwise. A quota status
+  snapshot stays opt-in (`--include-status`) because it is a reading, not a setting.
+- `agentvault import` detects the payload format automatically. Portable bundles (2.x),
+  `setup export` bundles (1.x) and legacy vault exports are all accepted; `--plain` is deprecated
+  and ignored.
+- Imported sessions are normalized: they arrive idle with cleared PIDs, a session that already
+  exists by name keeps its local ID, and an active-session pointer that no longer resolves is
+  cleared. Under `replace` and `mirror`, an agent whose bundle entry carries no API key keeps the
+  key already in the vault.
+- `setup export` and `setup import` are deprecated in favor of `export` and `import`. They keep
+  working and keep reading and writing the schema 1.x bundle, and now share their collection and
+  merge implementation with the new commands; `setup import --merge` maps onto `--strategy replace`.
+- The old vault-only export format is still writable with `agentvault export --vault-only` and
+  still readable by `agentvault import`.
+- Provider pricing rows now travel with a bundle and are reconciled by provider plus model
+  pattern, so a cost-report configuration replicates along with everything else.
+- Encryption is decided by `--encrypt` / `--plain` and the wizard answer only. The output
+  file's extension never changes it, so the same command always produces the same kind of file.
+
+### Fixed
+- An import no longer rewrites vault sections it did not change. Session config in particular
+  was written on every import, and `Vault.SetSessions` force-sets `parallel_limit_set`, so an
+  import carrying no session data silently marked an unset parallel limit as explicit.
+- `openVault` and per-profile unlock now fail with an actionable message when a password is
+  needed and stdin is not a terminal, instead of surfacing a low-level terminal-read error
+  that hid the real remedy.
+- `setup import` refuses a portable bundle holding more than one profile instead of quietly
+  folding every source-machine profile into the current vault. It has no profile selection,
+  so the message points at `agentvault import --profile`.
+- Re-running an import that changes nothing is now a true no-op: items whose bundle value
+  already matches the vault are reported as skipped rather than rewritten and re-timestamped.
+- Profile discovery also finds hidden `~/.agentvault*` directories.
+- Docs stated `AGENTVAULT_CONFIG_DIRS` is `:`-separated; it uses the OS path list separator.
+- The plaintext-with-secrets confirmation told `export` users to add `--encrypted`, a flag
+  only the deprecated `setup export` has. It now names each caller's own flag.
+- Docs described sibling profile discovery as `agentvault-*`; the match is `agentvault*`.
+- Instructions derived from asset overrides were stamped with the current time on import, so
+  a `replace` or `mirror` re-import of an unchanged bundle rewrote them every run. They now
+  carry the bundle's own creation time, which keeps a repeat import a true no-op.
+- The `mirror` confirmation listed only some of what it deletes. It now names provider
+  configs, pricing rows and model capability entries too, and says the shared system prompt
+  and router config are cleared when the bundle does not carry them.
+- `export --help` and the discovery comment said sibling directories are `agentvault-*`;
+  the match is `agentvault*`, hidden `~/.agentvault*` included.
+- `--strategy mirror` with more than one selected profile is refused. Profiles were applied
+  in sequence to the same vault, so each one deleted what the previous added and the result
+  matched only the last profile, while the confirmation implied the union of all of them.
+- Profile name deduplication reserves names case-insensitively, matching how selection
+  resolves them, and skips a suffix that is already taken, so `Work` and `work`, or a
+  directory literally named `agentvault-work-2`, can no longer shadow another profile.
+
+### Security
+- Stored prompt sessions are excluded from exported bundles. Their entries hold prompt and
+  response text, which has no place in a file meant to be copied between machines. Import
+  leaves the target machine's own prompt history untouched, including under `mirror`.
+- `gosec` G101 findings on the password *environment variable name* constants are annotated
+  rather than renamed; the values are variable names, not credentials.
+
 ## [0.12.0] - 2026-06-06
 
 ### Added

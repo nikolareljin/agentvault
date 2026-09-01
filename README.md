@@ -153,12 +153,14 @@ brew install nikolareljin/tap/agentvault
 | `routing-model status` | Show embedded engine state and model file info |
 | `routing-model download` | Download BitNet-b1.58-2B-4T routing model (~400 MB) |
 
-### Setup Export/Import
+### Export/Import
 | Command | Description |
 |---------|-------------|
-| `setup export <file>` | Export complete configuration |
-| `setup import <file>` | Import configuration |
+| `export [file]` | Export every setting on this machine to one portable bundle (wizard when run bare) |
+| `import [file]` | Import a bundle with `--strategy merge\|replace\|mirror` |
 | `setup pull` | Pull provider configs from system |
+| `setup export <file>` | Deprecated, use `export` |
+| `setup import <file>` | Deprecated, use `import` |
 | `templates list` | List workflow templates with effective source |
 | `templates show <name>` | Show effective workflow template |
 | `templates refresh` | Initialize/refresh config-stored templates |
@@ -266,7 +268,7 @@ Portable setup bundles can additionally include explicit asset manifests for:
 - discovered local instruction overrides (`instruction_overrides`)
 - custom skill trees (`skill_assets`)
 
-Sensitive provider file content is excluded from bundle content by default and can be included explicitly with `agentvault setup export --include-secrets`, ideally together with `--encrypted`.
+`agentvault export` includes sensitive provider file content by default and encrypts the bundle by default; use `--include-secrets=false` to leave it out, and note that `--plain` requires explicit confirmation whenever secrets are included. The deprecated `agentvault setup export` keeps its old defaults: secrets excluded unless `--include-secrets`, plaintext unless `--encrypted`.
 
 The built-in `add_issue` template emits append-only, git-lantern-compatible TODO entries with deterministic ID allocation and embeds the reusable `implement_issue` / `implement_pr` checklist bodies for issue and PR follow-up tasks.
 
@@ -417,27 +419,84 @@ agentvault instructions push /path/to/project
 
 ## Export/Import Workflow
 
+One command exports everything on a machine, and one command replays it elsewhere.
+
 ```bash
-# On source machine: export everything
-agentvault setup export my-setup.bundle --include-keys
+# On the source machine: interactive wizard, every prompt defaults to "include it".
+# Pressing Enter through it exports everything, encrypted, to
+# ~/.config/agentvault/exports/<host>-<timestamp>.avbundle
+agentvault export
 
-# Optional: include provider usage/quota snapshot for orchestration
-agentvault setup export my-setup.bundle --include-status
+# Same thing without questions
+agentvault export -y
 
-# Includes:
-# - All agents and configurations
-# - Unified rules
-# - Roles
-# - Sessions
-# - Provider configs (Claude plugins, Codex rules, etc.)
-# - Instructions
-# - Optional status snapshot (token/quota usage metadata)
+# Explicit path and selective content
+agentvault export team.avbundle --include-status --project .
+```
 
-# On target machine: import
+A bundle contains, per profile:
+- All agents and their configurations, with API keys unless `--include-keys=false`
+- Shared system prompt, MCP servers, unified rules, roles, instructions, router config
+- Provider configs (Claude plugins, Codex rules, Ollama settings)
+- Model capability registry entries
+- Sessions
+- Workflow templates
+- Provider home files (`~/.claude`, `~/.codex`, `~/.copilot`) and skill assets
+- Provider pricing rows
+- Optional status snapshot and detected-agent information
+- An installation guide for the target machine
+
+Stored prompt sessions are excluded on purpose: they are local run history whose entries
+hold prompt and response text. Encryption follows `--encrypt` / `--plain` and the wizard
+answer, never the output file's extension.
+
+### Multiple configurations on one machine
+
+Every agentvault config directory that holds a `vault.enc` becomes a named profile
+inside the same bundle. Discovery covers the active config dir, `~/.config/agentvault`,
+`~/.agentvault`, sibling `agentvault*` directories (including hidden ones under `$HOME`),
+and every path listed in `AGENTVAULT_CONFIG_DIRS`, separated by the OS path list separator (`:` on Unix, `;` on Windows). Each vault is unlocked separately; `AGENTVAULT_PASSWORD` is
+tried first, so one shared master password needs no typing.
+
+```bash
+agentvault export --profile work --profile default   # narrow the selection
+agentvault import team.avbundle --list               # see what a bundle holds
+```
+
+### Making machines converge
+
+```bash
+# On the target machine
 agentvault init
-agentvault setup import my-setup.bundle --apply-provider-configs
+agentvault import team.avbundle --strategy mirror --profile default --apply-provider-configs
+```
 
-# Or export/import just a session
+| Strategy | Collision | Local-only items |
+|----------|-----------|------------------|
+| `merge` (default) | existing value wins | kept |
+| `replace` | bundle wins | kept |
+| `mirror` | bundle wins | deleted |
+
+`mirror` is what makes every machine match the bundle exactly. It deletes agents, rules,
+roles, instructions, MCP servers, sessions, provider configs, pricing rows and model
+capability entries the bundle does not contain, so it asks for confirmation on a terminal
+and refuses to run non-interactively without `--confirm`. Preview any import first with
+`--dry-run`.
+
+### Scripted use
+
+```bash
+export AGENTVAULT_PASSWORD=...          # master password, no prompt
+export AGENTVAULT_EXPORT_PASSWORD=...   # bundle password on export
+export AGENTVAULT_IMPORT_PASSWORD=...   # bundle password on import
+
+agentvault export -y
+agentvault import bundle.avbundle --strategy mirror --profile default --confirm
+```
+
+Sessions can still be moved on their own:
+
+```bash
 agentvault session export my-project session.json
 agentvault session import session.json
 ```
@@ -461,7 +520,7 @@ make build-bitnet   # Build binary with embedded inference → ./agentvault-bitn
 - **Encryption**: AES-256-GCM with random nonces
 - **Key Derivation**: Argon2id (64MB memory)
 - **Storage**: Vault file is mode 0600
-- **API Keys**: Masked in TUI, excluded from exports by default
+- **API Keys**: Masked in TUI; included in `agentvault export` bundles by default (which are encrypted by default), excluded with `--include-keys=false`
 
 ## License
 

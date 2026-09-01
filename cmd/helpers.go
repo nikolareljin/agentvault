@@ -61,15 +61,28 @@ func readPassword(prompt string) (string, error) {
 	return string(pw), nil
 }
 
-// openVault prompts for the master password and unlocks the vault.
+// VaultPasswordEnv names the variable holding the master password for
+// non-interactive vault access.
+const VaultPasswordEnv = "AGENTVAULT_PASSWORD" // #nosec G101 -- environment variable name, not a credential
+
+// openVault unlocks the vault, prompting for the master password.
 // This is the common entry point for all commands that need vault access.
 // It reads the vault path from config (respecting --config flag), checks
-// existence, prompts for the password, and returns the unlocked vault.
+// existence, and returns the unlocked vault. AGENTVAULT_PASSWORD is tried
+// first so scripted runs need no terminal, matching the `serve` command.
 func openVault() (*vault.Vault, error) {
 	vaultPath := resolveVaultPath()
 	v := vault.New(vaultPath)
 	if !v.Exists() {
 		return nil, fmt.Errorf("%w at %s (run 'agentvault init' first)", ErrVaultNotFound, vaultPath)
+	}
+	if envPassword := os.Getenv(VaultPasswordEnv); envPassword != "" {
+		if err := v.Unlock(envPassword); err == nil {
+			return v, nil
+		}
+	}
+	if err := requireInteractivePassword(VaultPasswordEnv); err != nil {
+		return nil, err
 	}
 	pw, err := readPassword("Master password: ")
 	if err != nil {
@@ -79,4 +92,14 @@ func openVault() (*vault.Vault, error) {
 		return nil, err
 	}
 	return v, nil
+}
+
+// requireInteractivePassword reports a usable error when a password is needed
+// but stdin cannot be prompted, instead of letting the terminal read fail with
+// a low-level ioctl error that hides the real remedy.
+func requireInteractivePassword(envVar string) error {
+	if term.IsTerminal(stdinFD()) {
+		return nil
+	}
+	return fmt.Errorf("a password is required but stdin is not a terminal: set a correct %s", envVar)
 }
