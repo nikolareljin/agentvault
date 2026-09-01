@@ -676,7 +676,7 @@ and encrypted files are decrypted first. With no file argument the newest export
 
 Flags:
 - `--strategy <merge|replace|mirror>` (default: `merge`)
-- `--profile <name|all>`: Which bundle profile to apply. A multi-profile bundle prompts on a terminal and requires this flag otherwise.
+- `--profile <name|all>`: Which bundle profile to apply. A multi-profile bundle prompts on a terminal and requires this flag otherwise. `mirror` accepts only one profile, since applying several in sequence to one vault would leave just the last.
 - `--list` (default: `false`): Print the bundle's profiles and exit without touching the vault.
 - `--dry-run` (default: `false`): Print every change the import would make, write nothing.
 - `--apply-provider-configs` (default: `false`): Write provider configs and provider asset files back to `~/.claude`, `~/.codex` after import.
@@ -905,7 +905,7 @@ export AGENTVAULT_EXPORT_PASSWORD='***'
 agentvault export -y
 
 export AGENTVAULT_IMPORT_PASSWORD='***'
-agentvault import team.avbundle --strategy mirror --profile all --confirm
+agentvault import team.avbundle --strategy mirror --profile default --confirm
 ```
 
 ## 5.6 Automatic routing with intelligent selection

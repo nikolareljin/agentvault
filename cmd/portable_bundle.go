@@ -214,17 +214,22 @@ func profileNameForDir(dir string) string {
 }
 
 // dedupeProfileNames makes profile names unique by suffixing collisions.
+// Names are reserved case-insensitively because profile selection resolves them
+// that way, and a suffixed candidate that is already taken is skipped, so a
+// directory literally named `agentvault-work-2` cannot shadow a renamed one.
 func dedupeProfileNames(profiles []discoveredProfile) []discoveredProfile {
-	used := make(map[string]int, len(profiles))
+	used := make(map[string]struct{}, len(profiles))
 	for i := range profiles {
-		name := profiles[i].Name
-		if n, ok := used[name]; ok {
-			n++
-			used[name] = n
-			profiles[i].Name = fmt.Sprintf("%s-%d", name, n)
-			continue
+		base := profiles[i].Name
+		candidate := base
+		for n := 2; ; n++ {
+			if _, taken := used[strings.ToLower(candidate)]; !taken {
+				break
+			}
+			candidate = fmt.Sprintf("%s-%d", base, n)
 		}
-		used[name] = 1
+		used[strings.ToLower(candidate)] = struct{}{}
+		profiles[i].Name = candidate
 	}
 	return profiles
 }

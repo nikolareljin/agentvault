@@ -283,3 +283,34 @@ func TestDiscoverProfilesFindsHiddenHomeDirs(t *testing.T) {
 		t.Fatalf("discoverProfiles() names = %v, want the hidden ~/.agentvault-legacy directory included", names)
 	}
 }
+
+func TestDedupeProfileNamesIsCaseInsensitive(t *testing.T) {
+	// Selection resolves names case-insensitively, so dedupe must reserve them the
+	// same way or `--profile work` would silently match only one of the two.
+	out := dedupeProfileNames([]discoveredProfile{
+		{Name: "Work", ConfigDir: "/a"},
+		{Name: "work", ConfigDir: "/b"},
+	})
+	if strings.EqualFold(out[0].Name, out[1].Name) {
+		t.Fatalf("dedupeProfileNames() = %q and %q, want names that differ case-insensitively",
+			out[0].Name, out[1].Name)
+	}
+}
+
+func TestDedupeProfileNamesSkipsTakenSuffixes(t *testing.T) {
+	// A directory literally named agentvault-work-2 must not collide with the
+	// renamed second `work`.
+	out := dedupeProfileNames([]discoveredProfile{
+		{Name: "work", ConfigDir: "/a"},
+		{Name: "work-2", ConfigDir: "/b"},
+		{Name: "work", ConfigDir: "/c"},
+	})
+	seen := make(map[string]struct{}, len(out))
+	for _, p := range out {
+		key := strings.ToLower(p.Name)
+		if _, dup := seen[key]; dup {
+			t.Fatalf("dedupeProfileNames() produced duplicate name %q in %v", p.Name, discoveredProfileNames(out))
+		}
+		seen[key] = struct{}{}
+	}
+}
