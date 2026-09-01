@@ -252,14 +252,14 @@ func TestAgentKeyStatus_EnvKey(t *testing.T) {
 
 func TestConfirmPlaintextExport_ConfirmFlagBypasses(t *testing.T) {
 	var w bytes.Buffer
-	if err := confirmPlaintextExport(true, false, strings.NewReader(""), &w); err != nil {
+	if err := confirmPlaintextExport(true, false, strings.NewReader(""), &w, "--encrypted"); err != nil {
 		t.Fatalf("confirmFlag=true should bypass all checks, got error: %v", err)
 	}
 }
 
 func TestConfirmPlaintextExport_NonTTYErrors(t *testing.T) {
 	var w bytes.Buffer
-	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w)
+	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w, "--encrypted")
 	if err == nil {
 		t.Fatal("non-TTY without --confirm should return error")
 	}
@@ -271,7 +271,7 @@ func TestConfirmPlaintextExport_NonTTYErrors(t *testing.T) {
 func TestConfirmPlaintextExport_TTYAcceptsYes(t *testing.T) {
 	for _, input := range []string{"y\n", "yes\n", "Y\n", "YES\n"} {
 		var w bytes.Buffer
-		if err := confirmPlaintextExport(false, true, strings.NewReader(input), &w); err != nil {
+		if err := confirmPlaintextExport(false, true, strings.NewReader(input), &w, "--encrypted"); err != nil {
 			t.Fatalf("input %q should be accepted, got error: %v", input, err)
 		}
 	}
@@ -280,7 +280,7 @@ func TestConfirmPlaintextExport_TTYAcceptsYes(t *testing.T) {
 func TestConfirmPlaintextExport_TTYRejectsCancels(t *testing.T) {
 	for _, input := range []string{"n\n", "no\n", "\n", "maybe\n"} {
 		var w bytes.Buffer
-		err := confirmPlaintextExport(false, true, strings.NewReader(input), &w)
+		err := confirmPlaintextExport(false, true, strings.NewReader(input), &w, "--encrypted")
 		if err == nil {
 			t.Fatalf("input %q should cancel export, but got nil error", input)
 		}
@@ -346,5 +346,16 @@ func TestSetupImportRejectsMultiProfileBundle(t *testing.T) {
 	err = runSetupImport(cmd, []string{path})
 	if err == nil || !strings.Contains(err.Error(), "agentvault import") {
 		t.Fatalf("runSetupImport() error = %v, want it to redirect to 'agentvault import --profile'", err)
+	}
+}
+
+func TestConfirmPlaintextExport_NamesTheCallersEncryptFlag(t *testing.T) {
+	var w bytes.Buffer
+	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w, "--encrypt")
+	if err == nil || !strings.Contains(err.Error(), "--encrypt ") {
+		t.Fatalf("confirmPlaintextExport() error = %v, want it to name the caller's --encrypt flag", err)
+	}
+	if strings.Contains(err.Error(), "--encrypted") {
+		t.Fatalf("confirmPlaintextExport() error = %v, must not mention a flag the caller does not have", err)
 	}
 }

@@ -247,7 +247,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		encrypted = true
 	}
 	if includeSecrets && !encrypted {
-		if err := confirmPlaintextExport(confirmFlag, term.IsTerminal(stdinFD()), os.Stdin, cmd.ErrOrStderr()); err != nil {
+		if err := confirmPlaintextExport(confirmFlag, term.IsTerminal(stdinFD()), os.Stdin, cmd.ErrOrStderr(), "--encrypted"); err != nil {
 			return err
 		}
 	}
@@ -858,14 +858,16 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 }
 
 // confirmPlaintextExport gates a plaintext --include-secrets export.
+// encryptFlag names the flag that would encrypt the output, because `export` and
+// the deprecated `setup export` spell it differently.
 // It returns nil when export should proceed (confirmFlag set or user typed y/yes).
 // isTerminal and r are injected so the function is testable without a real TTY.
-func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io.Writer) error {
+func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io.Writer, encryptFlag string) error {
 	if confirmFlag {
 		return nil
 	}
 	if !isTerminal {
-		return fmt.Errorf("--include-secrets without --encrypted requires interactive confirmation; use --confirm to bypass in non-interactive environments")
+		return fmt.Errorf("--include-secrets without %s requires interactive confirmation; use --confirm to bypass in non-interactive environments", encryptFlag)
 	}
 	fmt.Fprintln(w, "warning: --include-secrets will embed sensitive asset content in plaintext")
 	fmt.Fprint(w, "Confirm export with sensitive content? [y/N]: ")
@@ -875,7 +877,7 @@ func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
 	if answer != "y" && answer != "yes" {
-		return fmt.Errorf("export cancelled: add --encrypted to protect sensitive content, or use --confirm to bypass this check")
+		return fmt.Errorf("export cancelled: add %s to protect sensitive content, or use --confirm to bypass this check", encryptFlag)
 	}
 	return nil
 }

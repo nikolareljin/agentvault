@@ -65,6 +65,9 @@
   already matches the vault are reported as skipped rather than rewritten and re-timestamped.
 - Profile discovery also finds hidden `~/.agentvault*` directories.
 - Docs stated `AGENTVAULT_CONFIG_DIRS` is `:`-separated; it uses the OS path list separator.
+- The plaintext-with-secrets confirmation told `export` users to add `--encrypted`, a flag
+  only the deprecated `setup export` has. It now names each caller's own flag.
+- Docs described sibling profile discovery as `agentvault-*`; the match is `agentvault*`.
 
 ### Security
 - Stored prompt sessions are excluded from exported bundles. Their entries hold prompt and
