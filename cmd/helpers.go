@@ -81,6 +81,9 @@ func openVault() (*vault.Vault, error) {
 			return v, nil
 		}
 	}
+	if err := requireInteractivePassword(VaultPasswordEnv); err != nil {
+		return nil, err
+	}
 	pw, err := readPassword("Master password: ")
 	if err != nil {
 		return nil, err
@@ -89,4 +92,14 @@ func openVault() (*vault.Vault, error) {
 		return nil, err
 	}
 	return v, nil
+}
+
+// requireInteractivePassword reports a usable error when a password is needed
+// but stdin cannot be prompted, instead of letting the terminal read fail with
+// a low-level ioctl error that hides the real remedy.
+func requireInteractivePassword(envVar string) error {
+	if term.IsTerminal(stdinFD()) {
+		return nil
+	}
+	return fmt.Errorf("a password is required but stdin is not a terminal: set a correct %s", envVar)
 }

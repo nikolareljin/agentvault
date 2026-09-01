@@ -507,8 +507,11 @@ Flags:
 
 ### `agentvault setup import [file]`
 Flags:
-- `--merge` (default: `false`)
+- `--merge` (default: `false`): Maps onto `--strategy replace`.
 - `--apply-provider-configs` (default: `false`)
+
+Refuses a portable bundle holding more than one profile, since this command has no profile
+selection; use `agentvault import <file> --profile NAME` instead.
 
 ### `agentvault setup show [file]`
 No flags.
@@ -576,7 +579,7 @@ Flags:
 Environment:
 - `AGENTVAULT_PASSWORD`: Master password tried before prompting, per profile.
 - `AGENTVAULT_EXPORT_PASSWORD`: Bundle password for non-interactive encrypted exports.
-- `AGENTVAULT_CONFIG_DIRS`: Extra config directories to treat as profiles, separated by `:`.
+- `AGENTVAULT_CONFIG_DIRS`: Extra config directories to treat as profiles, separated by the OS path list separator (`:` on Unix, `;` on Windows).
 
 Stored prompt sessions are excluded from bundles: they are local run history holding
 prompt and response text. Encryption follows the flags and the wizard answer, never the

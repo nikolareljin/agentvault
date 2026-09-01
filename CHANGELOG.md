@@ -51,6 +51,21 @@
 - Encryption is decided by `--encrypt` / `--plain` and the wizard answer only. The output
   file's extension never changes it, so the same command always produces the same kind of file.
 
+### Fixed
+- An import no longer rewrites vault sections it did not change. Session config in particular
+  was written on every import, and `Vault.SetSessions` force-sets `parallel_limit_set`, so an
+  import carrying no session data silently marked an unset parallel limit as explicit.
+- `openVault` and per-profile unlock now fail with an actionable message when a password is
+  needed and stdin is not a terminal, instead of surfacing a low-level terminal-read error
+  that hid the real remedy.
+- `setup import` refuses a portable bundle holding more than one profile instead of quietly
+  folding every source-machine profile into the current vault. It has no profile selection,
+  so the message points at `agentvault import --profile`.
+- Re-running an import that changes nothing is now a true no-op: items whose bundle value
+  already matches the vault are reported as skipped rather than rewritten and re-timestamped.
+- Profile discovery also finds hidden `~/.agentvault*` directories.
+- Docs stated `AGENTVAULT_CONFIG_DIRS` is `:`-separated; it uses the OS path list separator.
+
 ### Security
 - Stored prompt sessions are excluded from exported bundles. Their entries hold prompt and
   response text, which has no place in a file meant to be copied between machines. Import

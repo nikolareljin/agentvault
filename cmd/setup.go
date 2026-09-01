@@ -347,9 +347,16 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	bundle, _, err := decodePortableBundle(payload)
+	bundle, format, err := decodePortableBundle(payload)
 	if err != nil {
 		return err
+	}
+	// This legacy path has no profile selection, so folding several source-machine
+	// profiles into one vault would combine configurations the user never asked to
+	// merge. A single-profile bundle is unambiguous and still imports here.
+	if format == bundleFormatPortable && len(bundle.Profiles) > 1 {
+		return fmt.Errorf("bundle holds %d profiles (%s); 'setup import' cannot choose between them, use 'agentvault import %s --profile NAME'",
+			len(bundle.Profiles), strings.Join(bundle.ProfileNames(), ", "), args[0])
 	}
 
 	v, err := openVault()
