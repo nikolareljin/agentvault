@@ -388,6 +388,14 @@ func normalizeCapabilityEntries(entries []agent.ModelCapabilityEntry) []agent.Mo
 	return out
 }
 
+// SetCapabilities replaces the whole model capability list and persists.
+// Entries are normalized the same way as on vault load, so import and direct
+// edits converge on identical keys.
+func (v *Vault) SetCapabilities(entries []agent.ModelCapabilityEntry) error {
+	v.modelCapabilities = normalizeCapabilityEntries(entries)
+	return v.Save()
+}
+
 // RemoveCapability removes a capability entry by endpoint URL and model name.
 // Returns an error if not found.
 func (v *Vault) RemoveCapability(endpointURL, modelName string) error {
