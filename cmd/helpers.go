@@ -61,15 +61,24 @@ func readPassword(prompt string) (string, error) {
 	return string(pw), nil
 }
 
-// openVault prompts for the master password and unlocks the vault.
+// VaultPasswordEnv holds the master password for non-interactive vault access.
+const VaultPasswordEnv = "AGENTVAULT_PASSWORD"
+
+// openVault unlocks the vault, prompting for the master password.
 // This is the common entry point for all commands that need vault access.
 // It reads the vault path from config (respecting --config flag), checks
-// existence, prompts for the password, and returns the unlocked vault.
+// existence, and returns the unlocked vault. AGENTVAULT_PASSWORD is tried
+// first so scripted runs need no terminal, matching the `serve` command.
 func openVault() (*vault.Vault, error) {
 	vaultPath := resolveVaultPath()
 	v := vault.New(vaultPath)
 	if !v.Exists() {
 		return nil, fmt.Errorf("%w at %s (run 'agentvault init' first)", ErrVaultNotFound, vaultPath)
+	}
+	if envPassword := os.Getenv(VaultPasswordEnv); envPassword != "" {
+		if err := v.Unlock(envPassword); err == nil {
+			return v, nil
+		}
 	}
 	pw, err := readPassword("Master password: ")
 	if err != nil {

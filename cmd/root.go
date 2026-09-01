@@ -15,7 +15,9 @@
 //	│   ├── create/start/stop/list/show/export/import/activate
 //	├── sync                   Generate instruction files from rules
 //	│   ├── to/vault/preview
-//	├── setup                  Full configuration export/import
+//	├── export                 Export every setting on this machine to one bundle
+//	├── import                 Import a bundle (merge / replace / mirror)
+//	├── setup                  Deprecated configuration export/import
 //	│   ├── export/import/show/apply/pull
 //	├── templates              Workflow templates (issue/PR/add-issue flows)
 //	│   ├── list/show/refresh
