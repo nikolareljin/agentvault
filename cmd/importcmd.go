@@ -298,7 +298,10 @@ func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w
 		return fmt.Errorf("--strategy mirror deletes vault items that are not in the bundle; re-run with --confirm to proceed non-interactively")
 	}
 	fmt.Fprintf(w, "Strategy 'mirror' makes this vault match the bundle exactly.\n")
-	fmt.Fprintf(w, "Agents, rules, roles, instructions, MCP servers and sessions that are not in profile(s) %s will be DELETED.\n", strings.Join(names, ", "))
+	fmt.Fprintf(w, "Anything not in profile(s) %s will be DELETED: agents, rules, roles,\n", strings.Join(names, ", "))
+	fmt.Fprintf(w, "instructions, MCP servers, sessions, provider configs, pricing rows and\n")
+	fmt.Fprintf(w, "model capability entries. The shared system prompt and router config are\n")
+	fmt.Fprintf(w, "cleared too when the bundle does not carry them.\n")
 	fmt.Fprint(w, "Type 'mirror' to continue: ")
 	reader := bufio.NewReader(in)
 	line, err := reader.ReadString('\n')

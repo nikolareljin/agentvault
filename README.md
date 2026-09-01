@@ -477,9 +477,11 @@ agentvault import team.avbundle --strategy mirror --profile default --apply-prov
 | `replace` | bundle wins | kept |
 | `mirror` | bundle wins | deleted |
 
-`mirror` is what makes every machine match the bundle exactly. It deletes data, so it
-asks for confirmation on a terminal and refuses to run non-interactively without
-`--confirm`. Preview any import first with `--dry-run`.
+`mirror` is what makes every machine match the bundle exactly. It deletes agents, rules,
+roles, instructions, MCP servers, sessions, provider configs, pricing rows and model
+capability entries the bundle does not contain, so it asks for confirmation on a terminal
+and refuses to run non-interactively without `--confirm`. Preview any import first with
+`--dry-run`.
 
 ### Scripted use
 

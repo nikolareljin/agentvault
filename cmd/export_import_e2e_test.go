@@ -350,3 +350,24 @@ func TestImportRejectsUnrelatedJSONWithoutPasswordPrompt(t *testing.T) {
 		t.Fatalf("decodeImportPayload() error = %v, want it to name the real problem", err)
 	}
 }
+
+// TestMirrorWarningNamesEverythingItDeletes keeps the destructive prompt honest
+// about the full set of sections mirror can remove.
+func TestMirrorWarningNamesEverythingItDeletes(t *testing.T) {
+	var w bytes.Buffer
+	// A non-empty answer that is not "mirror" cancels, so the warning is printed
+	// and the function returns before touching anything.
+	err := confirmDestructiveImport(false, true, strings.NewReader("no\n"), &w, []PortableProfile{{Name: "work"}})
+	if err == nil {
+		t.Fatal("confirmDestructiveImport() error = nil, want the import cancelled")
+	}
+	warning := w.String()
+	for _, want := range []string{
+		"agents", "rules", "roles", "instructions", "MCP servers", "sessions",
+		"provider configs", "pricing rows", "model capability entries",
+	} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("mirror warning does not mention %q; text was:\n%s", want, warning)
+		}
+	}
+}
