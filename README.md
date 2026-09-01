@@ -442,8 +442,13 @@ A bundle contains, per profile:
 - Sessions
 - Workflow templates
 - Provider home files (`~/.claude`, `~/.codex`, `~/.copilot`) and skill assets
+- Provider pricing rows
 - Optional status snapshot and detected-agent information
 - An installation guide for the target machine
+
+Stored prompt sessions are excluded on purpose: they are local run history whose entries
+hold prompt and response text. Encryption follows `--encrypt` / `--plain` and the wizard
+answer, never the output file's extension.
 
 ### Multiple configurations on one machine
 

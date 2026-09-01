@@ -46,6 +46,17 @@
   merge implementation with the new commands; `setup import --merge` maps onto `--strategy replace`.
 - The old vault-only export format is still writable with `agentvault export --vault-only` and
   still readable by `agentvault import`.
+- Provider pricing rows now travel with a bundle and are reconciled by provider plus model
+  pattern, so a cost-report configuration replicates along with everything else.
+- Encryption is decided by `--encrypt` / `--plain` and the wizard answer only. The output
+  file's extension never changes it, so the same command always produces the same kind of file.
+
+### Security
+- Stored prompt sessions are excluded from exported bundles. Their entries hold prompt and
+  response text, which has no place in a file meant to be copied between machines. Import
+  leaves the target machine's own prompt history untouched, including under `mirror`.
+- `gosec` G101 findings on the password *environment variable name* constants are annotated
+  rather than renamed; the values are variable names, not credentials.
 
 ## [0.12.0] - 2026-06-06
 

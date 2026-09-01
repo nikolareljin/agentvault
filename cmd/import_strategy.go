@@ -161,6 +161,9 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	plan.AgentOps = planAgentOps(v.List(), setup.Agents, strategy, now, rep)
 
 	shared := cloneSharedConfig(v.SharedConfig())
+	// Prompt sessions are local run history that export deliberately omits, so
+	// they are carried through untouched rather than reconciled against a bundle
+	// that can never contain them.
 	incomingShared := setup.SharedConfig
 
 	if incomingShared.SystemPrompt != "" && (shared.SystemPrompt == "" || strategy.incomingWins()) {
@@ -189,6 +192,8 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 		func(r agent.UnifiedRule) string { return r.Name }, strategy, "rule", rep)
 	shared.Roles = mergeKeyed(shared.Roles, incomingShared.Roles,
 		func(r agent.Role) string { return r.Name }, strategy, "role", rep)
+	shared.Pricing = mergeKeyed(shared.Pricing, incomingShared.Pricing,
+		pricingKey, strategy, "pricing entry", rep)
 	sort.SliceStable(shared.Rules, func(i, j int) bool { return shared.Rules[i].Priority < shared.Rules[j].Priority })
 	plan.Shared = shared
 	plan.SharedChanged = true
@@ -354,6 +359,11 @@ func sessionIDPresent(sessions []agent.Session, id string) bool {
 		}
 	}
 	return false
+}
+
+// pricingKey identifies a pricing row by the provider and model pattern it covers.
+func pricingKey(p agent.ProviderPricing) string {
+	return string(p.Provider) + "\x00" + strings.TrimSpace(p.ModelPattern)
 }
 
 // capabilityKey builds the canonical endpoint+model key for a capability entry.

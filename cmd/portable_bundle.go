@@ -26,11 +26,13 @@ const DefaultExportDirName = "exports"
 // DefaultExportExtension is the file extension used for generated bundles.
 const DefaultExportExtension = ".avbundle"
 
-// ExportPasswordEnv supplies the bundle password for non-interactive exports.
-const ExportPasswordEnv = "AGENTVAULT_EXPORT_PASSWORD"
+// ExportPasswordEnv names the variable supplying the bundle password for
+// non-interactive exports.
+const ExportPasswordEnv = "AGENTVAULT_EXPORT_PASSWORD" // #nosec G101 -- environment variable name, not a credential
 
-// ImportPasswordEnv supplies the bundle password for non-interactive imports.
-const ImportPasswordEnv = "AGENTVAULT_IMPORT_PASSWORD"
+// ImportPasswordEnv names the variable supplying the bundle password for
+// non-interactive imports.
+const ImportPasswordEnv = "AGENTVAULT_IMPORT_PASSWORD" // #nosec G101 -- environment variable name, not a credential
 
 // ConfigDirsEnv lists extra agentvault config directories to consider as
 // profiles, separated by the OS path list separator.
@@ -123,6 +125,7 @@ func discoverProfiles(explicitConfigDir string) []discoveredProfile {
 			filepath.Join(home, "."+config.AppName),
 		)
 		candidates = append(candidates, siblingProfileDirs(filepath.Join(home, ".config"))...)
+		candidates = append(candidates, siblingProfileDirs(home)...)
 	}
 	candidates = append(candidates, siblingProfileDirs(filepath.Dir(active))...)
 	candidates = append(candidates, envConfigDirs()...)
@@ -165,7 +168,8 @@ func siblingProfileDirs(parent string) []string {
 		if !e.IsDir() {
 			continue
 		}
-		if !strings.HasPrefix(e.Name(), config.AppName) {
+		// Match both `agentvault*` under a config dir and `.agentvault*` under $HOME.
+		if !strings.HasPrefix(strings.TrimPrefix(e.Name(), "."), config.AppName) {
 			continue
 		}
 		dirs = append(dirs, filepath.Join(parent, e.Name()))
