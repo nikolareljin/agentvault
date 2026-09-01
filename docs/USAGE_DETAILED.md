@@ -576,7 +576,11 @@ Flags:
 - `--merge` (default: `false`)
 - `--apply-provider-configs` (default: `false`)
 
-`setup import` restores shared router settings from exported bundles. Without `--merge`, an existing router config is preserved; with `--merge`, the imported router config replaces it.
+`setup import` restores shared router settings from exported bundles. Without `--merge`, an existing router config is preserved; with `--merge`, the imported router config replaces it (`--merge` maps onto `--strategy replace`).
+
+`setup import` has no profile selection, so it refuses a portable bundle carrying more than
+one profile rather than folding several machines' configurations into one vault. Use
+`agentvault import <file> --profile NAME` for those.
 
 ### `agentvault setup show [file]`
 No flags.
@@ -623,7 +627,7 @@ wizard is skipped and the same defaults apply.
 **Profiles.** Every agentvault config directory holding a `vault.enc` becomes a named
 profile inside the bundle. Discovery covers, in order: the active config dir,
 `~/.config/agentvault`, `~/.agentvault`, sibling `agentvault*` directories next to those,
-and every path in `AGENTVAULT_CONFIG_DIRS` (separated by `:`). A directory called
+and every path in `AGENTVAULT_CONFIG_DIRS` (separated by the OS path list separator (`:` on Unix, `;` on Windows)). A directory called
 `agentvault-work` becomes the profile `work`; the canonical directory becomes `default`.
 Duplicate names get a numeric suffix. Passing `--config` restricts the export to that one
 directory. Each profile's vault is unlocked on its own, trying `AGENTVAULT_PASSWORD`
@@ -690,6 +694,10 @@ Strategies:
 roles, instructions, MCP servers, sessions, provider configs and capability entries that
 the bundle does not contain, so it prompts for the word `mirror` on a terminal and refuses
 to run non-interactively without `--confirm`.
+
+An import writes only the sections it actually changes, and an item whose bundle value
+already matches the vault is reported as skipped rather than rewritten, so re-running the
+same import is a no-op.
 
 Import always strips machine-local session state: imported sessions come in idle with
 cleared PIDs, a session that already exists by name keeps its local ID, and an active

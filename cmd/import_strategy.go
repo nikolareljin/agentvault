@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -95,6 +96,10 @@ func mergeKeyed[T any](existing []T, incoming []T, keyOf func(T) string, strateg
 			continue
 		}
 		if strategy.incomingWins() {
+			if reflect.DeepEqual(result[idx], item) {
+				rep.record("Skipped", "%s %s (already matches)", label, displayKey(key))
+				continue
+			}
 			result[idx] = item
 			rep.record("Updated", "%s %s", label, displayKey(key))
 			continue
@@ -114,6 +119,11 @@ func mergeKeyed[T any](existing []T, incoming []T, keyOf func(T) string, strateg
 			continue
 		}
 		rep.record("Removed", "%s %s (not in bundle)", label, displayKey(key))
+	}
+	if len(kept) == 0 {
+		// Return nil rather than an empty slice so an unchanged empty collection
+		// stays deep-equal to what the vault already holds.
+		return nil
 	}
 	return kept
 }
@@ -196,14 +206,33 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 		pricingKey, strategy, "pricing entry", rep)
 	sort.SliceStable(shared.Rules, func(i, j int) bool { return shared.Rules[i].Priority < shared.Rules[j].Priority })
 	plan.Shared = shared
-	plan.SharedChanged = true
+	plan.SharedChanged = !reflect.DeepEqual(v.SharedConfig(), shared)
 
 	plan.ProviderConfigs, plan.ProviderChanged = planProviderConfigs(v.ProviderConfigs(), setup.ProviderConfigs, strategy, rep)
-	plan.Sessions, plan.SessionsChanged = planSessions(v.Sessions(), setup.Sessions, strategy, now, rep)
-	plan.Capabilities = mergeKeyed(v.ListCapabilities(), setup.ModelCapabilities, capabilityKey, strategy, "model capability", rep)
-	plan.CapsChanged = true
+
+	// Normalize empty-but-allocated slices to nil first: mergeKeyed yields nil for
+	// an empty result, and an unchanged section must compare deep-equal.
+	existingSessions := v.Sessions()
+	existingSessions.Sessions = nilIfEmpty(existingSessions.Sessions)
+	plan.Sessions = planSessions(existingSessions, setup.Sessions, strategy, now, rep)
+	// Vault.SetSessions force-sets ParallelLimitSet, so writing an unchanged
+	// config would silently mark an unset parallel limit as explicit.
+	plan.SessionsChanged = !reflect.DeepEqual(existingSessions, plan.Sessions)
+
+	existingCaps := nilIfEmpty(v.ListCapabilities())
+	plan.Capabilities = mergeKeyed(existingCaps, setup.ModelCapabilities, capabilityKey, strategy, "model capability", rep)
+	plan.CapsChanged = !reflect.DeepEqual(existingCaps, plan.Capabilities)
 
 	return plan
+}
+
+// nilIfEmpty collapses an empty slice to nil so a section that gained and lost
+// nothing stays deep-equal to what the vault already holds.
+func nilIfEmpty[T any](items []T) []T {
+	if len(items) == 0 {
+		return nil
+	}
+	return items
 }
 
 // planAgentOps diffs the vault's agents against the bundle's.
@@ -234,6 +263,14 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 			a.APIKey = current.APIKey
 		}
 		a.CreatedAt = current.CreatedAt
+		// Compare against the stored agent ignoring UpdatedAt, so re-running an
+		// import that changes nothing does not rewrite and re-timestamp the vault.
+		unchanged := a
+		unchanged.UpdatedAt = current.UpdatedAt
+		if reflect.DeepEqual(unchanged, current) {
+			rep.record("Skipped", "agent %s (already matches)", a.Name)
+			continue
+		}
 		a.UpdatedAt = now
 		ops = append(ops, agentOp{Kind: "update", Agent: a, Name: a.Name})
 		rep.record("Updated", "agent %s", a.Name)
@@ -294,7 +331,7 @@ func isNilProviderConfig(value any) bool {
 
 // planSessions reconciles session definitions by name, stripping machine-local
 // runtime state (PIDs, running status) that must not travel between machines.
-func planSessions(existing agent.SessionConfig, incoming agent.SessionConfig, strategy importStrategy, now time.Time, rep *importReport) (agent.SessionConfig, bool) {
+func planSessions(existing agent.SessionConfig, incoming agent.SessionConfig, strategy importStrategy, now time.Time, rep *importReport) agent.SessionConfig {
 	result := existing
 	usedIDs := make(map[string]struct{}, len(existing.Sessions))
 	existingByName := make(map[string]agent.Session, len(existing.Sessions))
@@ -346,7 +383,7 @@ func planSessions(existing agent.SessionConfig, incoming agent.SessionConfig, st
 	if len(incoming.DefaultAgents) > 0 && (len(result.DefaultAgents) == 0 || strategy.incomingWins()) {
 		result.DefaultAgents = append([]string(nil), incoming.DefaultAgents...)
 	}
-	return result, true
+	return result
 }
 
 func sessionIDPresent(sessions []agent.Session, id string) bool {

@@ -305,6 +305,9 @@ func unlockProfileVault(profile discoveredProfile) (*vault.Vault, error) {
 			return v, nil
 		}
 	}
+	if err := requireInteractivePassword(VaultPasswordEnv); err != nil {
+		return nil, fmt.Errorf("profile %q: %w", profile.Name, err)
+	}
 	pw, err := readPassword(fmt.Sprintf("Master password for profile %q: ", profile.Name))
 	if err != nil {
 		return nil, err

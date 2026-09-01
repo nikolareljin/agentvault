@@ -454,8 +454,8 @@ answer, never the output file's extension.
 
 Every agentvault config directory that holds a `vault.enc` becomes a named profile
 inside the same bundle. Discovery covers the active config dir, `~/.config/agentvault`,
-`~/.agentvault`, sibling `agentvault-*` directories, and every path listed in
-`AGENTVAULT_CONFIG_DIRS`. Each vault is unlocked separately; `AGENTVAULT_PASSWORD` is
+`~/.agentvault`, sibling `agentvault*` directories (including hidden ones under `$HOME`),
+and every path listed in `AGENTVAULT_CONFIG_DIRS`, separated by the OS path list separator (`:` on Unix, `;` on Windows). Each vault is unlocked separately; `AGENTVAULT_PASSWORD` is
 tried first, so one shared master password needs no typing.
 
 ```bash

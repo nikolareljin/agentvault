@@ -158,8 +158,8 @@ func TestPlanSessionsStripsMachineLocalState(t *testing.T) {
 		Agents: []agent.SessionAgent{{Name: "alpha", PID: 4242}},
 	}}}
 
-	got, changed := planSessions(agent.SessionConfig{}, incoming, strategyMerge, now, &rep)
-	if !changed || len(got.Sessions) != 1 {
+	got := planSessions(agent.SessionConfig{}, incoming, strategyMerge, now, &rep)
+	if len(got.Sessions) != 1 {
 		t.Fatalf("planSessions() = %#v, want one imported session", got)
 	}
 	s := got.Sessions[0]
@@ -176,7 +176,7 @@ func TestPlanSessionsKeepsLocalIDOnNameCollision(t *testing.T) {
 	existing := agent.SessionConfig{Sessions: []agent.Session{{Name: "review", ID: "local-id"}}}
 	incoming := agent.SessionConfig{Sessions: []agent.Session{{Name: "review", ID: "bundle-id"}}}
 
-	got, _ := planSessions(existing, incoming, strategyReplace, time.Now(), &rep)
+	got := planSessions(existing, incoming, strategyReplace, time.Now(), &rep)
 	if len(got.Sessions) != 1 || got.Sessions[0].ID != "local-id" {
 		t.Fatalf("sessions = %#v, want the local session ID preserved", got.Sessions)
 	}
@@ -190,7 +190,7 @@ func TestPlanSessionsClearsDanglingActiveSession(t *testing.T) {
 	}
 	incoming := agent.SessionConfig{Sessions: []agent.Session{{Name: "review", ID: "review-id"}}}
 
-	got, _ := planSessions(existing, incoming, strategyMirror, time.Now(), &rep)
+	got := planSessions(existing, incoming, strategyMirror, time.Now(), &rep)
 	if got.ActiveSession != "" {
 		t.Fatalf("ActiveSession = %q, want empty once the referenced session is gone", got.ActiveSession)
 	}
@@ -410,5 +410,83 @@ func TestWithoutPromptSessionsStripsTranscripts(t *testing.T) {
 	}
 	if got.SystemPrompt != "keep me" {
 		t.Fatalf("SystemPrompt = %q, want the rest of the config preserved", got.SystemPrompt)
+	}
+}
+
+func TestPlanProfileImportSkipsWritesWhenNothingChanges(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.Add(agent.Agent{Name: "alpha", Provider: agent.ProviderClaude}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	// A bundle carrying exactly what the vault already holds must plan no writes.
+	setup := SetupBundle{Agents: []agent.Agent{{Name: "alpha", Provider: agent.ProviderClaude}}}
+	plan := planProfileImport(v, setup, strategyMerge, time.Now())
+
+	if plan.SharedChanged {
+		t.Error("SharedChanged = true, want no shared-config write for an unchanged import")
+	}
+	if plan.SessionsChanged {
+		t.Error("SessionsChanged = true, want no session write for an unchanged import")
+	}
+	if plan.CapsChanged {
+		t.Error("CapsChanged = true, want no capability write for an unchanged import")
+	}
+	if plan.ProviderChanged {
+		t.Error("ProviderChanged = true, want no provider-config write for an unchanged import")
+	}
+}
+
+func TestCommitProfileImportLeavesParallelLimitUnset(t *testing.T) {
+	v := newTestVault(t)
+	if v.Sessions().ParallelLimitSet {
+		t.Fatal("fresh vault reports ParallelLimitSet, cannot test the regression")
+	}
+
+	// Importing a bundle with no session data must not mark the parallel limit as
+	// explicitly configured, which Vault.SetSessions would do on any write.
+	plan := planProfileImport(v, SetupBundle{}, strategyMerge, time.Now())
+	if err := commitProfileImport(v, plan); err != nil {
+		t.Fatalf("commitProfileImport() error = %v", err)
+	}
+	if v.Sessions().ParallelLimitSet {
+		t.Fatal("ParallelLimitSet = true after an import that carried no session config")
+	}
+}
+
+func TestMergeKeyedMirrorReturnsNilWhenEverythingRemoved(t *testing.T) {
+	type item struct{ Name string }
+	rep := importReport{}
+	got := mergeKeyed([]item{{"gone"}}, nil, func(i item) string { return i.Name }, strategyMirror, "rule", &rep)
+	if got != nil {
+		t.Fatalf("mergeKeyed() = %#v, want nil so an emptied collection stays deep-equal to an unset one", got)
+	}
+}
+
+func TestPlanAgentOpsReplaceSkipsIdenticalAgent(t *testing.T) {
+	rep := importReport{}
+	existing := agent.Agent{Name: "alpha", Provider: agent.ProviderClaude, Model: "opus"}
+	ops := planAgentOps([]agent.Agent{existing}, []agent.Agent{existing}, strategyReplace, time.Now(), &rep)
+	if len(ops) != 0 {
+		t.Fatalf("planAgentOps() = %#v, want no write for an agent that already matches", ops)
+	}
+	if rep.Updated != 0 {
+		t.Fatalf("report.Updated = %d, want 0 for an unchanged agent", rep.Updated)
+	}
+}
+
+func TestMergeKeyedReplaceSkipsIdenticalItems(t *testing.T) {
+	type item struct {
+		Name  string
+		Value string
+	}
+	rep := importReport{}
+	same := []item{{"a", "same"}}
+	got := mergeKeyed(same, same, func(i item) string { return i.Name }, strategyReplace, "item", &rep)
+	if len(got) != 1 {
+		t.Fatalf("mergeKeyed() = %#v, want the single item retained", got)
+	}
+	if rep.Updated != 0 || rep.Skipped != 1 {
+		t.Fatalf("report = %+v, want the identical item reported as skipped, not updated", rep)
 	}
 }

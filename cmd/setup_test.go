@@ -3,11 +3,14 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/spf13/cobra"
 )
 
 func TestSetupBundleMarshalIncludesWorkflowTemplatesField(t *testing.T) {
@@ -315,5 +318,33 @@ func TestSetupImportMergesSharedRouterConfig(t *testing.T) {
 	}
 	if empty.Router.Mode != "langgraph" {
 		t.Fatalf("router config for empty shared config = %#v, want imported router", empty.Router)
+	}
+}
+
+func TestSetupImportRejectsMultiProfileBundle(t *testing.T) {
+	bundle := PortableBundle{
+		SchemaVersion: PortableBundleSchemaVersion,
+		Profiles: []PortableProfile{
+			{Name: "default"},
+			{Name: "work"},
+		},
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("Marshal error = %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "multi.avbundle")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "import"}
+	cmd.Flags().AddFlagSet(setupImportCmd.Flags())
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err = runSetupImport(cmd, []string{path})
+	if err == nil || !strings.Contains(err.Error(), "agentvault import") {
+		t.Fatalf("runSetupImport() error = %v, want it to redirect to 'agentvault import --profile'", err)
 	}
 }
