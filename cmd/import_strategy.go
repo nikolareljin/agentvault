@@ -196,7 +196,10 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 
 	shared.MCPServers = mergeKeyed(shared.MCPServers, incomingShared.MCPServers,
 		func(s agent.MCPServer) string { return s.Name }, strategy, "MCP server", rep)
-	shared.Instructions = mergeKeyed(shared.Instructions, mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, now),
+	// Stamp override-derived instructions with the bundle's own creation time, not
+	// the wall clock: a timestamp that moves on every run would make re-importing
+	// an unchanged bundle rewrite them forever.
+	shared.Instructions = mergeKeyed(shared.Instructions, mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)),
 		agent.InstructionKey, strategy, "instruction", rep)
 	shared.Rules = mergeKeyed(shared.Rules, incomingShared.Rules,
 		func(r agent.UnifiedRule) string { return r.Name }, strategy, "rule", rep)
@@ -224,6 +227,16 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	plan.CapsChanged = !reflect.DeepEqual(existingCaps, plan.Capabilities)
 
 	return plan
+}
+
+// instructionStamp returns a timestamp for instructions derived from asset
+// overrides. It is stable across repeated imports of the same bundle, falling
+// back to the current time only for a bundle that carries no creation time.
+func instructionStamp(setup SetupBundle, now time.Time) time.Time {
+	if !setup.CreatedAt.IsZero() {
+		return setup.CreatedAt
+	}
+	return now
 }
 
 // nilIfEmpty collapses an empty slice to nil so a section that gained and lost
