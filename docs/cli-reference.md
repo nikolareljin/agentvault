@@ -578,6 +578,10 @@ Environment:
 - `AGENTVAULT_EXPORT_PASSWORD`: Bundle password for non-interactive encrypted exports.
 - `AGENTVAULT_CONFIG_DIRS`: Extra config directories to treat as profiles, separated by `:`.
 
+Stored prompt sessions are excluded from bundles: they are local run history holding
+prompt and response text. Encryption follows the flags and the wizard answer, never the
+output file's extension.
+
 ### `agentvault import [file]`
 
 Imports a bundle. Portable bundles (schema 2.x), `setup export` bundles (schema 1.x)

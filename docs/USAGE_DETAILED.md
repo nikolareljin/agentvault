@@ -647,9 +647,16 @@ Flags:
 - `--confirm` (default: `false`): Skip interactive confirmations.
 
 Bundle contents, per profile: agents, shared config (system prompt, MCP servers, rules,
-roles, instructions, router), provider configs, model capability registry, sessions,
-workflow templates, provider home files, skill assets, optional status snapshot,
-optional detected-agent list, and a generated installation guide.
+roles, instructions, router, provider pricing), provider configs, model capability
+registry, sessions, workflow templates, provider home files, skill assets, optional status
+snapshot, optional detected-agent list, and a generated installation guide.
+
+Stored prompt sessions are deliberately excluded. They are local run history and their
+entries hold prompt and response text, so they never travel in a bundle meant to be
+shared, and an import leaves the target machine's own history untouched.
+
+Encryption follows `--encrypt` / `--plain` and the wizard answer only. The output file's
+extension never changes it, so the same command always produces the same kind of file.
 
 Environment:
 - `AGENTVAULT_PASSWORD`: Master password tried before prompting, per profile.

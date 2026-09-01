@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/vault"
@@ -118,7 +118,8 @@ func runExport(cmd *cobra.Command, args []string) error {
 	applyExportFlags(cmd, &opts)
 
 	skipWizard, _ := cmd.Flags().GetBool("yes")
-	interactive := !skipWizard && term.IsTerminal(stdinFD())
+	isTerminal := term.IsTerminal(stdinFD())
+	interactive := !skipWizard && isTerminal
 
 	explicitConfigDir := resolveConfigDir()
 	discovered := discoverProfiles(explicitConfigDir)
@@ -138,24 +139,22 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	if strings.TrimSpace(opts.Output) == "" {
-		opts.Output = defaultExportPath(time.Now())
+		opts.Output = defaultExportPath(nowFunc())
 	}
 	if opts.VaultOnly && len(selected) > 1 {
 		return fmt.Errorf("--vault-only exports a single vault; narrow the selection with --profile")
 	}
-	if strings.HasSuffix(opts.Output, ".json") && !cmd.Flags().Changed("encrypt") && !cmd.Flags().Changed("plain") && !interactive {
-		// A .json name signals a readable file; honor it rather than writing ciphertext under that name.
-		opts.Encrypt = false
-	}
+	// Encryption is decided by --encrypt/--plain or the wizard, never by the file
+	// extension, so the same command always produces the same kind of file.
 	if !opts.Encrypt && opts.IncludeSecrets {
-		if err := confirmPlaintextExport(opts.Confirm, interactive, os.Stdin, cmd.ErrOrStderr()); err != nil {
+		if err := confirmPlaintextExport(opts.Confirm, isTerminal, os.Stdin, cmd.ErrOrStderr()); err != nil {
 			return err
 		}
 	}
 
 	password := ""
 	if opts.Encrypt {
-		password, err = resolveExportPassword(interactive)
+		password, err = resolveExportPassword(isTerminal)
 		if err != nil {
 			return err
 		}
@@ -165,7 +164,7 @@ func runExport(cmd *cobra.Command, args []string) error {
 		return writeVaultOnlyExport(cmd, selected[0], opts, password)
 	}
 
-	bundle := newPortableBundle(time.Now())
+	bundle := newPortableBundle(nowFunc())
 	for _, profile := range selected {
 		built, err := buildProfileBundle(cmd, profile, opts)
 		if err != nil {
@@ -361,14 +360,14 @@ func writeExportFile(path string, data []byte) error {
 
 // resolveExportPassword reads the bundle password, preferring the environment so
 // non-interactive runs can still produce encrypted output.
-func resolveExportPassword(interactive bool) (string, error) {
+func resolveExportPassword(isTerminal bool) (string, error) {
 	if envPassword := os.Getenv(ExportPasswordEnv); envPassword != "" {
 		if len(envPassword) < 8 {
 			return "", fmt.Errorf("%s must be at least 8 characters", ExportPasswordEnv)
 		}
 		return envPassword, nil
 	}
-	if !interactive && !term.IsTerminal(stdinFD()) {
+	if !isTerminal {
 		return "", fmt.Errorf("encrypted export needs a password: set %s, or pass --plain --confirm for an unencrypted bundle", ExportPasswordEnv)
 	}
 	pw, err := readPassword("Bundle password: ")
@@ -432,6 +431,14 @@ type setupCollectOptions struct {
 	AgentName            string
 }
 
+// withoutPromptSessions strips stored prompt transcripts from a shared config.
+// Prompt sessions are local run history, and their entries hold prompt and
+// response text, so they never belong in a bundle meant to be shared.
+func withoutPromptSessions(sc agent.SharedConfig) agent.SharedConfig {
+	sc.PromptSessions = nil
+	return sc
+}
+
 // setupCollectResult is a collected bundle plus the provenance of its API keys.
 type setupCollectResult struct {
 	Bundle SetupBundle
@@ -447,11 +454,11 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 	host, _ := os.Hostname()
 	bundle := SetupBundle{
 		Version:         "1.0",
-		CreatedAt:       time.Now(),
+		CreatedAt:       nowFunc(),
 		SourceMachine:   host,
 		SourceOS:        goOSArch(),
 		Agents:          v.List(),
-		SharedConfig:    v.SharedConfig(),
+		SharedConfig:    withoutPromptSessions(v.SharedConfig()),
 		ProviderConfigs: v.ProviderConfigs(),
 	}
 	if opts.IncludeSessions {

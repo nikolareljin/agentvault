@@ -257,3 +257,29 @@ func TestSanitizeFilenamePart(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoverProfilesFindsHiddenHomeDirs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, ".config"))
+	t.Setenv(ConfigDirsEnv, "")
+
+	hidden := filepath.Join(root, ".agentvault-legacy")
+	if err := os.MkdirAll(hidden, 0700); err != nil {
+		t.Fatalf("MkdirAll error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hidden, "vault.enc"), []byte("x"), 0600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	names := discoveredProfileNames(discoverProfiles(""))
+	found := false
+	for _, n := range names {
+		if n == "legacy" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("discoverProfiles() names = %v, want the hidden ~/.agentvault-legacy directory included", names)
+	}
+}

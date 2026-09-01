@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -181,6 +183,9 @@ func decodeImportPayload(raw []byte) ([]byte, error) {
 	if detectBundleFormat(raw) != bundleFormatUnknown {
 		return raw, nil
 	}
+	if json.Valid(raw) {
+		return nil, errors.New("file is valid JSON but not a recognized agentvault export")
+	}
 	password := os.Getenv(ImportPasswordEnv)
 	if password == "" {
 		if !term.IsTerminal(stdinFD()) {
@@ -281,7 +286,7 @@ func selectProfilesForImport(cmd *cobra.Command, bundle PortableBundle, requeste
 }
 
 // confirmDestructiveImport gates mirror imports, which delete local-only items.
-func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in *os.File, w interface{ Write([]byte) (int, error) }, profiles []PortableProfile) error {
+func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w io.Writer, profiles []PortableProfile) error {
 	if confirmFlag {
 		return nil
 	}

@@ -257,3 +257,96 @@ func mustRead(t *testing.T, path string) []byte {
 	}
 	return data
 }
+
+// TestExportOmitsPromptTranscripts guards the privacy rule that stored prompt
+// history never travels inside a shareable bundle.
+func TestExportOmitsPromptTranscripts(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv(ConfigDirsEnv, "")
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+
+	sourceDir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, sourceDir, []agent.Agent{{Name: "alpha", Provider: agent.ProviderClaude}}, nil)
+
+	v := vault.New(filepath.Join(sourceDir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatalf("Unlock() error = %v", err)
+	}
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		SystemPrompt: "shared prompt",
+		PromptSessions: []agent.PromptSession{{
+			ID:      "s1",
+			Entries: []agent.PromptTranscriptEntry{{Prompt: "do-not-leak-this"}},
+		}},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	bundlePath := filepath.Join(root, "no-history.json")
+	var out bytes.Buffer
+	exportCmd.SetOut(&out)
+	exportCmd.SetErr(&out)
+	t.Cleanup(func() { exportCmd.SetOut(nil); exportCmd.SetErr(nil) })
+	withFlags(t, exportCmd, map[string]string{
+		"yes":                    "true",
+		"plain":                  "true",
+		"confirm":                "true",
+		"include-provider-files": "false",
+		"include-skills":         "false",
+		"detect":                 "false",
+	})
+	if err := runExport(exportCmd, []string{bundlePath}); err != nil {
+		t.Fatalf("runExport() error = %v\noutput: %s", err, out.String())
+	}
+
+	raw := mustRead(t, bundlePath)
+	if strings.Contains(string(raw), "do-not-leak-this") {
+		t.Fatal("bundle contains prompt transcript text, want prompt sessions stripped")
+	}
+	if !strings.Contains(string(raw), "shared prompt") {
+		t.Fatal("bundle lost the shared system prompt, want the rest of the shared config kept")
+	}
+}
+
+// TestExportEncryptsRegardlessOfExtension pins the rule that encryption follows
+// the flags and never the output file's extension.
+func TestExportEncryptsRegardlessOfExtension(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv(ConfigDirsEnv, "")
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	t.Setenv(ExportPasswordEnv, e2eBundlePassword)
+
+	seedProfileVault(t, filepath.Join(root, config.AppName),
+		[]agent.Agent{{Name: "alpha", Provider: agent.ProviderClaude}}, nil)
+
+	bundlePath := filepath.Join(root, "looks-like-plain.json")
+	var out bytes.Buffer
+	exportCmd.SetOut(&out)
+	exportCmd.SetErr(&out)
+	t.Cleanup(func() { exportCmd.SetOut(nil); exportCmd.SetErr(nil) })
+	withFlags(t, exportCmd, map[string]string{
+		"yes":                    "true",
+		"include-provider-files": "false",
+		"include-skills":         "false",
+		"detect":                 "false",
+	})
+	if err := runExport(exportCmd, []string{bundlePath}); err != nil {
+		t.Fatalf("runExport() error = %v\noutput: %s", err, out.String())
+	}
+	if detectBundleFormat(mustRead(t, bundlePath)) != bundleFormatUnknown {
+		t.Fatal("a .json output path turned encryption off, want the flags to decide")
+	}
+}
+
+// TestImportRejectsUnrelatedJSONWithoutPasswordPrompt keeps a readable but wrong
+// file from being reported as an encryption failure.
+func TestImportRejectsUnrelatedJSONWithoutPasswordPrompt(t *testing.T) {
+	_, err := decodeImportPayload([]byte(`{"hello":"world"}`))
+	if err == nil || !strings.Contains(err.Error(), "not a recognized agentvault export") {
+		t.Fatalf("decodeImportPayload() error = %v, want it to name the real problem", err)
+	}
+}

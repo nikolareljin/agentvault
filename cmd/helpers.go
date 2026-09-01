@@ -61,8 +61,9 @@ func readPassword(prompt string) (string, error) {
 	return string(pw), nil
 }
 
-// VaultPasswordEnv holds the master password for non-interactive vault access.
-const VaultPasswordEnv = "AGENTVAULT_PASSWORD"
+// VaultPasswordEnv names the variable holding the master password for
+// non-interactive vault access.
+const VaultPasswordEnv = "AGENTVAULT_PASSWORD" // #nosec G101 -- environment variable name, not a credential
 
 // openVault unlocks the vault, prompting for the master password.
 // This is the common entry point for all commands that need vault access.

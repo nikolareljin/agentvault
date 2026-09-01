@@ -342,3 +342,73 @@ func TestCommitProfileImportReplacesCapabilities(t *testing.T) {
 		t.Fatalf("capabilities = %#v, want only the bundle entry after a mirror import", caps)
 	}
 }
+
+func TestPlanProfileImportMergesPricing(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		Pricing: []agent.ProviderPricing{{Provider: agent.ProviderClaude, InputPer1KTokens: 1}},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	setup := SetupBundle{SharedConfig: agent.SharedConfig{Pricing: []agent.ProviderPricing{
+		{Provider: agent.ProviderClaude, InputPer1KTokens: 2},
+		{Provider: agent.ProviderOllama, InputPer1KTokens: 0},
+	}}}
+
+	plan := planProfileImport(v, setup, strategyReplace, time.Now())
+	if err := commitProfileImport(v, plan); err != nil {
+		t.Fatalf("commitProfileImport() error = %v", err)
+	}
+	pricing := v.SharedConfig().Pricing
+	if len(pricing) != 2 {
+		t.Fatalf("pricing = %#v, want both rows after a replace import", pricing)
+	}
+	if pricing[0].InputPer1KTokens != 2 {
+		t.Fatalf("pricing[0].InputPer1KTokens = %v, want the bundle rate", pricing[0].InputPer1KTokens)
+	}
+}
+
+func TestPricingKeySeparatesModelPatterns(t *testing.T) {
+	a := pricingKey(agent.ProviderPricing{Provider: agent.ProviderClaude, ModelPattern: "opus"})
+	b := pricingKey(agent.ProviderPricing{Provider: agent.ProviderClaude, ModelPattern: "sonnet"})
+	if a == b {
+		t.Fatal("pricingKey() collapsed two model patterns into one key")
+	}
+}
+
+func TestPlanProfileImportKeepsLocalPromptSessions(t *testing.T) {
+	v := newTestVault(t)
+	if err := v.SetSharedConfig(agent.SharedConfig{
+		PromptSessions: []agent.PromptSession{{ID: "local-history", AgentName: "alpha"}},
+	}); err != nil {
+		t.Fatalf("SetSharedConfig() error = %v", err)
+	}
+
+	// A bundle never carries prompt sessions, so even mirror must leave them alone.
+	plan := planProfileImport(v, SetupBundle{}, strategyMirror, time.Now())
+	if err := commitProfileImport(v, plan); err != nil {
+		t.Fatalf("commitProfileImport() error = %v", err)
+	}
+	sessions := v.SharedConfig().PromptSessions
+	if len(sessions) != 1 || sessions[0].ID != "local-history" {
+		t.Fatalf("prompt sessions = %#v, want local run history untouched", sessions)
+	}
+}
+
+func TestWithoutPromptSessionsStripsTranscripts(t *testing.T) {
+	sc := agent.SharedConfig{
+		SystemPrompt: "keep me",
+		PromptSessions: []agent.PromptSession{{
+			ID:      "s1",
+			Entries: []agent.PromptTranscriptEntry{{Prompt: "secret question"}},
+		}},
+	}
+	got := withoutPromptSessions(sc)
+	if got.PromptSessions != nil {
+		t.Fatalf("PromptSessions = %#v, want nil so transcripts never reach a bundle", got.PromptSessions)
+	}
+	if got.SystemPrompt != "keep me" {
+		t.Fatalf("SystemPrompt = %q, want the rest of the config preserved", got.SystemPrompt)
+	}
+}
