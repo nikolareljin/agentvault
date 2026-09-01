@@ -68,6 +68,9 @@
 - The plaintext-with-secrets confirmation told `export` users to add `--encrypted`, a flag
   only the deprecated `setup export` has. It now names each caller's own flag.
 - Docs described sibling profile discovery as `agentvault-*`; the match is `agentvault*`.
+- Instructions derived from asset overrides were stamped with the current time on import, so
+  a `replace` or `mirror` re-import of an unchanged bundle rewrote them every run. They now
+  carry the bundle's own creation time, which keeps a repeat import a true no-op.
 
 ### Security
 - Stored prompt sessions are excluded from exported bundles. Their entries hold prompt and

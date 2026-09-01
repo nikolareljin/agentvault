@@ -490,3 +490,45 @@ func TestMergeKeyedReplaceSkipsIdenticalItems(t *testing.T) {
 		t.Fatalf("report = %+v, want the identical item reported as skipped, not updated", rep)
 	}
 }
+
+func TestInstructionStampPrefersBundleCreationTime(t *testing.T) {
+	created := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	if got := instructionStamp(SetupBundle{CreatedAt: created}, time.Now()); !got.Equal(created) {
+		t.Fatalf("instructionStamp() = %v, want the bundle creation time", got)
+	}
+	now := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	if got := instructionStamp(SetupBundle{}, now); !got.Equal(now) {
+		t.Fatalf("instructionStamp() = %v, want the fallback clock for a bundle with no creation time", got)
+	}
+}
+
+func TestPlanProfileImportIsIdempotentForInstructionOverrides(t *testing.T) {
+	v := newTestVault(t)
+	setup := SetupBundle{
+		CreatedAt: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC),
+		InstructionOverrides: []SetupAsset{{
+			Kind:                setupAssetKindInstruction,
+			LogicalPath:         "AGENTS.md",
+			ProjectRelativePath: "AGENTS.md",
+			ContentPresent:      true,
+			Content:             []byte("# rules"),
+		}},
+	}
+
+	first := planProfileImport(v, setup, strategyMirror, time.Now())
+	if err := commitProfileImport(v, first); err != nil {
+		t.Fatalf("commitProfileImport() error = %v", err)
+	}
+	if len(v.SharedConfig().Instructions) != 1 {
+		t.Fatalf("instructions = %#v, want the override imported", v.SharedConfig().Instructions)
+	}
+
+	// Re-importing the same bundle later must not rewrite the instruction.
+	second := planProfileImport(v, setup, strategyMirror, time.Now().Add(time.Hour))
+	if second.SharedChanged {
+		t.Fatal("SharedChanged = true on a repeat import, want override-derived instructions to be stable")
+	}
+	if second.Report.Updated != 0 {
+		t.Fatalf("report.Updated = %d on a repeat import, want 0", second.Report.Updated)
+	}
+}
