@@ -250,7 +250,7 @@ Execution behavior:
 Current limitation:
 - Prompt text alone does not switch repositories or instruction scope. If you start from `~/Projects`, AgentVault uses that current directory for local instruction discovery.
 - Agentic prompt runs now use explicit execution workspace selection. CLI defaults to workflow repo root when `--workflow ... --repo ...` is used, otherwise current directory. Override with `--workspace`.
-- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/Projects/scholar-path --workspace ~/Projects/scholar-path --pr 27`.
+- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/Projects/my-app --workspace ~/Projects/my-app --pr 27`.
 
 Runtime value precedence for prompt execution is:
 - local agent setting in vault

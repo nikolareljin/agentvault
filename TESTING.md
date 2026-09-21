@@ -455,7 +455,7 @@ After several `prompt` executions, `status --cost-report` aggregates cost estima
 # Expected: "Discovered N model(s) from http://localhost:11434"
 # Adds entries with inferred capabilities from model names
 
-# Auto-discover from /health endpoint (llm-gateway-helpers format)
+# Auto-discover from /health endpoint (models-list format)
 ./agentvault capability discover --endpoint http://localhost:8080
 
 # Custom timeout

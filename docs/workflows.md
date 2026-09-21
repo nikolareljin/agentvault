@@ -144,7 +144,7 @@ agentvault route --router local-ai \
 ## LLM-router mode (HTTP server)
 
 Calls any OpenAI-compatible `/v1/chat/completions` server for intelligent routing decisions.
-Compatible with llama-server, bitnet-server, Ollama, and any llm-gateway-helpers deployment.
+Compatible with llama-server, bitnet-server, Ollama, and any gateway exposing a models-list `/health`.
 
 ```bash
 agentvault route --router llm-router \

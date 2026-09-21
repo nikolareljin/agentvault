@@ -263,7 +263,7 @@ Optional:
 - `--timeout <duration>` (default: `10s`): request timeout
 
 Behavior: tries `/v1/models` (OpenAI-compat shape — llama.cpp, Ollama, bitnet-server) first,
-then falls back to `/health` (llm-gateway-helpers shape). Infers capability tags from model names.
+then falls back to `/health` (models-list shape: `{"status":"ok","models":[...]}`). Infers capability tags from model names.
 Registry entries are used by all routing modes to augment agent `RouteConfig.Capabilities`.
 
 ## Embedded inference model

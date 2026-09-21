@@ -166,7 +166,7 @@ func runCapabilityRemove(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// runCapabilityDiscover queries the endpoint's /health (llm-gateway-helpers shape) or
+// runCapabilityDiscover queries the endpoint's /health (models-list shape) or
 // /v1/models (OpenAI-compat shape) and creates capability entries for each reported model.
 func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	v, err := openVault()
@@ -183,7 +183,7 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	// Try OpenAI-compat /v1/models first (llama.cpp, bitnet.cpp, Ollama).
 	entries, modelsErr := discoverFromModelsEndpoint(ctx, client, baseURL)
 	if modelsErr != nil {
-		// Fall back to /health (llm-gateway-helpers).
+		// Fall back to /health (models-list shape).
 		var healthErr error
 		entries, healthErr = discoverFromHealthEndpoint(ctx, client, baseURL)
 		if healthErr != nil {
@@ -291,7 +291,7 @@ func discoverFromHealthEndpoint(ctx context.Context, client *http.Client, baseUR
 	if err != nil {
 		return nil, err
 	}
-	// llm-gateway-helpers /health shape: {"status":"ok","models":["llama3.2",...]}
+	// Gateway /health shape: {"status":"ok","models":["llama3.2",...]}
 	var out struct {
 		Models []string `json:"models"`
 	}

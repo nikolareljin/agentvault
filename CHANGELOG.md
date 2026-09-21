@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+- **The public tree named two private repositories.** Six places described a
+  wire format by naming the repository that happens to serve it: the `/health`
+  models-list shape in `cmd/capability.go`, `docs/cli-reference.md`,
+  `docs/workflows.md` and `TESTING.md`, and a private repository used as the
+  example path in `README.md`. All now name the shape or a neutral example.
+  This is a general-purpose tool; nothing in it should describe one operator's
+  machine.
+
 ## [0.13.0] - 2026-09-01
 
 ### Added
