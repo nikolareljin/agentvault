@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   gate:
-    uses: nikolareljin/ci-helpers/.github/workflows/pr-gate.yml@0.30.0-rc1
+    uses: nikolareljin/ci-helpers/.github/workflows/pr-gate.yml@production
     with:
       go_version: "1.25"
       lint_command: 'test -z "$(gofmt -l .)" && go vet ./...'
