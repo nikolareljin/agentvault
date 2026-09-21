@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   go:
-    uses: nikolareljin/ci-helpers/.github/workflows/ci.yml@0.30.0-rc1
+    uses: nikolareljin/ci-helpers/.github/workflows/ci.yml@production
     with:
       go_version: "1.25"
       lint_command: 'test -z "$(gofmt -l .)" && go vet ./...'
