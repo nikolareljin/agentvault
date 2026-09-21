@@ -941,3 +941,59 @@ func TestImportBundleRejectsDuplicateResolvedFilenames(t *testing.T) {
 		t.Fatalf("ImportBundle() err = %v, want duplicate template filename", err)
 	}
 }
+
+// A stored template written by an older release keeps winning forever, because
+// RefreshConfigTemplates never overwrites an existing file without --force. That
+// is correct - it must not clobber someone's edits - but it must not be silent
+// either, which is how one machine went on using a superseded template while
+// reporting nothing. Both directions are asserted: a warning when the stored
+// version is an older built-in, and none when it matches.
+func TestLoadResolvedWarnsWhenStoredTemplateIsAnOlderBuiltin(t *testing.T) {
+	cfgDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatalf("RefreshConfigTemplates() error = %v", err)
+	}
+
+	spec, ok := findDefaultByKey("implement_pr")
+	if !ok {
+		t.Fatalf("findDefaultByKey(implement_pr) not found")
+	}
+
+	// Sound before broken: as written by this release, nothing is stale.
+	_, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "refresh --force") {
+			t.Fatalf("fresh config storage reported a stale template: %q", w)
+		}
+	}
+
+	// Now age the stored copy the way an older release left it.
+	meta, err := readMetadata(cfgDir)
+	if err != nil {
+		t.Fatalf("readMetadata() error = %v", err)
+	}
+	meta.Versions["implement_pr"] = "builtin-2.0"
+	if err := writeMetadata(cfgDir, meta); err != nil {
+		t.Fatalf("writeMetadata() error = %v", err)
+	}
+
+	_, warnings, err = LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatalf("LoadResolved() error = %v", err)
+	}
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "implement_pr.txt") &&
+			strings.Contains(w, "builtin-2.0") &&
+			strings.Contains(w, spec.Version) &&
+			strings.Contains(w, "refresh --force") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no staleness warning for a superseded stored template; got %v", warnings)
+	}
+}

@@ -113,7 +113,7 @@ Extension Points:
 - Pre-Intake Hook: custom issue triage rules
 - Pre-Commit Hook: formatting, security scans, policy checks
 - Post-Push Hook: reviewer assignment, label automation, CI checks
-- If Copilot is requested as reviewer, request review-only and do not ask Copilot to implement/fix code via PR comments.
+- Request review according to the repository's own policy. Do not assume a particular reviewer, human or automated, and do not ask a reviewer to write the fix.
 - Post-PR Hook: comment templating and release note generation
 
 Customization Notes:
@@ -178,11 +178,14 @@ Core Workflow (Default Module Set):
 6. PR Hygiene Module:
 - Resolve all fixed conversations/threads.
 - Re-request review from same reviewer when configured.
-- Re-request review from Copilot on the processed PR after fixes are pushed, but as review-only.
-- If Copilot was not reviewing the PR previously, explicitly request a new Copilot review-only request.
-- Do not ask Copilot to implement/fix code; do not post prompt-like comments that can trigger code-writing behavior.
-- Prefer GitHub reviewer re-request APIs/UI over chat/comment triggers.
-- If re-request fails, report which PR requires re-request and provide PR URL.
+- Re-request review after fixes are pushed, according to the repository's own
+  policy. Do not assume a particular reviewer, human or automated.
+- Review the diff at head yourself before reporting the PR ready, including the
+  commits just pushed.
+- Do not ask a reviewer to write the fix, and do not post prompt-like comments
+  that can trigger code-writing behaviour.
+- Prefer the host's reviewer APIs or UI over chat or comment triggers.
+- If a re-request fails, report which PR needs it and give the PR URL.
 
 Output Contract:
 - Addressed thread list
@@ -190,7 +193,7 @@ Output Contract:
 - Tests/build/lint results
 - Commit hash
 - Updated PR URL
-- Re-review status
+- Review report: who reviewed, the head commit, what was checked, what was found
 
 Extension Points:
 - Pre-Remediation Hook: map comments to owners/components
@@ -219,7 +222,7 @@ Metadata:
 - Template Version: 2.1
 - Template Type: TODO Entry Authoring Workflow
 - Mode: Modular and Extendable
-- Compatible Format: git-lantern TODO structure
+- Compatible Format: append-only TODO files using [TODO] ... [/TODO] markers
 
 Purpose:
 - Generate one or more TODO entries using a deterministic, append-only process.
@@ -324,13 +327,13 @@ var defaultSpecs = []TemplateAsset{
 	{
 		Key:      "implement_issue",
 		Filename: "implement_issue.txt",
-		Version:  "builtin-2.0",
+		Version:  "builtin-2.2",
 		Content:  builtinImplementIssueTemplate,
 	},
 	{
 		Key:      "implement_pr",
 		Filename: "implement_pr.txt",
-		Version:  "builtin-2.0",
+		Version:  "builtin-2.2",
 		Content:  builtinImplementPRTemplate,
 	},
 	{
@@ -407,6 +410,19 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 		}
 
 		if asset, ok := byKey[spec.Key]; ok && strings.TrimSpace(asset.Content) != "" {
+			// A stored copy always wins, including one written by an older
+			// release. Without this warning that is silent and permanent:
+			// RefreshConfigTemplates never overwrites an existing file unless
+			// --force is passed, so a machine keeps a superseded template
+			// indefinitely while reporting nothing.
+			if stored := strings.TrimSpace(asset.Version); stored != "" &&
+				strings.HasPrefix(stored, "builtin-") && stored != spec.Version {
+				warnings = append(warnings, fmt.Sprintf(
+					"template %q in config storage is %s; the built-in is %s. "+
+						"Run `agentvault templates refresh --force` to replace it, "+
+						"or edit it in place to keep your own version.",
+					asset.Filename, stored, spec.Version))
+			}
 			resolved = append(resolved, ResolvedTemplate{
 				TemplateAsset: asset,
 				Source:        "config",
