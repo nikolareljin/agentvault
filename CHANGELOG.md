@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Changed
+- **The built-in workflow templates no longer carry one operator's review
+  policy.** `implement_issue` and `implement_pr` named a specific automated
+  reviewer and prescribed how to re-request it. They now say to request review
+  according to the repository's own policy, assume no particular reviewer, and
+  review the diff at head yourself before reporting a PR ready. The `add_issue`
+  template describes its output as append-only `[TODO] ... [/TODO]` files rather
+  than naming one tool's format. Both templates move to `builtin-2.2`.
+
+  This is a general-purpose tool. A template compiled into the binary is the one
+  thing every user gets by default, so it must not encode anyone's house rules.
+
+### Added
+- **A stored template older than the built-in now says so.**
+  `RefreshConfigTemplates` never overwrites an existing file without `--force`,
+  which is right - it must not clobber edits - but it was also silent, so a
+  machine kept a superseded template indefinitely while reporting nothing.
+  `LoadResolved` now warns with the stored version, the built-in version, and
+  what to run. A template edited by hand keeps winning, as before.
+
+
 ## [0.13.0] - 2026-09-01
 
 ### Added
