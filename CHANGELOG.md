@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Added
+- **The setup bundle carries the user-level instruction files.** It took
+  `~/.claude/settings.json`, `~/.claude/keybindings.json` and the skills, but
+  not `~/.claude/CLAUDE.md`, `~/.claude/agents/` or `~/.claude/commands/`. A
+  machine restored from a bundle therefore had the keybindings and none of the
+  standing rules, which is the half that changes behaviour most. An agent
+  definition says how a subagent behaves and a saved command is a prompt
+  somebody wrote once and kept; both are instructions.
+
+  Each restores to where it came from under `~/.claude`, asserted in the test
+  rather than assumed, because carrying a file that lands somewhere else is
+  the same as not carrying it.
+
+### Added
 - **`instructions pull` follows the references out of an instruction file.** It
   took ten well-known names and stopped, so a workspace `AGENTS.md` naming
   `implement_pr.txt` as a required template exported without it and the rule

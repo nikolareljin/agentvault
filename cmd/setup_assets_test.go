@@ -807,3 +807,46 @@ func TestCopyRegularFileRejectsSymlinkDestinationDirectory(t *testing.T) {
 		t.Fatalf("symlink target directory should remain untouched, got err=%v", err)
 	}
 }
+
+// The user-level instruction file, agent definitions and commands are what a
+// restored machine reads to know how to behave. A bundle carried the settings
+// and the skills and left all three behind, so a restore produced a machine
+// with the keybindings and none of the rules.
+func TestCollectSetupAssets_CarriesUserLevelInstructions(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "agents"))
+	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "commands", "nested"))
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "CLAUDE.md"), "# user rules\n")
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "agents", "reviewer.md"), "agent definition\n")
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "commands", "nested", "ship.md"), "a saved prompt\n")
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+
+	for _, logical := range []string{"CLAUDE.md", "agents/reviewer.md", "commands/nested/ship.md"} {
+		if !hasAsset(assets.ProviderFiles, setupAssetKindProviderFile, setupAssetRootProviderClaude, logical) {
+			t.Errorf("%s was not carried", logical)
+		}
+	}
+
+	// And each must land back where it came from, or carrying it is pointless.
+	for _, logical := range []string{"CLAUDE.md", "agents/reviewer.md", "commands/nested/ship.md"} {
+		got, err := providerAssetDestination(homeDir, SetupAsset{
+			LogicalRoot: setupAssetRootProviderClaude,
+			LogicalPath: logical,
+		})
+		if err != nil {
+			t.Errorf("destination for %s: %v", logical, err)
+			continue
+		}
+		want := filepath.Join(homeDir, ".claude", filepath.FromSlash(logical))
+		if got != want {
+			t.Errorf("%s restores to %s, want %s", logical, got, want)
+		}
+	}
+}
