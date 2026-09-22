@@ -22,6 +22,11 @@
   There is deliberately no flag that takes all of them, because carrying one is
   a decision about that file rather than a mode to switch on.
 
+  `settings.json` is treated as sensitive and redacted without
+  `--include-secrets`, as the user-level one is. Agent and command definitions
+  are not: they are prose, and redacting them restores a machine with its rules
+  blanked out, which is the same as not carrying them.
+
 ### Added
 - **The setup bundle carries the user-level instruction files.** It took
   `~/.claude/settings.json`, `~/.claude/keybindings.json` and the skills, but

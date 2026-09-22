@@ -913,11 +913,23 @@ func TestCollectSetupAssets_CarriesDirectoryScopeAndDeclinesLocalFiles(t *testin
 		t.Fatalf("collectSetupAssets() error = %v", err)
 	}
 
-	if !hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.json") {
-		t.Error(".claude/settings.json was not carried")
-	}
-	if !hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/agents/local.md") {
+	// Presence is not enough: an asset can be carried with its content redacted,
+	// which restores nothing. An agent definition is prose and must arrive whole.
+	agentAsset := findAsset(assets.ProjectFiles, setupAssetRootProject, ".claude/agents/local.md")
+	if agentAsset == nil {
 		t.Error(".claude/agents/local.md was not carried")
+	} else if agentAsset.Redacted || !agentAsset.ContentPresent || string(agentAsset.Content) != "project agent\n" {
+		t.Errorf(".claude/agents/local.md carried without its content: redacted=%v present=%v",
+			agentAsset.Redacted, agentAsset.ContentPresent)
+	}
+
+	// settings.json can hold credentials, so without --include-secrets it is
+	// carried as metadata only, exactly as the user-level one is.
+	settingsAsset := findAsset(assets.ProjectFiles, setupAssetRootProject, ".claude/settings.json")
+	if settingsAsset == nil {
+		t.Error(".claude/settings.json was not carried")
+	} else if !settingsAsset.Redacted {
+		t.Error(".claude/settings.json was carried unredacted without --include-secrets")
 	}
 	if hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.local.json") {
 		t.Fatal("a .local. file was carried by default; it may hold credentials")

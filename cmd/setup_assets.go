@@ -227,15 +227,23 @@ func collectProjectAgentSettings(projectDir string, includeSecrets bool, include
 	var assets []SetupAsset
 	var warnings []string
 
-	roots := []string{
-		filepath.Join(".claude"),
-		filepath.Join(".claude", "agents"),
-		filepath.Join(".claude", "commands"),
+	// settings.json can hold credentials, so it is sensitive and is redacted
+	// without --include-secrets, exactly as the user-level one is. Agent and
+	// command definitions are prose: redacting them restores a machine with its
+	// rules blanked out, which is the same as not carrying them.
+	roots := []struct {
+		rel       string
+		sensitive bool
+	}{
+		{filepath.Join(".claude"), true},
+		{filepath.Join(".claude", "agents"), false},
+		{filepath.Join(".claude", "commands"), false},
 	}
-	for _, rel := range roots {
+	for _, root := range roots {
+		rel := root.rel
 		found, warns, err := collectDirFiles(filepath.Join(projectDir, rel),
 			setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject,
-			filepath.ToSlash(rel), filepath.ToSlash(rel), true, includeSecrets)
+			filepath.ToSlash(rel), filepath.ToSlash(rel), root.sensitive, includeSecrets)
 		if err != nil {
 			return nil, warnings, err
 		}
