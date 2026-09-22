@@ -513,6 +513,42 @@ Examples:
 			pulled++
 		}
 
+		// An instruction file is not self-contained. The workspace AGENTS.md
+		// that prompted this names three workflow templates as required
+		// reading, and storing it without them exports a rule pointing at
+		// nothing on the next machine.
+		follow, _ := cmd.Flags().GetBool("follow-references")
+		strict, _ := cmd.Flags().GetBool("strict")
+		if follow && pulled > 0 {
+			res, err := v.PullReferenceClosure(dir)
+			if err != nil {
+				return err
+			}
+			for _, inst := range res.Stored {
+				if warnings := agent.CheckHijacking(inst.Content); len(warnings) > 0 {
+					fmt.Fprintf(os.Stderr, "  [%s] %s\n", inst.Name, inst.Filename)
+					fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+				}
+				fmt.Printf("  Pulled %s -> %q (%d bytes, named by an instruction file)\n",
+					inst.Filename, inst.Name, len(inst.Content))
+			}
+			pulled += len(res.Stored)
+
+			// Refusals and missing files are printed, never swallowed. A rule
+			// naming a file that cannot travel is the defect this exists to
+			// end, and it is invisible if the export is quiet about it.
+			for _, r := range res.Refused {
+				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", r.Raw, r.Reason)
+			}
+			for _, r := range res.Missing {
+				fmt.Fprintf(os.Stderr, "  named but not present: %s\n", r.Raw)
+			}
+			if strict && (len(res.Refused) > 0 || len(res.Missing) > 0) {
+				return fmt.Errorf("--strict: %d reference(s) refused, %d named but not present",
+					len(res.Refused), len(res.Missing))
+			}
+		}
+
 		if pulled == 0 {
 			fmt.Println("No instruction files found in", dir)
 		} else {
@@ -1062,6 +1098,10 @@ func init() {
 
 	instPullCmd.Flags().String("name", "", "pull only a specific instruction name")
 	instPullCmd.Flags().String("file", "", "filename to read (use with --name)")
+	instPullCmd.Flags().Bool("follow-references", true,
+		"also store the files the instructions name, and what those name in turn")
+	instPullCmd.Flags().Bool("strict", false,
+		"fail if a named file is refused or not present, instead of reporting it")
 
 	instPushCmd.Flags().String("name", "", "push only a specific instruction name")
 

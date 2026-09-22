@@ -60,6 +60,7 @@ agentvault
    - press `c` to connect the selected agent directly to Prompt Gateway
 3. Go to `Instructions` tab:
    - AgentVault auto-detects project instruction files (`AGENTS.md`, `CLAUDE.md`, `codex.md`, `.github/copilot-instructions.md`)
+   - and the files those name: `instructions pull` follows references out of an instruction file, so a rule saying "use `implement_pr.txt`" carries the template with it. Refusals and missing files are reported rather than dropped; `--strict` turns the report into a failure, `--follow-references=false` turns it off.
    - current-project files are auto-synced into vault instructions
 4. Go to `Sessions` tab:
    - live provider token/quota usage is refreshed continuously for running sessions

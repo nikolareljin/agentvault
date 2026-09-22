@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+- **`instructions pull` follows the references out of an instruction file.** It
+  took ten well-known names and stopped, so a workspace `AGENTS.md` naming
+  `implement_pr.txt` as a required template exported without it and the rule
+  arrived on the next machine pointing at nothing. It now stores what the
+  instructions name, and what those name in turn, terminating on a cycle.
+
+  What it will not take is the point, and is decided rather than discovered:
+  absolute paths, anything reaching through `..`, anything whose real path
+  leaves the directory (symlinked parents included), directories, build and
+  vendor trees, and anything over 256 KiB. Each refusal is printed with its
+  reason; a named file that is not present is reported too. `--strict` turns
+  either into a failure, `--follow-references=false` turns the walk off.
+
+  Measured against a real 260-line instruction file before the defaults were
+  chosen: 41 candidate references, 7 taken, 12 named but absent. Failing on
+  absent files by default would have made the command unusable on the very file
+  that motivated it, which is why reporting is the default. That file also
+  names one of its required scripts by absolute path, so it is refused and
+  cannot travel: a defect in the rule, now visible instead of silent.
+
 ### Fixed
 - **CI called the shared engine directly, so Go was never set up.** `ci.yml`
   used `ci-helpers/.github/workflows/ci.yml`, which only runs its `Setup Go`
