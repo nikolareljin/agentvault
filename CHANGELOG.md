@@ -20,7 +20,18 @@
   should exercise the defaults rather than a local copy of them.
 
   `workflow_dispatch` added so a cold-versus-warm cache comparison can be made
-  deliberately instead of by pushing twice.
+  deliberately instead of by pushing twice. Its concurrency key now carries the
+  event, because a dispatch and a push on `main` otherwise share a group and
+  `cancel-in-progress` makes one destroy the other.
+
+- **Pull request runs skipped Go setup for the same reason.** `pr.yml` calls the
+  shared `pr-gate` engine, which also sets Go up only when a caller names a
+  version, so pull requests were building on the runner image's Go with no
+  module cache. It now passes `go_version` explicitly. That is a literal rather
+  than an inherited default because `pr-gate` is an engine with no Go preset in
+  front of it, which makes it the one place the version can drift from the
+  shared default -- written down in the file, and removable once such a preset
+  exists.
 
 
 ### Changed

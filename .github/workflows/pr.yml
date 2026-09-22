@@ -17,6 +17,17 @@ jobs:
   gate:
     uses: nikolareljin/ci-helpers/.github/workflows/pr-gate.yml@production
     with:
+      # Without this the gate's `Setup Go` step is skipped, exactly as it was in
+      # ci.yml: the engine only sets Go up when a caller names a version. Pull
+      # request runs were therefore building on whatever Go the runner image
+      # shipped, with no module cache, while go.mod declares go 1.25.0.
+      #
+      # It is a literal here, where ci.yml gets the same value as go.yml's
+      # default, because pr-gate is an engine and there is no Go preset in front
+      # of it. That makes this the one place a version can drift from the shared
+      # default -- so it is written down rather than left implicit, and it goes
+      # away when a Go pr-gate preset exists upstream.
+      go_version: "1.25"
       lint_command: 'test -z "$(gofmt -l .)" && go vet ./...'
       test_command: "go test ./..."
       build_command: "go build ./..."

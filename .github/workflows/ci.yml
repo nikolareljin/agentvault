@@ -14,7 +14,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is part of the key. Without it a workflow_dispatch on main shares
+  # a group with a push on main, and cancel-in-progress makes whichever started
+  # second destroy the first -- so triggering the cache comparison would kill a
+  # real CI run, and a push would kill the comparison. Pushes still cancel
+  # earlier pushes, which is the behaviour worth keeping.
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
