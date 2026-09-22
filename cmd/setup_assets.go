@@ -136,6 +136,12 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsse
 			// and the skills but not the standing instructions, which is the
 			// half that changes behaviour most: a restored machine had the
 			// keybindings and none of the rules.
+			//
+			// Not sensitive: this is instruction text, and marking it so would
+			// redact it unless --include-secrets, which restores a machine with
+			// its rules blanked out. settings.json is sensitive because it can
+			// hold credentials; prose cannot be redacted and still be prose.
+			// The 1 MiB asset ceiling still applies, as it does to every asset.
 			path:        filepath.Join(homeDir, ".claude", "CLAUDE.md"),
 			root:        setupAssetRootProviderClaude,
 			logicalPath: "CLAUDE.md",
