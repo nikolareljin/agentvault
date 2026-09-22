@@ -14,23 +14,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The Go preset for the gate, not the engine directly. Same reasoning as
+  # ci.yml: the engine sets Go up only when a caller names a version, so
+  # calling it here meant carrying a `go_version: "1.25"` literal -- a local
+  # pin, and the one place this repository could drift from the shared default.
+  #
+  # The preset takes go.yml's defaults, identically, so a push and a pull
+  # request now get the same toolchain and the same module cache. That is the
+  # property that makes a green gate mean something.
+  #
+  # The command overrides are gone for the same reason ci.yml dropped them: the
+  # preset's defaults are the same commands, and the point of this repository as
+  # the reference adopter is to exercise those defaults rather than a local copy
+  # of them. The only difference is that the preset's test default runs
+  # `go mod download` first.
   gate:
-    uses: nikolareljin/ci-helpers/.github/workflows/pr-gate.yml@production
+    uses: nikolareljin/ci-helpers/.github/workflows/go-pr-gate.yml@production
     with:
-      # Without this the gate's `Setup Go` step is skipped, exactly as it was in
-      # ci.yml: the engine only sets Go up when a caller names a version. Pull
-      # request runs were therefore building on whatever Go the runner image
-      # shipped, with no module cache, while go.mod declares go 1.25.0.
-      #
-      # It is a literal here, where ci.yml gets the same value as go.yml's
-      # default, because pr-gate is an engine and there is no Go preset in front
-      # of it. That makes this the one place a version can drift from the shared
-      # default -- so it is written down rather than left implicit, and it goes
-      # away when a Go pr-gate preset exists upstream.
-      go_version: "1.25"
-      lint_command: 'test -z "$(gofmt -l .)" && go vet ./...'
-      test_command: "go test ./..."
-      build_command: "go build ./..."
       # Release tag validation is handled by .github/workflows/release-tag-gate.yml.
       # Keeping this disabled avoids a missing local-action path in ci-helpers pr-gate.
       check_release_tag: false

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Changed
+- **The pull request gate takes the Go preset, so the version literal is gone.**
+  `pr.yml` carried `go_version: "1.25"` because `pr-gate.yml` is an engine and
+  no Go preset sat in front of it. That literal was the one place this
+  repository could drift from the shared default: change it upstream and this
+  file keeps the old value, silently, on every pull request.
+
+  `ci-helpers` 0.33.0 adds `go-pr-gate.yml`, which carries `go.yml`'s defaults.
+  Calling it means a push and a pull request now set up the same toolchain from
+  the same source. The three command overrides go with it, for the reason
+  `ci.yml` dropped its own: the preset's defaults are the same commands, and
+  this repository is the reference adopter, so it should exercise the shared
+  defaults rather than a local copy of them.
+
 ### Added
 - **A bundle records what the export left behind, and an import prints it.**
   Declines were warnings on the machine doing the export, so the person who
