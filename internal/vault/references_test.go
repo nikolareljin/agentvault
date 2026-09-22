@@ -98,6 +98,47 @@ func TestClosureTerminatesOnACycle(t *testing.T) {
 	}
 }
 
+// A reference is relative to the file that names it, not to the pulled root.
+// Resolving everything against the root reported a sibling as missing and
+// refused a legitimate ../ back to the root file.
+func TestClosureResolvesRelativeToTheReferencingFile(t *testing.T) {
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, src, "AGENTS.md", "see `scripts/hygiene.sh`\n")
+	write(t, src, filepath.Join("scripts", "hygiene.sh"),
+		"sources `helpers.sh` and points back at `../AGENTS.md`\n")
+	write(t, src, filepath.Join("scripts", "helpers.sh"), "helper\n")
+
+	v := New(tempVaultPath(t))
+	_ = v.Init("master")
+	if err := v.SetInstruction(agent.InstructionFile{
+		Name: "agents", Filename: "AGENTS.md",
+		Content: mustRead(t, filepath.Join(src, "AGENTS.md")),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := v.PullReferenceClosure(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]bool{}
+	for _, s := range res.Stored {
+		stored[filepath.ToSlash(s.Filename)] = true
+	}
+	if !stored["scripts/helpers.sh"] {
+		t.Errorf("a sibling named from scripts/ was not stored; stored=%v missing=%v",
+			stored, res.Missing)
+	}
+	for _, r := range res.Refused {
+		if r.Raw == "../AGENTS.md" {
+			t.Errorf("../AGENTS.md refused as %q, but it is inside the directory", r.Reason)
+		}
+	}
+}
+
 // A refusal and a missing file are reported, not dropped.
 func TestClosureReportsWhatItWillNotTake(t *testing.T) {
 	src := t.TempDir()

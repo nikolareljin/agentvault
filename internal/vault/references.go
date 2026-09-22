@@ -39,7 +39,8 @@ func (v *Vault) PullReferenceClosure(dir string) (ClosureResult, error) {
 		cur := queue[0]
 		queue = queue[1:]
 
-		for _, ref := range agent.ResolveReferences(dir, cur.Content) {
+		base := filepath.Dir(filepath.FromSlash(cur.Filename))
+		for _, ref := range agent.ResolveReferences(dir, base, cur.Content) {
 			switch ref.Status {
 			case agent.ReferenceRefused:
 				result.Refused = append(result.Refused, ref)

@@ -16,6 +16,13 @@
   reason; a named file that is not present is reported too. `--strict` turns
   either into a failure, `--follow-references=false` turns the walk off.
 
+  A reference is resolved relative to the file that names it. A script in
+  `scripts/` naming `helpers.sh` means `scripts/helpers.sh`, and `../AGENTS.md`
+  from there means the root file rather than an escape. Containment is checked
+  lexically first, so a reference that leaves the directory is refused by name
+  whether or not it exists, and then against the resolved real path, which
+  catches a symlinked parent.
+
   Measured against a real 260-line instruction file before the defaults were
   chosen: 41 candidate references, 7 taken, 12 named but absent. Failing on
   absent files by default would have made the command unusable on the very file

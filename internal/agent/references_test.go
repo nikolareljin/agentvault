@@ -61,7 +61,7 @@ func TestResolveReferencesRefusesWhatCannotTravel(t *testing.T) {
 		"`node_modules/dep.md` `sub/` `missing.txt` `escape.txt`"
 
 	byRaw := map[string]Reference{}
-	for _, r := range ResolveReferences(dir, content) {
+	for _, r := range ResolveReferences(dir, ".", content) {
 		byRaw[r.Raw] = r
 	}
 
@@ -72,7 +72,7 @@ func TestResolveReferencesRefusesWhatCannotTravel(t *testing.T) {
 	}{
 		{"ok.txt", ReferenceTaken, ""},
 		{"/etc/passwd", ReferenceRefused, "absolute path"},
-		{"../outside.txt", ReferenceRefused, "leaves the directory via .."},
+		{"../outside.txt", ReferenceRefused, "leaves the directory"},
 		{"big.txt", ReferenceRefused, "over the"},
 		{"node_modules/dep.md", ReferenceRefused, "under node_modules"},
 		{"sub/", ReferenceSkipped, "names a directory"},
@@ -111,7 +111,7 @@ func TestResolveReferencesReportsOneEntryPerFile(t *testing.T) {
 	}
 	mustWrite(t, filepath.Join(dir, "a.md"), "x")
 
-	got := ResolveReferences(dir, "`a.md` and `./a.md` again `a.md`")
+	got := ResolveReferences(dir, ".", "`a.md` and `./a.md` again `a.md`")
 	taken := 0
 	for _, r := range got {
 		if r.Status == ReferenceTaken {

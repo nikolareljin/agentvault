@@ -123,10 +123,15 @@ func looksLikePath(tok string) bool {
 	return strings.Contains(tok, "/") || fileExtension.MatchString(tok)
 }
 
-// ResolveReferences classifies every reference found in content against dir.
+// ResolveReferences classifies every reference in content, resolved relative to
+// baseRel: the directory of the file that named them, itself relative to dir.
+// A script in scripts/ naming `helpers.sh` means scripts/helpers.sh, and naming
+// `../AGENTS.md` means the root file, not an escape. Resolving everything
+// against the root instead reported the first as missing and refused the second.
+//
 // It reads nothing recursively; the caller walks the closure so that it can
 // keep its own visited set and terminate a cycle.
-func ResolveReferences(dir, content string) []Reference {
+func ResolveReferences(dir, baseRel, content string) []Reference {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		root = dir
@@ -139,7 +144,7 @@ func ResolveReferences(dir, content string) []Reference {
 
 	var out []Reference
 	for _, raw := range FindReferences(content) {
-		out = append(out, classifyReference(root, raw))
+		out = append(out, classifyReference(root, baseRel, raw))
 	}
 	// One entry per file taken, whatever the spelling: `AGENTS.md` and
 	// `./AGENTS.md` are the same reference and were reported twice.
@@ -159,7 +164,7 @@ func ResolveReferences(dir, content string) []Reference {
 	return out
 }
 
-func classifyReference(root, raw string) Reference {
+func classifyReference(root, baseRel, raw string) Reference {
 	ref := Reference{Raw: raw}
 
 	clean := strings.TrimPrefix(raw, "./")
@@ -171,18 +176,23 @@ func classifyReference(root, raw string) Reference {
 		ref.Status, ref.Reason = ReferenceRefused, "absolute path"
 		return ref
 	}
-	for _, seg := range strings.Split(filepath.ToSlash(clean), "/") {
-		if seg == ".." {
-			ref.Status, ref.Reason = ReferenceRefused, "leaves the directory via .."
-			return ref
-		}
+
+	// Lexical containment first, so a reference that escapes is refused by name
+	// whether or not it exists. Checking only the resolved path would report a
+	// non-existent ../secret as merely missing.
+	full := filepath.Join(root, baseRel, clean)
+	lexical, err := filepath.Rel(root, full)
+	if err != nil || lexical == ".." || strings.HasPrefix(lexical, ".."+string(os.PathSeparator)) {
+		ref.Status, ref.Reason = ReferenceRefused, "leaves the directory"
+		return ref
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(lexical), "/") {
 		if referenceSkipDirs[seg] {
 			ref.Status, ref.Reason = ReferenceRefused, "under "+seg
 			return ref
 		}
 	}
 
-	full := filepath.Join(root, clean)
 	info, err := os.Lstat(full)
 	if err != nil {
 		ref.Status, ref.Reason = ReferenceNotFound, "named but not present"
