@@ -85,7 +85,7 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 		return setupAssetCollection{}, nil, err
 	}
 
-	providerAssets, providerWarnings, err := collectProviderHomeAssets(homeDir, opts.IncludeSecrets)
+	providerAssets, providerWarnings, err := collectProviderHomeAssets(homeDir, opts.IncludeSecrets, opts.IncludeLocalFiles)
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
@@ -114,7 +114,7 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	return assets, warnings, nil
 }
 
-func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsset, []string, error) {
+func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []string, error) {
 	specs := []struct {
 		path        string
 		root        string
@@ -200,6 +200,12 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsse
 		warnings = append(warnings, subWarnings...)
 	}
 
+	// The same rule as directory scope: a .local. file stays behind unless it is
+	// named. It was applied to one scope only, so creds.local.md was refused
+	// inside a project and carried from the home directory.
+	assets, declinedLocal := declineLocalFiles(assets, optedLocalFiles(includeLocal))
+	warnings = append(warnings, declinedLocal...)
+
 	codexRulesDir := filepath.Join(homeDir, ".codex", "rules")
 	ruleAssets, warningsOut, err := collectDirFiles(codexRulesDir, setupAssetKindProviderFile, setupAssetOriginProviderHome, setupAssetRootProviderCodex, "rules", "", false, includeSecrets)
 	if err != nil {
@@ -208,6 +214,37 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsse
 	assets = append(assets, ruleAssets...)
 	warnings = append(warnings, warningsOut...)
 	return assets, warnings, nil
+}
+
+// declineLocalFiles removes the `.local.` files from a collected set unless the
+// caller named one, and reports each removal by the same logical path the
+// caller would use to opt it in.
+//
+// The rule is the same at user scope and at directory scope: these hold
+// per-machine values and some hold credentials. Applying it to only one scope
+// meant an agent definition called creds.local.md was refused inside a project
+// and carried from the home directory.
+func declineLocalFiles(assets []SetupAsset, opted map[string]bool) ([]SetupAsset, []string) {
+	kept := assets[:0]
+	var warnings []string
+	for _, a := range assets {
+		logical := filepath.ToSlash(a.LogicalPath)
+		if isLocalSettingsFile(logical) && !opted[logical] {
+			warnings = append(warnings,
+				fmt.Sprintf("declined %s: a .local. file is per-machine and may hold credentials; name it with --include-local to carry it", logical))
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return kept, warnings
+}
+
+func optedLocalFiles(includeLocal []string) map[string]bool {
+	opted := make(map[string]bool, len(includeLocal))
+	for _, p := range includeLocal {
+		opted[filepath.ToSlash(strings.TrimPrefix(filepath.Clean(p), "./"))] = true
+	}
+	return opted
 }
 
 // collectProjectAgentSettings carries a project's own agent configuration:
@@ -256,14 +293,11 @@ func collectProjectAgentSettings(projectDir string, includeSecrets bool, include
 				strings.HasPrefix(logical, ".claude/commands/")) {
 				continue
 			}
-			if isLocalSettingsFile(logical) && !opted[logical] {
-				warnings = append(warnings,
-					fmt.Sprintf("declined %s: a .local. file is per-machine and may hold credentials; name it with --include-local to carry it", logical))
-				continue
-			}
 			assets = append(assets, a)
 		}
 	}
+	assets, declined := declineLocalFiles(assets, opted)
+	warnings = append(warnings, declined...)
 	return assets, warnings, nil
 }
 

@@ -971,3 +971,65 @@ func TestCollectSetupAssets_IncludeLocalCarriesOnlyTheNamedFile(t *testing.T) {
 		t.Error("an unnamed .local. file was carried; opting in must be per file")
 	}
 }
+
+// The .local. rule cannot depend on which scope a file sits in. It was applied
+// to directory scope only, so an agent definition called creds.local.md was
+// refused inside a project and carried from the home directory.
+func TestCollectSetupAssets_DeclinesLocalFilesAtUserScopeToo(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "agents"))
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "agents", "creds.local.md"), "token: shhh\n")
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "agents", "reviewer.md"), "ordinary agent\n")
+
+	assets, warnings, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+	if hasAsset(assets.ProviderFiles, setupAssetKindProviderFile, setupAssetRootProviderClaude, "agents/creds.local.md") {
+		t.Error("a user-scope .local. file was carried; it may hold credentials")
+	}
+	if !hasAsset(assets.ProviderFiles, setupAssetKindProviderFile, setupAssetRootProviderClaude, "agents/reviewer.md") {
+		t.Error("an ordinary agent definition was dropped along with it")
+	}
+	said := false
+	for _, w := range warnings {
+		if strings.Contains(w, "creds.local.md") && strings.Contains(w, "declined") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the user-scope decline was not reported; warnings: %v", warnings)
+	}
+}
+
+// A dot directory is the shape directory scope is made of, and nothing had
+// restored one. The mapping being right is not the file landing.
+func TestApplyStagedProjectAssets_RestoresADotDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+	assets := []SetupAsset{{
+		Kind:                setupAssetKindProjectFile,
+		LogicalRoot:         setupAssetRootProject,
+		LogicalPath:         ".claude/settings.json",
+		ProjectRelativePath: ".claude/settings.json",
+		SourcePath:          "/tmp/source/.claude/settings.json",
+		ContentPresent:      true,
+		Content:             []byte(`{"model":"opus"}`),
+	}}
+	if _, _, err := stageImportedAssets(configDir, assets); err != nil {
+		t.Fatalf("stageImportedAssets() error = %v", err)
+	}
+	if _, err := applyStagedProjectAssets(configDir, targetDir); err != nil {
+		t.Fatalf("applyStagedProjectAssets() error = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(targetDir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf(".claude/settings.json did not land: %v", err)
+	}
+	if string(got) != `{"model":"opus"}` {
+		t.Errorf("landed with %q", got)
+	}
+}

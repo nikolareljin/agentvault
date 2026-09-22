@@ -22,6 +22,11 @@
   There is deliberately no flag that takes all of them, because carrying one is
   a decision about that file rather than a mode to switch on.
 
+  The rule applies at user scope as well as directory scope. It was written for
+  directory scope only, so an agent definition called `creds.local.md` was
+  refused inside a project and carried from the home directory; the filter is
+  now one function used by both.
+
   `settings.json` is treated as sensitive and redacted without
   `--include-secrets`, as the user-level one is. Agent and command definitions
   are not: they are prose, and redacting them restores a machine with its rules
