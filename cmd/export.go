@@ -20,10 +20,12 @@ import (
 // settable by flag and askable by the wizard, so scripted and interactive runs
 // take the same code path.
 type exportOptions struct {
-	Output              string
-	Profiles            []string
-	IncludeKeys         bool
-	IncludeSecrets      bool
+	Output         string
+	Profiles       []string
+	IncludeKeys    bool
+	IncludeSecrets bool
+	// Project-relative `.local.` files to carry anyway, named one at a time.
+	IncludeLocalFiles   []string
 	IncludeSessions     bool
 	IncludeTemplates    bool
 	IncludeProviderFile bool
@@ -101,6 +103,8 @@ func init() {
 	exportCmd.Flags().Bool("include-templates", defaults.IncludeTemplates, "include workflow templates")
 	exportCmd.Flags().Bool("include-provider-files", defaults.IncludeProviderFile, "include provider home files (~/.claude, ~/.codex, ~/.copilot)")
 	exportCmd.Flags().Bool("include-skills", defaults.IncludeSkills, "include skill assets")
+	exportCmd.Flags().StringArray("include-local", nil,
+		"carry one project-relative .local. file anyway, e.g. .claude/settings.local.json (repeatable; they are left behind by default because they are per-machine and may hold credentials)")
 	exportCmd.Flags().Bool("include-status", defaults.IncludeStatus, "include a provider token/quota status snapshot")
 	exportCmd.Flags().Bool("detect", defaults.IncludeDetected, "include detected agent information")
 	exportCmd.Flags().String("project", "", "also capture project-local instruction, workflow and skill assets from this directory")
@@ -213,6 +217,9 @@ func applyExportFlags(cmd *cobra.Command, opts *exportOptions) {
 			*target = value
 		}
 	}
+	if values, err := flags.GetStringArray("include-local"); err == nil && len(values) > 0 {
+		opts.IncludeLocalFiles = values
+	}
 	if plain, err := flags.GetBool("plain"); err == nil && plain {
 		opts.Encrypt = false
 	}
@@ -280,6 +287,7 @@ func buildProfileBundle(cmd *cobra.Command, profile discoveredProfile, opts expo
 		IncludeStatus:        opts.IncludeStatus,
 		IncludeDetected:      opts.IncludeDetected,
 		ProjectDir:           opts.ProjectDir,
+		IncludeLocalFiles:    opts.IncludeLocalFiles,
 	})
 	if err != nil {
 		return PortableProfile{}, fmt.Errorf("profile %q: %w", profile.Name, err)
@@ -433,6 +441,8 @@ type setupCollectOptions struct {
 	IncludeDetected      bool
 	ProjectDir           string
 	AgentName            string
+	// Project-relative `.local.` files to carry anyway, named one at a time.
+	IncludeLocalFiles []string
 }
 
 // withoutPromptSessions strips stored prompt transcripts from a shared config.
@@ -490,8 +500,9 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 
 	if opts.IncludeProviderFiles || opts.IncludeSkills || strings.TrimSpace(opts.ProjectDir) != "" {
 		collected, assetWarnings, err := collectSetupAssets(setupAssetOptions{
-			ProjectDir:     opts.ProjectDir,
-			IncludeSecrets: opts.IncludeSecrets,
+			ProjectDir:        opts.ProjectDir,
+			IncludeSecrets:    opts.IncludeSecrets,
+			IncludeLocalFiles: opts.IncludeLocalFiles,
 		})
 		if err != nil {
 			return setupCollectResult{}, fmt.Errorf("collecting portable setup assets: %w", err)

@@ -492,7 +492,7 @@ func mustMkdirAll(t *testing.T, path string) {
 
 func TestCollectProjectAssets_DoesNotCountOversizedWarningsAsMissing(t *testing.T) {
 	baselineDir := t.TempDir()
-	_, _, baselineWarnings, err := collectProjectAssets(baselineDir, false)
+	_, _, baselineWarnings, err := collectProjectAssets(baselineDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() baseline error = %v", err)
 	}
@@ -500,7 +500,7 @@ func TestCollectProjectAssets_DoesNotCountOversizedWarningsAsMissing(t *testing.
 	projectDir := t.TempDir()
 	mustWriteFileBytes(t, filepath.Join(projectDir, "AGENTS.md"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -550,7 +550,7 @@ func TestCollectProjectAssets_SurfacesOversizedInstructionWarnings(t *testing.T)
 	projectDir := t.TempDir()
 	mustWriteFileBytes(t, filepath.Join(projectDir, "AGENTS.md"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -563,7 +563,7 @@ func TestCollectProjectAssets_SurfacesOversizedInstructionWarnings(t *testing.T)
 func TestCollectProjectAssets_SkipsMissingOptionalFilesFromManifests(t *testing.T) {
 	projectDir := t.TempDir()
 
-	projectFiles, instructionOverrides, warnings, err := collectProjectAssets(projectDir, false)
+	projectFiles, instructionOverrides, warnings, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -596,7 +596,7 @@ func TestCollectProjectAssets_SurfacesOversizedWorkflowWarnings(t *testing.T) {
 	}
 	mustWriteFileBytes(t, filepath.Join(projectDir, filename), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -892,5 +892,70 @@ func TestApplyProviderAssets_RestoresUserLevelInstructions(t *testing.T) {
 		if string(got) != want {
 			t.Errorf("%s landed with %q, want %q", rel, got, want)
 		}
+	}
+}
+
+// Directory scope: a project's own agent configuration. The default must be to
+// leave .local. files behind, since they hold per-machine values and some hold
+// credentials, and to say which ones were left.
+func TestCollectSetupAssets_CarriesDirectoryScopeAndDeclinesLocalFiles(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(projectDir, ".claude", "agents"))
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.json"), `{"model":"opus"}`)
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.local.json"), `{"token":"secret"}`)
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "agents", "local.md"), "project agent\n")
+
+	assets, warnings, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+
+	if !hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.json") {
+		t.Error(".claude/settings.json was not carried")
+	}
+	if !hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/agents/local.md") {
+		t.Error(".claude/agents/local.md was not carried")
+	}
+	if hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.local.json") {
+		t.Fatal("a .local. file was carried by default; it may hold credentials")
+	}
+
+	// And the omission must be said out loud, by name.
+	said := false
+	for _, w := range warnings {
+		if strings.Contains(w, "settings.local.json") && strings.Contains(w, "declined") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the declined .local. file was not reported; warnings: %v", warnings)
+	}
+}
+
+// Opting one in is per file, and names it.
+func TestCollectSetupAssets_IncludeLocalCarriesOnlyTheNamedFile(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(projectDir, ".claude"))
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.local.json"), `{"wanted":true}`)
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "other.local.json"), `{"not":"wanted"}`)
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{
+		ProjectDir:        projectDir,
+		IncludeLocalFiles: []string{".claude/settings.local.json"},
+	})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+	if !hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.local.json") {
+		t.Error("the named .local. file was not carried")
+	}
+	if hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/other.local.json") {
+		t.Error("an unnamed .local. file was carried; opting in must be per file")
 	}
 }

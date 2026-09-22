@@ -65,6 +65,11 @@ type setupAssetCollection struct {
 type setupAssetOptions struct {
 	ProjectDir     string
 	IncludeSecrets bool
+	// Project-relative paths of `.local.` files to carry anyway, named one at a
+	// time. There is deliberately no flag that takes all of them: these hold
+	// per-machine values and some hold credentials, so carrying them is a
+	// decision about a specific file, not a mode.
+	IncludeLocalFiles []string
 }
 
 func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string, error) {
@@ -87,7 +92,7 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	assets.ProviderFiles = providerAssets
 	warnings = append(warnings, providerWarnings...)
 
-	projectAssets, instructionAssets, projectWarnings, err := collectProjectAssets(projectDir, opts.IncludeSecrets)
+	projectAssets, instructionAssets, projectWarnings, err := collectProjectAssets(projectDir, opts.IncludeSecrets, opts.IncludeLocalFiles)
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
@@ -205,7 +210,63 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsse
 	return assets, warnings, nil
 }
 
-func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset, []SetupAsset, []string, error) {
+// collectProjectAgentSettings carries a project's own agent configuration:
+// .claude/settings.json and any agent or command definitions kept beside it.
+//
+// A `.local.` file is left behind unless it is named. Those hold per-machine
+// values and some hold credentials, so a bundle that carried them quietly
+// would be a credential copy nobody asked for. Every one left behind is
+// reported by name, because a silent omission and a file that was never there
+// read the same on the far end.
+func collectProjectAgentSettings(projectDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []string, error) {
+	opted := make(map[string]bool, len(includeLocal))
+	for _, p := range includeLocal {
+		opted[filepath.ToSlash(strings.TrimPrefix(filepath.Clean(p), "./"))] = true
+	}
+
+	var assets []SetupAsset
+	var warnings []string
+
+	roots := []string{
+		filepath.Join(".claude"),
+		filepath.Join(".claude", "agents"),
+		filepath.Join(".claude", "commands"),
+	}
+	for _, rel := range roots {
+		found, warns, err := collectDirFiles(filepath.Join(projectDir, rel),
+			setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject,
+			filepath.ToSlash(rel), filepath.ToSlash(rel), true, includeSecrets)
+		if err != nil {
+			return nil, warnings, err
+		}
+		warnings = append(warnings, warns...)
+		for _, a := range found {
+			logical := filepath.ToSlash(a.LogicalPath)
+			// The agents and commands directories are collected on their own
+			// pass; skip them here so a file is not carried twice.
+			if rel == ".claude" && (strings.HasPrefix(logical, ".claude/agents/") ||
+				strings.HasPrefix(logical, ".claude/commands/")) {
+				continue
+			}
+			if isLocalSettingsFile(logical) && !opted[logical] {
+				warnings = append(warnings,
+					fmt.Sprintf("declined %s: a .local. file is per-machine and may hold credentials; name it with --include-local to carry it", logical))
+				continue
+			}
+			assets = append(assets, a)
+		}
+	}
+	return assets, warnings, nil
+}
+
+// isLocalSettingsFile matches the .local. convention wherever it appears in the
+// name: settings.local.json, and anything else a tool adopts with the same
+// meaning.
+func isLocalSettingsFile(logicalPath string) bool {
+	return strings.Contains(filepath.Base(logicalPath), ".local.")
+}
+
+func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []SetupAsset, []string, error) {
 	if strings.TrimSpace(projectDir) == "" {
 		return nil, nil, nil, nil
 	}
@@ -289,6 +350,15 @@ func collectProjectAssets(projectDir string, includeSecrets bool) ([]SetupAsset,
 		warnings = append(warnings, fmt.Sprintf("project export skipped %d missing optional workflow template file(s)", missingWorkflowFiles))
 	}
 	warnings = append(warnings, workflowWarnings...)
+
+	// Directory scope: the project's own agent configuration. An agent reads
+	// system, user and directory scope; the bundle covered parts of two.
+	dirScope, dirWarnings, err := collectProjectAgentSettings(projectDir, includeSecrets, includeLocal)
+	if err != nil {
+		return nil, nil, warnings, err
+	}
+	projectFiles = append(projectFiles, dirScope...)
+	warnings = append(warnings, dirWarnings...)
 
 	return projectFiles, instructionOverrides, warnings, nil
 }

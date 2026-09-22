@@ -3,6 +3,26 @@
 ## [Unreleased]
 
 ### Added
+- **A bundle carries directory-scope agent settings.** An agent reads system,
+  user and directory scope; the bundle covered parts of two. It now takes a
+  project's `.claude/settings.json` and any agent or command definitions kept
+  beside it.
+
+- **`.local.` files are left behind by default, and said so by name.** They hold
+  per-machine values and some hold credentials, so a bundle that carried them
+  quietly would be a credential copy nobody asked for. Each one declined is
+  reported:
+
+  ```
+  declined .claude/settings.local.json: a .local. file is per-machine and may
+  hold credentials; name it with --include-local to carry it
+  ```
+
+  Opting in is per file and names it: `--include-local .claude/settings.local.json`.
+  There is deliberately no flag that takes all of them, because carrying one is
+  a decision about that file rather than a mode to switch on.
+
+### Added
 - **The setup bundle carries the user-level instruction files.** It took
   `~/.claude/settings.json`, `~/.claude/keybindings.json` and the skills, but
   not `~/.claude/CLAUDE.md`, `~/.claude/agents/` or `~/.claude/commands/`. A
