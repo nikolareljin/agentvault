@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed
+- **CI called the shared engine directly, so Go was never set up.** `ci.yml`
+  used `ci-helpers/.github/workflows/ci.yml`, which only runs its `Setup Go`
+  step when a caller passes `go_version` — and nothing did. Every run built on
+  whatever Go the runner image shipped, while `go.mod` declares `go 1.25.0`. It
+  passed only because the image is currently newer: `go vet` would otherwise
+  have failed with `go.mod requires go >= 1.25.0`. An image rollback would have
+  broken CI for a reason nothing here pinned.
+
+  Skipping setup also meant no module cache, so the engine's `cache: true`
+  default had nothing to act on.
+
+  It now calls the `go.yml` preset, which supplies the version default and
+  forwards caching. The three command overrides are gone: the preset's defaults
+  are the same commands, and this repository is the reference Go adopter, so it
+  should exercise the defaults rather than a local copy of them.
+
+  `workflow_dispatch` added so a cold-versus-warm cache comparison can be made
+  deliberately instead of by pushing twice.
+
+
 ### Changed
 - **The built-in workflow templates no longer carry one operator's review
   policy.** `implement_issue` and `implement_pr` named a specific automated
