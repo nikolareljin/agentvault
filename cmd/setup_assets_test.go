@@ -807,3 +807,90 @@ func TestCopyRegularFileRejectsSymlinkDestinationDirectory(t *testing.T) {
 		t.Fatalf("symlink target directory should remain untouched, got err=%v", err)
 	}
 }
+
+// The user-level instruction file, agent definitions and commands are what a
+// restored machine reads to know how to behave. A bundle carried the settings
+// and the skills and left all three behind, so a restore produced a machine
+// with the keybindings and none of the rules.
+func TestCollectSetupAssets_CarriesUserLevelInstructions(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "agents"))
+	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "commands", "nested"))
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "CLAUDE.md"), "# user rules\n")
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "agents", "reviewer.md"), "agent definition\n")
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "commands", "nested", "ship.md"), "a saved prompt\n")
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+
+	for _, logical := range []string{"CLAUDE.md", "agents/reviewer.md", "commands/nested/ship.md"} {
+		if !hasAsset(assets.ProviderFiles, setupAssetKindProviderFile, setupAssetRootProviderClaude, logical) {
+			t.Errorf("%s was not carried", logical)
+		}
+	}
+
+	// And each must land back where it came from, or carrying it is pointless.
+	for _, logical := range []string{"CLAUDE.md", "agents/reviewer.md", "commands/nested/ship.md"} {
+		got, err := providerAssetDestination(homeDir, SetupAsset{
+			LogicalRoot: setupAssetRootProviderClaude,
+			LogicalPath: logical,
+		})
+		if err != nil {
+			t.Errorf("destination for %s: %v", logical, err)
+			continue
+		}
+		want := filepath.Join(homeDir, ".claude", filepath.FromSlash(logical))
+		if got != want {
+			t.Errorf("%s restores to %s, want %s", logical, got, want)
+		}
+	}
+}
+
+// Collecting and mapping are not the same as landing. applyProviderAssetsToSystem
+// is what writes a restored machine's files, and nothing exercised it: the
+// destination function could be right while the write never happened.
+func TestApplyProviderAssets_RestoresUserLevelInstructions(t *testing.T) {
+	sourceHome := t.TempDir()
+	targetHome := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", sourceHome)
+
+	mustMkdirAll(t, filepath.Join(sourceHome, ".claude", "agents"))
+	mustMkdirAll(t, filepath.Join(sourceHome, ".claude", "commands", "nested"))
+	mustWriteFile(t, filepath.Join(sourceHome, ".claude", "CLAUDE.md"), "# user rules\n")
+	mustWriteFile(t, filepath.Join(sourceHome, ".claude", "agents", "reviewer.md"), "agent definition\n")
+	mustWriteFile(t, filepath.Join(sourceHome, ".claude", "commands", "nested", "ship.md"), "a saved prompt\n")
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+
+	applied, warnings, err := applyProviderAssetsToSystem(targetHome, assets.ProviderFiles)
+	if err != nil {
+		t.Fatalf("applyProviderAssetsToSystem() error = %v (warnings %v)", err, warnings)
+	}
+	if applied == 0 {
+		t.Fatalf("applied nothing; warnings %v", warnings)
+	}
+
+	for rel, want := range map[string]string{
+		filepath.Join(".claude", "CLAUDE.md"):                     "# user rules\n",
+		filepath.Join(".claude", "agents", "reviewer.md"):         "agent definition\n",
+		filepath.Join(".claude", "commands", "nested", "ship.md"): "a saved prompt\n",
+	} {
+		got, err := os.ReadFile(filepath.Join(targetHome, rel))
+		if err != nil {
+			t.Errorf("%s did not land on the restored machine: %v", rel, err)
+			continue
+		}
+		if string(got) != want {
+			t.Errorf("%s landed with %q, want %q", rel, got, want)
+		}
+	}
+}

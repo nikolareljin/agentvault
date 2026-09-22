@@ -442,7 +442,7 @@ A bundle contains, per profile:
 - Model capability registry entries
 - Sessions
 - Workflow templates
-- Provider home files (`~/.claude`, `~/.codex`, `~/.copilot`) and skill assets
+- Provider home files (`~/.claude`, `~/.codex`, `~/.copilot`), including the user-level `CLAUDE.md`, agent definitions and saved commands, and skill assets
 - Provider pricing rows
 - Optional status snapshot and detected-agent information
 - An installation guide for the target machine

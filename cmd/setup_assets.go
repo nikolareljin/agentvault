@@ -132,6 +132,23 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsse
 			optional:    true,
 		},
 		{
+			// The user-level instruction file. A bundle carried the settings
+			// and the skills but not the standing instructions, which is the
+			// half that changes behaviour most: a restored machine had the
+			// keybindings and none of the rules.
+			//
+			// Not sensitive: this is instruction text, and marking it so would
+			// redact it unless --include-secrets, which restores a machine with
+			// its rules blanked out. settings.json is sensitive because it can
+			// hold credentials; prose cannot be redacted and still be prose.
+			// The 1 MiB asset ceiling still applies, as it does to every asset.
+			path:        filepath.Join(homeDir, ".claude", "CLAUDE.md"),
+			root:        setupAssetRootProviderClaude,
+			logicalPath: "CLAUDE.md",
+			sensitive:   false,
+			optional:    true,
+		},
+		{
 			path:        filepath.Join(homeDir, ".codex", "config.toml"),
 			root:        setupAssetRootProviderCodex,
 			logicalPath: "config.toml",
@@ -162,6 +179,21 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool) ([]SetupAsse
 	}
 	assets = append(assets, copilotAssets...)
 	warnings = append(warnings, copilotWarnings...)
+
+	// Agent and command definitions are instructions too: an agent definition
+	// says how a subagent behaves, and a command is a prompt someone typed once
+	// and kept. Both were left on the machine they were written on.
+	for _, sub := range []string{"agents", "commands"} {
+		subAssets, subWarnings, err := collectDirFiles(
+			filepath.Join(homeDir, ".claude", sub),
+			setupAssetKindProviderFile, setupAssetOriginProviderHome,
+			setupAssetRootProviderClaude, sub, "", false, includeSecrets)
+		if err != nil {
+			return nil, warnings, err
+		}
+		assets = append(assets, subAssets...)
+		warnings = append(warnings, subWarnings...)
+	}
 
 	codexRulesDir := filepath.Join(homeDir, ".codex", "rules")
 	ruleAssets, warningsOut, err := collectDirFiles(codexRulesDir, setupAssetKindProviderFile, setupAssetOriginProviderHome, setupAssetRootProviderCodex, "rules", "", false, includeSecrets)
