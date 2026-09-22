@@ -280,7 +280,7 @@
 ## [0.8.1] - 2026-04-17
 
 ### Fixed
-- Codex prompt execution now automatically adds `--skip-git-repo-check` when AgentVault is launched from a directory outside any Git worktree, which fixes TUI and `prompt` failures from trusted non-repository paths such as `/home/nikos/Projects`.
+- Codex prompt execution now automatically adds `--skip-git-repo-check` when AgentVault is launched from a directory outside any Git worktree, which fixes TUI and `prompt` failures from trusted non-repository paths such as a projects directory that is not itself a repository.
 - Codex Prompt Gateway and `agentvault prompt` now launch Codex in agentic workspace-write mode instead of a bare one-shot exec, avoiding read-only chat-style behavior when edits are expected.
 - Claude and Gemini prompt execution now use provider-specific agentic approval modes in both Prompt Gateway and `agentvault prompt`, instead of plain read/respond execution flags.
 - Prompt Gateway now shows a live running indicator with elapsed time and agent context while waiting for provider completion, instead of a static "Running prompt..." screen.
