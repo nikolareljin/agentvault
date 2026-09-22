@@ -514,6 +514,9 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 			bundle.SkillAssets = collected.SkillAssets
 		}
 		bundle.ProjectFiles = collected.ProjectFiles
+		// The declines travel too. A warning printed here reaches only the
+		// person running the export; the one who needs it is on the other end.
+		bundle.Declined = collected.Declined
 		bundle.InstructionOverrides = collected.InstructionOverrides
 		for _, warn := range assetWarnings {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)

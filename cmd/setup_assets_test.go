@@ -492,7 +492,7 @@ func mustMkdirAll(t *testing.T, path string) {
 
 func TestCollectProjectAssets_DoesNotCountOversizedWarningsAsMissing(t *testing.T) {
 	baselineDir := t.TempDir()
-	_, _, baselineWarnings, err := collectProjectAssets(baselineDir, false, nil)
+	_, _, baselineWarnings, _, err := collectProjectAssets(baselineDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() baseline error = %v", err)
 	}
@@ -500,7 +500,7 @@ func TestCollectProjectAssets_DoesNotCountOversizedWarningsAsMissing(t *testing.
 	projectDir := t.TempDir()
 	mustWriteFileBytes(t, filepath.Join(projectDir, "AGENTS.md"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
+	_, _, warnings, _, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -550,7 +550,7 @@ func TestCollectProjectAssets_SurfacesOversizedInstructionWarnings(t *testing.T)
 	projectDir := t.TempDir()
 	mustWriteFileBytes(t, filepath.Join(projectDir, "AGENTS.md"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
+	_, _, warnings, _, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -563,7 +563,7 @@ func TestCollectProjectAssets_SurfacesOversizedInstructionWarnings(t *testing.T)
 func TestCollectProjectAssets_SkipsMissingOptionalFilesFromManifests(t *testing.T) {
 	projectDir := t.TempDir()
 
-	projectFiles, instructionOverrides, warnings, err := collectProjectAssets(projectDir, false, nil)
+	projectFiles, instructionOverrides, warnings, _, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -596,7 +596,7 @@ func TestCollectProjectAssets_SurfacesOversizedWorkflowWarnings(t *testing.T) {
 	}
 	mustWriteFileBytes(t, filepath.Join(projectDir, filename), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
+	_, _, warnings, _, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -1031,5 +1031,101 @@ func TestApplyStagedProjectAssets_RestoresADotDirectory(t *testing.T) {
 	}
 	if string(got) != `{"model":"opus"}` {
 		t.Errorf("landed with %q", got)
+	}
+}
+
+// A decline has to reach the machine that imports the bundle. A warning printed
+// during export reaches only the person running it, and on the far end a file
+// that was refused and a file that never existed look identical.
+func TestCollectSetupAssets_RecordsDeclinesInTheCollection(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(projectDir, ".claude"))
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.json"), `{"model":"opus"}`)
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.local.json"), `{"token":"secret"}`)
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+
+	var found *DeclinedAsset
+	for i, d := range assets.Declined {
+		if d.Path == ".claude/settings.local.json" {
+			found = &assets.Declined[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the declined file is not in the collection: %+v", assets.Declined)
+	}
+	if found.Category != DeclinedByPolicy {
+		t.Errorf("category %q, want %q", found.Category, DeclinedByPolicy)
+	}
+	if found.Reason == "" {
+		t.Error("the decline carries no reason")
+	}
+}
+
+// Refused and absent must read differently, because one is a decision to
+// revisit and the other is a file to write.
+func TestPrintDeclinedAssets_SeparatesRefusedFromAbsent(t *testing.T) {
+	var out strings.Builder
+	printDeclinedAssets(&out, []DeclinedAsset{
+		{Path: ".claude/settings.local.json", Category: DeclinedByPolicy, Reason: "per-machine"},
+		{Path: "implement_pr.txt", Category: DeclinedAbsent, Reason: "named but not present"},
+	})
+	got := out.String()
+	for _, want := range []string{
+		"Declined: 2 (1 refused by policy, 1 not present)",
+		"policy   .claude/settings.local.json: per-machine",
+		"absent   implement_pr.txt: named but not present",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output does not contain %q; got:\n%s", want, got)
+		}
+	}
+}
+
+// The two categories must both be real. An instruction file naming a template
+// that is not there produces an absent decline; naming an absolute path
+// produces a policy one. Before this, only the .local. rule produced anything,
+// so "absent" existed in the printer and nowhere else.
+func TestCollectSetupAssets_RecordsWhatTheInstructionsNameAndLack(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustWriteFile(t, filepath.Join(projectDir, "AGENTS.md"),
+		"Use `implement_pr.txt`, which is here, and `absent.txt`, which is not.\n"+
+			"The helper is `/etc/passwd`.\n")
+	mustWriteFile(t, filepath.Join(projectDir, "implement_pr.txt"), "pr template\n")
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+
+	byPath := map[string]DeclinedAsset{}
+	for _, d := range assets.Declined {
+		byPath[d.Path] = d
+	}
+	absent, ok := byPath["absent.txt"]
+	if !ok {
+		t.Fatalf("a named, missing file was not recorded: %+v", assets.Declined)
+	}
+	if absent.Category != DeclinedAbsent {
+		t.Errorf("absent.txt category %q, want %q", absent.Category, DeclinedAbsent)
+	}
+	refused, ok := byPath["/etc/passwd"]
+	if !ok {
+		t.Fatalf("a refused reference was not recorded: %+v", assets.Declined)
+	}
+	if refused.Category != DeclinedByPolicy {
+		t.Errorf("/etc/passwd category %q, want %q", refused.Category, DeclinedByPolicy)
+	}
+	if _, present := byPath["implement_pr.txt"]; present {
+		t.Error("a file that was carried is listed as declined")
 	}
 }

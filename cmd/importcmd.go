@@ -404,6 +404,28 @@ func printBundleProfiles(cmd *cobra.Command, bundle PortableBundle, format bundl
 			len(p.Setup.SharedConfig.Roles), len(p.Setup.SharedConfig.Instructions))
 		fmt.Fprintf(out, "    Templates: %d, Provider files: %d, Skill assets: %d\n",
 			len(p.Setup.Templates.Assets), len(p.Setup.ProviderFiles), len(p.Setup.SkillAssets))
+		printDeclinedAssets(out, p.Setup.Declined)
+	}
+}
+
+// printDeclinedAssets lists what the export left behind, separating a refusal
+// from an absence. Both end as a file that is not here; only one is a decision
+// somebody can revisit, and a restore that is missing something should say
+// which kind it is rather than leaving the reader to guess.
+func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
+	if len(declined) == 0 {
+		return
+	}
+	byCategory := map[string][]DeclinedAsset{}
+	for _, d := range declined {
+		byCategory[d.Category] = append(byCategory[d.Category], d)
+	}
+	fmt.Fprintf(out, "    Declined: %d (%d refused by policy, %d not present)\n",
+		len(declined), len(byCategory[DeclinedByPolicy]), len(byCategory[DeclinedAbsent]))
+	for _, category := range []string{DeclinedByPolicy, DeclinedAbsent} {
+		for _, d := range byCategory[category] {
+			fmt.Fprintf(out, "      %-8s %s: %s\n", category, d.Path, d.Reason)
+		}
 	}
 }
 

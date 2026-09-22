@@ -60,6 +60,10 @@ type setupAssetCollection struct {
 	ProjectFiles         []SetupAsset `json:"project_files,omitempty"`
 	InstructionOverrides []SetupAsset `json:"instruction_overrides,omitempty"`
 	SkillAssets          []SetupAsset `json:"skill_assets,omitempty"`
+	// Declined travels with the bundle so the receiving machine can see what
+	// was left behind. A warning printed during export reaches only the person
+	// running it.
+	Declined []DeclinedAsset `json:"declined,omitempty"`
 }
 
 type setupAssetOptions struct {
@@ -85,18 +89,20 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 		return setupAssetCollection{}, nil, err
 	}
 
-	providerAssets, providerWarnings, err := collectProviderHomeAssets(homeDir, opts.IncludeSecrets, opts.IncludeLocalFiles)
+	providerAssets, providerWarnings, providerDeclined, err := collectProviderHomeAssets(homeDir, opts.IncludeSecrets, opts.IncludeLocalFiles)
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
 	assets.ProviderFiles = providerAssets
+	assets.Declined = append(assets.Declined, providerDeclined...)
 	warnings = append(warnings, providerWarnings...)
 
-	projectAssets, instructionAssets, projectWarnings, err := collectProjectAssets(projectDir, opts.IncludeSecrets, opts.IncludeLocalFiles)
+	projectAssets, instructionAssets, projectWarnings, projectDeclined, err := collectProjectAssets(projectDir, opts.IncludeSecrets, opts.IncludeLocalFiles)
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
 	assets.ProjectFiles = projectAssets
+	assets.Declined = append(assets.Declined, projectDeclined...)
 	assets.InstructionOverrides = instructionAssets
 	warnings = append(warnings, projectWarnings...)
 
@@ -114,7 +120,7 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	return assets, warnings, nil
 }
 
-func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []string, error) {
+func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []string, []DeclinedAsset, error) {
 	specs := []struct {
 		path        string
 		root        string
@@ -164,10 +170,11 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 
 	assets := make([]SetupAsset, 0, len(specs))
 	var warnings []string
+	var declinedAssets []DeclinedAsset
 	for _, spec := range specs {
 		asset, warn, err := loadSetupAsset(spec.path, setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root, spec.logicalPath, "", spec.sensitive, includeSecrets, spec.optional)
 		if err != nil {
-			return nil, warnings, err
+			return nil, warnings, declinedAssets, err
 		}
 		if warn != "" {
 			warnings = append(warnings, warn)
@@ -180,7 +187,7 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 	copilotConfigDir := filepath.Join(homeDir, ".config", "github-copilot")
 	copilotAssets, copilotWarnings, err := collectDirFiles(copilotConfigDir, setupAssetKindProviderFile, setupAssetOriginProviderHome, setupAssetRootProviderCopilot, "", "", true, includeSecrets)
 	if err != nil {
-		return nil, warnings, err
+		return nil, warnings, declinedAssets, err
 	}
 	assets = append(assets, copilotAssets...)
 	warnings = append(warnings, copilotWarnings...)
@@ -194,7 +201,7 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 			setupAssetKindProviderFile, setupAssetOriginProviderHome,
 			setupAssetRootProviderClaude, sub, "", false, includeSecrets)
 		if err != nil {
-			return nil, warnings, err
+			return nil, warnings, declinedAssets, err
 		}
 		assets = append(assets, subAssets...)
 		warnings = append(warnings, subWarnings...)
@@ -203,17 +210,18 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 	// The same rule as directory scope: a .local. file stays behind unless it is
 	// named. It was applied to one scope only, so creds.local.md was refused
 	// inside a project and carried from the home directory.
-	assets, declinedLocal := declineLocalFiles(assets, optedLocalFiles(includeLocal))
-	warnings = append(warnings, declinedLocal...)
+	assets, declinedWarnings, declined := declineLocalFiles(assets, optedLocalFiles(includeLocal))
+	warnings = append(warnings, declinedWarnings...)
+	declinedAssets = append(declinedAssets, declined...)
 
 	codexRulesDir := filepath.Join(homeDir, ".codex", "rules")
 	ruleAssets, warningsOut, err := collectDirFiles(codexRulesDir, setupAssetKindProviderFile, setupAssetOriginProviderHome, setupAssetRootProviderCodex, "rules", "", false, includeSecrets)
 	if err != nil {
-		return nil, warnings, err
+		return nil, warnings, declinedAssets, err
 	}
 	assets = append(assets, ruleAssets...)
 	warnings = append(warnings, warningsOut...)
-	return assets, warnings, nil
+	return assets, warnings, declinedAssets, nil
 }
 
 // declineLocalFiles removes the `.local.` files from a collected set unless the
@@ -224,19 +232,25 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 // per-machine values and some hold credentials. Applying it to only one scope
 // meant an agent definition called creds.local.md was refused inside a project
 // and carried from the home directory.
-func declineLocalFiles(assets []SetupAsset, opted map[string]bool) ([]SetupAsset, []string) {
+func declineLocalFiles(assets []SetupAsset, opted map[string]bool) ([]SetupAsset, []string, []DeclinedAsset) {
 	kept := assets[:0]
 	var warnings []string
+	var declined []DeclinedAsset
 	for _, a := range assets {
 		logical := filepath.ToSlash(a.LogicalPath)
 		if isLocalSettingsFile(logical) && !opted[logical] {
-			warnings = append(warnings,
-				fmt.Sprintf("declined %s: a .local. file is per-machine and may hold credentials; name it with --include-local to carry it", logical))
+			reason := "a .local. file is per-machine and may hold credentials; name it with --include-local to carry it"
+			warnings = append(warnings, fmt.Sprintf("declined %s: %s", logical, reason))
+			declined = append(declined, DeclinedAsset{
+				Path:     logical,
+				Category: DeclinedByPolicy,
+				Reason:   reason,
+			})
 			continue
 		}
 		kept = append(kept, a)
 	}
-	return kept, warnings
+	return kept, warnings, declined
 }
 
 func optedLocalFiles(includeLocal []string) map[string]bool {
@@ -255,7 +269,7 @@ func optedLocalFiles(includeLocal []string) map[string]bool {
 // would be a credential copy nobody asked for. Every one left behind is
 // reported by name, because a silent omission and a file that was never there
 // read the same on the far end.
-func collectProjectAgentSettings(projectDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []string, error) {
+func collectProjectAgentSettings(projectDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []string, []DeclinedAsset, error) {
 	opted := make(map[string]bool, len(includeLocal))
 	for _, p := range includeLocal {
 		opted[filepath.ToSlash(strings.TrimPrefix(filepath.Clean(p), "./"))] = true
@@ -282,7 +296,7 @@ func collectProjectAgentSettings(projectDir string, includeSecrets bool, include
 			setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject,
 			filepath.ToSlash(rel), filepath.ToSlash(rel), root.sensitive, includeSecrets)
 		if err != nil {
-			return nil, warnings, err
+			return nil, warnings, nil, err
 		}
 		warnings = append(warnings, warns...)
 		for _, a := range found {
@@ -296,9 +310,9 @@ func collectProjectAgentSettings(projectDir string, includeSecrets bool, include
 			assets = append(assets, a)
 		}
 	}
-	assets, declined := declineLocalFiles(assets, opted)
-	warnings = append(warnings, declined...)
-	return assets, warnings, nil
+	assets, declinedWarnings, declined := declineLocalFiles(assets, opted)
+	warnings = append(warnings, declinedWarnings...)
+	return assets, warnings, declined, nil
 }
 
 // isLocalSettingsFile matches the .local. convention wherever it appears in the
@@ -308,16 +322,17 @@ func isLocalSettingsFile(logicalPath string) bool {
 	return strings.Contains(filepath.Base(logicalPath), ".local.")
 }
 
-func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []SetupAsset, []string, error) {
+func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal []string) ([]SetupAsset, []SetupAsset, []string, []DeclinedAsset, error) {
 	if strings.TrimSpace(projectDir) == "" {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	projectDir, err := filepath.Abs(projectDir)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolving project path: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("resolving project path: %w", err)
 	}
 
 	projectFiles := make([]SetupAsset, 0)
+	var projectDeclined []DeclinedAsset
 	instructionOverrides := make([]SetupAsset, 0)
 	var warnings []string
 	var instructionWarnings []string
@@ -329,7 +344,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 		absPath := filepath.Join(projectDir, filepath.FromSlash(filename))
 		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
-			return nil, nil, warnings, err
+			return nil, nil, warnings, projectDeclined, err
 		}
 		if asset.Missing {
 			missingInstructionFiles++
@@ -372,7 +387,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 		absPath := filepath.Join(projectDir, filename)
 		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
-			return nil, nil, warnings, err
+			return nil, nil, warnings, projectDeclined, err
 		}
 		if asset.Missing {
 			missingWorkflowFiles++
@@ -393,16 +408,44 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	}
 	warnings = append(warnings, workflowWarnings...)
 
+	// What the instruction files name, and what became of it. Without this the
+	// bundle records a refusal by policy and nothing at all about a rule that
+	// points at a file which is not there, which is the failure this whole
+	// epic is about: on the far end both look like a file that is not here.
+	for _, inst := range projectFiles {
+		if inst.Kind != setupAssetKindProjectFile || !inst.ContentPresent {
+			continue
+		}
+		base := filepath.Dir(filepath.FromSlash(inst.LogicalPath))
+		for _, ref := range agent.ResolveReferences(projectDir, base, string(inst.Content)) {
+			switch ref.Status {
+			case agent.ReferenceNotFound:
+				projectDeclined = append(projectDeclined, DeclinedAsset{
+					Path:     ref.Raw,
+					Category: DeclinedAbsent,
+					Reason:   fmt.Sprintf("named by %s and not present", inst.LogicalPath),
+				})
+			case agent.ReferenceRefused:
+				projectDeclined = append(projectDeclined, DeclinedAsset{
+					Path:     ref.Raw,
+					Category: DeclinedByPolicy,
+					Reason:   fmt.Sprintf("named by %s: %s", inst.LogicalPath, ref.Reason),
+				})
+			}
+		}
+	}
+
 	// Directory scope: the project's own agent configuration. An agent reads
 	// system, user and directory scope; the bundle covered parts of two.
-	dirScope, dirWarnings, err := collectProjectAgentSettings(projectDir, includeSecrets, includeLocal)
+	dirScope, dirWarnings, dirDeclined, err := collectProjectAgentSettings(projectDir, includeSecrets, includeLocal)
 	if err != nil {
-		return nil, nil, warnings, err
+		return nil, nil, warnings, projectDeclined, err
 	}
 	projectFiles = append(projectFiles, dirScope...)
 	warnings = append(warnings, dirWarnings...)
+	projectDeclined = append(projectDeclined, dirDeclined...)
 
-	return projectFiles, instructionOverrides, warnings, nil
+	return projectFiles, instructionOverrides, warnings, projectDeclined, nil
 }
 
 func collectSkillAssets(homeDir string, projectDir string, includeSecrets bool) ([]SetupAsset, []string, error) {
