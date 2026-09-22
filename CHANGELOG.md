@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added
+- **`instructions pull` follows the references out of an instruction file.** It
+  took ten well-known names and stopped, so a workspace `AGENTS.md` naming
+  `implement_pr.txt` as a required template exported without it and the rule
+  arrived on the next machine pointing at nothing. It now stores what the
+  instructions name, and what those name in turn, terminating on a cycle.
+
+  What it will not take is the point, and is decided rather than discovered:
+  absolute paths, anything reaching through `..`, anything whose real path
+  leaves the directory (symlinked parents included), directories, build and
+  vendor trees, and anything over 256 KiB. Each refusal is printed with its
+  reason; a named file that is not present is reported too. `--strict` turns
+  either into a failure, `--follow-references=false` turns the walk off.
+
+  A reference is resolved relative to the file that names it. A script in
+  `scripts/` naming `helpers.sh` means `scripts/helpers.sh`, and `../AGENTS.md`
+  from there means the root file rather than an escape. Containment is checked
+  lexically first, so a reference that leaves the directory is refused by name
+  whether or not it exists, and then against the resolved real path, which
+  catches a symlinked parent.
+
+  Measured against a real 260-line instruction file before the defaults were
+  chosen: 41 candidate references, 7 taken, 12 named but absent. Failing on
+  absent files by default would have made the command unusable on the very file
+  that motivated it, which is why reporting is the default. That file also
+  names one of its required scripts by absolute path, so it is refused and
+  cannot travel: a defect in the rule, now visible instead of silent.
+
 ### Fixed
 - **CI called the shared engine directly, so Go was never set up.** `ci.yml`
   used `ci-helpers/.github/workflows/ci.yml`, which only runs its `Setup Go`
@@ -259,7 +287,7 @@
 ## [0.8.1] - 2026-04-17
 
 ### Fixed
-- Codex prompt execution now automatically adds `--skip-git-repo-check` when AgentVault is launched from a directory outside any Git worktree, which fixes TUI and `prompt` failures from trusted non-repository paths such as `/home/nikos/Projects`.
+- Codex prompt execution now automatically adds `--skip-git-repo-check` when AgentVault is launched from a directory outside any Git worktree, which fixes TUI and `prompt` failures from trusted non-repository paths such as a projects directory that is not itself a repository.
 - Codex Prompt Gateway and `agentvault prompt` now launch Codex in agentic workspace-write mode instead of a bare one-shot exec, avoiding read-only chat-style behavior when edits are expected.
 - Claude and Gemini prompt execution now use provider-specific agentic approval modes in both Prompt Gateway and `agentvault prompt`, instead of plain read/respond execution flags.
 - Prompt Gateway now shows a live running indicator with elapsed time and agent context while waiting for provider completion, instead of a static "Running prompt..." screen.
