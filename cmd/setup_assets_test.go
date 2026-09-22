@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -1127,5 +1128,35 @@ func TestCollectSetupAssets_RecordsWhatTheInstructionsNameAndLack(t *testing.T) 
 	}
 	if _, present := byPath["implement_pr.txt"]; present {
 		t.Error("a file that was carried is listed as declined")
+	}
+}
+
+// The list has to survive the bundle, or none of it reaches the far end. The
+// collection and the printer were both tested; the serialisation between them
+// was not, and a custom MarshalJSON is exactly where a field goes missing.
+func TestSetupBundle_DeclinedSurvivesSerialisation(t *testing.T) {
+	original := SetupBundle{
+		Version: "1",
+		Declined: []DeclinedAsset{
+			{Path: ".claude/settings.local.json", Category: DeclinedByPolicy, Reason: "per-machine"},
+			{Path: "absent.txt", Category: DeclinedAbsent, Reason: "named by AGENTS.md and not present"},
+		},
+	}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var round SetupBundle
+	if err := json.Unmarshal(data, &round); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(round.Declined) != 2 {
+		t.Fatalf("declined list did not survive the bundle: %+v", round.Declined)
+	}
+	if round.Declined[0].Category != DeclinedByPolicy || round.Declined[1].Category != DeclinedAbsent {
+		t.Errorf("categories did not survive: %+v", round.Declined)
+	}
+	if round.Declined[1].Reason == "" {
+		t.Error("the reason did not survive; the far end sees a path and no explanation")
 	}
 }
