@@ -3,6 +3,35 @@
 ## [Unreleased]
 
 ### Added
+- **A bundle records what the export left behind, and an import prints it.**
+  Declines were warnings on the machine doing the export, so the person who
+  needs them -- the one importing on another machine -- saw nothing. After
+  arrival a file that was refused and a file that never existed look identical,
+  which is what makes an incomplete restore invisible.
+
+  The bundle now carries a `declined` list, each entry with a path, a reason and
+  a category, and `import` prints it:
+
+  ```
+  Declined: 2 (1 refused by policy, 1 not present)
+    policy   .claude/settings.local.json: a .local. file is per-machine ...
+    absent   implement_pr.txt: named by AGENTS.md and not present
+  ```
+
+  The two categories are separated because they need different actions: one is
+  a decision to revisit, the other is a file to write. Every policy decline is
+  printed; absent ones are capped at five with a count, because a real
+  instruction set produced eighteen absent against four policy and printing all
+  of them buried the ones worth acting on. The bundle carries the full list
+  either way, deduplicated so two files naming one missing template is one
+  entry.
+
+  Both are produced for real. `.local.` files and references that cannot travel
+  are policy; a file an instruction names and does not exist is absent, found by
+  resolving the references of every instruction file the export collects, which
+  is the reference work from earlier in this epic reaching the bundle.
+
+### Added
 - **A bundle carries directory-scope agent settings.** An agent reads system,
   user and directory scope; the bundle covered parts of two. It now takes a
   project's `.claude/settings.json` and any agent or command definitions kept

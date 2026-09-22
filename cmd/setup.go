@@ -22,6 +22,29 @@ import (
 // This is the primary mechanism for replicating an entire agent setup
 // across machines. It captures everything needed to recreate the environment:
 // agents, sessions, rules, roles, instructions, provider configs, and an installation guide.
+// DeclinedAsset is a file the export considered and did not take.
+//
+// It travels in the bundle rather than only appearing as a warning on the
+// machine doing the export, because the person who needs it is on the other
+// end: a file that was declined and a file that never existed look identical
+// after arrival, and that is what makes an incomplete restore invisible.
+type DeclinedAsset struct {
+	// Path as the export saw it, in the form the caller would use to opt it in.
+	Path string `json:"path"`
+	// Category separates "we refused this" from "it was not there", because the
+	// two need different actions: one is a decision to revisit, the other is a
+	// file to write.
+	Category string `json:"category"`
+	Reason   string `json:"reason"`
+}
+
+const (
+	// DeclinedByPolicy: the export could have taken it and chose not to.
+	DeclinedByPolicy = "policy"
+	// DeclinedAbsent: it was named or expected, and is not on disk.
+	DeclinedAbsent = "absent"
+)
+
 type SetupBundle struct {
 	Version              string                       `json:"version"`
 	CreatedAt            time.Time                    `json:"created_at"`
@@ -40,6 +63,7 @@ type SetupBundle struct {
 	StatusSnapshot       *statuspkg.Report            `json:"status_snapshot,omitempty"`
 	DetectedAgents       []DetectedAgent              `json:"detected_agents,omitempty"`
 	InstallGuide         InstallGuide                 `json:"install_guide"`
+	Declined             []DeclinedAsset              `json:"declined,omitempty"`
 }
 
 // MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.
@@ -57,6 +81,9 @@ func (s SetupBundle) MarshalJSON() ([]byte, error) {
 	}
 	if copy.SkillAssets == nil {
 		copy.SkillAssets = []SetupAsset{}
+	}
+	if copy.Declined == nil {
+		copy.Declined = []DeclinedAsset{}
 	}
 	if copy.InstallGuide.Requirements == nil {
 		copy.InstallGuide.Requirements = []Requirement{}

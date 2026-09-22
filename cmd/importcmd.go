@@ -404,6 +404,41 @@ func printBundleProfiles(cmd *cobra.Command, bundle PortableBundle, format bundl
 			len(p.Setup.SharedConfig.Roles), len(p.Setup.SharedConfig.Instructions))
 		fmt.Fprintf(out, "    Templates: %d, Provider files: %d, Skill assets: %d\n",
 			len(p.Setup.Templates.Assets), len(p.Setup.ProviderFiles), len(p.Setup.SkillAssets))
+		printDeclinedAssets(out, p.Setup.Declined)
+	}
+}
+
+// printDeclinedAssets lists what the export left behind, separating a refusal
+// from an absence. Both end as a file that is not here; only one is a decision
+// somebody can revisit, and a restore that is missing something should say
+// which kind it is rather than leaving the reader to guess.
+func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
+	if len(declined) == 0 {
+		return
+	}
+	byCategory := map[string][]DeclinedAsset{}
+	for _, d := range declined {
+		byCategory[d.Category] = append(byCategory[d.Category], d)
+	}
+	fmt.Fprintf(out, "    Declined: %d (%d refused by policy, %d not present)\n",
+		len(declined), len(byCategory[DeclinedByPolicy]), len(byCategory[DeclinedAbsent]))
+	// Policy declines are few and each is a decision somebody can act on, so
+	// they are all printed. Absent ones are mostly prose naming a file that was
+	// never there -- eighteen of them against four policy declines on a real
+	// instruction set -- and printing every one buries the ones that matter.
+	// The bundle keeps the full list either way.
+	const maxAbsentPrinted = 5
+	for _, d := range byCategory[DeclinedByPolicy] {
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedByPolicy, d.Path, d.Reason)
+	}
+	absent := byCategory[DeclinedAbsent]
+	for i, d := range absent {
+		if i == maxAbsentPrinted {
+			fmt.Fprintf(out, "      %-8s ... and %d more, all in the bundle\n",
+				DeclinedAbsent, len(absent)-maxAbsentPrinted)
+			break
+		}
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedAbsent, d.Path, d.Reason)
 	}
 }
 
