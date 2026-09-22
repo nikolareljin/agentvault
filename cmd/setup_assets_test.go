@@ -492,7 +492,7 @@ func mustMkdirAll(t *testing.T, path string) {
 
 func TestCollectProjectAssets_DoesNotCountOversizedWarningsAsMissing(t *testing.T) {
 	baselineDir := t.TempDir()
-	_, _, baselineWarnings, err := collectProjectAssets(baselineDir, false)
+	_, _, baselineWarnings, err := collectProjectAssets(baselineDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() baseline error = %v", err)
 	}
@@ -500,7 +500,7 @@ func TestCollectProjectAssets_DoesNotCountOversizedWarningsAsMissing(t *testing.
 	projectDir := t.TempDir()
 	mustWriteFileBytes(t, filepath.Join(projectDir, "AGENTS.md"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -550,7 +550,7 @@ func TestCollectProjectAssets_SurfacesOversizedInstructionWarnings(t *testing.T)
 	projectDir := t.TempDir()
 	mustWriteFileBytes(t, filepath.Join(projectDir, "AGENTS.md"), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -563,7 +563,7 @@ func TestCollectProjectAssets_SurfacesOversizedInstructionWarnings(t *testing.T)
 func TestCollectProjectAssets_SkipsMissingOptionalFilesFromManifests(t *testing.T) {
 	projectDir := t.TempDir()
 
-	projectFiles, instructionOverrides, warnings, err := collectProjectAssets(projectDir, false)
+	projectFiles, instructionOverrides, warnings, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -596,7 +596,7 @@ func TestCollectProjectAssets_SurfacesOversizedWorkflowWarnings(t *testing.T) {
 	}
 	mustWriteFileBytes(t, filepath.Join(projectDir, filename), bytes.Repeat([]byte("a"), maxSetupAssetBytes+1))
 
-	_, _, warnings, err := collectProjectAssets(projectDir, false)
+	_, _, warnings, err := collectProjectAssets(projectDir, false, nil)
 	if err != nil {
 		t.Fatalf("collectProjectAssets() error = %v", err)
 	}
@@ -892,5 +892,144 @@ func TestApplyProviderAssets_RestoresUserLevelInstructions(t *testing.T) {
 		if string(got) != want {
 			t.Errorf("%s landed with %q, want %q", rel, got, want)
 		}
+	}
+}
+
+// Directory scope: a project's own agent configuration. The default must be to
+// leave .local. files behind, since they hold per-machine values and some hold
+// credentials, and to say which ones were left.
+func TestCollectSetupAssets_CarriesDirectoryScopeAndDeclinesLocalFiles(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(projectDir, ".claude", "agents"))
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.json"), `{"model":"opus"}`)
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.local.json"), `{"token":"secret"}`)
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "agents", "local.md"), "project agent\n")
+
+	assets, warnings, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+
+	// Presence is not enough: an asset can be carried with its content redacted,
+	// which restores nothing. An agent definition is prose and must arrive whole.
+	agentAsset := findAsset(assets.ProjectFiles, setupAssetRootProject, ".claude/agents/local.md")
+	if agentAsset == nil {
+		t.Error(".claude/agents/local.md was not carried")
+	} else if agentAsset.Redacted || !agentAsset.ContentPresent || string(agentAsset.Content) != "project agent\n" {
+		t.Errorf(".claude/agents/local.md carried without its content: redacted=%v present=%v",
+			agentAsset.Redacted, agentAsset.ContentPresent)
+	}
+
+	// settings.json can hold credentials, so without --include-secrets it is
+	// carried as metadata only, exactly as the user-level one is.
+	settingsAsset := findAsset(assets.ProjectFiles, setupAssetRootProject, ".claude/settings.json")
+	if settingsAsset == nil {
+		t.Error(".claude/settings.json was not carried")
+	} else if !settingsAsset.Redacted {
+		t.Error(".claude/settings.json was carried unredacted without --include-secrets")
+	}
+	if hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.local.json") {
+		t.Fatal("a .local. file was carried by default; it may hold credentials")
+	}
+
+	// And the omission must be said out loud, by name.
+	said := false
+	for _, w := range warnings {
+		if strings.Contains(w, "settings.local.json") && strings.Contains(w, "declined") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the declined .local. file was not reported; warnings: %v", warnings)
+	}
+}
+
+// Opting one in is per file, and names it.
+func TestCollectSetupAssets_IncludeLocalCarriesOnlyTheNamedFile(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(projectDir, ".claude"))
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.local.json"), `{"wanted":true}`)
+	mustWriteFile(t, filepath.Join(projectDir, ".claude", "other.local.json"), `{"not":"wanted"}`)
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{
+		ProjectDir:        projectDir,
+		IncludeLocalFiles: []string{".claude/settings.local.json"},
+	})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+	if !hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.local.json") {
+		t.Error("the named .local. file was not carried")
+	}
+	if hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/other.local.json") {
+		t.Error("an unnamed .local. file was carried; opting in must be per file")
+	}
+}
+
+// The .local. rule cannot depend on which scope a file sits in. It was applied
+// to directory scope only, so an agent definition called creds.local.md was
+// refused inside a project and carried from the home directory.
+func TestCollectSetupAssets_DeclinesLocalFilesAtUserScopeToo(t *testing.T) {
+	homeDir := t.TempDir()
+	projectDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "agents"))
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "agents", "creds.local.md"), "token: shhh\n")
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "agents", "reviewer.md"), "ordinary agent\n")
+
+	assets, warnings, err := collectSetupAssets(setupAssetOptions{ProjectDir: projectDir})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+	if hasAsset(assets.ProviderFiles, setupAssetKindProviderFile, setupAssetRootProviderClaude, "agents/creds.local.md") {
+		t.Error("a user-scope .local. file was carried; it may hold credentials")
+	}
+	if !hasAsset(assets.ProviderFiles, setupAssetKindProviderFile, setupAssetRootProviderClaude, "agents/reviewer.md") {
+		t.Error("an ordinary agent definition was dropped along with it")
+	}
+	said := false
+	for _, w := range warnings {
+		if strings.Contains(w, "creds.local.md") && strings.Contains(w, "declined") {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("the user-scope decline was not reported; warnings: %v", warnings)
+	}
+}
+
+// A dot directory is the shape directory scope is made of, and nothing had
+// restored one. The mapping being right is not the file landing.
+func TestApplyStagedProjectAssets_RestoresADotDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	targetDir := t.TempDir()
+	assets := []SetupAsset{{
+		Kind:                setupAssetKindProjectFile,
+		LogicalRoot:         setupAssetRootProject,
+		LogicalPath:         ".claude/settings.json",
+		ProjectRelativePath: ".claude/settings.json",
+		SourcePath:          "/tmp/source/.claude/settings.json",
+		ContentPresent:      true,
+		Content:             []byte(`{"model":"opus"}`),
+	}}
+	if _, _, err := stageImportedAssets(configDir, assets); err != nil {
+		t.Fatalf("stageImportedAssets() error = %v", err)
+	}
+	if _, err := applyStagedProjectAssets(configDir, targetDir); err != nil {
+		t.Fatalf("applyStagedProjectAssets() error = %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(targetDir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatalf(".claude/settings.json did not land: %v", err)
+	}
+	if string(got) != `{"model":"opus"}` {
+		t.Errorf("landed with %q", got)
 	}
 }
