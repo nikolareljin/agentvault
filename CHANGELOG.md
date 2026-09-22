@@ -19,7 +19,12 @@
   ```
 
   The two categories are separated because they need different actions: one is
-  a decision to revisit, the other is a file to write.
+  a decision to revisit, the other is a file to write. Every policy decline is
+  printed; absent ones are capped at five with a count, because a real
+  instruction set produced eighteen absent against four policy and printing all
+  of them buried the ones worth acting on. The bundle carries the full list
+  either way, deduplicated so two files naming one missing template is one
+  entry.
 
   Both are produced for real. `.local.` files and references that cannot travel
   are policy; a file an instruction names and does not exist is absent, found by

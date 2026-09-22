@@ -422,10 +422,23 @@ func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
 	}
 	fmt.Fprintf(out, "    Declined: %d (%d refused by policy, %d not present)\n",
 		len(declined), len(byCategory[DeclinedByPolicy]), len(byCategory[DeclinedAbsent]))
-	for _, category := range []string{DeclinedByPolicy, DeclinedAbsent} {
-		for _, d := range byCategory[category] {
-			fmt.Fprintf(out, "      %-8s %s: %s\n", category, d.Path, d.Reason)
+	// Policy declines are few and each is a decision somebody can act on, so
+	// they are all printed. Absent ones are mostly prose naming a file that was
+	// never there -- eighteen of them against four policy declines on a real
+	// instruction set -- and printing every one buries the ones that matter.
+	// The bundle keeps the full list either way.
+	const maxAbsentPrinted = 5
+	for _, d := range byCategory[DeclinedByPolicy] {
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedByPolicy, d.Path, d.Reason)
+	}
+	absent := byCategory[DeclinedAbsent]
+	for i, d := range absent {
+		if i == maxAbsentPrinted {
+			fmt.Fprintf(out, "      %-8s ... and %d more, all in the bundle\n",
+				DeclinedAbsent, len(absent)-maxAbsentPrinted)
+			break
 		}
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedAbsent, d.Path, d.Reason)
 	}
 }
 

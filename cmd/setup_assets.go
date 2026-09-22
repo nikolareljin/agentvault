@@ -103,6 +103,9 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	}
 	assets.ProjectFiles = projectAssets
 	assets.Declined = append(assets.Declined, projectDeclined...)
+	// Two instruction files naming the same missing template is one fact, not
+	// two. Without this a bundle lists a path once per file that mentions it.
+	assets.Declined = dedupeDeclined(assets.Declined)
 	assets.InstructionOverrides = instructionAssets
 	warnings = append(warnings, projectWarnings...)
 
@@ -222,6 +225,21 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 	assets = append(assets, ruleAssets...)
 	warnings = append(warnings, warningsOut...)
 	return assets, warnings, declinedAssets, nil
+}
+
+// dedupeDeclined keeps one entry per path and category, in first-seen order.
+func dedupeDeclined(in []DeclinedAsset) []DeclinedAsset {
+	seen := make(map[string]bool, len(in))
+	out := in[:0]
+	for _, d := range in {
+		key := d.Category + "\x00" + d.Path
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, d)
+	}
+	return out
 }
 
 // declineLocalFiles removes the `.local.` files from a collected set unless the

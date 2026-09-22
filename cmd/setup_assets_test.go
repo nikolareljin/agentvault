@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1158,5 +1159,55 @@ func TestSetupBundle_DeclinedSurvivesSerialisation(t *testing.T) {
 	}
 	if round.Declined[1].Reason == "" {
 		t.Error("the reason did not survive; the far end sees a path and no explanation")
+	}
+}
+
+// Policy declines are actionable and few; absent ones are mostly prose naming a
+// file that was never there. Printing every absent entry buried the ones that
+// matter, so the printer caps them and says how many it held back. The bundle
+// keeps all of them either way.
+func TestPrintDeclinedAssets_KeepsPolicyVisibleAmongManyAbsent(t *testing.T) {
+	declined := []DeclinedAsset{
+		{Path: ".claude/settings.local.json", Category: DeclinedByPolicy, Reason: "per-machine"},
+	}
+	for i := 0; i < 12; i++ {
+		declined = append(declined, DeclinedAsset{
+			Path:     fmt.Sprintf("prose-%d.md", i),
+			Category: DeclinedAbsent,
+			Reason:   "named but not present",
+		})
+	}
+
+	var out strings.Builder
+	printDeclinedAssets(&out, declined)
+	got := out.String()
+
+	if !strings.Contains(got, ".claude/settings.local.json") {
+		t.Error("the policy decline was lost among the absent ones")
+	}
+	if !strings.Contains(got, "and 7 more, all in the bundle") {
+		t.Errorf("the held-back count is missing or wrong; got:\n%s", got)
+	}
+	if strings.Contains(got, "prose-11.md") {
+		t.Error("every absent entry was printed; the cap did not apply")
+	}
+	if !strings.Contains(got, "Declined: 13 (1 refused by policy, 12 not present)") {
+		t.Errorf("the totals do not reflect everything held: \n%s", got)
+	}
+}
+
+// One fact, one entry: two instruction files naming the same missing template
+// must not fill the bundle with the same path.
+func TestDedupeDeclined_KeepsOnePerPathAndCategory(t *testing.T) {
+	got := dedupeDeclined([]DeclinedAsset{
+		{Path: "a.txt", Category: DeclinedAbsent, Reason: "named by AGENTS.md"},
+		{Path: "a.txt", Category: DeclinedAbsent, Reason: "named by CLAUDE.md"},
+		{Path: "a.txt", Category: DeclinedByPolicy, Reason: "a different judgement"},
+	})
+	if len(got) != 2 {
+		t.Fatalf("deduped to %d entries, want 2: %+v", len(got), got)
+	}
+	if got[0].Reason != "named by AGENTS.md" {
+		t.Errorf("kept %q, want the first seen", got[0].Reason)
 	}
 }
