@@ -8,15 +8,33 @@ on:
       - "docs/**"
       - "LICENSE"
       - ".gitignore"
+  # So a cold-versus-warm cache comparison can be made deliberately rather than
+  # by pushing twice. Running it on demand is also how the Go toolchain setup
+  # gets exercised after a runner image changes.
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event is part of the key. Without it a workflow_dispatch on main shares
+  # a group with a push on main, and cancel-in-progress makes whichever started
+  # second destroy the first -- so triggering the cache comparison would kill a
+  # real CI run, and a push would kill the comparison. Pushes still cancel
+  # earlier pushes, which is the behaviour worth keeping.
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
+  # The Go preset, not the engine directly. Calling the engine meant no
+  # go_version was ever passed, so its `Setup Go` step was skipped on every run:
+  # this repository was building on whatever Go the runner image happened to
+  # ship, while declaring `go 1.25.0` in go.mod. It passed only because the
+  # image is currently newer; an image rollback would have broken it, and
+  # nothing here pinned anything.
+  #
+  # Skipping setup also meant no module cache, so `cache: true` did nothing.
+  #
+  # The three command overrides are gone because the preset's defaults are the
+  # same commands, and the point of this repository as the reference adopter is
+  # to exercise those defaults rather than a local copy of them. The only
+  # difference is that the preset's test default runs `go mod download` first.
   go:
-    uses: nikolareljin/ci-helpers/.github/workflows/ci.yml@production
-    with:
-      lint_command: 'test -z "$(gofmt -l .)" && go vet ./...'
-      test_command: "go test ./..."
-      build_command: "go build ./..."
+    uses: nikolareljin/ci-helpers/.github/workflows/go.yml@production
