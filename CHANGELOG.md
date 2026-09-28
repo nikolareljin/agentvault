@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Security
+- `golang.org/x/crypto` 0.52.0 -> 0.55.0 (CVE-2026-56854: SSH source-address restrictions
+  not enforced) and `golang.org/x/text` 0.37.0 -> 0.41.0 (CVE-2026-56852: denial of service on
+  invalid UTF-8); `x/sys` and `x/term` follow. Trivy reported both as HIGH. The newest releases
+  need Go 1.26, so these are the lowest fixed versions that build with Go 1.25.
+
 ### Changed
 - **The pull request gate takes the Go preset, so the version literal is gone.**
   `pr.yml` carried `go_version: "1.25"` because `pr-gate.yml` is an engine and
