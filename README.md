@@ -79,7 +79,7 @@ make build
 ./agentvault --help
 ```
 
-### Homebrew (macOS/Linux)
+### Homebrew (macOS)
 
 ```bash
 brew install nikolareljin/tap/agentvault

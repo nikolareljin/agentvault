@@ -1,17 +1,133 @@
-name: Homebrew
+name: Homebrew macOS package
 
 on:
   push:
     tags:
       - "*.*.*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to package, for example 0.13.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
-  brew:
-    uses: nikolareljin/ci-helpers/.github/workflows/homebrew-package.yml@production
-    with:
-      name: agentvault
-      desc: "CLI/TUI tool for managing AI agents, keys, and instructions"
-      homepage: "https://github.com/nikolareljin/agentvault"
-      license: MIT
-      release_repo: "nikolareljin/agentvault"
-      publish: "false"
+  package:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      TAP_REPOSITORY: nikolareljin/homebrew-tap
+      TAP_BRANCH: homebrew/agentvault-${{ inputs.release_tag || github.ref_name }}
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.+-]+)?$ ]]
+
+      - name: Fetch release asset digests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/release.json"
+          for attempt in {1..20}; do
+            if gh api "repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" > "$release_json" 2>/dev/null; then
+              break
+            fi
+            test "$attempt" = 20 && exit 1
+            sleep 15
+          done
+          python3 - "$RUNNER_TEMP/release.json" "$RUNNER_TEMP/agentvault.rb" "$RELEASE_TAG" <<'PY'
+          import json
+          import re
+          import sys
+
+          release_path, formula_path, version = sys.argv[1:]
+          assets = {asset["name"]: asset for asset in json.load(open(release_path))["assets"]}
+          names = {
+              "arm": "agentvault-darwin-arm64",
+              "intel": "agentvault-darwin-amd64",
+          }
+          digests = {}
+          for platform, name in names.items():
+              asset = assets.get(name)
+              digest = asset and asset.get("digest", "")
+              if not digest.startswith("sha256:") or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                  raise SystemExit(f"missing SHA-256 digest for release asset: {name}")
+              digests[platform] = digest.removeprefix("sha256:")
+
+          formula = f'''class Agentvault < Formula
+            desc "CLI and TUI for managing agent configurations and instructions"
+            homepage "https://github.com/nikolareljin/agentvault"
+            version "{version}"
+            license "MIT"
+            tag = version.to_s
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/nikolareljin/agentvault/releases/download/#{{tag}}/agentvault-darwin-arm64"
+                sha256 "{digests["arm"]}"
+              else
+                url "https://github.com/nikolareljin/agentvault/releases/download/#{{tag}}/agentvault-darwin-amd64"
+                sha256 "{digests["intel"]}"
+              end
+            end
+
+            def install
+              bin.install Dir["agentvault-darwin-*"][0] => "agentvault"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{{bin}}/agentvault version")
+            end
+          end
+          '''
+          open(formula_path, "w").write(formula)
+          PY
+
+      - name: Validate generated formula
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew style "$RUNNER_TEMP/agentvault.rb"
+          brew install --build-from-source "$RUNNER_TEMP/agentvault.rb"
+          brew test agentvault
+          agentvault version | grep -F "$RELEASE_TAG"
+
+      - name: Check out Homebrew tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 @ 2026-09-10
+        with:
+          repository: nikolareljin/homebrew-tap
+          ref: main
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Open Homebrew tap pull request
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN"
+          if git -C homebrew-tap ls-remote --exit-code --heads origin "$TAP_BRANCH"; then
+            git -C homebrew-tap fetch origin "$TAP_BRANCH"
+            git -C homebrew-tap switch --track -c "$TAP_BRANCH" "origin/$TAP_BRANCH"
+          else
+            git -C homebrew-tap switch -c "$TAP_BRANCH"
+          fi
+          cp "$RUNNER_TEMP/agentvault.rb" homebrew-tap/Formula/agentvault.rb
+          git -C homebrew-tap add Formula/agentvault.rb
+          git -C homebrew-tap diff --cached --quiet && exit 0
+          git -C homebrew-tap config user.name "github-actions[bot]"
+          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C homebrew-tap commit -m "feat: add AgentVault ${RELEASE_TAG} formula"
+          git -C homebrew-tap push --set-upstream origin "$TAP_BRANCH"
+          gh pr create --repo "$TAP_REPOSITORY" --head "$TAP_BRANCH" --base main \
+            --title "feat: add AgentVault ${RELEASE_TAG} formula" \
+            --body "Adds the macOS formula generated from the verified ${RELEASE_TAG} release assets."
