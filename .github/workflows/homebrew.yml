@@ -131,6 +131,12 @@ jobs:
           git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C homebrew-tap commit -m "feat: add AgentVault ${RELEASE_TAG} formula"
           git -C homebrew-tap push --set-upstream origin "$TAP_BRANCH"
-          gh pr create --repo "$TAP_REPOSITORY" --head "$TAP_BRANCH" --base main \
-            --title "feat: add AgentVault ${RELEASE_TAG} formula" \
-            --body "Adds the macOS formula generated from the verified ${RELEASE_TAG} release assets."
+          title="feat: add AgentVault ${RELEASE_TAG} formula"
+          body="Adds the macOS formula generated from the verified ${RELEASE_TAG} release assets."
+          pr_url="$(gh pr list --repo "$TAP_REPOSITORY" --head "$TAP_BRANCH" --state open --json url --jq '.[0].url')"
+          if [[ -n "$pr_url" ]]; then
+            gh pr edit "$pr_url" --title "$title" --body "$body"
+          else
+            gh pr create --repo "$TAP_REPOSITORY" --head "$TAP_BRANCH" --base main \
+              --title "$title" --body "$body"
+          fi
