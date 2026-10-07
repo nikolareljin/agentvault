@@ -96,8 +96,11 @@ jobs:
         run: |
           set -euo pipefail
           brew style "$RUNNER_TEMP/agentvault.rb"
-          brew install --build-from-source "$RUNNER_TEMP/agentvault.rb"
-          brew test agentvault
+          brew tap-new nikolareljin/tap
+          tap_path="$(brew --repository)/Library/Taps/nikolareljin/homebrew-tap/Formula"
+          cp "$RUNNER_TEMP/agentvault.rb" "$tap_path/agentvault.rb"
+          brew install --build-from-source nikolareljin/tap/agentvault
+          brew test nikolareljin/tap/agentvault
           agentvault version | grep -F "$RELEASE_TAG"
 
       - name: Check out Homebrew tap
