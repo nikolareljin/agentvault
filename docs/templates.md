@@ -105,8 +105,9 @@ built-ins. Files with other names (`Notes.txt`, `notes.json`) are ignored.
   workflow in a repository you do not trust. A repository-local symlink is
   followed only while it stays inside the repository.
 - `import` writes only `<name>.txt` or `<name>.md` (no Windows device names
-  such as `con.txt`), skips a template over 256 KiB, and does not overwrite a
-  file that already holds another template.
+  such as `con.txt`). A built-in stored under any other name is written as
+  `<key>.txt`, with a warning. It skips a template over 256 KiB, and does not
+  overwrite a file that already holds another template.
 
 ## The TODO formats (`add_issue`)
 

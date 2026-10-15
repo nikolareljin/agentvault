@@ -479,7 +479,14 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 			return 0, nil, fmt.Errorf("invalid filename for template key %q: %w", asset.Key, err)
 		}
 		if !customFilenamePattern.MatchString(filename) || reservedStem(filename) {
-			return 0, nil, fmt.Errorf("invalid filename for template key %q: %q is not <name>.txt or <name>.md", asset.Key, filename)
+			if !supported {
+				warnings = append(warnings, fmt.Sprintf("skipped template %q: %q is not <name>.txt or <name>.md", asset.Key, filename))
+				continue
+			}
+			// Older releases stored a built-in under any safe name; keep the
+			// content under the canonical one rather than fail the import.
+			warnings = append(warnings, fmt.Sprintf("template %q: stored %q as %q", asset.Key, filename, defaultSpec.Filename))
+			filename = defaultSpec.Filename
 		}
 		if existingKey, exists := seenFilenames[filename]; exists {
 			return 0, nil, fmt.Errorf("duplicate template filename %q for keys %q and %q", filename, existingKey, asset.Key)

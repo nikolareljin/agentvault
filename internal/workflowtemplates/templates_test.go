@@ -1394,9 +1394,26 @@ func TestImportRefusesHostileAssets(t *testing.T) {
 		bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
 			{Key: "implement_pr", Filename: name, Content: "x\n"},
 		}}
-		if _, _, err := ImportBundle(cfgDir, bundle); err == nil {
-			t.Errorf("filename %q accepted", name)
+		// A path is refused outright; any other odd name is stored under the
+		// built-in's own file. Either way nothing lands under the hostile name.
+		_, _, _ = ImportBundle(cfgDir, bundle)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
 		}
+		for _, e := range entries {
+			switch e.Name() {
+			case "notes.md", "implement_pr.txt", metadataFileName:
+			default:
+				t.Errorf("filename %q produced %q", name, e.Name())
+			}
+		}
+		if _, err := os.Stat(filepath.Join(cfgDir, "x.txt")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("filename %q wrote outside the templates dir", name)
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, "implement_pr.txt")); err != nil {
+		t.Fatal(err)
 	}
 	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
 		{Key: "implement_pr", Filename: "notes.md", Content: "overwrite\n"},
@@ -1421,5 +1438,27 @@ func TestDescriptionDropsControlCharacters(t *testing.T) {
 	r := ResolvedTemplate{TemplateAsset: TemplateAsset{Filename: "x.md", Content: "---\ndescription: a\x1b[2Jb\x07\n---\nbody\n"}}
 	if got := r.Description(); got != "a[2Jb" {
 		t.Fatalf("description %q", got)
+	}
+}
+
+func TestImportOldBundleWithOddBuiltInFilenameStillImports(t *testing.T) {
+	cfgDir := t.TempDir()
+	// Older releases accepted any safe filename for a built-in.
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_pr", Filename: "Custom-PR.TXT", Version: "v1", Content: "my pr flow\n"},
+	}}
+	imported, warnings, err := ImportBundle(cfgDir, bundle)
+	if err != nil {
+		t.Fatalf("an old bundle must not fail the import: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("imported %d, want 1", imported)
+	}
+	got, err := os.ReadFile(filepath.Join(cfgDir, TemplatesDirName, "implement_pr.txt"))
+	if err != nil || strings.TrimSpace(string(got)) != "my pr flow" {
+		t.Fatalf("content not stored under implement_pr.txt: %q, %v", got, err)
+	}
+	if !hasWarning(warnings, "Custom-PR.TXT", "implement_pr.txt") {
+		t.Errorf("no warning about the renamed file: %v", warnings)
 	}
 }
