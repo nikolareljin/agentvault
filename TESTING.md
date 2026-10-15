@@ -371,8 +371,8 @@ Requires `git` and `gh` installed and `gh` authenticated for the target repo.
 # With explicit workspace directory
 ./agentvault prompt my-codex \
   --workflow implement_pr \
-  --repo ~/Projects/my-repo \
-  --workspace ~/Projects/my-repo \
+  --repo ~/src/my-repo \
+  --workspace ~/src/my-repo \
   --pr 27
 ```
 
@@ -479,12 +479,12 @@ After several `prompt` executions, `status --cost-report` aggregates cost estima
 
 ```bash
 # Create test instruction files
-mkdir -p /tmp/test-project
-echo "# Test AGENTS.md" > /tmp/test-project/AGENTS.md
-echo "# Test CLAUDE.md" > /tmp/test-project/CLAUDE.md
+mkdir -p /tmp/av-test
+echo "# Test AGENTS.md" > /tmp/av-test/AGENTS.md
+echo "# Test CLAUDE.md" > /tmp/av-test/CLAUDE.md
 
 # Pull instructions from directory
-./agentvault instructions pull /tmp/test-project
+./agentvault instructions pull /tmp/av-test
 
 # List stored instructions
 ./agentvault instructions list
@@ -537,8 +537,8 @@ echo "modified" >> /tmp/test-output/AGENTS.md
 ./agentvault templates refresh --force   # overwrite existing
 
 # Override in a repository: drop implement_issue.txt in repo root
-echo "Custom workflow template" > /tmp/test-project/implement_issue.txt
-./agentvault templates list --repo /tmp/test-project
+echo "Custom workflow template" > /tmp/av-test/implement_issue.txt
+./agentvault templates list --repo /tmp/av-test
 # Expected: implement_issue source shows as "repo-local"
 ```
 
@@ -579,7 +579,7 @@ rm ~/.config/agentvault/vault.enc
 ./agentvault setup import test-setup.json --merge --apply-provider-configs
 
 # Apply instructions to project
-./agentvault setup apply /tmp/test-project
+./agentvault setup apply /tmp/av-test
 ```
 
 ### 11. Configuration Generation
@@ -657,7 +657,7 @@ rm ~/.config/agentvault/vault.enc
 
 ```bash
 ./agentvault session create my-project \
-  --dir /tmp/test-project \
+  --dir /tmp/av-test \
   --agents my-claude,local-ollama
 
 ./agentvault session list
@@ -791,7 +791,7 @@ time ./agentvault --tui &
 # Remove test files
 rm -f test-setup.json test-setup-full.json test-setup.bundle backup.enc backup.json
 rm -f /tmp/session.json /tmp/rules.md
-rm -rf /tmp/test-project /tmp/test-output /tmp/models
+rm -rf /tmp/av-test /tmp/test-output /tmp/models
 rm -f .env .env.agents .env.example
 
 # Reset vault (careful - loses all data!)

@@ -513,10 +513,9 @@ Examples:
 			pulled++
 		}
 
-		// An instruction file is not self-contained. The workspace AGENTS.md
-		// that prompted this names three workflow templates as required
-		// reading, and storing it without them exports a rule pointing at
-		// nothing on the next machine.
+		// An instruction file is not self-contained: it can name other files as
+		// required reading, and storing it without them exports a rule
+		// pointing at nothing on the next machine.
 		follow, _ := cmd.Flags().GetBool("follow-references")
 		strict, _ := cmd.Flags().GetBool("strict")
 		if follow && pulled > 0 {
@@ -789,9 +788,9 @@ all resolved instructions instead of a single named one.
 
 Examples:
   agentvault instructions preview agents
-  agentvault instructions preview agents --dir /home/user/Projects/myrepo
-  agentvault instructions preview --dir /home/user/Projects/myrepo
-  agentvault instructions preview --all --dir /home/user/Projects/myrepo`,
+  agentvault instructions preview agents --dir /home/user/src/example-repo
+  agentvault instructions preview --dir /home/user/src/example-repo
+  agentvault instructions preview --all --dir /home/user/src/example-repo`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		v, err := openVault()

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -18,7 +19,25 @@ const (
 	TemplatesDirName     = "templates"
 	metadataFileName     = "metadata.json"
 	RepoLocalVersion     = "repo-local"
+	CustomVersion        = "custom"
 )
+
+// A custom template is any other <name>.txt a user adds to config storage. It is
+// listed, shown, exported and imported like a built-in; agentvault ships none.
+var customFilenamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}\.txt$`)
+
+// customKey returns the key for a custom template file, or false when the name
+// is not one (wrong shape, or a built-in's key).
+func customKey(filename string) (string, bool) {
+	if !customFilenamePattern.MatchString(filename) {
+		return "", false
+	}
+	key := normalizeTemplateName(filename)
+	if _, builtin := findDefaultByKey(key); builtin {
+		return "", false
+	}
+	return key, true
+}
 
 // TemplateAsset stores one workflow template body with metadata.
 type TemplateAsset struct {
@@ -51,295 +70,85 @@ type metadataFile struct {
 	Filenames     map[string]string    `json:"filenames,omitempty"`
 }
 
-const builtinImplementIssueTemplate = `Implement Issue Template
+// The built-in templates are short and generic on purpose: a starting point a
+// user edits, replaces per repository, or swaps for their own (docs/templates.md).
+const builtinImplementIssueTemplate = `Implement Issue
 
-Metadata:
-- Template Version: 2.0
-- Template Type: Issue Implementation Workflow
-- Mode: Modular and Extendable
+Inputs: repository path, issue reference, base branch (default: the
+repository's default branch).
 
-Inputs:
-- Repository path
-- Issue reference (number/url/title)
-- Base branch (default: main or master, override allowed)
-- Release strategy (major/minor/patch, or auto)
-- Optional policy overrides
+Steps:
+1. Read the issue. Confirm the scope and acceptance criteria; ask when they are unclear.
+2. Create a branch from the base branch, named the way the repository names branches.
+3. Make the change, scoped to the issue. Comment only where the logic is not obvious.
+4. Add or update tests for the new behaviour, including a case that fails without it.
+5. Update the docs and the changelog when a user sees a difference.
+6. Run the repository's build, lint and tests. Fix what fails.
+7. Commit with a clear message, push, and open a pull request that references the issue.
 
-Config Defaults (Override Per Team/Repo):
-- DEFAULT_BASE_BRANCH=main|master
-- DEFAULT_RELEASE_PREFIX=release/
-- DEFAULT_CHANGE_DOCS=true
-- DEFAULT_RUN_TESTS=true
-- DEFAULT_OPEN_PR=true
-
-Core Workflow (Default Module Set):
-1. Intake Module:
-- Read issue title and description.
-- Confirm scope and acceptance criteria from the issue.
-
-2. Release Module:
-- Classify change as major/minor/patch.
-- Create ` + "`release/X.Y.Z`" + ` from configured base branch using next semver.
-- Extension: teams can swap this with custom branching policy.
-
-3. Implementation Module:
-- Modify codebase according to issue scope.
-- Add concise code comments where important logic changes are introduced.
-- Create/update files as needed.
-
-4. Documentation Module:
-- Update docs/CHANGELOG/README where needed.
-- Keep comments concise and clean; avoid unnecessary special characters.
-- Extension: teams can define doc update policy per repo.
-
-5. Validation Module:
-- Run project test/build/lint workflow before commit.
-- Extension: team-specific quality gates can be inserted here.
-
-6. Delivery Module:
-- Commit with appropriate message.
-- Push branch.
-- Open PR referencing resolved issue.
-- If PR creation fails, output PR create URL.
-
-Output Contract:
-- Branch name created
-- Files changed summary
-- Tests/build/lint results
-- Commit hash
-- PR URL (or fallback create URL)
-
-Extension Points:
-- Pre-Intake Hook: custom issue triage rules
-- Pre-Commit Hook: formatting, security scans, policy checks
-- Post-Push Hook: reviewer assignment, label automation, CI checks
-- Request review according to the repository's own policy. Do not assume a particular reviewer, human or automated, and do not ask a reviewer to write the fix.
-- Post-PR Hook: comment templating and release note generation
-
-Customization Notes:
-- Repositories can override any ` + "`Config Defaults`" + ` value.
-- Teams can add/remove modules, but should preserve ordered checkpoints.
-- Keep this template as a base profile and create derived profiles per repo as needed.
-
-Profile Example:
-- Profile Name: legacy-master-flow
-- DEFAULT_BASE_BRANCH=master
-- DEFAULT_RELEASE_PREFIX=release/
-- DEFAULT_CHANGE_DOCS=true
-- DEFAULT_RUN_TESTS=true
-- DEFAULT_OPEN_PR=true
-- Extra Hook: Pre-Commit Hook runs ` + "`make lint && make test`" + ` before commit.
+Output: branch, files changed, test results, commit, pull request URL.
 `
 
-const builtinImplementPRTemplate = `Fix PR Template
+const builtinImplementPRTemplate = `Fix Pull Request Review
 
-Metadata:
-- Template Version: 2.0
-- Template Type: PR Review Remediation Workflow
-- Mode: Modular and Extendable
+Inputs: repository path, pull request reference.
 
-Inputs:
-- Repository path
-- PR reference (number/url)
-- Base branch context (main or master, inferred or configured)
-- Target branch name
-- Optional reviewer re-request policy
-- Optional policy overrides
+Steps:
+1. Read every unresolved review thread and comment. List what each one asks for.
+2. Fix each confirmed issue. Where you disagree, reply with the reason instead.
+3. Run the repository's build, lint and tests. Fix what fails.
+4. Commit and push to the pull request branch.
+5. Reply to or resolve each thread you addressed.
+6. Read the full diff at the new head before calling the pull request ready.
+7. Request review again the way the repository asks for it.
 
-Config Defaults (Override Per Team/Repo):
-- DEFAULT_BASE_BRANCH=main|master
-- DEFAULT_UPDATE_DOCS_IF_NEEDED=true
-- DEFAULT_RUN_TESTS=true
-- DEFAULT_RESOLVE_THREADS=true
-- DEFAULT_REREQUEST_REVIEW=true
-
-Core Workflow (Default Module Set):
-1. Review Intake Module:
-- Read all PR review issues and conversations.
-- Build a fix checklist grouped by thread/comment.
-
-2. Remediation Module:
-- Modify code for all confirmed review issues.
-- Add concise comments where important changes are introduced.
-- Create/update files as needed.
-
-3. Documentation Module:
-- Update docs/CHANGELOG/README only when required by the code changes.
-- Keep comments concise and clean; avoid unnecessary special characters.
-
-4. Validation Module:
-- Run project test/build/lint workflow before commit.
-- Extension: allow repo-specific CI dry-run or smoke checks.
-
-5. Delivery Module:
-- Commit with appropriate message.
-- Push code changes.
-
-6. PR Hygiene Module:
-- Resolve all fixed conversations/threads.
-- Re-request review from same reviewer when configured.
-- Re-request review after fixes are pushed, according to the repository's own
-  policy. Do not assume a particular reviewer, human or automated.
-- Review the diff at head yourself before reporting the PR ready, including the
-  commits just pushed.
-- Do not ask a reviewer to write the fix, and do not post prompt-like comments
-  that can trigger code-writing behaviour.
-- Prefer the host's reviewer APIs or UI over chat or comment triggers.
-- If a re-request fails, report which PR needs it and give the PR URL.
-
-Output Contract:
-- Addressed thread list
-- Files changed summary
-- Tests/build/lint results
-- Commit hash
-- Updated PR URL
-- Review report: who reviewed, the head commit, what was checked, what was found
-
-Extension Points:
-- Pre-Remediation Hook: map comments to owners/components
-- Pre-Commit Hook: enforce style/security/release policies
-- Post-Push Hook: auto-resolve eligible threads
-- Post-Hygiene Hook: auto-comment with fix summary
-
-Customization Notes:
-- Teams can change module order if dependencies are preserved.
-- Config defaults can be overridden by repo profile.
-- Keep a shared default and add derived templates per workflow maturity.
-
-Profile Example:
-- Profile Name: strict-main-flow
-- DEFAULT_BASE_BRANCH=main
-- DEFAULT_UPDATE_DOCS_IF_NEEDED=true
-- DEFAULT_RUN_TESTS=true
-- DEFAULT_RESOLVE_THREADS=true
-- DEFAULT_REREQUEST_REVIEW=true
-- Extra Hook: Post-Push Hook posts a checklist summary comment on the PR.
+Output: threads addressed, files changed, test results, commit, pull request URL.
 `
 
-const builtinAddIssueTemplate = `Add TODO Item Template Instructions
+const builtinAddIssueTemplate = `Add TODO Item
 
-Metadata:
-- Template Version: 2.1
-- Template Type: TODO Entry Authoring Workflow
-- Mode: Modular and Extendable
-- Compatible Format: append-only TODO files using [TODO] ... [/TODO] markers
+Inputs: repository path, TODO file (default: TODO.txt), and for each item a
+title, description, intent, implementation details and acceptance criteria.
 
-Purpose:
-- Generate one or more TODO entries using a deterministic, append-only process.
-- Produce output compatible with TODO files that use [TODO] ... [/TODO] markers.
+Items sit between [TODO] and [/TODO] markers, fields in this order:
 
-Input Contract:
-- Target repository path
-- Target TODO file path (default: <repo>/TODO.txt)
-- Number of items to create
-- For each item:
-  - Title
-  - Description
-  - Intent
-  - Implementation Details (required)
-  - Acceptance Criteria list (required)
-
-Config Defaults (Override Per Team/Repo):
-- DEFAULT_TODO_FILENAME=TODO.txt
-- DEFAULT_ID_WIDTH=3
-- DEFAULT_APPEND_BEFORE_CLOSING_MARKER=true
-- DEFAULT_REQUIRE_IMPLEMENTATION_DETAILS=true
-- DEFAULT_REQUIRE_ACCEPTANCE_CRITERIA=true
-
-Core Workflow (Default Module Set):
-1. Discovery Module:
-- Read target TODO file.
-- Validate markers [TODO] and [/TODO].
-- Detect highest existing ID.
-
-2. Allocation Module:
-- Allocate sequential IDs for all new items.
-- Preserve existing IDs without renumbering.
-
-3. Composition Module:
-- Build each entry in canonical field order:
-  1. ID
-  2. Title
-  3. Description
-  4. Intent
-  5. Implementation Details
-  6. Acceptance Criteria
-
-4. Validation Module:
-- Reject missing required fields.
-- Enforce single blank line between items.
-- Enforce - bullets for Implementation Details and Acceptance Criteria.
-- Reject malformed insertion if markers are missing.
-
-5. Write Module:
-- Insert new items before [/TODO].
-- Keep all existing content unchanged outside insertion block.
-
-Output Contract:
-- Updated TODO file path
-- IDs assigned
-- Inserted item count
-- Validation results
-- Append-only TODO entries in canonical field order
-
-Fill-In Entry Template (Canonical):
-
-ID: <NEXT_ID_3_DIGITS>
-Title: <TITLE>
-Description: <DESCRIPTION>
-Intent: <INTENT>
+ID: <next 3-digit id>
+Title: <title>
+Description: <description>
+Intent: <intent>
 Implementation Details:
-- <DETAIL_1>
-- <DETAIL_2>
+- <detail>
 Acceptance Criteria:
-- <CRITERION_1>
-- <CRITERION_2>
+- <criterion>
 
-Reusable Implementation Template Bodies:
-- implement_issue.txt embedded checklist:
-` + "\n\n" + builtinImplementIssueTemplate + "\n\n" + `- implement_pr.txt embedded checklist:
-` + "\n\n" + builtinImplementPRTemplate + "\n\n" + `Usage Notes For Reusable Modules:
-- When the TODO item is issue-implementation focused, embed the full implement_issue.txt checklist body into the item's Implementation Details section.
-- When the TODO item is PR-remediation focused, embed the full implement_pr.txt checklist body into the item's Implementation Details section.
-- For multi-item runs, apply deterministic sequential IDs and keep each item self-contained.
+Steps:
+1. Read the file and find the highest ID. Never renumber existing items.
+2. Give each new item the next ID.
+3. Refuse an item without implementation details or acceptance criteria.
+4. Insert new items just before [/TODO], one blank line apart. Change nothing else.
+5. For an item that implements an issue or fixes a review, point to the
+   implement_issue or implement_pr template instead of copying it.
 
-Extension Points:
-- Pre-Validation Hook: apply custom schema checks per repository.
-- Pre-Write Hook: enforce label/tag conventions in titles.
-- Post-Write Hook: auto-open related issue/PR links.
-
-Customization Notes:
-- Keep this file as base profile and create team-specific variants.
-- Override only config defaults and hook logic when possible.
-- Preserve canonical output field order for compatibility.
-
-Profile Example:
-- Profile Name: multi-repo-standard
-- DEFAULT_TODO_FILENAME=TODO.txt
-- DEFAULT_ID_WIDTH=3
-- DEFAULT_APPEND_BEFORE_CLOSING_MARKER=true
-- DEFAULT_REQUIRE_IMPLEMENTATION_DETAILS=true
-- DEFAULT_REQUIRE_ACCEPTANCE_CRITERIA=true
-- Repo Policy Note: apply same template for repositories using either main or master base branch naming.
+Output: file path, IDs assigned, items added.
 `
 
 var defaultSpecs = []TemplateAsset{
 	{
 		Key:      "implement_issue",
 		Filename: "implement_issue.txt",
-		Version:  "builtin-2.2",
+		Version:  "builtin-3.0",
 		Content:  builtinImplementIssueTemplate,
 	},
 	{
 		Key:      "implement_pr",
 		Filename: "implement_pr.txt",
-		Version:  "builtin-2.2",
+		Version:  "builtin-3.0",
 		Content:  builtinImplementPRTemplate,
 	},
 	{
 		Key:      "add_issue",
 		Filename: "add_issue.txt",
-		Version:  "builtin-2.1",
+		Version:  "builtin-3.0",
 		Content:  builtinAddIssueTemplate,
 	},
 }
@@ -440,6 +249,27 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 		})
 	}
 
+	for _, asset := range assets {
+		if _, builtin := findDefaultByKey(asset.Key); builtin {
+			continue
+		}
+		if repoDir != "" {
+			repoPath := filepath.Join(repoDir, asset.Filename)
+			if content, ok, warn := readTemplateFile(repoPath); ok {
+				asset.Version, asset.UpdatedAt, asset.Content = RepoLocalVersion, time.Time{}, content
+				resolved = append(resolved, ResolvedTemplate{TemplateAsset: asset, Source: "repo-local", Path: repoPath})
+				continue
+			} else if warn != "" {
+				warnings = append(warnings, warn)
+			}
+		}
+		resolved = append(resolved, ResolvedTemplate{
+			TemplateAsset: asset,
+			Source:        "config",
+			Path:          filepath.Join(configTemplatesDir(configDir), asset.Filename),
+		})
+	}
+
 	sort.Slice(resolved, func(i, j int) bool { return resolved[i].Filename < resolved[j].Filename })
 	return resolved, dedupeWarnings(warnings), nil
 }
@@ -469,6 +299,11 @@ func ExportBundle(configDir string) (Bundle, []string, error) {
 				warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; exporting built-in default", spec.Filename))
 			}
 			merged = append(merged, spec)
+		}
+		for _, asset := range byKey {
+			if _, builtin := findDefaultByKey(asset.Key); !builtin {
+				merged = append(merged, asset)
+			}
 		}
 		assets = merged
 	}
@@ -526,8 +361,12 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		}
 		defaultSpec, supported := findDefaultByKey(asset.Key)
 		if !supported {
-			warnings = append(warnings, fmt.Sprintf("skipped unsupported template key %q", asset.Key))
-			continue
+			key, ok := customKey(asset.Filename)
+			if !ok || key != asset.Key {
+				warnings = append(warnings, fmt.Sprintf("skipped template %q: a custom template is <name>.txt, lowercase letters, digits, - and _", asset.Key))
+				continue
+			}
+			defaultSpec = TemplateAsset{Key: key, Filename: asset.Filename}
 		}
 		if _, exists := seenKeys[asset.Key]; exists {
 			return 0, nil, fmt.Errorf("duplicate template key %q in bundle", asset.Key)
@@ -742,6 +581,47 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 			continue
 		}
 		seenFilenames[asset.Filename] = spec.Key
+		assets = append(assets, asset)
+	}
+
+	// A file a built-in's metadata points at belongs to that built-in, whether or
+	// not it was read above.
+	for _, spec := range defaultSpecs {
+		seenFilenames[spec.Filename] = spec.Key
+		if meta.Filenames != nil {
+			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
+				seenFilenames[mfn] = spec.Key
+			}
+		}
+	}
+	entries, err := os.ReadDir(configTemplatesDir(configDir))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		warnings = append(warnings, fmt.Sprintf("cannot list custom templates (%v)", err))
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.Type().IsRegular() || name == metadataFileName {
+			continue
+		}
+		if _, taken := seenFilenames[name]; taken {
+			continue
+		}
+		key, ok := customKey(name)
+		if !ok {
+			continue
+		}
+		content, ok, warn := readTemplateFile(filepath.Join(configTemplatesDir(configDir), name))
+		if warn != "" {
+			warnings = append(warnings, warn)
+		}
+		if !ok {
+			continue
+		}
+		asset := TemplateAsset{Key: key, Filename: name, Version: CustomVersion, Content: content}
+		if v := strings.TrimSpace(meta.Versions[key]); v != "" {
+			asset.Version = v
+		}
+		asset.UpdatedAt = meta.Updated[key]
 		assets = append(assets, asset)
 	}
 

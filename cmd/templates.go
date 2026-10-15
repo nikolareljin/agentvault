@@ -17,7 +17,9 @@ var templatesCmd = &cobra.Command{
   2) AgentVault config storage (default: ~/.config/agentvault/templates; honors XDG_CONFIG_HOME/--config)
   3) built-in safe defaults
 
-Use these commands to inspect effective content and refresh config templates.`,
+Any other <name>.txt in config storage is a custom template, resolved the same
+way. Use these commands to inspect effective content and refresh config
+templates; docs/templates.md covers editing and adding templates.`,
 }
 
 var templatesListCmd = &cobra.Command{

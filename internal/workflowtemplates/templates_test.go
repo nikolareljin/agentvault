@@ -187,8 +187,8 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportBundle() error = %v", err)
 	}
-	if imported != 1 {
-		t.Fatalf("ImportBundle() imported count = %d, want 1", imported)
+	if imported != 2 {
+		t.Fatalf("ImportBundle() imported count = %d, want 2 (implement_issue and the custom one)", imported)
 	}
 	if len(warnings) == 0 {
 		t.Fatalf("expected warnings for empty asset")
@@ -199,8 +199,8 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "implement_pr.txt")); !os.IsNotExist(err) {
 		t.Fatalf("implement_pr.txt should not exist, err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "custom_template.txt")); !os.IsNotExist(err) {
-		t.Fatalf("custom_template.txt should not exist, err=%v", err)
+	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "custom_template.txt")); err != nil {
+		t.Fatalf("expected custom_template.txt: %v", err)
 	}
 }
 
@@ -211,7 +211,7 @@ func TestImportBundleNoOpDoesNotWriteMetadata(t *testing.T) {
 		ExportedAt:    time.Now().UTC(),
 		Assets: []TemplateAsset{
 			{Key: "implement_issue", Filename: "implement_issue.txt", Version: "v1", Content: "\n"},
-			{Key: "unsupported", Filename: "unsupported.txt", Version: "v1", Content: "x\n"},
+			{Key: "not a name", Filename: "Not A Name.txt", Version: "v1", Content: "x\n"},
 		},
 	}
 
@@ -759,7 +759,7 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 	}
 }
 
-func TestBuiltInAddIssueTemplateIncludesReusableImplementationBodies(t *testing.T) {
+func TestBuiltInAddIssueTemplatePointsAtTheOtherTemplates(t *testing.T) {
 	var addIssue TemplateAsset
 	for _, spec := range defaultSpecs {
 		if spec.Key == "add_issue" {
@@ -771,16 +771,12 @@ func TestBuiltInAddIssueTemplateIncludesReusableImplementationBodies(t *testing.
 		t.Fatalf("add_issue template not found in defaults")
 	}
 	for _, want := range []string{
-		"Input Contract:",
-		"Output Contract:",
-		"Fill-In Entry Template (Canonical):",
-		"ID: <NEXT_ID_3_DIGITS>",
-		"[TODO] ... [/TODO]",
-		"Reusable Implementation Template Bodies:",
-		"Implement Issue Template",
-		"Fix PR Template",
-		"implement_issue.txt",
-		"implement_pr.txt",
+		"[TODO]",
+		"[/TODO]",
+		"ID: <next 3-digit id>",
+		"Acceptance Criteria:",
+		"implement_issue",
+		"implement_pr",
 	} {
 		if !strings.Contains(addIssue.Content, want) {
 			t.Fatalf("add_issue template missing %q", want)
@@ -996,4 +992,79 @@ func TestLoadResolvedWarnsWhenStoredTemplateIsAnOlderBuiltin(t *testing.T) {
 	if !found {
 		t.Fatalf("no staleness warning for a superseded stored template; got %v", warnings)
 	}
+}
+
+func TestCustomTemplateIsListedExportedAndImported(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "release-notes.txt"), []byte("write the notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Not template names: ignored, never an error.
+	for _, name := range []string{"Notes.txt", "notes.md", "a b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var custom *ResolvedTemplate
+	for i := range resolved {
+		if resolved[i].Filename == "release-notes.txt" {
+			custom = &resolved[i]
+		}
+		if resolved[i].Filename == "Notes.txt" || resolved[i].Filename == "notes.md" || resolved[i].Filename == "a b.txt" {
+			t.Errorf("%s is not a template name but was listed", resolved[i].Filename)
+		}
+	}
+	if custom == nil || custom.Key != "release_notes" || custom.Source != "config" || custom.Version != CustomVersion {
+		t.Fatalf("custom template = %+v, want key release_notes from config", custom)
+	}
+
+	bundle, _, err := ExportBundle(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	if _, _, err := ImportBundle(other, bundle); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(other, TemplatesDirName, "release-notes.txt"))
+	if err != nil || strings.TrimSpace(string(got)) != "write the notes" {
+		t.Fatalf("custom template did not travel: %q, %v", got, err)
+	}
+}
+
+func TestRepoLocalFileOverridesCustomTemplate(t *testing.T) {
+	cfgDir := t.TempDir()
+	repo := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "triage.txt"), []byte("stored\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "triage.txt"), []byte("repo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resolved {
+		if r.Key == "triage" {
+			if r.Source != "repo-local" || strings.TrimSpace(r.Content) != "repo" {
+				t.Fatalf("triage = %+v, want the repo-local file", r)
+			}
+			return
+		}
+	}
+	t.Fatal("triage was not listed")
 }

@@ -529,6 +529,8 @@ Flags:
 
 ## Templates
 
+Precedence, editing and custom templates: [templates.md](templates.md).
+
 ### `agentvault templates list`
 Flags:
 - `--repo <path>` (default: current directory)

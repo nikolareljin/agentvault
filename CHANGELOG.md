@@ -5,167 +5,44 @@
 ## [0.14.0] - 2026-10-15
 
 ### Security
-- `golang.org/x/crypto` 0.52.0 -> 0.55.0 (CVE-2026-56854: SSH source-address restrictions
-  not enforced) and `golang.org/x/text` 0.37.0 -> 0.41.0 (CVE-2026-56852: denial of service on
-  invalid UTF-8, fixed in 0.39.0; 0.41.0 is what x/crypto 0.55.0 requires); `x/sys` and `x/term`
-  follow. Trivy reported both as HIGH. x/crypto 0.55.0 is the newest release that builds with
-  Go 1.25; 0.56.0 and later need Go 1.26.
+- `golang.org/x/crypto` 0.55.0 (CVE-2026-56854) and `golang.org/x/text` 0.41.0
+  (CVE-2026-56852), both rated HIGH; `x/sys` and `x/term` follow.
 
 ### Added
-- **A bundle records what the export left behind, and an import prints it.**
-  Declines were warnings on the machine doing the export, so the person who
-  needs them -- the one importing on another machine -- saw nothing. After
-  arrival a file that was refused and a file that never existed look identical,
-  which is what makes an incomplete restore invisible.
-
-  The bundle now carries a `declined` list, each entry with a path, a reason and
-  a category, and `import` prints it:
-
-  ```
-  Declined: 2 (1 refused by policy, 1 not present)
-    policy   .claude/settings.local.json: a .local. file is per-machine ...
-    absent   implement_pr.txt: named by AGENTS.md and not present
-  ```
-
-  The two categories are separated because they need different actions: one is
-  a decision to revisit, the other is a file to write. Every policy decline is
-  printed; absent ones are capped at five with a count, because a real
-  instruction set produced eighteen absent against four policy and printing all
-  of them buried the ones worth acting on. The bundle carries the full list
-  either way, deduplicated so two files naming one missing template is one
-  entry.
-
-  Both are produced for real. `.local.` files and references that cannot travel
-  are policy; a file an instruction names and does not exist is absent, found by
-  resolving the references of every instruction file the export collects, which
-  is the reference work from earlier in this epic reaching the bundle.
-- **A bundle carries directory-scope agent settings.** An agent reads system,
-  user and directory scope; the bundle covered parts of two. It now takes a
-  project's `.claude/settings.json` and any agent or command definitions kept
-  beside it.
-
-- **`.local.` files are left behind by default, and said so by name.** They hold
-  per-machine values and some hold credentials, so a bundle that carried them
-  quietly would be a credential copy nobody asked for. Each one declined is
-  reported:
-
-  ```
-  declined .claude/settings.local.json: a .local. file is per-machine and may
-  hold credentials; name it with --include-local to carry it
-  ```
-
-  Opting in is per file and names it: `--include-local .claude/settings.local.json`.
-  There is deliberately no flag that takes all of them, because carrying one is
-  a decision about that file rather than a mode to switch on.
-
-  The rule applies at user scope as well as directory scope. It was written for
-  directory scope only, so an agent definition called `creds.local.md` was
-  refused inside a project and carried from the home directory; the filter is
-  now one function used by both.
-
-  `settings.json` is treated as sensitive and redacted without
-  `--include-secrets`, as the user-level one is. Agent and command definitions
-  are not: they are prose, and redacting them restores a machine with its rules
-  blanked out, which is the same as not carrying them.
-- **The setup bundle carries the user-level instruction files.** It took
-  `~/.claude/settings.json`, `~/.claude/keybindings.json` and the skills, but
-  not `~/.claude/CLAUDE.md`, `~/.claude/agents/` or `~/.claude/commands/`. A
-  machine restored from a bundle therefore had the keybindings and none of the
-  standing rules, which is the half that changes behaviour most. An agent
-  definition says how a subagent behaves and a saved command is a prompt
-  somebody wrote once and kept; both are instructions.
-
-  Each restores to where it came from under `~/.claude`, asserted in the test
-  rather than assumed, because carrying a file that lands somewhere else is
-  the same as not carrying it.
-- **`instructions pull` follows the references out of an instruction file.** It
-  took ten well-known names and stopped, so a workspace `AGENTS.md` naming
-  `implement_pr.txt` as a required template exported without it and the rule
-  arrived on the next machine pointing at nothing. It now stores what the
-  instructions name, and what those name in turn, terminating on a cycle.
-
-  What it will not take is the point, and is decided rather than discovered:
-  absolute paths, anything reaching through `..`, anything whose real path
-  leaves the directory (symlinked parents included), directories, build and
-  vendor trees, and anything over 256 KiB. Each refusal is printed with its
-  reason; a named file that is not present is reported too. `--strict` turns
-  either into a failure, `--follow-references=false` turns the walk off.
-
-  A reference is resolved relative to the file that names it. A script in
-  `scripts/` naming `helpers.sh` means `scripts/helpers.sh`, and `../AGENTS.md`
-  from there means the root file rather than an escape. Containment is checked
-  lexically first, so a reference that leaves the directory is refused by name
-  whether or not it exists, and then against the resolved real path, which
-  catches a symlinked parent.
-
-  Measured against a real 260-line instruction file before the defaults were
-  chosen: 41 candidate references, 7 taken, 12 named but absent. Failing on
-  absent files by default would have made the command unusable on the very file
-  that motivated it, which is why reporting is the default. That file also
-  names one of its required scripts by absolute path, so it is refused and
-  cannot travel: a defect in the rule, now visible instead of silent.
-- **A stored template older than the built-in now says so.**
-  `RefreshConfigTemplates` never overwrites an existing file without `--force`,
-  which is right - it must not clobber edits - but it was also silent, so a
-  machine kept a superseded template indefinitely while reporting nothing.
-  `LoadResolved` now warns with the stored version, the built-in version, and
-  what to run. A template edited by hand keeps winning, as before.
+- **`instructions pull` follows references.** Files an instruction file names
+  in backticks or markdown links are stored too, and the files those name, so a
+  rule saying "follow `docs/review.md`" travels with that file. A reference is
+  resolved relative to the file that names it. Absolute paths, paths leaving
+  the directory (`..` or a symlinked parent), build and vendor trees and files
+  over 256 KiB are refused and listed; a named file that is missing is listed
+  too. `--strict` turns either list into a failure, and
+  `--follow-references=false` turns the walk off.
+- **The setup bundle carries user-level instructions**: `~/.claude/CLAUDE.md`,
+  `~/.claude/agents/` and `~/.claude/commands/`, each restored to where it came
+  from.
+- **The setup bundle carries directory-scope settings**: a project's
+  `.claude/settings.json` (redacted without `--include-secrets`) and the agent
+  and command definitions beside it.
+- **`.local.` files stay behind unless named.** They hold per-machine values
+  and sometimes credentials. Each one is reported as declined; carry one with
+  `--include-local <path>`. This applies at user and directory scope.
+- **An export records what it declined, and `import` prints it**: files left
+  out by policy and files an instruction names that do not exist, listed
+  separately. Every policy entry is printed; missing files are capped at five
+  with a count.
+- **Custom workflow templates.** Any `<name>.txt` in the config templates
+  directory is a template: `templates list` and `templates show` include it,
+  a repository-root file of the same name overrides it, and export/import carry
+  it. See [docs/templates.md](docs/templates.md).
+- **A stored template older than the built-in prints a warning** with both
+  versions and the command to update it; an edited copy keeps winning.
 
 ### Changed
-- **The pull request gate takes the Go preset, so the version literal is gone.**
-  `pr.yml` carried `go_version: "1.25"` because `pr-gate.yml` is an engine and
-  no Go preset sat in front of it. That literal was the one place this
-  repository could drift from the shared default: change it upstream and this
-  file keeps the old value, silently, on every pull request.
-
-  `ci-helpers` 0.33.0 adds `go-pr-gate.yml`, which carries `go.yml`'s defaults.
-  Calling it means a push and a pull request now set up the same toolchain from
-  the same source. The three command overrides go with it, for the reason
-  `ci.yml` dropped its own: the preset's defaults are the same commands, and
-  this repository is the reference adopter, so it should exercise the shared
-  defaults rather than a local copy of them.
-- **The built-in workflow templates no longer carry one operator's review
-  policy.** `implement_issue` and `implement_pr` named a specific automated
-  reviewer and prescribed how to re-request it. They now say to request review
-  according to the repository's own policy, assume no particular reviewer, and
-  review the diff at head yourself before reporting a PR ready. The `add_issue`
-  template describes its output as append-only `[TODO] ... [/TODO]` files rather
-  than naming one tool's format. Both templates move to `builtin-2.2`.
-
-  This is a general-purpose tool. A template compiled into the binary is the one
-  thing every user gets by default, so it must not encode anyone's house rules.
-
-### Fixed
-- **CI called the shared engine directly, so Go was never set up.** `ci.yml`
-  used `ci-helpers/.github/workflows/ci.yml`, which only runs its `Setup Go`
-  step when a caller passes `go_version`, and nothing did. Every run built on
-  whatever Go the runner image shipped, while `go.mod` declares `go 1.25.0`. It
-  passed only because the image is currently newer: `go vet` would otherwise
-  have failed with `go.mod requires go >= 1.25.0`. An image rollback would have
-  broken CI for a reason nothing here pinned.
-
-  Skipping setup also meant no module cache, so the engine's `cache: true`
-  default had nothing to act on.
-
-  It now calls the `go.yml` preset, which supplies the version default and
-  forwards caching. The three command overrides are gone: the preset's lint and
-  build defaults are byte-identical to them and its test default differs only by
-  a leading `go mod download`, and this repository is the reference Go adopter,
-  so it should exercise the defaults rather than a local copy of them.
-
-  `workflow_dispatch` added so a cold-versus-warm cache comparison can be made
-  deliberately instead of by pushing twice. Its concurrency key now carries the
-  event, because a dispatch and a push on `main` otherwise share a group and
-  `cancel-in-progress` makes one destroy the other.
-
-- **Pull request runs skipped Go setup for the same reason.** `pr.yml` calls the
-  shared `pr-gate` engine, which also sets Go up only when a caller names a
-  version, so pull requests were building on the runner image's Go with no
-  module cache. It now passes `go_version` explicitly. That is a literal rather
-  than an inherited default because `pr-gate` is an engine with no Go preset in
-  front of it, which makes it the one place the version can drift from the
-  shared default -- written down in the file, and removable once such a preset
-  exists.
+- **The built-in workflow templates are short and generic** (`builtin-3.0`):
+  inputs, ordered steps and the expected output. `add_issue` points to
+  `implement_issue` and `implement_pr` instead of embedding them. A copy stored
+  by an earlier release keeps working and prints the version warning; run
+  `agentvault templates refresh --force` to take the new text.
 
 ## [0.13.0] - 2026-09-01
 

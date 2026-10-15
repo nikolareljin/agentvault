@@ -145,7 +145,7 @@ func scopeRank(scope string) int {
 // Relative patterns with separators match against suffixes of workDir and its
 // ancestors, so "repo/*" can match "/home/user/repo/src". Separator-free
 // patterns match against the base name of the original workDir only (no
-// ancestor walk), so "myrepo" still works without full path anchoring.
+// ancestor walk), so "example-repo" still works without full path anchoring.
 // Returns false on error or when either argument is empty.
 func matchesDirectory(pattern, workDir string) bool {
 	if pattern == "" || workDir == "" {
