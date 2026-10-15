@@ -30,19 +30,25 @@
   out by policy and files an instruction names that do not exist, listed
   separately. Every policy entry is printed; missing files are capped at five
   with a count.
-- **Custom workflow templates.** Any `<name>.txt` in the config templates
-  directory is a template: `templates list` and `templates show` include it,
-  a repository-root file of the same name overrides it, and export/import carry
-  it. See [docs/templates.md](docs/templates.md).
+- **Custom workflow templates, in plain text or Markdown.** Any `<name>.txt` or
+  `<name>.md` in the config templates directory is a template: `templates list`
+  and `templates show` include it, a repository-root file of the same name
+  overrides it, and export/import carry it. Built-in keys accept `.md` files
+  too; with both, `.txt` wins and a warning names the other. A Markdown
+  template may start with front matter: `description` shows in `templates
+  list`, and the agent gets the text after it. See
+  [docs/templates.md](docs/templates.md).
 - **A stored template older than the built-in prints a warning** with both
   versions and the command to update it; an edited copy keeps winning.
 
 ### Changed
 - **The built-in workflow templates are short and generic** (`builtin-3.0`):
-  inputs, ordered steps and the expected output. `add_issue` now describes
-  writing a new issue. A copy stored by an earlier release keeps working and
-  prints the version warning; run `agentvault templates refresh --force` to
-  take the new text.
+  inputs, ordered steps and the expected output. `implement_issue` names a
+  branch `release/X.Y.Z` by default and follows the repository's own naming
+  when it has one. `add_issue` describes both `TODO.txt` (`[TODO]` markers) and
+  `TODO.md` (one `## ` section per item). A copy stored by an earlier release
+  keeps working and prints the version warning; run
+  `agentvault templates refresh --force` to take the new text.
 
 ## [0.13.0] - 2026-09-01
 

@@ -788,9 +788,9 @@ all resolved instructions instead of a single named one.
 
 Examples:
   agentvault instructions preview agents
-  agentvault instructions preview agents --dir /home/user/src/example-repo
-  agentvault instructions preview --dir /home/user/src/example-repo
-  agentvault instructions preview --all --dir /home/user/src/example-repo`,
+  agentvault instructions preview agents --dir /home/user/my-projects-location/example-repo
+  agentvault instructions preview --dir /home/user/my-projects-location/example-repo
+  agentvault instructions preview --all --dir /home/user/my-projects-location/example-repo`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		v, err := openVault()

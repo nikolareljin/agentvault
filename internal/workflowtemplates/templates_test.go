@@ -759,6 +759,15 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 	}
 }
 
+func TestBuiltInAddIssueDescribesBothTodoForms(t *testing.T) {
+	spec, _ := findDefaultByKey("add_issue")
+	for _, want := range []string{"[TODO]", "[/TODO]", "ID: <next 3-digit id>", "TODO.md", "## <title>"} {
+		if !strings.Contains(spec.Content, want) {
+			t.Errorf("add_issue template missing %q", want)
+		}
+	}
+}
+
 func TestBuiltInTemplatesStateInputsStepsAndOutput(t *testing.T) {
 	for _, spec := range defaultSpecs {
 		for _, want := range []string{"Inputs:", "Steps:", "Output:"} {
@@ -989,7 +998,7 @@ func TestCustomTemplateIsListedExportedAndImported(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Not template names: ignored, never an error.
-	for _, name := range []string{"Notes.txt", "notes.md", "a b.txt"} {
+	for _, name := range []string{"Notes.txt", "notes.json", "a b.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -1004,7 +1013,7 @@ func TestCustomTemplateIsListedExportedAndImported(t *testing.T) {
 		if resolved[i].Filename == "release-notes.txt" {
 			custom = &resolved[i]
 		}
-		if resolved[i].Filename == "Notes.txt" || resolved[i].Filename == "notes.md" || resolved[i].Filename == "a b.txt" {
+		if resolved[i].Filename == "Notes.txt" || resolved[i].Filename == "notes.json" || resolved[i].Filename == "a b.txt" {
 			t.Errorf("%s is not a template name but was listed", resolved[i].Filename)
 		}
 	}
@@ -1052,4 +1061,109 @@ func TestRepoLocalFileOverridesCustomTemplate(t *testing.T) {
 		}
 	}
 	t.Fatal("triage was not listed")
+}
+
+func writeTemplate(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func findResolved(t *testing.T, resolved []ResolvedTemplate, key string) ResolvedTemplate {
+	t.Helper()
+	var found []ResolvedTemplate
+	for _, r := range resolved {
+		if r.Key == key {
+			found = append(found, r)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d templates with key %q, want 1: %+v", len(found), key, found)
+	}
+	return found[0]
+}
+
+func hasWarning(warnings []string, parts ...string) bool {
+	for _, w := range warnings {
+		all := true
+		for _, p := range parts {
+			all = all && strings.Contains(w, p)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMarkdownCustomTemplateFrontMatter(t *testing.T) {
+	cfgDir := t.TempDir()
+	writeTemplate(t, filepath.Join(cfgDir, TemplatesDirName), "triage.md",
+		"---\ndescription: \"Sort new issues\"\n---\n\n# Triage\n1. Label it.\n")
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := findResolved(t, resolved, "triage")
+	if r.Description() != "Sort new issues" {
+		t.Errorf("description = %q", r.Description())
+	}
+	if strings.Contains(r.Body(), "description:") || !strings.HasPrefix(r.Body(), "# Triage") {
+		t.Errorf("body kept the front matter: %q", r.Body())
+	}
+	if !strings.Contains(r.Content, "description:") {
+		t.Error("stored content should stay the whole file, so export round-trips it")
+	}
+}
+
+func TestTxtWinsOverMarkdownWithAWarning(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "triage.md", "markdown\n")
+	writeTemplate(t, dir, "triage.txt", "plain\n")
+	resolved, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "triage"); r.Filename != "triage.txt" {
+		t.Errorf("using %s, want triage.txt", r.Filename)
+	}
+	if !hasWarning(warnings, "triage.txt", "triage.md") {
+		t.Errorf("no warning naming both files: %v", warnings)
+	}
+
+	repo := t.TempDir()
+	writeTemplate(t, repo, "implement_pr.md", "repo markdown\n")
+	writeTemplate(t, repo, "implement_pr.txt", "repo plain\n")
+	resolved, warnings, err = LoadResolved(cfgDir, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "implement_pr"); r.Filename != "implement_pr.txt" || r.Source != "repo-local" {
+		t.Errorf("implement_pr = %s from %s, want the repo's .txt", r.Filename, r.Source)
+	}
+	if !hasWarning(warnings, "implement_pr.txt", "implement_pr.md") {
+		t.Errorf("no warning naming both repo files: %v", warnings)
+	}
+}
+
+func TestBuiltInKeyFromMarkdownFile(t *testing.T) {
+	cfgDir := t.TempDir()
+	writeTemplate(t, filepath.Join(cfgDir, TemplatesDirName), "implement_issue.md", "# Our issue flow\n")
+	repo := t.TempDir()
+	writeTemplate(t, repo, "implement_pr.md", "# Our review flow\n")
+	resolved, _, err := LoadResolved(cfgDir, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "implement_issue"); r.Source != "config" || r.Filename != "implement_issue.md" {
+		t.Errorf("implement_issue = %s from %s, want config implement_issue.md", r.Filename, r.Source)
+	}
+	if r := findResolved(t, resolved, "implement_pr"); r.Source != "repo-local" || r.Filename != "implement_pr.md" {
+		t.Errorf("implement_pr = %s from %s, want repo-local implement_pr.md", r.Filename, r.Source)
+	}
 }

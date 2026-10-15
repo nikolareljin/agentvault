@@ -225,7 +225,7 @@ agentvault setup export my-setup.json --agent my-codex --project .
 # include secret-bearing provider files in an encrypted bundle
 agentvault setup export my-setup.bundle --agent my-codex --project . --include-secrets --encrypted
 
-# inspect the built-in template for writing a new issue
+# inspect the built-in template for TODO.txt / TODO.md task lists
 agentvault templates show add_issue
 
 # JSON output for orchestration systems
@@ -249,16 +249,16 @@ Execution behavior:
 - Ollama remains a plain HTTP prompt execution path and does not have CLI tool-use semantics.
 
 Current limitation:
-- Prompt text alone does not switch repositories or instruction scope. If you start from `~/src`, AgentVault uses that current directory for local instruction discovery.
+- Prompt text alone does not switch repositories or instruction scope. If you start from `~/my-projects-location`, AgentVault uses that current directory for local instruction discovery.
 - Agentic prompt runs now use explicit execution workspace selection. CLI defaults to workflow repo root when `--workflow ... --repo ...` is used, otherwise current directory. Override with `--workspace`.
-- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/src/my-app --workspace ~/src/my-app --pr 27`.
+- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/my-projects-location/my-app --workspace ~/my-projects-location/my-app --pr 27`.
 
 Runtime value precedence for prompt execution is:
 - local agent setting in vault
 - process environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`)
 - built-in default fallback (for Ollama base URL: `http://localhost:11434`)
 
-Workflow templates (`implement_issue`, `implement_pr`, `add_issue`, and any you add) resolve repository-local file > config storage > built-in. How to edit, replace and add them: [docs/templates.md](docs/templates.md).
+Workflow templates (`implement_issue`, `implement_pr`, `add_issue`, and any you add) are plain `.txt` or Markdown `.md` files, resolved repository-local file > config storage > built-in. How to edit, replace and add them: [docs/templates.md](docs/templates.md).
 
 Portable setup bundles can additionally include explicit asset manifests for:
 - provider-home files (`provider_files`)

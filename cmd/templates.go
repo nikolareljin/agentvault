@@ -13,11 +13,11 @@ var templatesCmd = &cobra.Command{
 	Use:   "templates",
 	Short: "Manage workflow templates used by issue/PR automation workflows",
 	Long: `Workflow templates are resolved with explicit precedence:
-  1) repository-local files (./implement_issue.txt, etc.)
+  1) repository-local files (./implement_issue.txt or .md, etc.)
   2) AgentVault config storage (default: ~/.config/agentvault/templates; honors XDG_CONFIG_HOME/--config)
   3) built-in safe defaults
 
-Any other <name>.txt in config storage is a custom template, resolved the same
+Any other <name>.txt or <name>.md in config storage is a custom template, resolved the same
 way. Use these commands to inspect effective content and refresh config
 templates; docs/templates.md covers editing and adding templates.`,
 }
@@ -66,6 +66,10 @@ func runTemplatesList(cmd *cobra.Command, args []string) error {
 	errOut := cmd.ErrOrStderr()
 	fmt.Fprintln(out, "Workflow templates")
 	for _, t := range resolved {
+		if desc := t.Description(); desc != "" {
+			fmt.Fprintf(out, "  - %s (%s, version=%s): %s\n", t.Filename, t.Source, t.Version, desc)
+			continue
+		}
 		fmt.Fprintf(out, "  - %s (%s, version=%s)\n", t.Filename, t.Source, t.Version)
 	}
 	for _, warn := range warnings {

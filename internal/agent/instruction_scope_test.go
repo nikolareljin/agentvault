@@ -19,9 +19,9 @@ func TestResolveEffectiveInstructions_globalOnly(t *testing.T) {
 func TestResolveEffectiveInstructions_directoryWinsOverGlobal(t *testing.T) {
 	instructions := []InstructionFile{
 		{Name: "agents", Content: "global", Scope: InstructionScopeGlobal},
-		{Name: "agents", Content: "dir-specific", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/src/example-repo"},
+		{Name: "agents", Content: "dir-specific", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/my-projects-location/example-repo"},
 	}
-	result := ResolveEffectiveInstructions(instructions, "/home/user/src/example-repo")
+	result := ResolveEffectiveInstructions(instructions, "/home/user/my-projects-location/example-repo")
 	if len(result) != 1 || result[0].Content != "dir-specific" {
 		t.Errorf("expected directory instruction to win, got %+v", result)
 	}
@@ -30,9 +30,9 @@ func TestResolveEffectiveInstructions_directoryWinsOverGlobal(t *testing.T) {
 func TestResolveEffectiveInstructions_directoryNoMatch(t *testing.T) {
 	instructions := []InstructionFile{
 		{Name: "agents", Content: "global", Scope: InstructionScopeGlobal},
-		{Name: "agents", Content: "dir-specific", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/src/example-repo"},
+		{Name: "agents", Content: "dir-specific", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/my-projects-location/example-repo"},
 	}
-	result := ResolveEffectiveInstructions(instructions, "/home/user/src/other")
+	result := ResolveEffectiveInstructions(instructions, "/home/user/my-projects-location/other")
 	if len(result) != 1 || result[0].Content != "global" {
 		t.Errorf("expected global to win when directory doesn't match, got %+v", result)
 	}
@@ -44,7 +44,7 @@ func TestResolveEffectiveInstructions_localAlwaysWins(t *testing.T) {
 		{Name: "agents", Content: "dir-specific", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/*"},
 		{Name: "agents", Content: "local", Scope: InstructionScopeLocal},
 	}
-	result := ResolveEffectiveInstructions(instructions, "/home/user/src/example-repo")
+	result := ResolveEffectiveInstructions(instructions, "/home/user/my-projects-location/example-repo")
 	if len(result) != 1 || result[0].Content != "local" {
 		t.Errorf("expected local to win, got %+v", result)
 	}
@@ -83,9 +83,9 @@ func TestResolveEffectiveInstructions_emptyWorkDirDisablesDirectory(t *testing.T
 func TestResolveEffectiveInstructions_wildcardPattern(t *testing.T) {
 	instructions := []InstructionFile{
 		{Name: "agents", Content: "global", Scope: InstructionScopeGlobal},
-		{Name: "agents", Content: "wildcard", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/src/*"},
+		{Name: "agents", Content: "wildcard", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/my-projects-location/*"},
 	}
-	result := ResolveEffectiveInstructions(instructions, "/home/user/src/example-repo")
+	result := ResolveEffectiveInstructions(instructions, "/home/user/my-projects-location/example-repo")
 	if len(result) != 1 || result[0].Content != "wildcard" {
 		t.Errorf("expected wildcard to match, got %+v", result)
 	}
@@ -94,10 +94,10 @@ func TestResolveEffectiveInstructions_wildcardPattern(t *testing.T) {
 func TestResolveEffectiveInstructions_directoryMatchesSubdir(t *testing.T) {
 	instructions := []InstructionFile{
 		{Name: "agents", Content: "global", Scope: InstructionScopeGlobal},
-		{Name: "agents", Content: "repo-root", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/src/example-repo"},
+		{Name: "agents", Content: "repo-root", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/my-projects-location/example-repo"},
 	}
 	// workDir is a subdirectory of the pattern — should still match.
-	result := ResolveEffectiveInstructions(instructions, "/home/user/src/example-repo/src/pkg")
+	result := ResolveEffectiveInstructions(instructions, "/home/user/my-projects-location/example-repo/src/pkg")
 	if len(result) != 1 || result[0].Content != "repo-root" {
 		t.Errorf("expected directory instruction to apply in subdirectory, got %+v", result)
 	}
@@ -108,7 +108,7 @@ func TestResolveEffectiveInstructions_relativeDirectoryPatternWithSeparator(t *t
 		{Name: "agents", Content: "global", Scope: InstructionScopeGlobal},
 		{Name: "agents", Content: "repo-subdir", Scope: InstructionScopeDirectory, DirectoryPattern: "example-repo/*"},
 	}
-	result := ResolveEffectiveInstructions(instructions, "/home/user/src/example-repo/src/pkg")
+	result := ResolveEffectiveInstructions(instructions, "/home/user/my-projects-location/example-repo/src/pkg")
 	if len(result) != 1 || result[0].Content != "repo-subdir" {
 		t.Errorf("expected relative directory pattern to match absolute workDir suffix, got %+v", result)
 	}
@@ -116,10 +116,10 @@ func TestResolveEffectiveInstructions_relativeDirectoryPatternWithSeparator(t *t
 
 func TestResolveEffectiveInstructions_prefersLongerDirectoryPatternBeforeLexicographicTieBreak(t *testing.T) {
 	instructions := []InstructionFile{
-		{Name: "agents", Content: "specific", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/src/example-repo"},
+		{Name: "agents", Content: "specific", Scope: InstructionScopeDirectory, DirectoryPattern: "/home/user/my-projects-location/example-repo"},
 		{Name: "agents", Content: "shorter", Scope: InstructionScopeDirectory, DirectoryPattern: "*/example-repo"},
 	}
-	result := ResolveEffectiveInstructions(instructions, "/home/user/src/example-repo")
+	result := ResolveEffectiveInstructions(instructions, "/home/user/my-projects-location/example-repo")
 	if len(result) != 1 || result[0].Content != "specific" {
 		t.Errorf("expected longer matching directory pattern to win, got %+v", result)
 	}

@@ -599,7 +599,7 @@ Flags:
 ## 3.12 Workflow templates
 
 Workflow template precedence:
-1. repository-local file (`./<name>.txt`)
+1. repository-local file (`./<name>.txt` or `./<name>.md`)
 2. AgentVault config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`)
 3. built-in defaults (safe fallback with warning)
 

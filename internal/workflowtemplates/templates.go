@@ -22,9 +22,10 @@ const (
 	CustomVersion        = "custom"
 )
 
-// A custom template is any other <name>.txt a user adds to config storage. It is
+// A template file is plain text (<name>.txt) or Markdown (<name>.md); with both,
+// the .txt one wins. A custom template is any other <name>.txt or <name>.md a user adds to config storage. It is
 // listed, shown, exported and imported like a built-in; agentvault ships none.
-var customFilenamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}\.txt$`)
+var customFilenamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}\.(txt|md)$`)
 
 // customKey returns the key for a custom template file, or false when the name
 // is not one (wrong shape, or a built-in's key).
@@ -62,6 +63,63 @@ type ResolvedTemplate struct {
 	Path   string `json:"path,omitempty"`
 }
 
+// Description is the front matter "description:" of a Markdown template, if any.
+func (t ResolvedTemplate) Description() string {
+	desc, _ := splitFrontMatter(t.Content)
+	return desc
+}
+
+// Body is the template without its front matter: what an agent is sent.
+func (t ResolvedTemplate) Body() string {
+	_, body := splitFrontMatter(t.Content)
+	return body
+}
+
+// splitFrontMatter separates a leading "---" YAML block from the text and
+// returns its description value. Text without one comes back unchanged.
+func splitFrontMatter(content string) (string, string) {
+	text := strings.TrimLeft(content, "\ufeff")
+	if !strings.HasPrefix(text, "---\n") && !strings.HasPrefix(text, "---\r\n") {
+		return "", content
+	}
+	lines := strings.SplitAfter(text, "\n")
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "---" {
+			continue
+		}
+		desc := ""
+		for _, line := range lines[1:i] {
+			key, value, ok := strings.Cut(line, ":")
+			if ok && strings.TrimSpace(key) == "description" {
+				desc = strings.Trim(strings.TrimSpace(value), `"'`)
+			}
+		}
+		return desc, strings.TrimLeft(strings.Join(lines[i+1:], ""), "\r\n")
+	}
+	return "", content
+}
+
+// readTxtOrMD reads dir/<stem>.txt, else dir/<stem>.md. With both present the
+// .txt one wins and a warning names the .md one.
+func readTxtOrMD(dir, txtName string) (content string, name string, ok bool, warnings []string) {
+	mdName := strings.TrimSuffix(txtName, ".txt") + ".md"
+	content, ok, warn := readTemplateFile(filepath.Join(dir, txtName))
+	if warn != "" {
+		warnings = append(warnings, warn)
+	}
+	if ok {
+		if _, err := os.Stat(filepath.Join(dir, mdName)); err == nil {
+			warnings = append(warnings, fmt.Sprintf("both %q and %q exist in %s; using %q", txtName, mdName, dir, txtName))
+		}
+		return content, txtName, true, warnings
+	}
+	content, ok, warn = readTemplateFile(filepath.Join(dir, mdName))
+	if warn != "" {
+		warnings = append(warnings, warn)
+	}
+	return content, mdName, ok, warnings
+}
+
 type metadataFile struct {
 	SchemaVersion string               `json:"schema_version"`
 	UpdatedAt     time.Time            `json:"updated_at,omitempty"`
@@ -79,7 +137,9 @@ repository's default branch).
 
 Steps:
 1. Read the issue. Confirm the scope and acceptance criteria; ask when they are unclear.
-2. Create a branch from the base branch, named the way the repository names branches.
+2. Create a branch from the base branch. Default name: release/X.Y.Z with the next
+   semantic version. Use the repository's own naming instead when it has one, or
+   when asked.
 3. Make the change, scoped to the issue. Comment only where the logic is not obvious.
 4. Add or update tests for the new behaviour, including edge cases.
 5. Update the docs and the changelog when a user sees a difference.
@@ -104,19 +164,31 @@ Steps:
 Output: threads addressed, files changed, test results, commit, pull request URL.
 `
 
-const builtinAddIssueTemplate = `Add Issue
+const builtinAddIssueTemplate = `Add TODO Item
 
-Inputs: repository, a short description of the problem or request.
+Inputs: repository path, TODO file (default: TODO.txt), and for each item a
+title, description, implementation details and acceptance criteria.
+
+TODO.txt: items sit between [TODO] and [/TODO] markers, fields in this order:
+
+ID: <next 3-digit id>
+Title: <title>
+Description: <description>
+Implementation Details:
+- <detail>
+Acceptance Criteria:
+- <criterion>
+
+TODO.md: one "## <title>" section per item, then "ID: <id>" and the same
+fields as Markdown lists.
 
 Steps:
-1. Search existing issues; if one already covers it, add to that one instead.
-2. Write a title that says what should change, in a few words.
-3. Describe the current behaviour, the expected behaviour, and how to reproduce
-   or where it applies.
-4. List acceptance criteria a reviewer can check.
-5. Add labels and links to related issues or pull requests where the repository uses them.
+1. Read the file and find the highest ID. Never renumber existing items.
+2. Give each new item the next ID.
+3. Refuse an item without implementation details or acceptance criteria.
+4. Add new items at the end (before [/TODO] in TODO.txt). Change nothing else.
 
-Output: issue title, body, labels, and its URL once created.
+Output: file path, IDs assigned, items added.
 `
 
 var defaultSpecs = []TemplateAsset{
@@ -186,22 +258,21 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 	resolved := make([]ResolvedTemplate, 0, len(defaultSpecs))
 	for _, spec := range defaultSpecs {
 		if repoDir != "" {
-			repoPath := filepath.Join(repoDir, spec.Filename)
-			if content, ok, warn := readTemplateFile(repoPath); ok {
+			content, name, ok, warns := readTxtOrMD(repoDir, spec.Filename)
+			warnings = append(warnings, warns...)
+			if ok {
 				resolved = append(resolved, ResolvedTemplate{
 					TemplateAsset: TemplateAsset{
 						Key:       spec.Key,
-						Filename:  spec.Filename,
+						Filename:  name,
 						Version:   RepoLocalVersion,
 						UpdatedAt: time.Time{},
 						Content:   content,
 					},
 					Source: "repo-local",
-					Path:   repoPath,
+					Path:   filepath.Join(repoDir, name),
 				})
 				continue
-			} else if warn != "" {
-				warnings = append(warnings, warn)
 			}
 		}
 
@@ -241,13 +312,13 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 			continue
 		}
 		if repoDir != "" {
-			repoPath := filepath.Join(repoDir, asset.Filename)
-			if content, ok, warn := readTemplateFile(repoPath); ok {
-				asset.Version, asset.UpdatedAt, asset.Content = RepoLocalVersion, time.Time{}, content
-				resolved = append(resolved, ResolvedTemplate{TemplateAsset: asset, Source: "repo-local", Path: repoPath})
+			stem := strings.TrimSuffix(strings.TrimSuffix(asset.Filename, ".txt"), ".md")
+			content, name, ok, warns := readTxtOrMD(repoDir, stem+".txt")
+			warnings = append(warnings, warns...)
+			if ok {
+				asset.Filename, asset.Version, asset.UpdatedAt, asset.Content = name, RepoLocalVersion, time.Time{}, content
+				resolved = append(resolved, ResolvedTemplate{TemplateAsset: asset, Source: "repo-local", Path: filepath.Join(repoDir, name)})
 				continue
-			} else if warn != "" {
-				warnings = append(warnings, warn)
 			}
 		}
 		resolved = append(resolved, ResolvedTemplate{
@@ -524,6 +595,14 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 		selectedFilename := filename
 		path := filepath.Join(configTemplatesDir(configDir), selectedFilename)
 		content, ok, warn := readTemplateFile(path)
+		if !usedMetadataFilename {
+			// The canonical name, so <key>.md stands in for a missing <key>.txt.
+			var name string
+			var warns []string
+			content, name, ok, warns = readTxtOrMD(configTemplatesDir(configDir), filename)
+			selectedFilename, path, warn = name, filepath.Join(configTemplatesDir(configDir), name), ""
+			warnings = append(warnings, warns...)
+		}
 		if !ok {
 			fallbackTarget := "built-in default template"
 			if warn != "" {
@@ -575,6 +654,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 	// not it was read above.
 	for _, spec := range defaultSpecs {
 		seenFilenames[spec.Filename] = spec.Key
+		seenFilenames[strings.TrimSuffix(spec.Filename, ".txt")+".md"] = spec.Key
 		if meta.Filenames != nil {
 			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
 				seenFilenames[mfn] = spec.Key
@@ -585,6 +665,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		warnings = append(warnings, fmt.Sprintf("cannot list custom templates (%v)", err))
 	}
+	customAt := map[string]int{}
 	for _, entry := range entries {
 		name := entry.Name()
 		if !entry.Type().IsRegular() || name == metadataFileName {
@@ -609,6 +690,18 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 			asset.Version = v
 		}
 		asset.UpdatedAt = meta.Updated[key]
+		if i, dup := customAt[key]; dup {
+			txt, md := name, assets[i].Filename
+			if strings.HasSuffix(md, ".txt") {
+				txt, md = md, name
+			}
+			warnings = append(warnings, fmt.Sprintf("both %q and %q exist in %s; using %q", txt, md, configTemplatesDir(configDir), txt))
+			if strings.HasSuffix(name, ".txt") {
+				assets[i] = asset
+			}
+			continue
+		}
+		customAt[key] = len(assets)
 		assets = append(assets, asset)
 	}
 
@@ -686,7 +779,7 @@ func findDefaultByKey(key string) (TemplateAsset, bool) {
 
 func normalizeTemplateName(name string) string {
 	n := strings.TrimSpace(strings.ToLower(name))
-	n = strings.TrimSuffix(n, ".txt")
+	n = strings.TrimSuffix(strings.TrimSuffix(n, ".txt"), ".md")
 	n = strings.ReplaceAll(n, "-", "_")
 	return n
 }

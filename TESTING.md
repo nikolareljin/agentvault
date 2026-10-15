@@ -371,8 +371,8 @@ Requires `git` and `gh` installed and `gh` authenticated for the target repo.
 # With explicit workspace directory
 ./agentvault prompt my-codex \
   --workflow implement_pr \
-  --repo ~/src/my-repo \
-  --workspace ~/src/my-repo \
+  --repo ~/my-projects-location/my-repo \
+  --workspace ~/my-projects-location/my-repo \
   --pr 27
 ```
 
