@@ -36,7 +36,8 @@
   overrides it, and export/import carry it. Built-in keys accept `.md` files
   too; with both, `.txt` wins and a warning names the other. A Markdown
   template may start with front matter: `description` shows in `templates
-  list`, and the agent gets the text after it. See
+  list`, and the agent gets the text after it. A symlinked template file
+  counts; an imported file replaces the stored copy under the other extension. See
   [docs/templates.md](docs/templates.md).
 - **A stored template older than the built-in prints a warning** with both
   versions and the command to update it; an edited copy keeps winning.

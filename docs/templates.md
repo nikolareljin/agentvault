@@ -45,7 +45,7 @@ a `.txt` beside it.
 
 `refresh` never overwrites a stored file. To go back to the built-in, run
 `agentvault templates refresh --force`, which overwrites all stored built-in
-templates.
+templates, a lone `.md` copy included.
 
 When a release changes a built-in, a stored copy written from an older built-in
 prints a warning naming both versions. Keep your copy (edit it, and the warning
@@ -70,7 +70,8 @@ Any other `<name>.txt` or `<name>.md` in `<config dir>/templates/` is a template
 too. The name uses lowercase letters, digits, `-` and `_`. Its key is the name
 with `-` turned into `_`, so `release-notes.md` has the key `release_notes`.
 
-A Markdown template may start with front matter. `description` is shown by
+A Markdown template may start with front matter (a `.txt` template is sent as
+is). `description` is shown by
 `templates list`; the agent is sent the text after the front matter.
 
 ```markdown
@@ -91,7 +92,7 @@ agentvault templates show release_notes
 ```
 
 A file of the same name at a repository root overrides it there, as for the
-built-ins. Files with other names (`Notes.txt`, `notes.json`) are ignored.
+built-ins. A symlink to a template file counts as the file. Files with other names (`Notes.txt`, `notes.json`) are ignored.
 
 ## The TODO formats (`add_issue`)
 
@@ -140,5 +141,6 @@ Both forms can be turned into GitHub issues by a tool that reads them, such as
 
 `agentvault export` includes every stored template, built-in and custom, `.txt`
 and `.md`, and `agentvault import` writes them back into config storage under
-the same names. Repository-local files travel with their repository, not in the
+the same names. An imported file replaces a stored copy of that template under
+the other extension. Repository-local files travel with their repository, not in the
 bundle.

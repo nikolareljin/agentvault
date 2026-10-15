@@ -1,6 +1,7 @@
 package workflowtemplates
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1229,5 +1230,100 @@ func TestSplitFrontMatterEdgeCases(t *testing.T) {
 		if desc != c.desc || body != c.body {
 			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, desc, body, c.desc, c.body)
 		}
+	}
+}
+
+func TestSymlinkedCustomTemplateIsListed(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(target, []byte("notes body\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "notes.md")); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "folder.txt"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range resolved {
+		if r.Key == "folder" {
+			t.Fatalf("directory folder.txt listed as a template")
+		}
+		if r.Key == "notes" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("symlinked notes.md not listed: %+v", resolved)
+	}
+}
+
+func TestRefreshForceOverwritesALoneMarkdownCopy(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "implement_pr.md"), []byte("mine\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "implement_pr.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("refresh --force wrote implement_pr.txt beside the .md copy (err=%v)", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "implement_pr.md"))
+	if string(got) != builtinImplementPRTemplate {
+		t.Fatalf("implement_pr.md not overwritten with the built-in: %q", got)
+	}
+	_, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "both") {
+			t.Fatalf("unexpected warning: %s", w)
+		}
+	}
+}
+
+func TestImportReplacesTheOtherExtensionCopy(t *testing.T) {
+	cfgDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("old notes\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_pr", Filename: "implement_pr.md", Version: CustomVersion, Content: "imported pr\n"},
+		{Key: "notes", Filename: "notes.md", Version: CustomVersion, Content: "imported notes\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	resolved, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"implement_pr": "imported pr\n", "notes": "imported notes\n"}
+	for _, r := range resolved {
+		if w, ok := want[r.Key]; ok && r.Content != w {
+			t.Fatalf("%s resolved to %q from %s, want the imported copy", r.Key, r.Content, r.Filename)
+		}
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
 	}
 }

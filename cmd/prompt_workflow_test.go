@@ -517,3 +517,21 @@ func setPromptWorkflowTestConfigDir(t *testing.T, dir string) {
 		_ = rootCmd.PersistentFlags().Set("config", orig)
 	})
 }
+
+func TestBuildPromptWorkflowSendsMarkdownBodyWithoutFrontMatter(t *testing.T) {
+	tpl := workflowTemplateForTest("implement_pr", "---\ndescription: secret desc\n---\n\nPR steps\n")
+	tpl.Filename = "implement_pr.md"
+	prompt := buildPromptWorkflow(promptWorkflowContext{
+		Kind: promptWorkflowImplementPR, RepoRoot: "/tmp/repo", RepoName: "repo", CurrentBranch: "main",
+		Template: tpl,
+		PR:       &promptWorkflowPR{Number: 3, Title: "t", URL: "https://example.test/pull/3"},
+	})
+	if strings.Contains(prompt, "secret desc") || !strings.Contains(prompt, "PR steps") {
+		t.Fatalf("front matter sent or body missing:\n%s", prompt)
+	}
+
+	txt := workflowTemplateForTest("implement_pr", "---\nkeep me\n---\nsteps\n")
+	if got := txt.Body(); got != txt.Content {
+		t.Fatalf(".txt body changed: %q", got)
+	}
+}

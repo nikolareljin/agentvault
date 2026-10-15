@@ -65,14 +65,25 @@ type ResolvedTemplate struct {
 
 // Description is the front matter "description:" of a Markdown template, if any.
 func (t ResolvedTemplate) Description() string {
+	if !t.isMarkdown() {
+		return ""
+	}
 	desc, _ := splitFrontMatter(t.Content)
 	return desc
 }
 
-// Body is the template without its front matter: what an agent is sent.
+// Body is the template without its front matter: what an agent is sent. A .txt
+// template is sent whole, even when it starts with "---".
 func (t ResolvedTemplate) Body() string {
+	if !t.isMarkdown() {
+		return t.Content
+	}
 	_, body := splitFrontMatter(t.Content)
 	return body
+}
+
+func (t ResolvedTemplate) isMarkdown() bool {
+	return strings.HasSuffix(strings.ToLower(t.Filename), ".md")
 }
 
 // splitFrontMatter separates a leading "---" YAML block from the text and
@@ -421,7 +432,7 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		if !supported {
 			key, ok := customKey(asset.Filename)
 			if !ok || key != asset.Key {
-				warnings = append(warnings, fmt.Sprintf("skipped template %q: a custom template is <name>.txt, lowercase letters, digits, - and _", asset.Key))
+				warnings = append(warnings, fmt.Sprintf("skipped template %q: a custom template is <name>.txt or <name>.md, lowercase letters, digits, - and _", asset.Key))
 				continue
 			}
 			defaultSpec = TemplateAsset{Key: key, Filename: asset.Filename}
@@ -448,6 +459,15 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		}
 		if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), filename), []byte(asset.Content), 0600); err != nil {
 			return 0, nil, fmt.Errorf("writing template %s: %w", filename, err)
+		}
+		// The imported file replaces this key's template. A stored copy under the
+		// other extension would otherwise shadow it (.txt wins) or warn forever.
+		if sibling := otherExtension(filename); sibling != "" {
+			if _, claimed := seenFilenames[sibling]; !claimed {
+				if err := os.Remove(filepath.Join(configTemplatesDir(configDir), sibling)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return 0, nil, fmt.Errorf("removing replaced template %s: %w", sibling, err)
+				}
+			}
 		}
 		meta.Versions[asset.Key] = firstNonEmpty(asset.Version, "imported")
 		meta.Updated[asset.Key] = nonZeroTime(asset.UpdatedAt, time.Now().UTC())
@@ -509,6 +529,16 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 			}
 		}
 		path := filepath.Join(templatesDir, filename)
+		if force && filename == spec.Filename {
+			// Overwrite the copy in effect: a .txt written beside a lone .md
+			// would shadow it and warn on every run.
+			mdName := strings.TrimSuffix(spec.Filename, ".txt") + ".md"
+			if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+				if _, err := os.Stat(filepath.Join(templatesDir, mdName)); err == nil {
+					filename, path = mdName, filepath.Join(templatesDir, mdName)
+				}
+			}
+		}
 		if !force {
 			// A Markdown copy of a built-in is the user's version: keep it, and do
 			// not write a .txt beside it, which would win over it.
@@ -690,7 +720,12 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 	customAt := map[string]int{}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !entry.Type().IsRegular() || name == metadataFileName {
+		if name == metadataFileName {
+			continue
+		}
+		// Follow a symlink, as the built-in names do: a dotfiles checkout often
+		// links its templates in.
+		if info, err := os.Stat(filepath.Join(configTemplatesDir(configDir), name)); err != nil || !info.Mode().IsRegular() {
 			continue
 		}
 		if _, taken := seenFilenames[name]; taken {
@@ -728,6 +763,17 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 	}
 
 	return assets, dedupeWarnings(warnings), nil
+}
+
+// otherExtension returns <stem>.md for <stem>.txt and the reverse, else "".
+func otherExtension(filename string) string {
+	switch {
+	case strings.HasSuffix(filename, ".txt"):
+		return strings.TrimSuffix(filename, ".txt") + ".md"
+	case strings.HasSuffix(filename, ".md"):
+		return strings.TrimSuffix(filename, ".md") + ".txt"
+	}
+	return ""
 }
 
 func readTemplateFile(path string) (string, bool, string) {
