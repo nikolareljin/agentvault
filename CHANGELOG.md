@@ -39,10 +39,10 @@
 
 ### Changed
 - **The built-in workflow templates are short and generic** (`builtin-3.0`):
-  inputs, ordered steps and the expected output. `add_issue` points to
-  `implement_issue` and `implement_pr` instead of embedding them. A copy stored
-  by an earlier release keeps working and prints the version warning; run
-  `agentvault templates refresh --force` to take the new text.
+  inputs, ordered steps and the expected output. `add_issue` now describes
+  writing a new issue. A copy stored by an earlier release keeps working and
+  prints the version warning; run `agentvault templates refresh --force` to
+  take the new text.
 
 ## [0.13.0] - 2026-09-01
 
@@ -269,7 +269,7 @@
 
 ### Added
 - Expanded built-in workflow templates to use the current `2.0` issue/PR implementation bodies.
-- Upgraded the built-in `add_issue` template to generate git-lantern-compatible TODO entries with explicit input/output contracts, deterministic ID allocation, and embedded reusable `implement_issue` / `implement_pr` checklists.
+- Upgraded the built-in `add_issue` template to generate TODO entries with explicit input/output contracts, deterministic ID allocation, and embedded reusable `implement_issue` / `implement_pr` checklists.
 
 ## [0.5.2] - 2026-03-11
 

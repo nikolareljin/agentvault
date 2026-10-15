@@ -759,27 +759,12 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 	}
 }
 
-func TestBuiltInAddIssueTemplatePointsAtTheOtherTemplates(t *testing.T) {
-	var addIssue TemplateAsset
+func TestBuiltInTemplatesStateInputsStepsAndOutput(t *testing.T) {
 	for _, spec := range defaultSpecs {
-		if spec.Key == "add_issue" {
-			addIssue = spec
-			break
-		}
-	}
-	if addIssue.Key == "" {
-		t.Fatalf("add_issue template not found in defaults")
-	}
-	for _, want := range []string{
-		"[TODO]",
-		"[/TODO]",
-		"ID: <next 3-digit id>",
-		"Acceptance Criteria:",
-		"implement_issue",
-		"implement_pr",
-	} {
-		if !strings.Contains(addIssue.Content, want) {
-			t.Fatalf("add_issue template missing %q", want)
+		for _, want := range []string{"Inputs:", "Steps:", "Output:"} {
+			if !strings.Contains(spec.Content, want) {
+				t.Errorf("%s template missing %q", spec.Key, want)
+			}
 		}
 	}
 }

@@ -81,7 +81,7 @@ Steps:
 1. Read the issue. Confirm the scope and acceptance criteria; ask when they are unclear.
 2. Create a branch from the base branch, named the way the repository names branches.
 3. Make the change, scoped to the issue. Comment only where the logic is not obvious.
-4. Add or update tests for the new behaviour, including a case that fails without it.
+4. Add or update tests for the new behaviour, including edge cases.
 5. Update the docs and the changelog when a user sees a difference.
 6. Run the repository's build, lint and tests. Fix what fails.
 7. Commit with a clear message, push, and open a pull request that references the issue.
@@ -99,37 +99,24 @@ Steps:
 3. Run the repository's build, lint and tests. Fix what fails.
 4. Commit and push to the pull request branch.
 5. Reply to or resolve each thread you addressed.
-6. Read the full diff at the new head before calling the pull request ready.
-7. Request review again the way the repository asks for it.
+6. Look over the whole change once more, then request review again.
 
 Output: threads addressed, files changed, test results, commit, pull request URL.
 `
 
-const builtinAddIssueTemplate = `Add TODO Item
+const builtinAddIssueTemplate = `Add Issue
 
-Inputs: repository path, TODO file (default: TODO.txt), and for each item a
-title, description, intent, implementation details and acceptance criteria.
-
-Items sit between [TODO] and [/TODO] markers, fields in this order:
-
-ID: <next 3-digit id>
-Title: <title>
-Description: <description>
-Intent: <intent>
-Implementation Details:
-- <detail>
-Acceptance Criteria:
-- <criterion>
+Inputs: repository, a short description of the problem or request.
 
 Steps:
-1. Read the file and find the highest ID. Never renumber existing items.
-2. Give each new item the next ID.
-3. Refuse an item without implementation details or acceptance criteria.
-4. Insert new items just before [/TODO], one blank line apart. Change nothing else.
-5. For an item that implements an issue or fixes a review, point to the
-   implement_issue or implement_pr template instead of copying it.
+1. Search existing issues; if one already covers it, add to that one instead.
+2. Write a title that says what should change, in a few words.
+3. Describe the current behaviour, the expected behaviour, and how to reproduce
+   or where it applies.
+4. List acceptance criteria a reviewer can check.
+5. Add labels and links to related issues or pull requests where the repository uses them.
 
-Output: file path, IDs assigned, items added.
+Output: issue title, body, labels, and its URL once created.
 `
 
 var defaultSpecs = []TemplateAsset{

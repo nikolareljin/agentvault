@@ -225,7 +225,7 @@ agentvault setup export my-setup.json --agent my-codex --project .
 # include secret-bearing provider files in an encrypted bundle
 agentvault setup export my-setup.bundle --agent my-codex --project . --include-secrets --encrypted
 
-# inspect the built-in TODO authoring workflow for git-lantern-style TODO files
+# inspect the built-in template for writing a new issue
 agentvault templates show add_issue
 
 # JSON output for orchestration systems

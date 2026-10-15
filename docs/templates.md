@@ -11,7 +11,7 @@ replace them per repository, or add your own.
 |---|---|---|
 | `implement_issue` | `implement_issue.txt` | Implement an issue: branch, change, tests, docs, pull request |
 | `implement_pr` | `implement_pr.txt` | Address pull request review comments, then re-check the diff |
-| `add_issue` | `add_issue.txt` | Append items to a `TODO.txt` between `[TODO]` and `[/TODO]` markers |
+| `add_issue` | `add_issue.txt` | Write a new issue: check for duplicates, describe it, list acceptance criteria |
 
 `agentvault prompt --workflow implement_issue|implement_pr` uses the first two.
 `agentvault templates show <key>` prints whichever copy is in effect.
