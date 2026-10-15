@@ -510,6 +510,28 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 		}
 		path := filepath.Join(templatesDir, filename)
 		if !force {
+			// A Markdown copy of a built-in is the user's version: keep it, and do
+			// not write a .txt beside it, which would win over it.
+			if filename == spec.Filename {
+				mdName := strings.TrimSuffix(spec.Filename, ".txt") + ".md"
+				if content, ok, _ := readTemplateFile(filepath.Join(templatesDir, mdName)); ok && strings.TrimSpace(content) != "" {
+					if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+						if _, ok := meta.Versions[spec.Key]; !ok {
+							meta.Versions[spec.Key] = CustomVersion
+							dirty = true
+						}
+						if meta.Filenames[spec.Key] != mdName {
+							meta.Filenames[spec.Key] = mdName
+							dirty = true
+						}
+						if _, ok := meta.Updated[spec.Key]; !ok {
+							meta.Updated[spec.Key] = now
+							dirty = true
+						}
+						continue
+					}
+				}
+			}
 			if content, ok, _ := readTemplateFile(path); ok && strings.TrimSpace(content) != "" {
 				if _, ok := meta.Versions[spec.Key]; !ok {
 					meta.Versions[spec.Key] = spec.Version
@@ -586,7 +608,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 				safeFilename, err := sanitizeTemplateFilename(mfn)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("ignoring unsafe metadata filename for %q: %v", spec.Key, err))
-				} else {
+				} else if safeFilename != strings.TrimSuffix(spec.Filename, ".txt")+".md" {
 					filename = safeFilename
 					usedMetadataFilename = safeFilename != spec.Filename
 				}

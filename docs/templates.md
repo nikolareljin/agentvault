@@ -40,7 +40,8 @@ agentvault templates show implement_issue    # check what is now in effect
 ```
 
 To use Markdown instead, save your version as `implement_issue.md` and delete
-the `.txt` copy.
+the `.txt` copy; `templates refresh` leaves a `.md` copy alone and does not write
+a `.txt` beside it.
 
 `refresh` never overwrites a stored file. To go back to the built-in, run
 `agentvault templates refresh --force`, which overwrites all stored built-in

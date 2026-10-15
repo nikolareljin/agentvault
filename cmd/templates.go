@@ -162,7 +162,7 @@ func filterTemplateWarnings(warnings []string, key string, filename string) []st
 
 func normalizeTemplateSelector(value string) string {
 	v := strings.TrimSpace(strings.ToLower(value))
-	v = strings.TrimSuffix(v, ".txt")
+	v = strings.TrimSuffix(strings.TrimSuffix(v, ".txt"), ".md")
 	v = strings.ReplaceAll(v, "-", "_")
 	return v
 }

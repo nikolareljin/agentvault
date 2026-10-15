@@ -1167,3 +1167,67 @@ func TestBuiltInKeyFromMarkdownFile(t *testing.T) {
 		t.Errorf("implement_pr = %s from %s, want repo-local implement_pr.md", r.Filename, r.Source)
 	}
 }
+
+func TestRefreshKeepsAMarkdownCopyOfABuiltIn(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "implement_issue.md", "# our flow\n")
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "implement_issue.txt")); !os.IsNotExist(err) {
+		t.Fatalf("refresh wrote implement_issue.txt beside the user's .md (err=%v)", err)
+	}
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "implement_issue"); r.Filename != "implement_issue.md" || strings.TrimSpace(r.Content) != "# our flow" {
+		t.Fatalf("implement_issue = %s %q, want the user's .md", r.Filename, r.Content)
+	}
+}
+
+func TestStoredMarkdownBuiltInStillLetsATxtWin(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	// What an import of a bundle holding implement_pr.md leaves behind.
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_pr", Filename: "implement_pr.md", Version: "v1", Content: "# md\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	writeTemplate(t, dir, "implement_pr.txt", "plain\n")
+	resolved, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "implement_pr"); r.Filename != "implement_pr.txt" {
+		t.Fatalf("using %s, want implement_pr.txt", r.Filename)
+	}
+	if !hasWarning(warnings, "implement_pr.txt", "implement_pr.md") {
+		t.Errorf("no warning naming both files: %v", warnings)
+	}
+}
+
+func TestSplitFrontMatterEdgeCases(t *testing.T) {
+	cases := []struct {
+		name, in, desc, body string
+	}{
+		{"none", "# Title\n", "", "# Title\n"},
+		{"crlf", "---\r\ndescription: Win\r\n---\r\n# T\r\n", "Win", "# T\r\n"},
+		{"bom", "\ufeff---\ndescription: B\n---\nbody\n", "B", "body\n"},
+		{"unclosed", "---\ndescription: x\nbody\n", "", "---\ndescription: x\nbody\n"},
+		{"rule not front matter", "text\n---\nmore\n", "", "text\n---\nmore\n"},
+		{"colon in value", "---\ndescription: 'a: b'\n---\nx\n", "a: b", "x\n"},
+	}
+	for _, c := range cases {
+		desc, body := splitFrontMatter(c.in)
+		if desc != c.desc || body != c.body {
+			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, desc, body, c.desc, c.body)
+		}
+	}
+}
