@@ -2,6 +2,7 @@ package workflowtemplates
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1460,5 +1461,105 @@ func TestImportOldBundleWithOddBuiltInFilenameStillImports(t *testing.T) {
 	}
 	if !hasWarning(warnings, "Custom-PR.TXT", "implement_pr.txt") {
 		t.Errorf("no warning about the renamed file: %v", warnings)
+	}
+}
+
+func TestCustomNamesWithTheSameKeyPickOneAndSayWhich(t *testing.T) {
+	for _, tc := range []struct{ a, b, want string }{
+		{"my-x.txt", "my_x.txt", "my-x.txt"},
+		{"my-x.md", "my_x.md", "my-x.md"},
+		{"my_x.md", "my-x.txt", "my-x.txt"},
+	} {
+		cfgDir := t.TempDir()
+		dir := filepath.Join(cfgDir, TemplatesDirName)
+		writeTemplate(t, dir, tc.a, "from "+tc.a+"\n")
+		writeTemplate(t, dir, tc.b, "from "+tc.b+"\n")
+		resolved, warnings, err := LoadResolved(cfgDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := findResolved(t, resolved, "my_x")
+		if got.Filename != tc.want || got.Content != "from "+tc.want+"\n" {
+			t.Errorf("%s + %s: used %q (%q), want %q", tc.a, tc.b, got.Filename, got.Content, tc.want)
+		}
+		if !hasWarning(warnings, fmt.Sprintf("using %q", tc.want)) {
+			t.Errorf("%s + %s: warning does not name %q: %v", tc.a, tc.b, tc.want, warnings)
+		}
+	}
+}
+
+func TestImportedCustomTemplateIsTheOneInEffect(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "my-x.txt", "old\n")
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "my_x", Filename: "my_x.txt", Content: "imported\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findResolved(t, resolved, "my_x"); got.Content != "imported\n" {
+		t.Fatalf("imported template shadowed by %q: %q", got.Filename, got.Content)
+	}
+}
+
+func TestUnrelatedCustomWarningKeepsTheBuiltInMissingWarning(t *testing.T) {
+	cfgDir := t.TempDir()
+	writeTemplate(t, filepath.Join(cfgDir, TemplatesDirName), "implement_pr_v2.txt", "  \n")
+	_, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWarning(warnings, `"implement_pr.txt" missing from config storage`) {
+		t.Fatalf("missing-template warning for implement_pr dropped: %v", warnings)
+	}
+}
+
+func TestMissingMetadataFilenameFallsBackToMarkdownCopy(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "implement_issue.md", "my markdown\n")
+	writeTemplate(t, dir, metadataFileName, `{"schema_version":"1","filenames":{"implement_issue":"issue.txt"}}`)
+	check := func(stage string) {
+		t.Helper()
+		resolved, _, err := LoadResolved(cfgDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := findResolved(t, resolved, "implement_issue"); got.Content != "my markdown\n" {
+			t.Fatalf("%s: implement_issue is %q from %q, want the stored .md", stage, got.Content, got.Filename)
+		}
+	}
+	check("load")
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatal(err)
+	}
+	check("after refresh")
+}
+
+func TestImportKeepsAFileABuiltInIsStoredUnder(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "my-x.txt", "issue flow\n")
+	writeTemplate(t, dir, metadataFileName, `{"schema_version":"1","filenames":{"implement_issue":"my-x.txt"}}`)
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "my_x", Filename: "my_x.txt", Content: "custom\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findResolved(t, resolved, "implement_issue"); got.Content != "issue flow\n" {
+		t.Fatalf("built-in stored as my-x.txt lost: %+v", got)
+	}
+	if got := findResolved(t, resolved, "my_x"); got.Content != "custom\n" {
+		t.Fatalf("custom my_x not imported: %+v", got)
 	}
 }

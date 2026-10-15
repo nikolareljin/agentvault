@@ -69,6 +69,9 @@ stored copy and the built-in.
 Any other `<name>.txt` or `<name>.md` in `<config dir>/templates/` is a template
 too. The name uses lowercase letters, digits, `-` and `_`. Its key is the name
 with `-` turned into `_`, so `release-notes.md` has the key `release_notes`.
+If two files share a key (`notes.txt` and `notes.md`, or `my-x.txt` and
+`my_x.txt`), a `.txt` file beats a `.md` one, otherwise the first name in
+sorted order wins, and a warning names both.
 
 A Markdown template may start with front matter (a `.txt` template is sent as
 is). `description` is shown by
@@ -156,6 +159,7 @@ Both forms can be turned into GitHub issues by a tool that reads them, such as
 
 `agentvault export` includes every stored template, built-in and custom, `.txt`
 and `.md`, and `agentvault import` writes them back into config storage under
-the same names. An imported file replaces a stored copy of that template under
-the other extension. Repository-local files travel with their repository, not in the
+the same names. An imported file replaces any stored copy of that template
+under another name with the same key (the other extension, or `my-x` for
+`my_x`). Repository-local files travel with their repository, not in the
 bundle.

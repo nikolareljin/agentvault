@@ -37,7 +37,8 @@
   too; with both, `.txt` wins and a warning names the other. A Markdown
   template may start with front matter: `description` shows in `templates
   list`, and the agent gets the text after it. A symlinked template file
-  counts; an imported file replaces the stored copy under the other extension.
+  counts; an imported file replaces a stored copy under another name with the same
+  key.
   A template is a regular file up to 256 KiB; a repository-local symlink is
   followed only inside the repository, and `import` never overwrites another
   template's file. See

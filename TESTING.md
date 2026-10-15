@@ -552,6 +552,7 @@ printf -- '---\ndescription: Write release notes\n---\nSteps\n' > ~/.config/agen
 ./agentvault templates list
 # Expected: release-notes.md (config, version=custom): Write release notes
 ./agentvault templates show release_notes
+rm ~/.config/agentvault/templates/release-notes.md
 ```
 
 ### 10. Setup Export/Import

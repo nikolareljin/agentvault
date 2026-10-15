@@ -510,15 +510,16 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), filename), []byte(asset.Content), 0600); err != nil {
 			return 0, nil, fmt.Errorf("writing template %s: %w", filename, err)
 		}
-		// The imported file replaces this key's template. A stored copy under the
-		// other extension would otherwise shadow it (.txt wins) or warn forever.
-		// Only the same template's other copy: a renamed file can share a stem
-		// with another template, which must survive the import.
-		if sibling := otherExtension(filename); sibling != "" && normalizeTemplateName(sibling) == asset.Key {
-			if _, claimed := seenFilenames[sibling]; !claimed {
-				if err := os.Remove(filepath.Join(configTemplatesDir(configDir), sibling)); err != nil && !errors.Is(err, os.ErrNotExist) {
-					return 0, nil, fmt.Errorf("removing replaced template %s: %w", sibling, err)
-				}
+		// The imported file replaces this key's template. Another stored copy of
+		// it (the other extension, or my-x for my_x) would otherwise shadow it or
+		// warn forever. Only copies of this template: a renamed file can share a
+		// stem with another template, which must survive the import.
+		for _, stale := range staleCopies(configDir, meta, asset.Key, filename, supported) {
+			if _, claimed := seenFilenames[stale]; claimed {
+				continue
+			}
+			if err := os.Remove(filepath.Join(configTemplatesDir(configDir), stale)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return 0, nil, fmt.Errorf("removing replaced template %s: %w", stale, err)
 			}
 		}
 		meta.Versions[asset.Key] = firstNonEmpty(asset.Version, "imported")
@@ -534,6 +535,34 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		return 0, nil, err
 	}
 	return importedCount, dedupeWarnings(warnings), nil
+}
+
+// staleCopies lists the files in config storage that the loader reads as key's
+// template, other than filename. For a built-in that is only <key> under the
+// other extension; for a custom template, any name with the same key. A file a
+// built-in's metadata points at is that built-in's and never listed.
+func staleCopies(configDir string, meta metadataFile, key, filename string, builtin bool) []string {
+	owned := map[string]bool{}
+	for _, spec := range defaultSpecs {
+		if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" && spec.Key != key {
+			owned[mfn] = true
+		}
+	}
+	var stale []string
+	if builtin {
+		if sibling := otherExtension(filename); sibling != "" && normalizeTemplateName(sibling) == key && !owned[sibling] {
+			stale = append(stale, sibling)
+		}
+		return stale
+	}
+	entries, _ := os.ReadDir(configTemplatesDir(configDir))
+	for _, entry := range entries {
+		name := entry.Name()
+		if k, ok := customKey(name); ok && k == key && name != filename && !owned[name] {
+			stale = append(stale, name)
+		}
+	}
+	return stale
 }
 
 // RefreshConfigTemplates ensures config storage contains default templates and metadata.
@@ -572,12 +601,9 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 	written := make([]TemplateAsset, 0, len(defaultSpecs))
 	for _, spec := range defaultSpecs {
 		filename := spec.Filename
-		if meta.Filenames != nil {
-			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
-				safeFilename, err := sanitizeTemplateFilename(mfn)
-				if err == nil {
-					filename = safeFilename
-				}
+		if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
+			if safeFilename, err := sanitizeTemplateFilename(mfn); err == nil {
+				filename = safeFilename
 			}
 		}
 		path := filepath.Join(templatesDir, filename)
@@ -630,14 +656,14 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 				continue
 			}
 			if filename != spec.Filename {
-				canonicalPath := filepath.Join(templatesDir, spec.Filename)
-				if content, ok, _ := readTemplateFile(canonicalPath); ok && strings.TrimSpace(content) != "" {
+				// The loader falls back to <key>.txt or <key>.md: keep that copy.
+				if _, canonical, ok, _ := readTxtOrMD(templatesDir, spec.Filename, false); ok {
 					if _, ok := meta.Versions[spec.Key]; !ok {
 						meta.Versions[spec.Key] = spec.Version
 						dirty = true
 					}
-					if meta.Filenames[spec.Key] != spec.Filename {
-						meta.Filenames[spec.Key] = spec.Filename
+					if meta.Filenames[spec.Key] != canonical {
+						meta.Filenames[spec.Key] = canonical
 						dirty = true
 					}
 					if _, ok := meta.Updated[spec.Key]; !ok {
@@ -713,15 +739,13 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 				warnings = append(warnings, warn)
 			}
 			if usedMetadataFilename {
-				canonicalPath := filepath.Join(configTemplatesDir(configDir), spec.Filename)
-				canonicalContent, canonicalOK, canonicalWarn := readTemplateFile(canonicalPath)
+				canonicalContent, canonicalName, canonicalOK, canonicalWarns := readTxtOrMD(configTemplatesDir(configDir), spec.Filename, false)
+				warnings = append(warnings, canonicalWarns...)
 				if canonicalOK {
 					content = canonicalContent
 					ok = true
-					selectedFilename = spec.Filename
-					fallbackTarget = fmt.Sprintf("canonical config template %q", spec.Filename)
-				} else if canonicalWarn != "" {
-					warnings = append(warnings, canonicalWarn)
+					selectedFilename = canonicalName
+					fallbackTarget = fmt.Sprintf("canonical config template %q", canonicalName)
 				}
 				if warn == "" {
 					warnings = append(warnings, fmt.Sprintf("template %q referenced by metadata for %q is missing; falling back to %s", path, spec.Key, fallbackTarget))
@@ -800,14 +824,14 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 		}
 		asset.UpdatedAt = meta.Updated[key]
 		if i, dup := customAt[key]; dup {
-			txt, md := name, assets[i].Filename
-			if strings.HasSuffix(md, ".txt") {
-				txt, md = md, name
-			}
-			warnings = append(warnings, fmt.Sprintf("both %q and %q exist in %s; using %q", txt, md, configTemplatesDir(configDir), txt))
-			if strings.HasSuffix(name, ".txt") {
+			// Two names, one key (x.txt and x.md, or my-x and my_x): a .txt
+			// beats a .md, otherwise the first name in sorted order is kept.
+			kept, other := assets[i].Filename, name
+			if strings.HasSuffix(name, ".txt") && strings.HasSuffix(kept, ".md") {
+				kept, other = name, kept
 				assets[i] = asset
 			}
+			warnings = append(warnings, fmt.Sprintf("both %q and %q exist in %s; using %q", kept, other, configTemplatesDir(configDir), kept))
 			continue
 		}
 		customAt[key] = len(assets)
@@ -1012,7 +1036,11 @@ func hasSpecificTemplateWarning(warnings []string, key, filename string) bool {
 		"missing",
 	}
 	for _, warningText := range warnings {
-		if !(strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, filename) || strings.Contains(warningText, key)) {
+		// Whole names only: a warning about implement_pr_v2.txt is not about
+		// implement_pr. Paths are quoted, so the file name ends at a quote.
+		if !strings.Contains(warningText, quotedFilename) && !strings.Contains(warningText, fmt.Sprintf("%q", key)) &&
+			!strings.Contains(warningText, string(filepath.Separator)+filename+`"`) &&
+			!strings.Contains(warningText, "/"+filename+`"`) {
 			continue
 		}
 		lowered := strings.ToLower(warningText)
