@@ -762,7 +762,7 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 
 func TestBuiltInAddIssueDescribesBothTodoForms(t *testing.T) {
 	spec, _ := findDefaultByKey("add_issue")
-	for _, want := range []string{"[TODO]", "[/TODO]", "ID: <next 3-digit id>", "TODO.md", "## <title>", "first line under the heading", "description as a paragraph"} {
+	for _, want := range []string{"[TODO]", "[/TODO]", "ID: <next 3-digit id>", "TODO.md", "## <title>", "first non-blank line under\nthe heading", "description as a paragraph"} {
 		if !strings.Contains(spec.Content, want) {
 			t.Errorf("add_issue template missing %q", want)
 		}

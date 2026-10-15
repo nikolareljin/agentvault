@@ -190,8 +190,8 @@ Implementation Details:
 Acceptance Criteria:
 - <criterion>
 
-TODO.md: one "## <title>" section per item. The first line under the heading
-is "ID: <id>", then the description as a paragraph, then "Implementation
+TODO.md: one "## <title>" section per item. The first non-blank line under
+the heading is "ID: <id>", then the description as a paragraph, then "Implementation
 Details:" and "Acceptance Criteria:", each followed by a "- " list.
 
 Steps:
