@@ -535,3 +535,36 @@ func TestBuildPromptWorkflowSendsMarkdownBodyWithoutFrontMatter(t *testing.T) {
 		t.Fatalf(".txt body changed: %q", got)
 	}
 }
+
+func TestResolvePromptWorkflowContextSendsRepoMarkdownBodyOnly(t *testing.T) {
+	setPromptWorkflowTestConfigDir(t, t.TempDir())
+
+	repoDir := t.TempDir()
+	md := "---\ndescription: front matter text\n---\n\nrepo markdown pr workflow\n"
+	if err := os.WriteFile(filepath.Join(repoDir, "implement_pr.md"), []byte(md), 0644); err != nil {
+		t.Fatalf("WriteFile(implement_pr.md): %v", err)
+	}
+
+	cmd := newPromptWorkflowTestCommand()
+	for flag, value := range map[string]string{"workflow": "implement_pr", "repo": repoDir, "pr": "25"} {
+		if err := cmd.Flags().Set(flag, value); err != nil {
+			t.Fatalf("setting %s flag: %v", flag, err)
+		}
+	}
+
+	prompt, warnings, err := resolvePromptInputWithDeps(cmd, newPromptWorkflowTestDeps(repoDir))
+	if err != nil {
+		t.Fatalf("resolvePromptInput() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("resolvePromptInput() warnings = %v, want none", warnings)
+	}
+	if !strings.Contains(prompt, "## Canonical Workflow Template\nrepo markdown pr workflow\n") {
+		t.Fatalf("prompt missing the Markdown body\n%s", prompt)
+	}
+	for _, unwanted := range []string{"front matter text", "description:"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt contains front matter %q\n%s", unwanted, prompt)
+		}
+	}
+}

@@ -113,7 +113,7 @@ func splitFrontMatter(content string) (string, string) {
 // readTxtOrMD reads dir/<stem>.txt, else dir/<stem>.md. With both present the
 // .txt one wins and a warning names the .md one.
 func readTxtOrMD(dir, txtName string) (content string, name string, ok bool, warnings []string) {
-	mdName := strings.TrimSuffix(txtName, ".txt") + ".md"
+	mdName := otherExtension(txtName)
 	content, ok, warn := readTemplateFile(filepath.Join(dir, txtName))
 	if warn != "" {
 		warnings = append(warnings, warn)
@@ -190,8 +190,9 @@ Implementation Details:
 Acceptance Criteria:
 - <criterion>
 
-TODO.md: one "## <title>" section per item, then "ID: <id>" and the same
-fields as Markdown lists.
+TODO.md: one "## <title>" section per item. The first line under the heading
+is "ID: <id>", then the description as a paragraph, then "Implementation
+Details:" and "Acceptance Criteria:", each followed by a "- " list.
 
 Steps:
 1. Read the file and find the highest ID. Never renumber existing items.
@@ -323,8 +324,11 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 			continue
 		}
 		if repoDir != "" {
-			stem := strings.TrimSuffix(strings.TrimSuffix(asset.Filename, ".txt"), ".md")
-			content, name, ok, warns := readTxtOrMD(repoDir, stem+".txt")
+			txtName := asset.Filename
+			if strings.HasSuffix(txtName, ".md") {
+				txtName = otherExtension(txtName)
+			}
+			content, name, ok, warns := readTxtOrMD(repoDir, txtName)
 			warnings = append(warnings, warns...)
 			if ok {
 				asset.Filename, asset.Version, asset.UpdatedAt, asset.Content = name, RepoLocalVersion, time.Time{}, content
@@ -534,7 +538,7 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 		if force && filename == spec.Filename {
 			// Overwrite the copy in effect: a .txt written beside a lone .md
 			// would shadow it and warn on every run.
-			mdName := strings.TrimSuffix(spec.Filename, ".txt") + ".md"
+			mdName := otherExtension(spec.Filename)
 			if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 				if _, err := os.Stat(filepath.Join(templatesDir, mdName)); err == nil {
 					filename, path = mdName, filepath.Join(templatesDir, mdName)
@@ -545,7 +549,7 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 			// A Markdown copy of a built-in is the user's version: keep it, and do
 			// not write a .txt beside it, which would win over it.
 			if filename == spec.Filename {
-				mdName := strings.TrimSuffix(spec.Filename, ".txt") + ".md"
+				mdName := otherExtension(spec.Filename)
 				if content, ok, _ := readTemplateFile(filepath.Join(templatesDir, mdName)); ok && strings.TrimSpace(content) != "" {
 					if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 						if _, ok := meta.Versions[spec.Key]; !ok {
@@ -640,7 +644,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 				safeFilename, err := sanitizeTemplateFilename(mfn)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("ignoring unsafe metadata filename for %q: %v", spec.Key, err))
-				} else if safeFilename != strings.TrimSuffix(spec.Filename, ".txt")+".md" {
+				} else if safeFilename != otherExtension(spec.Filename) {
 					filename = safeFilename
 					usedMetadataFilename = safeFilename != spec.Filename
 				}
@@ -708,7 +712,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 	// not it was read above.
 	for _, spec := range defaultSpecs {
 		seenFilenames[spec.Filename] = spec.Key
-		seenFilenames[strings.TrimSuffix(spec.Filename, ".txt")+".md"] = spec.Key
+		seenFilenames[otherExtension(spec.Filename)] = spec.Key
 		if meta.Filenames != nil {
 			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
 				seenFilenames[mfn] = spec.Key

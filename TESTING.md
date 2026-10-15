@@ -525,7 +525,8 @@ echo "modified" >> /tmp/test-output/AGENTS.md
 ```bash
 # List effective templates and their source
 ./agentvault templates list
-# Shows: name, filename, source (built-in|config|repo-local)
+# Shows one line per template: filename (source, version=...)
+# source is built-in, config or repo-local
 
 # Show built-in template content
 ./agentvault templates show implement_issue
@@ -539,7 +540,18 @@ echo "modified" >> /tmp/test-output/AGENTS.md
 # Override in a repository: drop implement_issue.txt in repo root
 echo "Custom workflow template" > /tmp/av-test/implement_issue.txt
 ./agentvault templates list --repo /tmp/av-test
-# Expected: implement_issue source shows as "repo-local"
+# Expected: implement_issue.txt (repo-local, version=repo-local)
+
+# Markdown override with front matter
+printf -- '---\ndescription: PR steps for this repo\n---\nSteps\n' > /tmp/av-test/implement_pr.md
+./agentvault templates list --repo /tmp/av-test
+# Expected: implement_pr.md (repo-local, version=repo-local): PR steps for this repo
+
+# Custom template in config storage
+printf -- '---\ndescription: Write release notes\n---\nSteps\n' > ~/.config/agentvault/templates/release-notes.md
+./agentvault templates list
+# Expected: release-notes.md (config, version=custom): Write release notes
+./agentvault templates show release_notes
 ```
 
 ### 10. Setup Export/Import
