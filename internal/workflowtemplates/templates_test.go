@@ -1343,3 +1343,83 @@ func TestImportNeverRemovesAnotherTemplatesFile(t *testing.T) {
 		t.Fatalf("import removed an unrelated template: %v", err)
 	}
 }
+
+func TestRepoLocalTemplateSymlinkOutsideRepoIsRefused(t *testing.T) {
+	cfgDir := t.TempDir()
+	repo := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "credentials")
+	if err := os.WriteFile(secret, []byte("aws_secret_access_key=XYZ\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(repo, "implement_pr.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	writeTemplate(t, repo, "inside.txt", "inside\n")
+	if err := os.Symlink("inside.txt", filepath.Join(repo, "implement_issue.txt")); err != nil {
+		t.Fatal(err)
+	}
+	resolved, warnings, err := LoadResolved(cfgDir, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resolved {
+		if strings.Contains(r.Content, "aws_secret") {
+			t.Fatalf("symlink outside the repository was read: %+v", r)
+		}
+		if r.Key == "implement_issue" && r.Source != "repo-local" {
+			t.Fatalf("symlink inside the repository was refused: %+v", r)
+		}
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "resolves outside") {
+		t.Fatalf("no warning for the refused symlink: %v", warnings)
+	}
+}
+
+func TestTemplateReadRefusesOversize(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(big, []byte(strings.Repeat("a", 256*1024+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, warn := readTemplateFile(big); ok || !strings.Contains(warn, "ceiling") {
+		t.Fatalf("oversize template read: ok=%v warn=%q", ok, warn)
+	}
+}
+
+func TestImportRefusesHostileAssets(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "notes.md", "my notes\n")
+	for _, name := range []string{"evil.sh", "Upper.txt", "con.txt", "a\x00.txt", "../x.txt", strings.Repeat("a", 70) + ".txt"} {
+		bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+			{Key: "implement_pr", Filename: name, Content: "x\n"},
+		}}
+		if _, _, err := ImportBundle(cfgDir, bundle); err == nil {
+			t.Errorf("filename %q accepted", name)
+		}
+	}
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_pr", Filename: "notes.md", Content: "overwrite\n"},
+		{Key: "implement_issue", Filename: "implement_issue.txt", Content: strings.Repeat("a", 256*1024+1)},
+	}}
+	n, warnings, err := ImportBundle(cfgDir, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || len(warnings) != 2 {
+		t.Fatalf("imported %d, warnings %v", n, warnings)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "notes.md")); string(data) != "my notes\n" {
+		t.Fatalf("import overwrote another template: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "implement_issue.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversize template written: %v", err)
+	}
+}
+
+func TestDescriptionDropsControlCharacters(t *testing.T) {
+	r := ResolvedTemplate{TemplateAsset: TemplateAsset{Filename: "x.md", Content: "---\ndescription: a\x1b[2Jb\x07\n---\nbody\n"}}
+	if got := r.Description(); got != "a[2Jb" {
+		t.Fatalf("description %q", got)
+	}
+}

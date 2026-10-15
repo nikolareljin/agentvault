@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/nikolareljin/agentvault/internal/config"
 )
@@ -27,10 +29,20 @@ const (
 // listed, shown, exported and imported like a built-in; agentvault ships none.
 var customFilenamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}\.(txt|md)$`)
 
+// reservedStem reports a Windows device name (con.txt opens the console there).
+func reservedStem(filename string) bool {
+	stem := strings.TrimSuffix(strings.TrimSuffix(filename, ".txt"), ".md")
+	switch stem {
+	case "con", "prn", "aux", "nul":
+		return true
+	}
+	return len(stem) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) && stem[3] >= '0' && stem[3] <= '9'
+}
+
 // customKey returns the key for a custom template file, or false when the name
 // is not one (wrong shape, or a built-in's key).
 func customKey(filename string) (string, bool) {
-	if !customFilenamePattern.MatchString(filename) {
+	if !customFilenamePattern.MatchString(filename) || reservedStem(filename) {
 		return "", false
 	}
 	key := normalizeTemplateName(filename)
@@ -69,7 +81,14 @@ func (t ResolvedTemplate) Description() string {
 		return ""
 	}
 	desc, _ := splitFrontMatter(t.Content)
-	return desc
+	// A repository-local file is untrusted: drop control characters, so a
+	// description cannot send terminal escape sequences to `templates list`.
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, desc)
 }
 
 // Body is the template without its front matter: what an agent is sent. A .txt
@@ -111,10 +130,16 @@ func splitFrontMatter(content string) (string, string) {
 }
 
 // readTxtOrMD reads dir/<stem>.txt, else dir/<stem>.md. With both present the
-// .txt one wins and a warning names the .md one.
-func readTxtOrMD(dir, txtName string) (content string, name string, ok bool, warnings []string) {
+// .txt one wins and a warning names the .md one. With contained set, a file that
+// resolves outside dir (a symlink, or a symlinked parent) is refused: a cloned
+// repository must not be able to pull ~/.aws/credentials into a prompt.
+func readTxtOrMD(dir, txtName string, contained bool) (content string, name string, ok bool, warnings []string) {
+	read := readTemplateFile
+	if contained {
+		read = func(path string) (string, bool, string) { return readContainedTemplateFile(dir, path) }
+	}
 	mdName := otherExtension(txtName)
-	content, ok, warn := readTemplateFile(filepath.Join(dir, txtName))
+	content, ok, warn := read(filepath.Join(dir, txtName))
 	if warn != "" {
 		warnings = append(warnings, warn)
 	}
@@ -124,7 +149,7 @@ func readTxtOrMD(dir, txtName string) (content string, name string, ok bool, war
 		}
 		return content, txtName, true, warnings
 	}
-	content, ok, warn = readTemplateFile(filepath.Join(dir, mdName))
+	content, ok, warn = read(filepath.Join(dir, mdName))
 	if warn != "" {
 		warnings = append(warnings, warn)
 	}
@@ -270,7 +295,7 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 	resolved := make([]ResolvedTemplate, 0, len(defaultSpecs))
 	for _, spec := range defaultSpecs {
 		if repoDir != "" {
-			content, name, ok, warns := readTxtOrMD(repoDir, spec.Filename)
+			content, name, ok, warns := readTxtOrMD(repoDir, spec.Filename, true)
 			warnings = append(warnings, warns...)
 			if ok {
 				resolved = append(resolved, ResolvedTemplate{
@@ -328,7 +353,7 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 			if strings.HasSuffix(txtName, ".md") {
 				txtName = otherExtension(txtName)
 			}
-			content, name, ok, warns := readTxtOrMD(repoDir, txtName)
+			content, name, ok, warns := readTxtOrMD(repoDir, txtName, true)
 			warnings = append(warnings, warns...)
 			if ok {
 				asset.Filename, asset.Version, asset.UpdatedAt, asset.Content = name, RepoLocalVersion, time.Time{}, content
@@ -453,6 +478,9 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		if err != nil {
 			return 0, nil, fmt.Errorf("invalid filename for template key %q: %w", asset.Key, err)
 		}
+		if !customFilenamePattern.MatchString(filename) || reservedStem(filename) {
+			return 0, nil, fmt.Errorf("invalid filename for template key %q: %q is not <name>.txt or <name>.md", asset.Key, filename)
+		}
 		if existingKey, exists := seenFilenames[filename]; exists {
 			return 0, nil, fmt.Errorf("duplicate template filename %q for keys %q and %q", filename, existingKey, asset.Key)
 		}
@@ -460,6 +488,17 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		if strings.TrimSpace(asset.Content) == "" {
 			warnings = append(warnings, fmt.Sprintf("skipped empty template %q", filename))
 			continue
+		}
+		if len(asset.Content) > MaxTemplateBytes {
+			warnings = append(warnings, fmt.Sprintf("skipped template %q: %d bytes, over the %d byte ceiling", filename, len(asset.Content), MaxTemplateBytes))
+			continue
+		}
+		// A renamed built-in must not overwrite a file that is another template's.
+		if normalizeTemplateName(filename) != asset.Key && meta.Filenames[asset.Key] != filename {
+			if _, err := os.Lstat(filepath.Join(configTemplatesDir(configDir), filename)); err == nil {
+				warnings = append(warnings, fmt.Sprintf("skipped template %q: %q already holds another template", asset.Key, filename))
+				continue
+			}
 		}
 		if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), filename), []byte(asset.Content), 0600); err != nil {
 			return 0, nil, fmt.Errorf("writing template %s: %w", filename, err)
@@ -657,7 +696,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 			// The canonical name, so <key>.md stands in for a missing <key>.txt.
 			var name string
 			var warns []string
-			content, name, ok, warns = readTxtOrMD(configTemplatesDir(configDir), filename)
+			content, name, ok, warns = readTxtOrMD(configTemplatesDir(configDir), filename, false)
 			selectedFilename, path, warn = name, filepath.Join(configTemplatesDir(configDir), name), ""
 			warnings = append(warnings, warns...)
 		}
@@ -782,13 +821,54 @@ func otherExtension(filename string) string {
 	return ""
 }
 
+// MaxTemplateBytes is the ceiling for one template file or imported template.
+const MaxTemplateBytes = 256 * 1024
+
+// readContainedTemplateFile reads path only when its real path stays inside root.
+func readContainedTemplateFile(root, path string) (string, bool, string) {
+	if _, err := os.Lstat(path); err != nil {
+		return readTemplateFile(path)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false, fmt.Sprintf("cannot resolve %q; skipping (%v)", root, err)
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	if rel, err := filepath.Rel(realRoot, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false, fmt.Sprintf("template %q resolves outside %s; skipping", path, root)
+	}
+	return readTemplateFile(path)
+}
+
 func readTemplateFile(path string) (string, bool, string) {
-	data, err := os.ReadFile(path)
+	// Stat before opening: a FIFO would block the open, a device never ends.
+	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", false, ""
 		}
 		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, fmt.Sprintf("template %q is not a regular file; skipping", path)
+	}
+	if info.Size() > MaxTemplateBytes {
+		return "", false, fmt.Sprintf("template %q is %d bytes, over the %d byte ceiling; skipping", path, info.Size(), MaxTemplateBytes)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, MaxTemplateBytes+1))
+	if err != nil {
+		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	if len(data) > MaxTemplateBytes {
+		return "", false, fmt.Sprintf("template %q is over the %d byte ceiling; skipping", path, MaxTemplateBytes)
 	}
 	content := strings.TrimSpace(string(data))
 	if content == "" {

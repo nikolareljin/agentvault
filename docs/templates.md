@@ -92,7 +92,21 @@ agentvault templates show release_notes
 ```
 
 A file of the same name at a repository root overrides it there, as for the
-built-ins. A symlink to a template file counts as the file. Files with other names (`Notes.txt`, `notes.json`) are ignored.
+built-ins. Files with other names (`Notes.txt`, `notes.json`) are ignored.
+
+## Limits and trust
+
+- A template is a regular file of at most 256 KiB; anything else is skipped
+  with a warning.
+- In config storage a symlink counts as the file it points to, wherever that
+  is, and `export` carries its content. Link only template files there.
+- A repository-local template is sent to the agent as instructions, so a
+  cloned repository can steer the agent through one. Read it before running a
+  workflow in a repository you do not trust. A repository-local symlink is
+  followed only while it stays inside the repository.
+- `import` writes only `<name>.txt` or `<name>.md` (no Windows device names
+  such as `con.txt`), skips a template over 256 KiB, and does not overwrite a
+  file that already holds another template.
 
 ## The TODO formats (`add_issue`)
 
