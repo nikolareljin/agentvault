@@ -1327,3 +1327,19 @@ func TestImportReplacesTheOtherExtensionCopy(t *testing.T) {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}
 }
+
+func TestImportNeverRemovesAnotherTemplatesFile(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "my-flow.md", "my own custom template\n")
+	// A built-in stored under a renamed file whose stem matches the custom one.
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_issue", Filename: "my-flow.txt", Version: "v1", Content: "issue flow\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "my-flow.md")); err != nil {
+		t.Fatalf("import removed an unrelated template: %v", err)
+	}
+}

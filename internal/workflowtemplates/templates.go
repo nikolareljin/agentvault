@@ -462,7 +462,9 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		}
 		// The imported file replaces this key's template. A stored copy under the
 		// other extension would otherwise shadow it (.txt wins) or warn forever.
-		if sibling := otherExtension(filename); sibling != "" {
+		// Only the same template's other copy: a renamed file can share a stem
+		// with another template, which must survive the import.
+		if sibling := otherExtension(filename); sibling != "" && normalizeTemplateName(sibling) == asset.Key {
 			if _, claimed := seenFilenames[sibling]; !claimed {
 				if err := os.Remove(filepath.Join(configTemplatesDir(configDir), sibling)); err != nil && !errors.Is(err, os.ErrNotExist) {
 					return 0, nil, fmt.Errorf("removing replaced template %s: %w", sibling, err)
