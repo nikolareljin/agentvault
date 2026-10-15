@@ -2,26 +2,14 @@
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-15
+
 ### Security
 - `golang.org/x/crypto` 0.52.0 -> 0.55.0 (CVE-2026-56854: SSH source-address restrictions
   not enforced) and `golang.org/x/text` 0.37.0 -> 0.41.0 (CVE-2026-56852: denial of service on
   invalid UTF-8, fixed in 0.39.0; 0.41.0 is what x/crypto 0.55.0 requires); `x/sys` and `x/term`
   follow. Trivy reported both as HIGH. x/crypto 0.55.0 is the newest release that builds with
   Go 1.25; 0.56.0 and later need Go 1.26.
-
-### Changed
-- **The pull request gate takes the Go preset, so the version literal is gone.**
-  `pr.yml` carried `go_version: "1.25"` because `pr-gate.yml` is an engine and
-  no Go preset sat in front of it. That literal was the one place this
-  repository could drift from the shared default: change it upstream and this
-  file keeps the old value, silently, on every pull request.
-
-  `ci-helpers` 0.33.0 adds `go-pr-gate.yml`, which carries `go.yml`'s defaults.
-  Calling it means a push and a pull request now set up the same toolchain from
-  the same source. The three command overrides go with it, for the reason
-  `ci.yml` dropped its own: the preset's defaults are the same commands, and
-  this repository is the reference adopter, so it should exercise the shared
-  defaults rather than a local copy of them.
 
 ### Added
 - **A bundle records what the export left behind, and an import prints it.**
@@ -51,8 +39,6 @@
   are policy; a file an instruction names and does not exist is absent, found by
   resolving the references of every instruction file the export collects, which
   is the reference work from earlier in this epic reaching the bundle.
-
-### Added
 - **A bundle carries directory-scope agent settings.** An agent reads system,
   user and directory scope; the bundle covered parts of two. It now takes a
   project's `.claude/settings.json` and any agent or command definitions kept
@@ -81,8 +67,6 @@
   `--include-secrets`, as the user-level one is. Agent and command definitions
   are not: they are prose, and redacting them restores a machine with its rules
   blanked out, which is the same as not carrying them.
-
-### Added
 - **The setup bundle carries the user-level instruction files.** It took
   `~/.claude/settings.json`, `~/.claude/keybindings.json` and the skills, but
   not `~/.claude/CLAUDE.md`, `~/.claude/agents/` or `~/.claude/commands/`. A
@@ -94,8 +78,6 @@
   Each restores to where it came from under `~/.claude`, asserted in the test
   rather than assumed, because carrying a file that lands somewhere else is
   the same as not carrying it.
-
-### Added
 - **`instructions pull` follows the references out of an instruction file.** It
   took ten well-known names and stopped, so a workspace `AGENTS.md` naming
   `implement_pr.txt` as a required template exported without it and the rule
@@ -122,6 +104,36 @@
   that motivated it, which is why reporting is the default. That file also
   names one of its required scripts by absolute path, so it is refused and
   cannot travel: a defect in the rule, now visible instead of silent.
+- **A stored template older than the built-in now says so.**
+  `RefreshConfigTemplates` never overwrites an existing file without `--force`,
+  which is right - it must not clobber edits - but it was also silent, so a
+  machine kept a superseded template indefinitely while reporting nothing.
+  `LoadResolved` now warns with the stored version, the built-in version, and
+  what to run. A template edited by hand keeps winning, as before.
+
+### Changed
+- **The pull request gate takes the Go preset, so the version literal is gone.**
+  `pr.yml` carried `go_version: "1.25"` because `pr-gate.yml` is an engine and
+  no Go preset sat in front of it. That literal was the one place this
+  repository could drift from the shared default: change it upstream and this
+  file keeps the old value, silently, on every pull request.
+
+  `ci-helpers` 0.33.0 adds `go-pr-gate.yml`, which carries `go.yml`'s defaults.
+  Calling it means a push and a pull request now set up the same toolchain from
+  the same source. The three command overrides go with it, for the reason
+  `ci.yml` dropped its own: the preset's defaults are the same commands, and
+  this repository is the reference adopter, so it should exercise the shared
+  defaults rather than a local copy of them.
+- **The built-in workflow templates no longer carry one operator's review
+  policy.** `implement_issue` and `implement_pr` named a specific automated
+  reviewer and prescribed how to re-request it. They now say to request review
+  according to the repository's own policy, assume no particular reviewer, and
+  review the diff at head yourself before reporting a PR ready. The `add_issue`
+  template describes its output as append-only `[TODO] ... [/TODO]` files rather
+  than naming one tool's format. Both templates move to `builtin-2.2`.
+
+  This is a general-purpose tool. A template compiled into the binary is the one
+  thing every user gets by default, so it must not encode anyone's house rules.
 
 ### Fixed
 - **CI called the shared engine directly, so Go was never set up.** `ci.yml`
@@ -154,28 +166,6 @@
   front of it, which makes it the one place the version can drift from the
   shared default -- written down in the file, and removable once such a preset
   exists.
-
-
-### Changed
-- **The built-in workflow templates no longer carry one operator's review
-  policy.** `implement_issue` and `implement_pr` named a specific automated
-  reviewer and prescribed how to re-request it. They now say to request review
-  according to the repository's own policy, assume no particular reviewer, and
-  review the diff at head yourself before reporting a PR ready. The `add_issue`
-  template describes its output as append-only `[TODO] ... [/TODO]` files rather
-  than naming one tool's format. Both templates move to `builtin-2.2`.
-
-  This is a general-purpose tool. A template compiled into the binary is the one
-  thing every user gets by default, so it must not encode anyone's house rules.
-
-### Added
-- **A stored template older than the built-in now says so.**
-  `RefreshConfigTemplates` never overwrites an existing file without `--force`,
-  which is right - it must not clobber edits - but it was also silent, so a
-  machine kept a superseded template indefinitely while reporting nothing.
-  `LoadResolved` now warns with the stored version, the built-in version, and
-  what to run. A template edited by hand keeps winning, as before.
-
 
 ## [0.13.0] - 2026-09-01
 
