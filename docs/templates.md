@@ -73,9 +73,9 @@ If two files share a key (`notes.txt` and `notes.md`, or `my-x.txt` and
 `my_x.txt`), a `.txt` file beats a `.md` one, otherwise the first name in
 sorted order wins, and a warning names both.
 
-A Markdown template may start with front matter (a `.txt` template is sent as
-is). `description` is shown by
-`templates list`; the agent is sent the text after the front matter.
+A Markdown template may start with front matter: `description` is shown by
+`templates list`, and the agent is sent the text after the front matter. A
+`.txt` template is sent as is.
 
 ```markdown
 ---

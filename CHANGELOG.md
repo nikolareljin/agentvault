@@ -33,16 +33,9 @@
 - **Custom workflow templates, in plain text or Markdown.** Any `<name>.txt` or
   `<name>.md` in the config templates directory is a template: `templates list`
   and `templates show` include it, a repository-root file of the same name
-  overrides it, and export/import carry it. Built-in keys accept `.md` files
-  too; with both, `.txt` wins and a warning names the other. A Markdown
-  template may start with front matter: `description` shows in `templates
-  list`, and the agent gets the text after it. A symlinked template file
-  counts; an imported file replaces a stored copy under another name with the same
-  key.
-  A template is a regular file up to 256 KiB; a repository-local symlink is
-  followed only inside the repository, and `import` never overwrites another
-  template's file. See
-  [docs/templates.md](docs/templates.md).
+  overrides it, and export/import carry it. Built-in keys accept `.md` too.
+  Markdown front matter `description` shows in `templates list`. A template is
+  a regular file up to 256 KiB. See [docs/templates.md](docs/templates.md).
 - **A stored template older than the built-in prints a warning** with both
   versions and the command to update it; an edited copy keeps winning.
 

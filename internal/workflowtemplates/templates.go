@@ -323,8 +323,8 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 				strings.HasPrefix(stored, "builtin-") && stored != spec.Version {
 				warnings = append(warnings, fmt.Sprintf(
 					"template %q in config storage is %s; the built-in is %s. "+
-						"Run `agentvault templates refresh --force` to replace it, "+
-						"or edit it in place to keep your own version.",
+						"Your copy stays in effect. `agentvault templates refresh --force` "+
+						"replaces it, and every other stored built-in, with the new text.",
 					asset.Filename, stored, spec.Version))
 			}
 			resolved = append(resolved, ResolvedTemplate{
