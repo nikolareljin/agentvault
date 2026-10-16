@@ -62,7 +62,11 @@ jobs:
                   raise SystemExit(f"missing SHA-256 digest for release asset: {name}")
               digests[platform] = digest.removeprefix("sha256:")
 
-          formula = f'''class Agentvault < Formula
+          formula = f'''# typed: strict
+          # frozen_string_literal: true
+
+          # AgentVault: CLI and TUI for managing agent configurations and instructions.
+          class Agentvault < Formula
             desc "CLI and TUI for managing agent configurations and instructions"
             homepage "https://github.com/nikolareljin/agentvault"
             version "{version}"
@@ -126,11 +130,17 @@ jobs:
           fi
           cp "$RUNNER_TEMP/agentvault.rb" homebrew-tap/Formula/agentvault.rb
           git -C homebrew-tap add Formula/agentvault.rb
-          git -C homebrew-tap diff --cached --quiet && exit 0
-          git -C homebrew-tap config user.name "github-actions[bot]"
-          git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git -C homebrew-tap commit -m "feat: add AgentVault ${RELEASE_TAG} formula"
-          git -C homebrew-tap push --set-upstream origin "$TAP_BRANCH"
+          # A rerun finds the formula already on the branch: still make sure the PR exists.
+          if ! git -C homebrew-tap diff --cached --quiet; then
+            git -C homebrew-tap config user.name "github-actions[bot]"
+            git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git -C homebrew-tap commit -m "feat: add AgentVault ${RELEASE_TAG} formula"
+            git -C homebrew-tap push --set-upstream origin "$TAP_BRANCH"
+          fi
+          if git -C homebrew-tap diff --quiet origin/main HEAD -- Formula/agentvault.rb; then
+            echo "Homebrew tap main already has the ${RELEASE_TAG} formula."
+            exit 0
+          fi
           title="feat: add AgentVault ${RELEASE_TAG} formula"
           body="Adds the macOS formula generated from the verified ${RELEASE_TAG} release assets."
           pr_url="$(gh pr list --repo "$TAP_REPOSITORY" --head "$TAP_BRANCH" --state open --json url --jq '.[0].url')"
