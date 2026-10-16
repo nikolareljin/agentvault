@@ -78,7 +78,11 @@ func TestResolvePromptExecutionWorkspaceUsesWorkflowRepoWhenWorkspaceUnset(t *te
 		t.Skip("git binary not available")
 	}
 
-	repoRoot := t.TempDir()
+	// git reports the long form; on Windows t.TempDir() can be an 8.3 short path.
+	repoRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(TempDir) error = %v", err)
+	}
 	if out, err := exec.Command("git", "init", repoRoot).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v (%s)", err, strings.TrimSpace(string(out)))
 	}

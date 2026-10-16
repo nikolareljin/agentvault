@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -375,6 +376,9 @@ class StateGraph:
 }
 
 func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake interpreters are #!/bin/sh scripts, which Windows cannot execute")
+	}
 	tempDir := t.TempDir()
 	python3Path := filepath.Join(tempDir, "bin", "python3")
 	if err := os.MkdirAll(filepath.Dir(python3Path), 0o755); err != nil {
@@ -424,7 +428,12 @@ func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
 }
 
 func TestResolveLangGraphScriptPathReturnsCanonicalAbsolutePath(t *testing.T) {
-	tempDir := t.TempDir()
+	// Canonical form: on Windows t.TempDir() can be an 8.3 short path
+	// (RUNNER~1) that EvalSymlinks expands.
+	tempDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(TempDir) error = %v", err)
+	}
 	targetPath := filepath.Join(tempDir, "router.py")
 	if err := os.WriteFile(targetPath, []byte("print('ok')\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(targetPath) error = %v", err)
@@ -462,6 +471,9 @@ func TestResolvePythonInterpreterErrorsWithoutSupportedExecutable(t *testing.T) 
 }
 
 func TestResolvePythonInterpreterSkipsPython2Fallback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake interpreters are #!/bin/sh scripts, which Windows cannot execute")
+	}
 	tempDir := t.TempDir()
 	python2Path := filepath.Join(tempDir, "python")
 	python3Path := filepath.Join(tempDir, "python3")

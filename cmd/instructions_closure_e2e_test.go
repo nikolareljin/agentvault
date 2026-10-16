@@ -15,7 +15,7 @@ import (
 // out loud what it would not take.
 func TestPullFollowsReferencesAndPushRestoresThem(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv(ConfigDirsEnv, "")
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
@@ -91,7 +91,7 @@ func TestPullFollowsReferencesAndPushRestoresThem(t *testing.T) {
 // knowing a rule points at nothing and finding out on the next machine.
 func TestPullStrictFailsOnAReferenceItCannotTake(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv(ConfigDirsEnv, "")
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)

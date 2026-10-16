@@ -83,7 +83,7 @@ func useConfigDir(t *testing.T, dir string) {
 // exactly that profile's agents and rules.
 func TestExportAllProfilesThenMirrorImport(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv(ConfigDirsEnv, "")
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
@@ -179,7 +179,7 @@ func TestExportAllProfilesThenMirrorImport(t *testing.T) {
 // without writing any of them.
 func TestImportDryRunLeavesVaultUntouched(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv(ConfigDirsEnv, "")
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
@@ -263,7 +263,7 @@ func mustRead(t *testing.T, path string) []byte {
 // history never travels inside a shareable bundle.
 func TestExportOmitsPromptTranscripts(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv(ConfigDirsEnv, "")
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
@@ -315,7 +315,7 @@ func TestExportOmitsPromptTranscripts(t *testing.T) {
 // the flags and never the output file's extension.
 func TestExportEncryptsRegardlessOfExtension(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv(ConfigDirsEnv, "")
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
@@ -377,7 +377,7 @@ func TestMirrorWarningNamesEverythingItDeletes(t *testing.T) {
 // into one vault is refused rather than silently leaving only the last one.
 func TestImportMirrorRejectsMultipleProfiles(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv(ConfigDirsEnv, "")
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)

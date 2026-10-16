@@ -172,7 +172,11 @@ func classifyReference(root, baseRel, raw string) Reference {
 		ref.Status, ref.Reason = ReferenceSkipped, "names a directory"
 		return ref
 	}
-	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "~") {
+	// filepath.IsAbs alone misses "/etc/passwd" and "C:x" on Windows: they are
+	// rooted or drive-relative there, and would resolve outside root.
+	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "~") ||
+		strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, `\`) ||
+		filepath.VolumeName(clean) != "" {
 		ref.Status, ref.Reason = ReferenceRefused, "absolute path"
 		return ref
 	}
