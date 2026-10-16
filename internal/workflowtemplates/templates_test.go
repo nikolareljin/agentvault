@@ -1,6 +1,8 @@
 package workflowtemplates
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,8 +189,8 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportBundle() error = %v", err)
 	}
-	if imported != 1 {
-		t.Fatalf("ImportBundle() imported count = %d, want 1", imported)
+	if imported != 2 {
+		t.Fatalf("ImportBundle() imported count = %d, want 2 (implement_issue and the custom one)", imported)
 	}
 	if len(warnings) == 0 {
 		t.Fatalf("expected warnings for empty asset")
@@ -199,8 +201,8 @@ func TestImportBundleSkipsEmptyAssets(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "implement_pr.txt")); !os.IsNotExist(err) {
 		t.Fatalf("implement_pr.txt should not exist, err=%v", err)
 	}
-	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "custom_template.txt")); !os.IsNotExist(err) {
-		t.Fatalf("custom_template.txt should not exist, err=%v", err)
+	if _, err := os.Stat(filepath.Join(cfgDir, TemplatesDirName, "custom_template.txt")); err != nil {
+		t.Fatalf("expected custom_template.txt: %v", err)
 	}
 }
 
@@ -211,7 +213,7 @@ func TestImportBundleNoOpDoesNotWriteMetadata(t *testing.T) {
 		ExportedAt:    time.Now().UTC(),
 		Assets: []TemplateAsset{
 			{Key: "implement_issue", Filename: "implement_issue.txt", Version: "v1", Content: "\n"},
-			{Key: "unsupported", Filename: "unsupported.txt", Version: "v1", Content: "x\n"},
+			{Key: "not a name", Filename: "Not A Name.txt", Version: "v1", Content: "x\n"},
 		},
 	}
 
@@ -759,31 +761,21 @@ func TestRefreshConfigTemplatesBackfillsUpdatedMetadata(t *testing.T) {
 	}
 }
 
-func TestBuiltInAddIssueTemplateIncludesReusableImplementationBodies(t *testing.T) {
-	var addIssue TemplateAsset
-	for _, spec := range defaultSpecs {
-		if spec.Key == "add_issue" {
-			addIssue = spec
-			break
+func TestBuiltInAddIssueDescribesBothTodoForms(t *testing.T) {
+	spec, _ := findDefaultByKey("add_issue")
+	for _, want := range []string{"[TODO]", "[/TODO]", "ID: <next 3-digit id>", "TODO.md", "## <title>", "first non-blank line under\nthe heading", "description as a paragraph"} {
+		if !strings.Contains(spec.Content, want) {
+			t.Errorf("add_issue template missing %q", want)
 		}
 	}
-	if addIssue.Key == "" {
-		t.Fatalf("add_issue template not found in defaults")
-	}
-	for _, want := range []string{
-		"Input Contract:",
-		"Output Contract:",
-		"Fill-In Entry Template (Canonical):",
-		"ID: <NEXT_ID_3_DIGITS>",
-		"[TODO] ... [/TODO]",
-		"Reusable Implementation Template Bodies:",
-		"Implement Issue Template",
-		"Fix PR Template",
-		"implement_issue.txt",
-		"implement_pr.txt",
-	} {
-		if !strings.Contains(addIssue.Content, want) {
-			t.Fatalf("add_issue template missing %q", want)
+}
+
+func TestBuiltInTemplatesStateInputsStepsAndOutput(t *testing.T) {
+	for _, spec := range defaultSpecs {
+		for _, want := range []string{"Inputs:", "Steps:", "Output:"} {
+			if !strings.Contains(spec.Content, want) {
+				t.Errorf("%s template missing %q", spec.Key, want)
+			}
 		}
 	}
 }
@@ -995,5 +987,579 @@ func TestLoadResolvedWarnsWhenStoredTemplateIsAnOlderBuiltin(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no staleness warning for a superseded stored template; got %v", warnings)
+	}
+}
+
+func TestCustomTemplateIsListedExportedAndImported(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "release-notes.txt"), []byte("write the notes\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Not template names: ignored, never an error.
+	for _, name := range []string{"Notes.txt", "notes.json", "a b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var custom *ResolvedTemplate
+	for i := range resolved {
+		if resolved[i].Filename == "release-notes.txt" {
+			custom = &resolved[i]
+		}
+		if resolved[i].Filename == "Notes.txt" || resolved[i].Filename == "notes.json" || resolved[i].Filename == "a b.txt" {
+			t.Errorf("%s is not a template name but was listed", resolved[i].Filename)
+		}
+	}
+	if custom == nil || custom.Key != "release_notes" || custom.Source != "config" || custom.Version != CustomVersion {
+		t.Fatalf("custom template = %+v, want key release_notes from config", custom)
+	}
+
+	bundle, _, err := ExportBundle(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	if _, _, err := ImportBundle(other, bundle); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(other, TemplatesDirName, "release-notes.txt"))
+	if err != nil || strings.TrimSpace(string(got)) != "write the notes" {
+		t.Fatalf("custom template did not travel: %q, %v", got, err)
+	}
+}
+
+func TestRepoLocalFileOverridesCustomTemplate(t *testing.T) {
+	cfgDir := t.TempDir()
+	repo := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "triage.txt"), []byte("stored\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "triage.txt"), []byte("repo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resolved {
+		if r.Key == "triage" {
+			if r.Source != "repo-local" || strings.TrimSpace(r.Content) != "repo" {
+				t.Fatalf("triage = %+v, want the repo-local file", r)
+			}
+			return
+		}
+	}
+	t.Fatal("triage was not listed")
+}
+
+func writeTemplate(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func findResolved(t *testing.T, resolved []ResolvedTemplate, key string) ResolvedTemplate {
+	t.Helper()
+	var found []ResolvedTemplate
+	for _, r := range resolved {
+		if r.Key == key {
+			found = append(found, r)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d templates with key %q, want 1: %+v", len(found), key, found)
+	}
+	return found[0]
+}
+
+func hasWarning(warnings []string, parts ...string) bool {
+	for _, w := range warnings {
+		all := true
+		for _, p := range parts {
+			all = all && strings.Contains(w, p)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+func TestMarkdownCustomTemplateFrontMatter(t *testing.T) {
+	cfgDir := t.TempDir()
+	writeTemplate(t, filepath.Join(cfgDir, TemplatesDirName), "triage.md",
+		"---\ndescription: \"Sort new issues\"\n---\n\n# Triage\n1. Label it.\n")
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := findResolved(t, resolved, "triage")
+	if r.Description() != "Sort new issues" {
+		t.Errorf("description = %q", r.Description())
+	}
+	if strings.Contains(r.Body(), "description:") || !strings.HasPrefix(r.Body(), "# Triage") {
+		t.Errorf("body kept the front matter: %q", r.Body())
+	}
+	if !strings.Contains(r.Content, "description:") {
+		t.Error("stored content should stay the whole file, so export round-trips it")
+	}
+}
+
+func TestTxtWinsOverMarkdownWithAWarning(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "triage.md", "markdown\n")
+	writeTemplate(t, dir, "triage.txt", "plain\n")
+	resolved, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "triage"); r.Filename != "triage.txt" {
+		t.Errorf("using %s, want triage.txt", r.Filename)
+	}
+	if !hasWarning(warnings, "triage.txt", "triage.md") {
+		t.Errorf("no warning naming both files: %v", warnings)
+	}
+
+	repo := t.TempDir()
+	writeTemplate(t, repo, "implement_pr.md", "repo markdown\n")
+	writeTemplate(t, repo, "implement_pr.txt", "repo plain\n")
+	resolved, warnings, err = LoadResolved(cfgDir, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "implement_pr"); r.Filename != "implement_pr.txt" || r.Source != "repo-local" {
+		t.Errorf("implement_pr = %s from %s, want the repo's .txt", r.Filename, r.Source)
+	}
+	if !hasWarning(warnings, "implement_pr.txt", "implement_pr.md") {
+		t.Errorf("no warning naming both repo files: %v", warnings)
+	}
+}
+
+func TestBuiltInKeyFromMarkdownFile(t *testing.T) {
+	cfgDir := t.TempDir()
+	writeTemplate(t, filepath.Join(cfgDir, TemplatesDirName), "implement_issue.md", "# Our issue flow\n")
+	repo := t.TempDir()
+	writeTemplate(t, repo, "implement_pr.md", "# Our review flow\n")
+	resolved, _, err := LoadResolved(cfgDir, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "implement_issue"); r.Source != "config" || r.Filename != "implement_issue.md" {
+		t.Errorf("implement_issue = %s from %s, want config implement_issue.md", r.Filename, r.Source)
+	}
+	if r := findResolved(t, resolved, "implement_pr"); r.Source != "repo-local" || r.Filename != "implement_pr.md" {
+		t.Errorf("implement_pr = %s from %s, want repo-local implement_pr.md", r.Filename, r.Source)
+	}
+}
+
+func TestRefreshKeepsAMarkdownCopyOfABuiltIn(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "implement_issue.md", "# our flow\n")
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "implement_issue.txt")); !os.IsNotExist(err) {
+		t.Fatalf("refresh wrote implement_issue.txt beside the user's .md (err=%v)", err)
+	}
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "implement_issue"); r.Filename != "implement_issue.md" || strings.TrimSpace(r.Content) != "# our flow" {
+		t.Fatalf("implement_issue = %s %q, want the user's .md", r.Filename, r.Content)
+	}
+}
+
+func TestStoredMarkdownBuiltInStillLetsATxtWin(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	// What an import of a bundle holding implement_pr.md leaves behind.
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_pr", Filename: "implement_pr.md", Version: "v1", Content: "# md\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	writeTemplate(t, dir, "implement_pr.txt", "plain\n")
+	resolved, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := findResolved(t, resolved, "implement_pr"); r.Filename != "implement_pr.txt" {
+		t.Fatalf("using %s, want implement_pr.txt", r.Filename)
+	}
+	if !hasWarning(warnings, "implement_pr.txt", "implement_pr.md") {
+		t.Errorf("no warning naming both files: %v", warnings)
+	}
+}
+
+func TestSplitFrontMatterEdgeCases(t *testing.T) {
+	cases := []struct {
+		name, in, desc, body string
+	}{
+		{"none", "# Title\n", "", "# Title\n"},
+		{"crlf", "---\r\ndescription: Win\r\n---\r\n# T\r\n", "Win", "# T\r\n"},
+		{"bom", "\ufeff---\ndescription: B\n---\nbody\n", "B", "body\n"},
+		{"unclosed", "---\ndescription: x\nbody\n", "", "---\ndescription: x\nbody\n"},
+		{"rule not front matter", "text\n---\nmore\n", "", "text\n---\nmore\n"},
+		{"colon in value", "---\ndescription: 'a: b'\n---\nx\n", "a: b", "x\n"},
+	}
+	for _, c := range cases {
+		desc, body := splitFrontMatter(c.in)
+		if desc != c.desc || body != c.body {
+			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, desc, body, c.desc, c.body)
+		}
+	}
+}
+
+func TestSymlinkedCustomTemplateIsListed(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(target, []byte("notes body\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "notes.md")); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "folder.txt"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range resolved {
+		if r.Key == "folder" {
+			t.Fatalf("directory folder.txt listed as a template")
+		}
+		if r.Key == "notes" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("symlinked notes.md not listed: %+v", resolved)
+	}
+}
+
+func TestRefreshForceOverwritesALoneMarkdownCopy(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "implement_pr.md"), []byte("mine\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RefreshConfigTemplates(cfgDir, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "implement_pr.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("refresh --force wrote implement_pr.txt beside the .md copy (err=%v)", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "implement_pr.md"))
+	if string(got) != builtinImplementPRTemplate {
+		t.Fatalf("implement_pr.md not overwritten with the built-in: %q", got)
+	}
+	_, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range warnings {
+		if strings.Contains(w, "both") {
+			t.Fatalf("unexpected warning: %s", w)
+		}
+	}
+}
+
+func TestImportReplacesTheOtherExtensionCopy(t *testing.T) {
+	cfgDir := t.TempDir()
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("old notes\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_pr", Filename: "implement_pr.md", Version: CustomVersion, Content: "imported pr\n"},
+		{Key: "notes", Filename: "notes.md", Version: CustomVersion, Content: "imported notes\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	resolved, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"implement_pr": "imported pr\n", "notes": "imported notes\n"}
+	for _, r := range resolved {
+		if w, ok := want[r.Key]; ok && r.Content != w {
+			t.Fatalf("%s resolved to %q from %s, want the imported copy", r.Key, r.Content, r.Filename)
+		}
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+}
+
+func TestImportNeverRemovesAnotherTemplatesFile(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "my-flow.md", "my own custom template\n")
+	// A built-in stored under a renamed file whose stem matches the custom one.
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_issue", Filename: "my-flow.txt", Version: "v1", Content: "issue flow\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "my-flow.md")); err != nil {
+		t.Fatalf("import removed an unrelated template: %v", err)
+	}
+}
+
+func TestRepoLocalTemplateSymlinkOutsideRepoIsRefused(t *testing.T) {
+	cfgDir := t.TempDir()
+	repo := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "credentials")
+	if err := os.WriteFile(secret, []byte("aws_secret_access_key=XYZ\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(repo, "implement_pr.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	writeTemplate(t, repo, "inside.txt", "inside\n")
+	if err := os.Symlink("inside.txt", filepath.Join(repo, "implement_issue.txt")); err != nil {
+		t.Fatal(err)
+	}
+	resolved, warnings, err := LoadResolved(cfgDir, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resolved {
+		if strings.Contains(r.Content, "aws_secret") {
+			t.Fatalf("symlink outside the repository was read: %+v", r)
+		}
+		if r.Key == "implement_issue" && r.Source != "repo-local" {
+			t.Fatalf("symlink inside the repository was refused: %+v", r)
+		}
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "resolves outside") {
+		t.Fatalf("no warning for the refused symlink: %v", warnings)
+	}
+}
+
+func TestTemplateReadRefusesOversize(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.txt")
+	if err := os.WriteFile(big, []byte(strings.Repeat("a", 256*1024+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, warn := readTemplateFile(big); ok || !strings.Contains(warn, "ceiling") {
+		t.Fatalf("oversize template read: ok=%v warn=%q", ok, warn)
+	}
+}
+
+func TestImportRefusesHostileAssets(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "notes.md", "my notes\n")
+	for _, name := range []string{"evil.sh", "Upper.txt", "con.txt", "a\x00.txt", "../x.txt", strings.Repeat("a", 70) + ".txt"} {
+		bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+			{Key: "implement_pr", Filename: name, Content: "x\n"},
+		}}
+		// A path is refused outright; any other odd name is stored under the
+		// built-in's own file. Either way nothing lands under the hostile name.
+		_, _, _ = ImportBundle(cfgDir, bundle)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			switch e.Name() {
+			case "notes.md", "implement_pr.txt", metadataFileName:
+			default:
+				t.Errorf("filename %q produced %q", name, e.Name())
+			}
+		}
+		if _, err := os.Stat(filepath.Join(cfgDir, "x.txt")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("filename %q wrote outside the templates dir", name)
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, "implement_pr.txt")); err != nil {
+		t.Fatal(err)
+	}
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_pr", Filename: "notes.md", Content: "overwrite\n"},
+		{Key: "implement_issue", Filename: "implement_issue.txt", Content: strings.Repeat("a", 256*1024+1)},
+	}}
+	n, warnings, err := ImportBundle(cfgDir, bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || len(warnings) != 2 {
+		t.Fatalf("imported %d, warnings %v", n, warnings)
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "notes.md")); string(data) != "my notes\n" {
+		t.Fatalf("import overwrote another template: %q", data)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "implement_issue.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oversize template written: %v", err)
+	}
+}
+
+func TestDescriptionDropsControlCharacters(t *testing.T) {
+	r := ResolvedTemplate{TemplateAsset: TemplateAsset{Filename: "x.md", Content: "---\ndescription: a\x1b[2Jb\x07\n---\nbody\n"}}
+	if got := r.Description(); got != "a[2Jb" {
+		t.Fatalf("description %q", got)
+	}
+}
+
+func TestImportOldBundleWithOddBuiltInFilenameStillImports(t *testing.T) {
+	cfgDir := t.TempDir()
+	// Older releases accepted any safe filename for a built-in.
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "implement_pr", Filename: "Custom-PR.TXT", Version: "v1", Content: "my pr flow\n"},
+	}}
+	imported, warnings, err := ImportBundle(cfgDir, bundle)
+	if err != nil {
+		t.Fatalf("an old bundle must not fail the import: %v", err)
+	}
+	if imported != 1 {
+		t.Fatalf("imported %d, want 1", imported)
+	}
+	got, err := os.ReadFile(filepath.Join(cfgDir, TemplatesDirName, "implement_pr.txt"))
+	if err != nil || strings.TrimSpace(string(got)) != "my pr flow" {
+		t.Fatalf("content not stored under implement_pr.txt: %q, %v", got, err)
+	}
+	if !hasWarning(warnings, "Custom-PR.TXT", "implement_pr.txt") {
+		t.Errorf("no warning about the renamed file: %v", warnings)
+	}
+}
+
+func TestCustomNamesWithTheSameKeyPickOneAndSayWhich(t *testing.T) {
+	for _, tc := range []struct{ a, b, want string }{
+		{"my-x.txt", "my_x.txt", "my-x.txt"},
+		{"my-x.md", "my_x.md", "my-x.md"},
+		{"my_x.md", "my-x.txt", "my-x.txt"},
+	} {
+		cfgDir := t.TempDir()
+		dir := filepath.Join(cfgDir, TemplatesDirName)
+		writeTemplate(t, dir, tc.a, "from "+tc.a+"\n")
+		writeTemplate(t, dir, tc.b, "from "+tc.b+"\n")
+		resolved, warnings, err := LoadResolved(cfgDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := findResolved(t, resolved, "my_x")
+		if got.Filename != tc.want || got.Content != "from "+tc.want+"\n" {
+			t.Errorf("%s + %s: used %q (%q), want %q", tc.a, tc.b, got.Filename, got.Content, tc.want)
+		}
+		if !hasWarning(warnings, fmt.Sprintf("using %q", tc.want)) {
+			t.Errorf("%s + %s: warning does not name %q: %v", tc.a, tc.b, tc.want, warnings)
+		}
+	}
+}
+
+func TestImportedCustomTemplateIsTheOneInEffect(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "my-x.txt", "old\n")
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "my_x", Filename: "my_x.txt", Content: "imported\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findResolved(t, resolved, "my_x"); got.Content != "imported\n" {
+		t.Fatalf("imported template shadowed by %q: %q", got.Filename, got.Content)
+	}
+}
+
+func TestUnrelatedCustomWarningKeepsTheBuiltInMissingWarning(t *testing.T) {
+	cfgDir := t.TempDir()
+	writeTemplate(t, filepath.Join(cfgDir, TemplatesDirName), "implement_pr_v2.txt", "  \n")
+	_, warnings, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasWarning(warnings, `"implement_pr.txt" missing from config storage`) {
+		t.Fatalf("missing-template warning for implement_pr dropped: %v", warnings)
+	}
+}
+
+func TestMissingMetadataFilenameFallsBackToMarkdownCopy(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "implement_issue.md", "my markdown\n")
+	writeTemplate(t, dir, metadataFileName, `{"schema_version":"1","filenames":{"implement_issue":"issue.txt"}}`)
+	check := func(stage string) {
+		t.Helper()
+		resolved, _, err := LoadResolved(cfgDir, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := findResolved(t, resolved, "implement_issue"); got.Content != "my markdown\n" {
+			t.Fatalf("%s: implement_issue is %q from %q, want the stored .md", stage, got.Content, got.Filename)
+		}
+	}
+	check("load")
+	if _, err := RefreshConfigTemplates(cfgDir, false); err != nil {
+		t.Fatal(err)
+	}
+	check("after refresh")
+}
+
+func TestImportKeepsAFileABuiltInIsStoredUnder(t *testing.T) {
+	cfgDir := t.TempDir()
+	dir := filepath.Join(cfgDir, TemplatesDirName)
+	writeTemplate(t, dir, "my-x.txt", "issue flow\n")
+	writeTemplate(t, dir, metadataFileName, `{"schema_version":"1","filenames":{"implement_issue":"my-x.txt"}}`)
+	bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
+		{Key: "my_x", Filename: "my_x.txt", Content: "custom\n"},
+	}}
+	if _, _, err := ImportBundle(cfgDir, bundle); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := LoadResolved(cfgDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findResolved(t, resolved, "implement_issue"); got.Content != "issue flow\n" {
+		t.Fatalf("built-in stored as my-x.txt lost: %+v", got)
+	}
+	if got := findResolved(t, resolved, "my_x"); got.Content != "custom\n" {
+		t.Fatalf("custom my_x not imported: %+v", got)
 	}
 }

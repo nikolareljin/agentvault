@@ -60,7 +60,7 @@ agentvault
    - press `c` to connect the selected agent directly to Prompt Gateway
 3. Go to `Instructions` tab:
    - AgentVault auto-detects project instruction files (`AGENTS.md`, `CLAUDE.md`, `codex.md`, `.github/copilot-instructions.md`)
-   - and the files those name: `instructions pull` follows references out of an instruction file, so a rule saying "use `implement_pr.txt`" carries the template with it. Refusals and missing files are reported rather than dropped; `--strict` turns the report into a failure, `--follow-references=false` turns it off.
+   - and the files those name: `instructions pull` follows references out of an instruction file, so a rule saying "follow `docs/review.md`" carries that file with it. Refusals and missing files are reported rather than dropped; `--strict` turns the report into a failure, `--follow-references=false` turns it off.
    - current-project files are auto-synced into vault instructions
 4. Go to `Sessions` tab:
    - live provider token/quota usage is refreshed continuously for running sessions
@@ -225,7 +225,7 @@ agentvault setup export my-setup.json --agent my-codex --project .
 # include secret-bearing provider files in an encrypted bundle
 agentvault setup export my-setup.bundle --agent my-codex --project . --include-secrets --encrypted
 
-# inspect the built-in TODO authoring workflow for git-lantern-style TODO files
+# inspect the built-in template for TODO.txt / TODO.md task lists
 agentvault templates show add_issue
 
 # JSON output for orchestration systems
@@ -249,19 +249,16 @@ Execution behavior:
 - Ollama remains a plain HTTP prompt execution path and does not have CLI tool-use semantics.
 
 Current limitation:
-- Prompt text alone does not switch repositories or instruction scope. If you start from `~/Projects`, AgentVault uses that current directory for local instruction discovery.
+- Prompt text alone does not switch repositories or instruction scope. If you start from `~/my-projects-location`, AgentVault uses that current directory for local instruction discovery.
 - Agentic prompt runs now use explicit execution workspace selection. CLI defaults to workflow repo root when `--workflow ... --repo ...` is used, otherwise current directory. Override with `--workspace`.
-- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/Projects/my-app --workspace ~/Projects/my-app --pr 27`.
+- For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/my-projects-location/my-app --workspace ~/my-projects-location/my-app --pr 27`.
 
 Runtime value precedence for prompt execution is:
 - local agent setting in vault
 - process environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`)
 - built-in default fallback (for Ollama base URL: `http://localhost:11434`)
 
-Workflow template precedence is:
-- repository-local override (`./implement_issue.txt`, `./implement_pr.txt`, `./add_issue.txt`)
-- config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`)
-- built-in defaults (with warning)
+Workflow templates (`implement_issue`, `implement_pr`, `add_issue`, and any you add) are plain `.txt` or Markdown `.md` files, resolved repository-local file > config storage > built-in. How to edit, replace and add them: [docs/templates.md](docs/templates.md).
 
 Portable setup bundles can additionally include explicit asset manifests for:
 - provider-home files (`provider_files`)
@@ -270,8 +267,6 @@ Portable setup bundles can additionally include explicit asset manifests for:
 - custom skill trees (`skill_assets`)
 
 `agentvault export` includes sensitive provider file content by default and encrypts the bundle by default; use `--include-secrets=false` to leave it out, and note that `--plain` requires explicit confirmation whenever secrets are included. The deprecated `agentvault setup export` keeps its old defaults: secrets excluded unless `--include-secrets`, plaintext unless `--encrypted`.
-
-The built-in `add_issue` template emits append-only, git-lantern-compatible TODO entries with deterministic ID allocation and embeds the reusable `implement_issue` / `implement_pr` checklist bodies for issue and PR follow-up tasks.
 
 In the TUI Agent detail view, effective values include source tags (`local`, `env`, `default`) for model/API key/base URL.
 

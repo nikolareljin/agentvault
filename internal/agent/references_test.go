@@ -9,12 +9,12 @@ import (
 )
 
 func TestFindReferencesKeepsPathsAndDropsTheThingsThatLookLikeThem(t *testing.T) {
-	content := "Use `implement_pr.txt` and [the plan](docs/plan.md).\n" +
+	content := "Use `docs/review.md` and [the plan](docs/plan.md).\n" +
 		"Go is `1.25`, the SDK is `8.0.x`, run `npm install`, see https://example.com/x.md\n" +
 		"Ignore `*.sh` and `--flag` and `#anchor`.\n"
 
 	got := FindReferences(content)
-	want := map[string]bool{"implement_pr.txt": true, "docs/plan.md": true}
+	want := map[string]bool{"docs/review.md": true, "docs/plan.md": true}
 	for _, g := range got {
 		if !want[g] {
 			t.Errorf("took %q, which is not a file reference", g)

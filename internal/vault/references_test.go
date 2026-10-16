@@ -15,14 +15,17 @@ func TestClosureStoresWhatTheInstructionsName(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
 
-	write(t, src, "AGENTS.md", "# Rules\n\nUse `implement_pr.txt` and `implement_issue.txt`.\n"+
-		"The helper is `scripts/hygiene.sh`.\n")
-	write(t, src, "implement_pr.txt", "pr template\n")
-	write(t, src, "implement_issue.txt", "issue template\n")
+	write(t, src, "AGENTS.md", "# Rules\n\nUse `docs/review.md` and `docs/release.md`.\n"+
+		"The helper is `scripts/check.sh`.\n")
+	if err := os.MkdirAll(filepath.Join(src, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, src, "docs/review.md", "review checklist\n")
+	write(t, src, "docs/release.md", "release checklist\n")
 	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	write(t, src, filepath.Join("scripts", "hygiene.sh"), "#!/usr/bin/env bash\n")
+	write(t, src, filepath.Join("scripts", "check.sh"), "#!/usr/bin/env bash\n")
 
 	v := New(tempVaultPath(t))
 	_ = v.Init("master")
@@ -54,8 +57,8 @@ func TestClosureStoresWhatTheInstructionsName(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, rel := range []string{"AGENTS.md", "implement_pr.txt", "implement_issue.txt",
-		filepath.Join("scripts", "hygiene.sh")} {
+	for _, rel := range []string{"AGENTS.md", "docs/review.md", "docs/release.md",
+		filepath.Join("scripts", "check.sh")} {
 		if got := mustRead(t, filepath.Join(dst, rel)); got != mustRead(t, filepath.Join(src, rel)) {
 			t.Errorf("%s did not round-trip", rel)
 		}
@@ -106,8 +109,8 @@ func TestClosureResolvesRelativeToTheReferencingFile(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	write(t, src, "AGENTS.md", "see `scripts/hygiene.sh`\n")
-	write(t, src, filepath.Join("scripts", "hygiene.sh"),
+	write(t, src, "AGENTS.md", "see `scripts/check.sh`\n")
+	write(t, src, filepath.Join("scripts", "check.sh"),
 		"sources `helpers.sh` and points back at `../AGENTS.md`\n")
 	write(t, src, filepath.Join("scripts", "helpers.sh"), "helper\n")
 

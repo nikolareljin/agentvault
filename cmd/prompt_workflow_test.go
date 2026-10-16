@@ -517,3 +517,54 @@ func setPromptWorkflowTestConfigDir(t *testing.T, dir string) {
 		_ = rootCmd.PersistentFlags().Set("config", orig)
 	})
 }
+
+func TestBuildPromptWorkflowSendsMarkdownBodyWithoutFrontMatter(t *testing.T) {
+	tpl := workflowTemplateForTest("implement_pr", "---\ndescription: secret desc\n---\n\nPR steps\n")
+	tpl.Filename = "implement_pr.md"
+	prompt := buildPromptWorkflow(promptWorkflowContext{
+		Kind: promptWorkflowImplementPR, RepoRoot: "/tmp/repo", RepoName: "repo", CurrentBranch: "main",
+		Template: tpl,
+		PR:       &promptWorkflowPR{Number: 3, Title: "t", URL: "https://example.test/pull/3"},
+	})
+	if strings.Contains(prompt, "secret desc") || !strings.Contains(prompt, "PR steps") {
+		t.Fatalf("front matter sent or body missing:\n%s", prompt)
+	}
+
+	txt := workflowTemplateForTest("implement_pr", "---\nkeep me\n---\nsteps\n")
+	if got := txt.Body(); got != txt.Content {
+		t.Fatalf(".txt body changed: %q", got)
+	}
+}
+
+func TestResolvePromptWorkflowContextSendsRepoMarkdownBodyOnly(t *testing.T) {
+	setPromptWorkflowTestConfigDir(t, t.TempDir())
+
+	repoDir := t.TempDir()
+	md := "---\ndescription: front matter text\n---\n\nrepo markdown pr workflow\n"
+	if err := os.WriteFile(filepath.Join(repoDir, "implement_pr.md"), []byte(md), 0644); err != nil {
+		t.Fatalf("WriteFile(implement_pr.md): %v", err)
+	}
+
+	cmd := newPromptWorkflowTestCommand()
+	for flag, value := range map[string]string{"workflow": "implement_pr", "repo": repoDir, "pr": "25"} {
+		if err := cmd.Flags().Set(flag, value); err != nil {
+			t.Fatalf("setting %s flag: %v", flag, err)
+		}
+	}
+
+	prompt, warnings, err := resolvePromptInputWithDeps(cmd, newPromptWorkflowTestDeps(repoDir))
+	if err != nil {
+		t.Fatalf("resolvePromptInput() error = %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("resolvePromptInput() warnings = %v, want none", warnings)
+	}
+	if !strings.Contains(prompt, "## Canonical Workflow Template\nrepo markdown pr workflow\n") {
+		t.Fatalf("prompt missing the Markdown body\n%s", prompt)
+	}
+	for _, unwanted := range []string{"front matter text", "description:"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("prompt contains front matter %q\n%s", unwanted, prompt)
+		}
+	}
+}

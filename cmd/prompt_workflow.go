@@ -404,7 +404,7 @@ func buildPromptWorkflow(ctx promptWorkflowContext) string {
 
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Canonical Workflow Template")
-	fmt.Fprintln(&b, ctx.Template.Content)
+	fmt.Fprintln(&b, ctx.Template.Body())
 
 	return b.String()
 }

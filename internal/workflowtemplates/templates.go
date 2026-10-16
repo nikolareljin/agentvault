@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/nikolareljin/agentvault/internal/config"
 )
@@ -18,7 +21,36 @@ const (
 	TemplatesDirName     = "templates"
 	metadataFileName     = "metadata.json"
 	RepoLocalVersion     = "repo-local"
+	CustomVersion        = "custom"
 )
+
+// A template file is plain text (<name>.txt) or Markdown (<name>.md); with both,
+// the .txt one wins. A custom template is any other <name>.txt or <name>.md a user adds to config storage. It is
+// listed, shown, exported and imported like a built-in; agentvault ships none.
+var customFilenamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}\.(txt|md)$`)
+
+// reservedStem reports a Windows device name (con.txt opens the console there).
+func reservedStem(filename string) bool {
+	stem := strings.TrimSuffix(strings.TrimSuffix(filename, ".txt"), ".md")
+	switch stem {
+	case "con", "prn", "aux", "nul":
+		return true
+	}
+	return len(stem) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) && stem[3] >= '0' && stem[3] <= '9'
+}
+
+// customKey returns the key for a custom template file, or false when the name
+// is not one (wrong shape, or a built-in's key).
+func customKey(filename string) (string, bool) {
+	if !customFilenamePattern.MatchString(filename) || reservedStem(filename) {
+		return "", false
+	}
+	key := normalizeTemplateName(filename)
+	if _, builtin := findDefaultByKey(key); builtin {
+		return "", false
+	}
+	return key, true
+}
 
 // TemplateAsset stores one workflow template body with metadata.
 type TemplateAsset struct {
@@ -43,6 +75,87 @@ type ResolvedTemplate struct {
 	Path   string `json:"path,omitempty"`
 }
 
+// Description is the front matter "description:" of a Markdown template, if any.
+func (t ResolvedTemplate) Description() string {
+	if !t.isMarkdown() {
+		return ""
+	}
+	desc, _ := splitFrontMatter(t.Content)
+	// A repository-local file is untrusted: drop control characters, so a
+	// description cannot send terminal escape sequences to `templates list`.
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, desc)
+}
+
+// Body is the template without its front matter: what an agent is sent. A .txt
+// template is sent whole, even when it starts with "---".
+func (t ResolvedTemplate) Body() string {
+	if !t.isMarkdown() {
+		return t.Content
+	}
+	_, body := splitFrontMatter(t.Content)
+	return body
+}
+
+func (t ResolvedTemplate) isMarkdown() bool {
+	return strings.HasSuffix(strings.ToLower(t.Filename), ".md")
+}
+
+// splitFrontMatter separates a leading "---" YAML block from the text and
+// returns its description value. Text without one comes back unchanged.
+func splitFrontMatter(content string) (string, string) {
+	text := strings.TrimLeft(content, "\ufeff")
+	if !strings.HasPrefix(text, "---\n") && !strings.HasPrefix(text, "---\r\n") {
+		return "", content
+	}
+	lines := strings.SplitAfter(text, "\n")
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "---" {
+			continue
+		}
+		desc := ""
+		for _, line := range lines[1:i] {
+			key, value, ok := strings.Cut(line, ":")
+			if ok && strings.TrimSpace(key) == "description" {
+				desc = strings.Trim(strings.TrimSpace(value), `"'`)
+			}
+		}
+		return desc, strings.TrimLeft(strings.Join(lines[i+1:], ""), "\r\n")
+	}
+	return "", content
+}
+
+// readTxtOrMD reads dir/<stem>.txt, else dir/<stem>.md. With both present the
+// .txt one wins and a warning names the .md one. With contained set, a file that
+// resolves outside dir (a symlink, or a symlinked parent) is refused: a cloned
+// repository must not be able to pull ~/.aws/credentials into a prompt.
+func readTxtOrMD(dir, txtName string, contained bool) (content string, name string, ok bool, warnings []string) {
+	read := readTemplateFile
+	if contained {
+		read = func(path string) (string, bool, string) { return readContainedTemplateFile(dir, path) }
+	}
+	mdName := otherExtension(txtName)
+	content, ok, warn := read(filepath.Join(dir, txtName))
+	if warn != "" {
+		warnings = append(warnings, warn)
+	}
+	if ok {
+		if _, err := os.Stat(filepath.Join(dir, mdName)); err == nil {
+			warnings = append(warnings, fmt.Sprintf("both %q and %q exist in %s; using %q", txtName, mdName, dir, txtName))
+		}
+		return content, txtName, true, warnings
+	}
+	content, ok, warn = read(filepath.Join(dir, mdName))
+	if warn != "" {
+		warnings = append(warnings, warn)
+	}
+	return content, mdName, ok, warnings
+}
+
 type metadataFile struct {
 	SchemaVersion string               `json:"schema_version"`
 	UpdatedAt     time.Time            `json:"updated_at,omitempty"`
@@ -51,295 +164,87 @@ type metadataFile struct {
 	Filenames     map[string]string    `json:"filenames,omitempty"`
 }
 
-const builtinImplementIssueTemplate = `Implement Issue Template
+// The built-in templates are short and generic on purpose: a starting point a
+// user edits, replaces per repository, or swaps for their own (docs/templates.md).
+const builtinImplementIssueTemplate = `Implement Issue
 
-Metadata:
-- Template Version: 2.0
-- Template Type: Issue Implementation Workflow
-- Mode: Modular and Extendable
+Inputs: repository path, issue reference, base branch (default: the
+repository's default branch).
 
-Inputs:
-- Repository path
-- Issue reference (number/url/title)
-- Base branch (default: main or master, override allowed)
-- Release strategy (major/minor/patch, or auto)
-- Optional policy overrides
+Steps:
+1. Read the issue. Confirm the scope and acceptance criteria; ask when they are unclear.
+2. Create a branch from the base branch. Default name: release/X.Y.Z with the next
+   semantic version. Use the repository's own naming instead when it has one, or
+   when asked.
+3. Make the change, scoped to the issue. Comment only where the logic is not obvious.
+4. Add or update tests for the new behaviour, including edge cases.
+5. Update the docs and the changelog when a user sees a difference.
+6. Run the repository's build, lint and tests. Fix what fails.
+7. Commit with a clear message, push, and open a pull request that references the issue.
 
-Config Defaults (Override Per Team/Repo):
-- DEFAULT_BASE_BRANCH=main|master
-- DEFAULT_RELEASE_PREFIX=release/
-- DEFAULT_CHANGE_DOCS=true
-- DEFAULT_RUN_TESTS=true
-- DEFAULT_OPEN_PR=true
-
-Core Workflow (Default Module Set):
-1. Intake Module:
-- Read issue title and description.
-- Confirm scope and acceptance criteria from the issue.
-
-2. Release Module:
-- Classify change as major/minor/patch.
-- Create ` + "`release/X.Y.Z`" + ` from configured base branch using next semver.
-- Extension: teams can swap this with custom branching policy.
-
-3. Implementation Module:
-- Modify codebase according to issue scope.
-- Add concise code comments where important logic changes are introduced.
-- Create/update files as needed.
-
-4. Documentation Module:
-- Update docs/CHANGELOG/README where needed.
-- Keep comments concise and clean; avoid unnecessary special characters.
-- Extension: teams can define doc update policy per repo.
-
-5. Validation Module:
-- Run project test/build/lint workflow before commit.
-- Extension: team-specific quality gates can be inserted here.
-
-6. Delivery Module:
-- Commit with appropriate message.
-- Push branch.
-- Open PR referencing resolved issue.
-- If PR creation fails, output PR create URL.
-
-Output Contract:
-- Branch name created
-- Files changed summary
-- Tests/build/lint results
-- Commit hash
-- PR URL (or fallback create URL)
-
-Extension Points:
-- Pre-Intake Hook: custom issue triage rules
-- Pre-Commit Hook: formatting, security scans, policy checks
-- Post-Push Hook: reviewer assignment, label automation, CI checks
-- Request review according to the repository's own policy. Do not assume a particular reviewer, human or automated, and do not ask a reviewer to write the fix.
-- Post-PR Hook: comment templating and release note generation
-
-Customization Notes:
-- Repositories can override any ` + "`Config Defaults`" + ` value.
-- Teams can add/remove modules, but should preserve ordered checkpoints.
-- Keep this template as a base profile and create derived profiles per repo as needed.
-
-Profile Example:
-- Profile Name: legacy-master-flow
-- DEFAULT_BASE_BRANCH=master
-- DEFAULT_RELEASE_PREFIX=release/
-- DEFAULT_CHANGE_DOCS=true
-- DEFAULT_RUN_TESTS=true
-- DEFAULT_OPEN_PR=true
-- Extra Hook: Pre-Commit Hook runs ` + "`make lint && make test`" + ` before commit.
+Output: branch, files changed, test results, commit, pull request URL.
 `
 
-const builtinImplementPRTemplate = `Fix PR Template
+const builtinImplementPRTemplate = `Fix Pull Request Review
 
-Metadata:
-- Template Version: 2.0
-- Template Type: PR Review Remediation Workflow
-- Mode: Modular and Extendable
+Inputs: repository path, pull request reference.
 
-Inputs:
-- Repository path
-- PR reference (number/url)
-- Base branch context (main or master, inferred or configured)
-- Target branch name
-- Optional reviewer re-request policy
-- Optional policy overrides
+Steps:
+1. Read every unresolved review thread and comment. List what each one asks for.
+2. Fix each confirmed issue. Where you disagree, reply with the reason instead.
+3. Run the repository's build, lint and tests. Fix what fails.
+4. Commit and push to the pull request branch.
+5. Reply to or resolve each thread you addressed.
+6. Look over the whole change once more, then request review again.
 
-Config Defaults (Override Per Team/Repo):
-- DEFAULT_BASE_BRANCH=main|master
-- DEFAULT_UPDATE_DOCS_IF_NEEDED=true
-- DEFAULT_RUN_TESTS=true
-- DEFAULT_RESOLVE_THREADS=true
-- DEFAULT_REREQUEST_REVIEW=true
-
-Core Workflow (Default Module Set):
-1. Review Intake Module:
-- Read all PR review issues and conversations.
-- Build a fix checklist grouped by thread/comment.
-
-2. Remediation Module:
-- Modify code for all confirmed review issues.
-- Add concise comments where important changes are introduced.
-- Create/update files as needed.
-
-3. Documentation Module:
-- Update docs/CHANGELOG/README only when required by the code changes.
-- Keep comments concise and clean; avoid unnecessary special characters.
-
-4. Validation Module:
-- Run project test/build/lint workflow before commit.
-- Extension: allow repo-specific CI dry-run or smoke checks.
-
-5. Delivery Module:
-- Commit with appropriate message.
-- Push code changes.
-
-6. PR Hygiene Module:
-- Resolve all fixed conversations/threads.
-- Re-request review from same reviewer when configured.
-- Re-request review after fixes are pushed, according to the repository's own
-  policy. Do not assume a particular reviewer, human or automated.
-- Review the diff at head yourself before reporting the PR ready, including the
-  commits just pushed.
-- Do not ask a reviewer to write the fix, and do not post prompt-like comments
-  that can trigger code-writing behaviour.
-- Prefer the host's reviewer APIs or UI over chat or comment triggers.
-- If a re-request fails, report which PR needs it and give the PR URL.
-
-Output Contract:
-- Addressed thread list
-- Files changed summary
-- Tests/build/lint results
-- Commit hash
-- Updated PR URL
-- Review report: who reviewed, the head commit, what was checked, what was found
-
-Extension Points:
-- Pre-Remediation Hook: map comments to owners/components
-- Pre-Commit Hook: enforce style/security/release policies
-- Post-Push Hook: auto-resolve eligible threads
-- Post-Hygiene Hook: auto-comment with fix summary
-
-Customization Notes:
-- Teams can change module order if dependencies are preserved.
-- Config defaults can be overridden by repo profile.
-- Keep a shared default and add derived templates per workflow maturity.
-
-Profile Example:
-- Profile Name: strict-main-flow
-- DEFAULT_BASE_BRANCH=main
-- DEFAULT_UPDATE_DOCS_IF_NEEDED=true
-- DEFAULT_RUN_TESTS=true
-- DEFAULT_RESOLVE_THREADS=true
-- DEFAULT_REREQUEST_REVIEW=true
-- Extra Hook: Post-Push Hook posts a checklist summary comment on the PR.
+Output: threads addressed, files changed, test results, commit, pull request URL.
 `
 
-const builtinAddIssueTemplate = `Add TODO Item Template Instructions
+const builtinAddIssueTemplate = `Add TODO Item
 
-Metadata:
-- Template Version: 2.1
-- Template Type: TODO Entry Authoring Workflow
-- Mode: Modular and Extendable
-- Compatible Format: append-only TODO files using [TODO] ... [/TODO] markers
+Inputs: repository path, TODO file (default: TODO.txt), and for each item a
+title, description, implementation details and acceptance criteria.
 
-Purpose:
-- Generate one or more TODO entries using a deterministic, append-only process.
-- Produce output compatible with TODO files that use [TODO] ... [/TODO] markers.
+TODO.txt: items sit between [TODO] and [/TODO] markers, fields in this order:
 
-Input Contract:
-- Target repository path
-- Target TODO file path (default: <repo>/TODO.txt)
-- Number of items to create
-- For each item:
-  - Title
-  - Description
-  - Intent
-  - Implementation Details (required)
-  - Acceptance Criteria list (required)
-
-Config Defaults (Override Per Team/Repo):
-- DEFAULT_TODO_FILENAME=TODO.txt
-- DEFAULT_ID_WIDTH=3
-- DEFAULT_APPEND_BEFORE_CLOSING_MARKER=true
-- DEFAULT_REQUIRE_IMPLEMENTATION_DETAILS=true
-- DEFAULT_REQUIRE_ACCEPTANCE_CRITERIA=true
-
-Core Workflow (Default Module Set):
-1. Discovery Module:
-- Read target TODO file.
-- Validate markers [TODO] and [/TODO].
-- Detect highest existing ID.
-
-2. Allocation Module:
-- Allocate sequential IDs for all new items.
-- Preserve existing IDs without renumbering.
-
-3. Composition Module:
-- Build each entry in canonical field order:
-  1. ID
-  2. Title
-  3. Description
-  4. Intent
-  5. Implementation Details
-  6. Acceptance Criteria
-
-4. Validation Module:
-- Reject missing required fields.
-- Enforce single blank line between items.
-- Enforce - bullets for Implementation Details and Acceptance Criteria.
-- Reject malformed insertion if markers are missing.
-
-5. Write Module:
-- Insert new items before [/TODO].
-- Keep all existing content unchanged outside insertion block.
-
-Output Contract:
-- Updated TODO file path
-- IDs assigned
-- Inserted item count
-- Validation results
-- Append-only TODO entries in canonical field order
-
-Fill-In Entry Template (Canonical):
-
-ID: <NEXT_ID_3_DIGITS>
-Title: <TITLE>
-Description: <DESCRIPTION>
-Intent: <INTENT>
+ID: <next 3-digit id>
+Title: <title>
+Description: <description>
 Implementation Details:
-- <DETAIL_1>
-- <DETAIL_2>
+- <detail>
 Acceptance Criteria:
-- <CRITERION_1>
-- <CRITERION_2>
+- <criterion>
 
-Reusable Implementation Template Bodies:
-- implement_issue.txt embedded checklist:
-` + "\n\n" + builtinImplementIssueTemplate + "\n\n" + `- implement_pr.txt embedded checklist:
-` + "\n\n" + builtinImplementPRTemplate + "\n\n" + `Usage Notes For Reusable Modules:
-- When the TODO item is issue-implementation focused, embed the full implement_issue.txt checklist body into the item's Implementation Details section.
-- When the TODO item is PR-remediation focused, embed the full implement_pr.txt checklist body into the item's Implementation Details section.
-- For multi-item runs, apply deterministic sequential IDs and keep each item self-contained.
+TODO.md: one "## <title>" section per item. The first non-blank line under
+the heading is "ID: <id>", then the description as a paragraph, then "Implementation
+Details:" and "Acceptance Criteria:", each followed by a "- " list.
 
-Extension Points:
-- Pre-Validation Hook: apply custom schema checks per repository.
-- Pre-Write Hook: enforce label/tag conventions in titles.
-- Post-Write Hook: auto-open related issue/PR links.
+Steps:
+1. Read the file and find the highest ID. Never renumber existing items.
+2. Give each new item the next ID.
+3. Refuse an item without implementation details or acceptance criteria.
+4. Add new items at the end (before [/TODO] in TODO.txt). Change nothing else.
 
-Customization Notes:
-- Keep this file as base profile and create team-specific variants.
-- Override only config defaults and hook logic when possible.
-- Preserve canonical output field order for compatibility.
-
-Profile Example:
-- Profile Name: multi-repo-standard
-- DEFAULT_TODO_FILENAME=TODO.txt
-- DEFAULT_ID_WIDTH=3
-- DEFAULT_APPEND_BEFORE_CLOSING_MARKER=true
-- DEFAULT_REQUIRE_IMPLEMENTATION_DETAILS=true
-- DEFAULT_REQUIRE_ACCEPTANCE_CRITERIA=true
-- Repo Policy Note: apply same template for repositories using either main or master base branch naming.
+Output: file path, IDs assigned, items added.
 `
 
 var defaultSpecs = []TemplateAsset{
 	{
 		Key:      "implement_issue",
 		Filename: "implement_issue.txt",
-		Version:  "builtin-2.2",
+		Version:  "builtin-3.0",
 		Content:  builtinImplementIssueTemplate,
 	},
 	{
 		Key:      "implement_pr",
 		Filename: "implement_pr.txt",
-		Version:  "builtin-2.2",
+		Version:  "builtin-3.0",
 		Content:  builtinImplementPRTemplate,
 	},
 	{
 		Key:      "add_issue",
 		Filename: "add_issue.txt",
-		Version:  "builtin-2.1",
+		Version:  "builtin-3.0",
 		Content:  builtinAddIssueTemplate,
 	},
 }
@@ -390,22 +295,21 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 	resolved := make([]ResolvedTemplate, 0, len(defaultSpecs))
 	for _, spec := range defaultSpecs {
 		if repoDir != "" {
-			repoPath := filepath.Join(repoDir, spec.Filename)
-			if content, ok, warn := readTemplateFile(repoPath); ok {
+			content, name, ok, warns := readTxtOrMD(repoDir, spec.Filename, true)
+			warnings = append(warnings, warns...)
+			if ok {
 				resolved = append(resolved, ResolvedTemplate{
 					TemplateAsset: TemplateAsset{
 						Key:       spec.Key,
-						Filename:  spec.Filename,
+						Filename:  name,
 						Version:   RepoLocalVersion,
 						UpdatedAt: time.Time{},
 						Content:   content,
 					},
 					Source: "repo-local",
-					Path:   repoPath,
+					Path:   filepath.Join(repoDir, name),
 				})
 				continue
-			} else if warn != "" {
-				warnings = append(warnings, warn)
 			}
 		}
 
@@ -419,8 +323,8 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 				strings.HasPrefix(stored, "builtin-") && stored != spec.Version {
 				warnings = append(warnings, fmt.Sprintf(
 					"template %q in config storage is %s; the built-in is %s. "+
-						"Run `agentvault templates refresh --force` to replace it, "+
-						"or edit it in place to keep your own version.",
+						"Your copy stays in effect. `agentvault templates refresh --force` "+
+						"replaces it, and every other stored built-in, with the new text.",
 					asset.Filename, stored, spec.Version))
 			}
 			resolved = append(resolved, ResolvedTemplate{
@@ -437,6 +341,30 @@ func LoadResolved(configDir string, repoDir string) ([]ResolvedTemplate, []strin
 		resolved = append(resolved, ResolvedTemplate{
 			TemplateAsset: spec,
 			Source:        "built-in",
+		})
+	}
+
+	for _, asset := range assets {
+		if _, builtin := findDefaultByKey(asset.Key); builtin {
+			continue
+		}
+		if repoDir != "" {
+			txtName := asset.Filename
+			if strings.HasSuffix(txtName, ".md") {
+				txtName = otherExtension(txtName)
+			}
+			content, name, ok, warns := readTxtOrMD(repoDir, txtName, true)
+			warnings = append(warnings, warns...)
+			if ok {
+				asset.Filename, asset.Version, asset.UpdatedAt, asset.Content = name, RepoLocalVersion, time.Time{}, content
+				resolved = append(resolved, ResolvedTemplate{TemplateAsset: asset, Source: "repo-local", Path: filepath.Join(repoDir, name)})
+				continue
+			}
+		}
+		resolved = append(resolved, ResolvedTemplate{
+			TemplateAsset: asset,
+			Source:        "config",
+			Path:          filepath.Join(configTemplatesDir(configDir), asset.Filename),
 		})
 	}
 
@@ -469,6 +397,11 @@ func ExportBundle(configDir string) (Bundle, []string, error) {
 				warnings = append(warnings, fmt.Sprintf("template %q missing from config storage; exporting built-in default", spec.Filename))
 			}
 			merged = append(merged, spec)
+		}
+		for _, asset := range byKey {
+			if _, builtin := findDefaultByKey(asset.Key); !builtin {
+				merged = append(merged, asset)
+			}
 		}
 		assets = merged
 	}
@@ -526,8 +459,12 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		}
 		defaultSpec, supported := findDefaultByKey(asset.Key)
 		if !supported {
-			warnings = append(warnings, fmt.Sprintf("skipped unsupported template key %q", asset.Key))
-			continue
+			key, ok := customKey(asset.Filename)
+			if !ok || key != asset.Key {
+				warnings = append(warnings, fmt.Sprintf("skipped template %q: a custom template is <name>.txt or <name>.md, lowercase letters, digits, - and _", asset.Key))
+				continue
+			}
+			defaultSpec = TemplateAsset{Key: key, Filename: asset.Filename}
 		}
 		if _, exists := seenKeys[asset.Key]; exists {
 			return 0, nil, fmt.Errorf("duplicate template key %q in bundle", asset.Key)
@@ -541,6 +478,16 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		if err != nil {
 			return 0, nil, fmt.Errorf("invalid filename for template key %q: %w", asset.Key, err)
 		}
+		if !customFilenamePattern.MatchString(filename) || reservedStem(filename) {
+			if !supported {
+				warnings = append(warnings, fmt.Sprintf("skipped template %q: %q is not <name>.txt or <name>.md", asset.Key, filename))
+				continue
+			}
+			// Older releases stored a built-in under any safe name; keep the
+			// content under the canonical one rather than fail the import.
+			warnings = append(warnings, fmt.Sprintf("template %q: stored %q as %q", asset.Key, filename, defaultSpec.Filename))
+			filename = defaultSpec.Filename
+		}
 		if existingKey, exists := seenFilenames[filename]; exists {
 			return 0, nil, fmt.Errorf("duplicate template filename %q for keys %q and %q", filename, existingKey, asset.Key)
 		}
@@ -549,8 +496,31 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 			warnings = append(warnings, fmt.Sprintf("skipped empty template %q", filename))
 			continue
 		}
+		if len(asset.Content) > MaxTemplateBytes {
+			warnings = append(warnings, fmt.Sprintf("skipped template %q: %d bytes, over the %d byte ceiling", filename, len(asset.Content), MaxTemplateBytes))
+			continue
+		}
+		// A renamed built-in must not overwrite a file that is another template's.
+		if normalizeTemplateName(filename) != asset.Key && meta.Filenames[asset.Key] != filename {
+			if _, err := os.Lstat(filepath.Join(configTemplatesDir(configDir), filename)); err == nil {
+				warnings = append(warnings, fmt.Sprintf("skipped template %q: %q already holds another template", asset.Key, filename))
+				continue
+			}
+		}
 		if err := os.WriteFile(filepath.Join(configTemplatesDir(configDir), filename), []byte(asset.Content), 0600); err != nil {
 			return 0, nil, fmt.Errorf("writing template %s: %w", filename, err)
+		}
+		// The imported file replaces this key's template. Another stored copy of
+		// it (the other extension, or my-x for my_x) would otherwise shadow it or
+		// warn forever. Only copies of this template: a renamed file can share a
+		// stem with another template, which must survive the import.
+		for _, stale := range staleCopies(configDir, meta, asset.Key, filename, supported) {
+			if _, claimed := seenFilenames[stale]; claimed {
+				continue
+			}
+			if err := os.Remove(filepath.Join(configTemplatesDir(configDir), stale)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return 0, nil, fmt.Errorf("removing replaced template %s: %w", stale, err)
+			}
 		}
 		meta.Versions[asset.Key] = firstNonEmpty(asset.Version, "imported")
 		meta.Updated[asset.Key] = nonZeroTime(asset.UpdatedAt, time.Now().UTC())
@@ -565,6 +535,34 @@ func ImportBundle(configDir string, bundle Bundle) (int, []string, error) {
 		return 0, nil, err
 	}
 	return importedCount, dedupeWarnings(warnings), nil
+}
+
+// staleCopies lists the files in config storage that the loader reads as key's
+// template, other than filename. For a built-in that is only <key> under the
+// other extension; for a custom template, any name with the same key. A file a
+// built-in's metadata points at is that built-in's and never listed.
+func staleCopies(configDir string, meta metadataFile, key, filename string, builtin bool) []string {
+	owned := map[string]bool{}
+	for _, spec := range defaultSpecs {
+		if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" && spec.Key != key {
+			owned[mfn] = true
+		}
+	}
+	var stale []string
+	if builtin {
+		if sibling := otherExtension(filename); sibling != "" && normalizeTemplateName(sibling) == key && !owned[sibling] {
+			stale = append(stale, sibling)
+		}
+		return stale
+	}
+	entries, _ := os.ReadDir(configTemplatesDir(configDir))
+	for _, entry := range entries {
+		name := entry.Name()
+		if k, ok := customKey(name); ok && k == key && name != filename && !owned[name] {
+			stale = append(stale, name)
+		}
+	}
+	return stale
 }
 
 // RefreshConfigTemplates ensures config storage contains default templates and metadata.
@@ -603,16 +601,45 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 	written := make([]TemplateAsset, 0, len(defaultSpecs))
 	for _, spec := range defaultSpecs {
 		filename := spec.Filename
-		if meta.Filenames != nil {
-			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
-				safeFilename, err := sanitizeTemplateFilename(mfn)
-				if err == nil {
-					filename = safeFilename
-				}
+		if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
+			if safeFilename, err := sanitizeTemplateFilename(mfn); err == nil {
+				filename = safeFilename
 			}
 		}
 		path := filepath.Join(templatesDir, filename)
+		if force && filename == spec.Filename {
+			// Overwrite the copy in effect: a .txt written beside a lone .md
+			// would shadow it and warn on every run.
+			mdName := otherExtension(spec.Filename)
+			if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+				if _, err := os.Stat(filepath.Join(templatesDir, mdName)); err == nil {
+					filename, path = mdName, filepath.Join(templatesDir, mdName)
+				}
+			}
+		}
 		if !force {
+			// A Markdown copy of a built-in is the user's version: keep it, and do
+			// not write a .txt beside it, which would win over it.
+			if filename == spec.Filename {
+				mdName := otherExtension(spec.Filename)
+				if content, ok, _ := readTemplateFile(filepath.Join(templatesDir, mdName)); ok && strings.TrimSpace(content) != "" {
+					if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+						if _, ok := meta.Versions[spec.Key]; !ok {
+							meta.Versions[spec.Key] = CustomVersion
+							dirty = true
+						}
+						if meta.Filenames[spec.Key] != mdName {
+							meta.Filenames[spec.Key] = mdName
+							dirty = true
+						}
+						if _, ok := meta.Updated[spec.Key]; !ok {
+							meta.Updated[spec.Key] = now
+							dirty = true
+						}
+						continue
+					}
+				}
+			}
 			if content, ok, _ := readTemplateFile(path); ok && strings.TrimSpace(content) != "" {
 				if _, ok := meta.Versions[spec.Key]; !ok {
 					meta.Versions[spec.Key] = spec.Version
@@ -629,14 +656,14 @@ func RefreshConfigTemplates(configDir string, force bool) ([]TemplateAsset, erro
 				continue
 			}
 			if filename != spec.Filename {
-				canonicalPath := filepath.Join(templatesDir, spec.Filename)
-				if content, ok, _ := readTemplateFile(canonicalPath); ok && strings.TrimSpace(content) != "" {
+				// The loader falls back to <key>.txt or <key>.md: keep that copy.
+				if _, canonical, ok, _ := readTxtOrMD(templatesDir, spec.Filename, false); ok {
 					if _, ok := meta.Versions[spec.Key]; !ok {
 						meta.Versions[spec.Key] = spec.Version
 						dirty = true
 					}
-					if meta.Filenames[spec.Key] != spec.Filename {
-						meta.Filenames[spec.Key] = spec.Filename
+					if meta.Filenames[spec.Key] != canonical {
+						meta.Filenames[spec.Key] = canonical
 						dirty = true
 					}
 					if _, ok := meta.Updated[spec.Key]; !ok {
@@ -689,7 +716,7 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 				safeFilename, err := sanitizeTemplateFilename(mfn)
 				if err != nil {
 					warnings = append(warnings, fmt.Sprintf("ignoring unsafe metadata filename for %q: %v", spec.Key, err))
-				} else {
+				} else if safeFilename != otherExtension(spec.Filename) {
 					filename = safeFilename
 					usedMetadataFilename = safeFilename != spec.Filename
 				}
@@ -698,21 +725,27 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 		selectedFilename := filename
 		path := filepath.Join(configTemplatesDir(configDir), selectedFilename)
 		content, ok, warn := readTemplateFile(path)
+		if !usedMetadataFilename {
+			// The canonical name, so <key>.md stands in for a missing <key>.txt.
+			var name string
+			var warns []string
+			content, name, ok, warns = readTxtOrMD(configTemplatesDir(configDir), filename, false)
+			selectedFilename, path, warn = name, filepath.Join(configTemplatesDir(configDir), name), ""
+			warnings = append(warnings, warns...)
+		}
 		if !ok {
 			fallbackTarget := "built-in default template"
 			if warn != "" {
 				warnings = append(warnings, warn)
 			}
 			if usedMetadataFilename {
-				canonicalPath := filepath.Join(configTemplatesDir(configDir), spec.Filename)
-				canonicalContent, canonicalOK, canonicalWarn := readTemplateFile(canonicalPath)
+				canonicalContent, canonicalName, canonicalOK, canonicalWarns := readTxtOrMD(configTemplatesDir(configDir), spec.Filename, false)
+				warnings = append(warnings, canonicalWarns...)
 				if canonicalOK {
 					content = canonicalContent
 					ok = true
-					selectedFilename = spec.Filename
-					fallbackTarget = fmt.Sprintf("canonical config template %q", spec.Filename)
-				} else if canonicalWarn != "" {
-					warnings = append(warnings, canonicalWarn)
+					selectedFilename = canonicalName
+					fallbackTarget = fmt.Sprintf("canonical config template %q", canonicalName)
 				}
 				if warn == "" {
 					warnings = append(warnings, fmt.Sprintf("template %q referenced by metadata for %q is missing; falling back to %s", path, spec.Key, fallbackTarget))
@@ -745,16 +778,128 @@ func loadConfigAssets(configDir string) ([]TemplateAsset, []string, error) {
 		assets = append(assets, asset)
 	}
 
+	// A file a built-in's metadata points at belongs to that built-in, whether or
+	// not it was read above.
+	for _, spec := range defaultSpecs {
+		seenFilenames[spec.Filename] = spec.Key
+		seenFilenames[otherExtension(spec.Filename)] = spec.Key
+		if meta.Filenames != nil {
+			if mfn := strings.TrimSpace(meta.Filenames[spec.Key]); mfn != "" {
+				seenFilenames[mfn] = spec.Key
+			}
+		}
+	}
+	entries, err := os.ReadDir(configTemplatesDir(configDir))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		warnings = append(warnings, fmt.Sprintf("cannot list custom templates (%v)", err))
+	}
+	customAt := map[string]int{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == metadataFileName {
+			continue
+		}
+		// Follow a symlink, as the built-in names do: a dotfiles checkout often
+		// links its templates in.
+		if info, err := os.Stat(filepath.Join(configTemplatesDir(configDir), name)); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if _, taken := seenFilenames[name]; taken {
+			continue
+		}
+		key, ok := customKey(name)
+		if !ok {
+			continue
+		}
+		content, ok, warn := readTemplateFile(filepath.Join(configTemplatesDir(configDir), name))
+		if warn != "" {
+			warnings = append(warnings, warn)
+		}
+		if !ok {
+			continue
+		}
+		asset := TemplateAsset{Key: key, Filename: name, Version: CustomVersion, Content: content}
+		if v := strings.TrimSpace(meta.Versions[key]); v != "" {
+			asset.Version = v
+		}
+		asset.UpdatedAt = meta.Updated[key]
+		if i, dup := customAt[key]; dup {
+			// Two names, one key (x.txt and x.md, or my-x and my_x): a .txt
+			// beats a .md, otherwise the first name in sorted order is kept.
+			kept, other := assets[i].Filename, name
+			if strings.HasSuffix(name, ".txt") && strings.HasSuffix(kept, ".md") {
+				kept, other = name, kept
+				assets[i] = asset
+			}
+			warnings = append(warnings, fmt.Sprintf("both %q and %q exist in %s; using %q", kept, other, configTemplatesDir(configDir), kept))
+			continue
+		}
+		customAt[key] = len(assets)
+		assets = append(assets, asset)
+	}
+
 	return assets, dedupeWarnings(warnings), nil
 }
 
+// otherExtension returns <stem>.md for <stem>.txt and the reverse, else "".
+func otherExtension(filename string) string {
+	switch {
+	case strings.HasSuffix(filename, ".txt"):
+		return strings.TrimSuffix(filename, ".txt") + ".md"
+	case strings.HasSuffix(filename, ".md"):
+		return strings.TrimSuffix(filename, ".md") + ".txt"
+	}
+	return ""
+}
+
+// MaxTemplateBytes is the ceiling for one template file or imported template.
+const MaxTemplateBytes = 256 * 1024
+
+// readContainedTemplateFile reads path only when its real path stays inside root.
+func readContainedTemplateFile(root, path string) (string, bool, string) {
+	if _, err := os.Lstat(path); err != nil {
+		return readTemplateFile(path)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false, fmt.Sprintf("cannot resolve %q; skipping (%v)", root, err)
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	if rel, err := filepath.Rel(realRoot, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false, fmt.Sprintf("template %q resolves outside %s; skipping", path, root)
+	}
+	return readTemplateFile(path)
+}
+
 func readTemplateFile(path string) (string, bool, string) {
-	data, err := os.ReadFile(path)
+	// Stat before opening: a FIFO would block the open, a device never ends.
+	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", false, ""
 		}
 		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", false, fmt.Sprintf("template %q is not a regular file; skipping", path)
+	}
+	if info.Size() > MaxTemplateBytes {
+		return "", false, fmt.Sprintf("template %q is %d bytes, over the %d byte ceiling; skipping", path, info.Size(), MaxTemplateBytes)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, MaxTemplateBytes+1))
+	if err != nil {
+		return "", false, fmt.Sprintf("cannot read template %q; skipping (%v)", path, err)
+	}
+	if len(data) > MaxTemplateBytes {
+		return "", false, fmt.Sprintf("template %q is over the %d byte ceiling; skipping", path, MaxTemplateBytes)
 	}
 	content := strings.TrimSpace(string(data))
 	if content == "" {
@@ -819,7 +964,7 @@ func findDefaultByKey(key string) (TemplateAsset, bool) {
 
 func normalizeTemplateName(name string) string {
 	n := strings.TrimSpace(strings.ToLower(name))
-	n = strings.TrimSuffix(n, ".txt")
+	n = strings.TrimSuffix(strings.TrimSuffix(n, ".txt"), ".md")
 	n = strings.ReplaceAll(n, "-", "_")
 	return n
 }
@@ -891,7 +1036,11 @@ func hasSpecificTemplateWarning(warnings []string, key, filename string) bool {
 		"missing",
 	}
 	for _, warningText := range warnings {
-		if !(strings.Contains(warningText, quotedFilename) || strings.Contains(warningText, filename) || strings.Contains(warningText, key)) {
+		// Whole names only: a warning about implement_pr_v2.txt is not about
+		// implement_pr. Paths are quoted, so the file name ends at a quote.
+		if !strings.Contains(warningText, quotedFilename) && !strings.Contains(warningText, fmt.Sprintf("%q", key)) &&
+			!strings.Contains(warningText, string(filepath.Separator)+filename+`"`) &&
+			!strings.Contains(warningText, "/"+filename+`"`) {
 			continue
 		}
 		lowered := strings.ToLower(warningText)

@@ -9,9 +9,9 @@ import (
 	"strings"
 )
 
-// An instruction file is not self-contained. The workspace AGENTS.md that
-// prompted this names three workflow templates as required reading; storing it
-// without them exports a rule pointing at nothing.
+// An instruction file is not self-contained: it can name checklists, templates
+// or scripts as required reading, and storing it without them exports a rule
+// pointing at nothing.
 //
 // Finding those names is the easy half. The hard half is what NOT to take, and
 // it is decided here rather than discovered in production: nothing absolute,
@@ -39,8 +39,8 @@ var referenceSkipDirs = map[string]bool{
 }
 
 // Backticked spans and markdown link targets. Prose naming a file without
-// either is not treated as a reference: "see the implement_pr template" is a
-// sentence, `implement_pr.txt` is a reference.
+// either is not treated as a reference: "see the review checklist" is a
+// sentence, `docs/checklist.md` is a reference.
 var (
 	backtickSpan  = regexp.MustCompile("`([^`\n]+)`")
 	markdownLink  = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
