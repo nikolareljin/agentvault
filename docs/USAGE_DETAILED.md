@@ -599,16 +599,17 @@ Flags:
 ## 3.12 Workflow templates
 
 Workflow template precedence:
-1. repository-local override (`./implement_issue.txt`, `./implement_pr.txt`, `./add_issue.txt`)
+1. repository-local file (`./<name>.txt` or `./<name>.md`)
 2. AgentVault config storage (default: `~/.config/agentvault/templates/`; honors `XDG_CONFIG_HOME` and `--config`)
 3. built-in defaults (safe fallback with warning)
+
+Editing, replacing and adding templates: [templates.md](templates.md).
 
 ### `agentvault templates list`
 List effective templates and their source.
 
 ### `agentvault templates show <name>`
 Show effective template content by key or filename.
-Use `agentvault templates show add_issue` to inspect the git-lantern-compatible TODO authoring template, including the embedded `implement_issue` and `implement_pr` reusable checklist modules.
 
 ### `agentvault templates refresh`
 Initialize or refresh config-stored templates from built-in defaults.

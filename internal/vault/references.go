@@ -19,9 +19,9 @@ type ClosureResult struct {
 // PullReferenceClosure stores every file the vault's instructions name, and
 // every file those name in turn, reading them from dir.
 //
-// An instruction file is not self-contained: a workspace AGENTS.md naming three
-// workflow templates as required reading exports, without this, a rule that
-// points at nothing on the next machine.
+// An instruction file is not self-contained: one that names other files as
+// required reading exports, without this, a rule that points at nothing on the
+// next machine.
 //
 // The visited set is what terminates a cycle. Two documents naming each other
 // is an ordinary thing for documentation to do, and the walk must not care.

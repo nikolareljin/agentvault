@@ -33,15 +33,18 @@ func TestPullFollowsReferencesAndPushRestoresThem(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
 	writeFile(t, filepath.Join(src, "AGENTS.md"),
-		"# Rules\n\nUse `implement_pr.txt` and `implement_issue.txt`.\n"+
-			"The helper is `scripts/hygiene.sh`.\n"+
+		"# Rules\n\nUse `docs/review.md` and `docs/release.md`.\n"+
+			"The helper is `scripts/check.sh`.\n"+
 			"Do not take `/etc/passwd`, and `absent.txt` is not here.\n")
-	writeFile(t, filepath.Join(src, "implement_pr.txt"), "pr template\n")
-	writeFile(t, filepath.Join(src, "implement_issue.txt"), "issue template\n")
+	if err := os.MkdirAll(filepath.Join(src, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(src, "docs", "review.md"), "review checklist\n")
+	writeFile(t, filepath.Join(src, "docs", "release.md"), "release checklist\n")
 	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(src, "scripts", "hygiene.sh"), "#!/usr/bin/env bash\n")
+	writeFile(t, filepath.Join(src, "scripts", "check.sh"), "#!/usr/bin/env bash\n")
 
 	if err := instPullCmd.RunE(instPullCmd, []string{src}); err != nil {
 		t.Fatalf("pull: %v", err)
@@ -55,7 +58,7 @@ func TestPullFollowsReferencesAndPushRestoresThem(t *testing.T) {
 	for _, inst := range reopened.ListInstructions() {
 		stored[filepath.ToSlash(inst.Filename)] = true
 	}
-	for _, want := range []string{"AGENTS.md", "implement_pr.txt", "implement_issue.txt", "scripts/hygiene.sh"} {
+	for _, want := range []string{"AGENTS.md", "docs/review.md", "docs/release.md", "scripts/check.sh"} {
 		if !stored[want] {
 			t.Errorf("%s was not stored; vault holds %v", want, keysOf(stored))
 		}
@@ -67,8 +70,8 @@ func TestPullFollowsReferencesAndPushRestoresThem(t *testing.T) {
 	if err := instPushCmd.RunE(instPushCmd, []string{dst}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-	for _, rel := range []string{"AGENTS.md", "implement_pr.txt", "implement_issue.txt",
-		filepath.Join("scripts", "hygiene.sh")} {
+	for _, rel := range []string{"AGENTS.md", "docs/review.md", "docs/release.md",
+		filepath.Join("scripts", "check.sh")} {
 		got, err := os.ReadFile(filepath.Join(dst, rel))
 		if err != nil {
 			t.Errorf("%s was not pushed: %v", rel, err)
