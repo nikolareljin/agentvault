@@ -169,13 +169,25 @@ func ResolveReferences(dir, baseRel, content string) []Reference {
 // instruction directory. filepath.IsAbs misses "/etc/passwd", `\x` and "C:x"
 // on Windows, where they are rooted or drive-relative rather than absolute.
 func isRootedPath(p string) bool {
-	if filepath.IsAbs(p) {
-		return true
-	}
-	if runtime.GOOS != "windows" {
+	return filepath.IsAbs(p) || isWindowsRooted(runtime.GOOS, p)
+}
+
+// isWindowsRooted applies the Windows rules on goos "windows" only, by hand
+// rather than with filepath.VolumeName, so the rules are tested on any OS.
+// Covers "/x", `\x`, UNC and `\\?\` prefixes (both start with a slash),
+// and drive-qualified "C:", "C:x", "c:/x".
+func isWindowsRooted(goos, p string) bool {
+	if goos != "windows" {
 		return false
 	}
-	return strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || filepath.VolumeName(p) != ""
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		return true
+	}
+	if len(p) >= 2 && p[1] == ':' {
+		c := p[0] | 0x20
+		return c >= 'a' && c <= 'z'
+	}
+	return false
 }
 
 func classifyReference(root, baseRel, raw string) Reference {

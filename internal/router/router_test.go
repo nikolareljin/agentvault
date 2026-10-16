@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -376,23 +377,14 @@ class StateGraph:
 }
 
 func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake interpreters are #!/bin/sh scripts, which Windows cannot execute")
-	}
-	tempDir := t.TempDir()
-	python3Path := filepath.Join(tempDir, "bin", "python3")
-	if err := os.MkdirAll(filepath.Dir(python3Path), 0o755); err != nil {
-		t.Fatalf("MkdirAll(filepath.Dir(python3Path)) error = %v", err)
-	}
-	if err := os.WriteFile(python3Path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatalf("WriteFile(python3Path) error = %v", err)
-	}
+	tempDir := canonicalTempDir(t)
+	python3Path := writeFakeInterpreter(t, filepath.Join(tempDir, "bin"), "python3", 0)
 
 	original := execLookPath
 	execLookPath = func(file string) (string, error) {
 		switch file {
 		case "python3":
-			return filepath.Join("bin", "python3"), nil
+			return filepath.Join("bin", filepath.Base(python3Path)), nil
 		default:
 			return "", errors.New("missing")
 		}
@@ -471,19 +463,9 @@ func TestResolvePythonInterpreterErrorsWithoutSupportedExecutable(t *testing.T) 
 }
 
 func TestResolvePythonInterpreterSkipsPython2Fallback(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake interpreters are #!/bin/sh scripts, which Windows cannot execute")
-	}
-	tempDir := t.TempDir()
-	python2Path := filepath.Join(tempDir, "python")
-	python3Path := filepath.Join(tempDir, "python3")
-
-	if err := os.WriteFile(python2Path, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
-		t.Fatalf("WriteFile(python2Path) error = %v", err)
-	}
-	if err := os.WriteFile(python3Path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatalf("WriteFile(python3Path) error = %v", err)
-	}
+	tempDir := canonicalTempDir(t)
+	python2Path := writeFakeInterpreter(t, tempDir, "python", 1)
+	python3Path := writeFakeInterpreter(t, tempDir, "python3", 0)
 
 	original := execLookPath
 	execLookPath = func(file string) (string, error) {
@@ -827,4 +809,34 @@ func TestRouteLLMRouterModeReturnsDecision(t *testing.T) {
 	if !strings.Contains(reasonsStr, "llm-router") {
 		t.Errorf("expected llm-router reason, got: %v", decision.Selected.Reasons)
 	}
+}
+
+// canonicalTempDir returns t.TempDir() in the long form that EvalSymlinks
+// yields; on Windows t.TempDir() can be an 8.3 short path.
+func canonicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(TempDir) error = %v", err)
+	}
+	return dir
+}
+
+// writeFakeInterpreter writes an executable named name under dir that exits
+// with code, and returns its path: a .bat file on Windows, a sh script elsewhere.
+func writeFakeInterpreter(t *testing.T, dir, name string, code int) string {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%s) error = %v", dir, err)
+	}
+	path := filepath.Join(dir, name)
+	body := fmt.Sprintf("#!/bin/sh\nexit %d\n", code)
+	if runtime.GOOS == "windows" {
+		path += ".bat"
+		body = fmt.Sprintf("@exit /b %d\r\n", code)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", path, err)
+	}
+	return path
 }

@@ -132,3 +132,35 @@ func mustWrite(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestIsWindowsRooted(t *testing.T) {
+	cases := []struct {
+		p    string
+		want bool
+	}{
+		{"/etc/passwd", true},
+		{`\x`, true},
+		{`\\server\share\x`, true},
+		{`//server/share/x`, true},
+		{`\\?\C:\x`, true},
+		{"C:", true},
+		{"C:x", true},
+		{"c:/x", true},
+		{`C:\x`, true},
+		{"x:y", true},
+		{"ok.txt", false},
+		{"sub/ok.txt", false},
+		{"file.txt:stream", false},
+		{"1:x", false},
+		{":x", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isWindowsRooted("windows", c.p); got != c.want {
+			t.Errorf("isWindowsRooted(windows, %q) = %v, want %v", c.p, got, c.want)
+		}
+		if isWindowsRooted("linux", c.p) {
+			t.Errorf("isWindowsRooted(linux, %q) = true, want false", c.p)
+		}
+	}
+}
