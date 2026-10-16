@@ -171,15 +171,14 @@ func TestIsWindowsRooted(t *testing.T) {
 }
 
 func TestRootedReasonNamesWindowsCase(t *testing.T) {
-	for _, p := range []string{"a:b", "C:x", `\\x`} {
+	// None of these is filepath.IsAbs on any host, so the result depends on
+	// goos only.
+	for _, p := range []string{"a:b", "C:x", `\x`} {
 		if got, want := rootedReason("windows", p), "rooted or drive-qualified path on Windows"; got != want {
 			t.Errorf("rootedReason(windows, %q) = %q, want %q", p, got, want)
 		}
 		if got := rootedReason("linux", p); got != "" {
 			t.Errorf("rootedReason(linux, %q) = %q, want empty", p, got)
 		}
-	}
-	if got := rootedReason("linux", "/etc/passwd"); got != "absolute path" {
-		t.Errorf("rootedReason(linux, /etc/passwd) = %q, want absolute path", got)
 	}
 }
