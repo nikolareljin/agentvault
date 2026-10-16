@@ -26,3 +26,11 @@ jobs:
         -X github.com/nikolareljin/agentvault/cmd.Commit=${{ github.sha }}
       release_tag: ${{ github.event.inputs.release_tag || github.ref_name }}
       generate_release_notes: true
+
+  # The macOS formula is built from this release's assets, so it runs after them.
+  homebrew:
+    needs: release
+    uses: ./.github/workflows/homebrew.yml
+    with:
+      release_tag: ${{ github.event.inputs.release_tag || github.ref_name }}
+    secrets: inherit
