@@ -420,12 +420,7 @@ func TestResolvePythonInterpreterReturnsSupportedExecutable(t *testing.T) {
 }
 
 func TestResolveLangGraphScriptPathReturnsCanonicalAbsolutePath(t *testing.T) {
-	// Canonical form: on Windows t.TempDir() can be an 8.3 short path
-	// (RUNNER~1) that EvalSymlinks expands.
-	tempDir, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatalf("EvalSymlinks(TempDir) error = %v", err)
-	}
+	tempDir := canonicalTempDir(t)
 	targetPath := filepath.Join(tempDir, "router.py")
 	if err := os.WriteFile(targetPath, []byte("print('ok')\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile(targetPath) error = %v", err)
