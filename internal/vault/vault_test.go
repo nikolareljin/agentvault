@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +36,8 @@ func TestInitCreatesFile(t *testing.T) {
 		t.Fatal("Init() did not create vault file")
 	}
 	info, _ := os.Stat(path)
-	if info.Mode().Perm() != 0600 {
+	// Windows has no Unix mode bits; os.Stat reports 0666 for any writable file.
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Errorf("vault file permissions = %o, want 0600", info.Mode().Perm())
 	}
 }

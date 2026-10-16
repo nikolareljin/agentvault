@@ -65,13 +65,18 @@ func TestResolveReferencesRefusesWhatCannotTravel(t *testing.T) {
 		byRaw[r.Raw] = r
 	}
 
+	// "/etc/passwd" is rooted but not absolute on Windows.
+	rootedWant := "absolute path"
+	if runtime.GOOS == "windows" {
+		rootedWant = "rooted or drive-qualified path on Windows"
+	}
 	cases := []struct {
 		raw    string
 		status ReferenceStatus
 		reason string
 	}{
 		{"ok.txt", ReferenceTaken, ""},
-		{"/etc/passwd", ReferenceRefused, "absolute path"},
+		{"/etc/passwd", ReferenceRefused, rootedWant},
 		{"../outside.txt", ReferenceRefused, "leaves the directory"},
 		{"big.txt", ReferenceRefused, "over the"},
 		{"node_modules/dep.md", ReferenceRefused, "under node_modules"},
@@ -130,5 +135,50 @@ func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIsWindowsRooted(t *testing.T) {
+	cases := []struct {
+		p    string
+		want bool
+	}{
+		{"/etc/passwd", true},
+		{`\x`, true},
+		{`\\server\share\x`, true},
+		{`//server/share/x`, true},
+		{`\\?\C:\x`, true},
+		{"C:", true},
+		{"C:x", true},
+		{"c:/x", true},
+		{`C:\x`, true},
+		{"x:y", true},
+		{"ok.txt", false},
+		{"sub/ok.txt", false},
+		{"file.txt:stream", false},
+		{"1:x", false},
+		{":x", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isWindowsRooted("windows", c.p); got != c.want {
+			t.Errorf("isWindowsRooted(windows, %q) = %v, want %v", c.p, got, c.want)
+		}
+		if isWindowsRooted("linux", c.p) {
+			t.Errorf("isWindowsRooted(linux, %q) = true, want false", c.p)
+		}
+	}
+}
+
+func TestRootedReasonNamesWindowsCase(t *testing.T) {
+	// None of these is filepath.IsAbs on any host, so the result depends on
+	// goos only.
+	for _, p := range []string{"a:b", "C:x", `\x`} {
+		if got, want := rootedReason("windows", p), "rooted or drive-qualified path on Windows"; got != want {
+			t.Errorf("rootedReason(windows, %q) = %q, want %q", p, got, want)
+		}
+		if got := rootedReason("linux", p); got != "" {
+			t.Errorf("rootedReason(linux, %q) = %q, want empty", p, got)
+		}
 	}
 }

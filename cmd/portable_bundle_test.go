@@ -46,7 +46,7 @@ func TestDedupeProfileNames(t *testing.T) {
 
 func TestDiscoverProfilesFindsSiblingConfigDirs(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	t.Setenv(ConfigDirsEnv, "")
 
@@ -79,7 +79,7 @@ func TestDiscoverProfilesFindsSiblingConfigDirs(t *testing.T) {
 
 func TestDiscoverProfilesHonorsExplicitConfigDir(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 
 	profiles := discoverProfiles("/custom/agentvault-team")
@@ -94,7 +94,7 @@ func TestDiscoverProfilesHonorsExplicitConfigDir(t *testing.T) {
 func TestDiscoverProfilesIncludesEnvConfigDirs(t *testing.T) {
 	root := t.TempDir()
 	extra := filepath.Join(t.TempDir(), "team-vault")
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 	if err := os.MkdirAll(extra, 0700); err != nil {
 		t.Fatalf("MkdirAll error = %v", err)
@@ -227,7 +227,7 @@ func TestEncryptBundlePayloadRejectsShortPassword(t *testing.T) {
 
 func TestDefaultExportPathNaming(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", root)
 
 	got := defaultExportPath(time.Date(2026, 9, 1, 12, 30, 0, 0, time.UTC))
@@ -260,7 +260,7 @@ func TestSanitizeFilenamePart(t *testing.T) {
 
 func TestDiscoverProfilesFindsHiddenHomeDirs(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("HOME", root)
+	setTestHomeDir(t, root)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, ".config"))
 	t.Setenv(ConfigDirsEnv, "")
 

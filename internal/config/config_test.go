@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -9,8 +10,9 @@ import (
 func TestDirRespectsXDG(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-test")
 	dir := Dir()
-	if dir != "/tmp/xdg-test/agentvault" {
-		t.Errorf("Dir() = %q, want %q", dir, "/tmp/xdg-test/agentvault")
+	want := filepath.Join("/tmp/xdg-test", "agentvault")
+	if dir != want {
+		t.Errorf("Dir() = %q, want %q", dir, want)
 	}
 }
 
@@ -26,7 +28,8 @@ func TestDirFallsBackToHome(t *testing.T) {
 func TestVaultPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg-test")
 	path := VaultPath()
-	if path != "/tmp/xdg-test/agentvault/vault.enc" {
-		t.Errorf("VaultPath() = %q, want %q", path, "/tmp/xdg-test/agentvault/vault.enc")
+	want := filepath.Join("/tmp/xdg-test", "agentvault", "vault.enc")
+	if path != want {
+		t.Errorf("VaultPath() = %q, want %q", path, want)
 	}
 }

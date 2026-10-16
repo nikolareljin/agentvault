@@ -148,7 +148,7 @@ func TestCollectSetupAssets_SkipsMissingOptionalProviderFilesFromManifest(t *tes
 func TestCollectSetupAssets_IncludeSecretsAndSkills(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustMkdirAll(t, filepath.Join(homeDir, ".codex", "skills", "reviewer"))
 	mustMkdirAll(t, filepath.Join(projectDir, "skills", "custom"))
@@ -708,13 +708,13 @@ func TestReplaceRegularFileDoesNotRemoveDestinationOnNonExistRenameError(t *test
 	})
 
 	renameCalls := 0
-	removeCalls := 0
+	var removed []string
 	renameFile = func(_ string, _ string) error {
 		renameCalls++
 		return os.ErrPermission
 	}
-	removeFile = func(_ string) error {
-		removeCalls++
+	removeFile = func(path string) error {
+		removed = append(removed, path)
 		return nil
 	}
 
@@ -722,11 +722,17 @@ func TestReplaceRegularFileDoesNotRemoveDestinationOnNonExistRenameError(t *test
 	if !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("replaceRegularFile() err = %v, want permission error", err)
 	}
-	if renameCalls != 1 {
-		t.Fatalf("renameFile calls = %d, want 1", renameCalls)
+	// Windows also tries to move the destination aside to dest.bak first, and
+	// clears a stale backup before that; the destination itself is never removed.
+	wantRenames, wantRemoved := 1, []string(nil)
+	if runtime.GOOS == "windows" {
+		wantRenames, wantRemoved = 2, []string{"/tmp/dest.bak"}
 	}
-	if removeCalls != 0 {
-		t.Fatalf("removeFile calls = %d, want 0", removeCalls)
+	if renameCalls != wantRenames {
+		t.Fatalf("renameFile calls = %d, want %d", renameCalls, wantRenames)
+	}
+	if fmt.Sprint(removed) != fmt.Sprint(wantRemoved) {
+		t.Fatalf("removeFile calls = %q, want %q", removed, wantRemoved)
 	}
 }
 
@@ -817,7 +823,7 @@ func TestCopyRegularFileRejectsSymlinkDestinationDirectory(t *testing.T) {
 func TestCollectSetupAssets_CarriesUserLevelInstructions(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "agents"))
 	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "commands", "nested"))
@@ -860,7 +866,7 @@ func TestApplyProviderAssets_RestoresUserLevelInstructions(t *testing.T) {
 	sourceHome := t.TempDir()
 	targetHome := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", sourceHome)
+	setTestHomeDir(t, sourceHome)
 
 	mustMkdirAll(t, filepath.Join(sourceHome, ".claude", "agents"))
 	mustMkdirAll(t, filepath.Join(sourceHome, ".claude", "commands", "nested"))
@@ -903,7 +909,7 @@ func TestApplyProviderAssets_RestoresUserLevelInstructions(t *testing.T) {
 func TestCollectSetupAssets_CarriesDirectoryScopeAndDeclinesLocalFiles(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustMkdirAll(t, filepath.Join(projectDir, ".claude", "agents"))
 	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.json"), `{"model":"opus"}`)
@@ -953,7 +959,7 @@ func TestCollectSetupAssets_CarriesDirectoryScopeAndDeclinesLocalFiles(t *testin
 func TestCollectSetupAssets_IncludeLocalCarriesOnlyTheNamedFile(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustMkdirAll(t, filepath.Join(projectDir, ".claude"))
 	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.local.json"), `{"wanted":true}`)
@@ -980,7 +986,7 @@ func TestCollectSetupAssets_IncludeLocalCarriesOnlyTheNamedFile(t *testing.T) {
 func TestCollectSetupAssets_DeclinesLocalFilesAtUserScopeToo(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustMkdirAll(t, filepath.Join(homeDir, ".claude", "agents"))
 	mustWriteFile(t, filepath.Join(homeDir, ".claude", "agents", "creds.local.md"), "token: shhh\n")
@@ -1042,7 +1048,7 @@ func TestApplyStagedProjectAssets_RestoresADotDirectory(t *testing.T) {
 func TestCollectSetupAssets_RecordsDeclinesInTheCollection(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustMkdirAll(t, filepath.Join(projectDir, ".claude"))
 	mustWriteFile(t, filepath.Join(projectDir, ".claude", "settings.json"), `{"model":"opus"}`)
@@ -1097,7 +1103,7 @@ func TestPrintDeclinedAssets_SeparatesRefusedFromAbsent(t *testing.T) {
 func TestCollectSetupAssets_RecordsWhatTheInstructionsNameAndLack(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
+	setTestHomeDir(t, homeDir)
 
 	mustWriteFile(t, filepath.Join(projectDir, "AGENTS.md"),
 		"Use `implement_pr.txt`, which is here, and `absent.txt`, which is not.\n"+

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -164,6 +165,38 @@ func ResolveReferences(dir, baseRel, content string) []Reference {
 	return out
 }
 
+// rootedReason returns why p is refused when it names a location independent
+// of the instruction directory, or "" when it does not. filepath.IsAbs misses
+// "/etc/passwd", `\x` and "C:x" on Windows, where they are rooted or
+// drive-relative; the reason says so, since "a:b" is not obviously absolute.
+func rootedReason(goos, p string) string {
+	if filepath.IsAbs(p) {
+		return "absolute path"
+	}
+	if isWindowsRooted(goos, p) {
+		return "rooted or drive-qualified path on Windows"
+	}
+	return ""
+}
+
+// isWindowsRooted applies the Windows rules on goos "windows" only, by hand
+// rather than with filepath.VolumeName, so the rules are tested on any OS.
+// Covers "/x", `\x`, UNC and `\\?\` prefixes (both start with a slash),
+// and drive-qualified "C:", "C:x", "c:/x".
+func isWindowsRooted(goos, p string) bool {
+	if goos != "windows" {
+		return false
+	}
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		return true
+	}
+	if len(p) >= 2 && p[1] == ':' {
+		c := p[0] | 0x20
+		return c >= 'a' && c <= 'z'
+	}
+	return false
+}
+
 func classifyReference(root, baseRel, raw string) Reference {
 	ref := Reference{Raw: raw}
 
@@ -172,7 +205,11 @@ func classifyReference(root, baseRel, raw string) Reference {
 		ref.Status, ref.Reason = ReferenceSkipped, "names a directory"
 		return ref
 	}
-	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "~") {
+	if reason := rootedReason(runtime.GOOS, clean); reason != "" {
+		ref.Status, ref.Reason = ReferenceRefused, reason
+		return ref
+	}
+	if strings.HasPrefix(clean, "~") {
 		ref.Status, ref.Reason = ReferenceRefused, "absolute path"
 		return ref
 	}

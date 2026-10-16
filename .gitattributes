@@ -1,0 +1,2 @@
+# gofmt rejects CRLF; Windows checkouts default to core.autocrlf=true.
+*.go text eol=lf
