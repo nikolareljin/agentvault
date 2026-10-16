@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -164,6 +165,19 @@ func ResolveReferences(dir, baseRel, content string) []Reference {
 	return out
 }
 
+// isRootedPath reports whether p names a location independent of the
+// instruction directory. filepath.IsAbs misses "/etc/passwd", `\x` and "C:x"
+// on Windows, where they are rooted or drive-relative rather than absolute.
+func isRootedPath(p string) bool {
+	if filepath.IsAbs(p) {
+		return true
+	}
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	return strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) || filepath.VolumeName(p) != ""
+}
+
 func classifyReference(root, baseRel, raw string) Reference {
 	ref := Reference{Raw: raw}
 
@@ -172,11 +186,7 @@ func classifyReference(root, baseRel, raw string) Reference {
 		ref.Status, ref.Reason = ReferenceSkipped, "names a directory"
 		return ref
 	}
-	// filepath.IsAbs alone misses "/etc/passwd" and "C:x" on Windows: they are
-	// rooted or drive-relative there, and would resolve outside root.
-	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "~") ||
-		strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, `\`) ||
-		filepath.VolumeName(clean) != "" {
+	if isRootedPath(clean) || strings.HasPrefix(clean, "~") {
 		ref.Status, ref.Reason = ReferenceRefused, "absolute path"
 		return ref
 	}
