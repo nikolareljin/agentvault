@@ -1,9 +1,14 @@
 name: Homebrew macOS package
 
+# Called by release.yml after the release assets exist (a tag pushed by the
+# auto-tag workflow does not trigger workflows on its own); runnable by hand
+# for an existing release.
 on:
-  push:
-    tags:
-      - "*.*.*"
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       release_tag:
@@ -19,9 +24,9 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 20
     env:
-      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
       TAP_REPOSITORY: nikolareljin/homebrew-tap
-      TAP_BRANCH: homebrew/agentvault-${{ inputs.release_tag || github.ref_name }}
+      TAP_BRANCH: homebrew/agentvault-${{ inputs.release_tag }}
     steps:
       - name: Validate release tag
         shell: bash
