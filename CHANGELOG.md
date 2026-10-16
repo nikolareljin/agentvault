@@ -4,8 +4,9 @@
 
 ### Fixed
 - `instructions pull` on Windows refuses rooted references such as
-  `/etc/passwd` and `C:x` as absolute paths. Before, they were looked up
-  under the instruction directory and reported as "not found".
+  `/etc/passwd`, `C:x` and `a:b` with the reason "rooted or
+  drive-qualified path on Windows". Before, they were looked up under the
+  instruction directory and reported as "not found".
 
 ## [0.14.0] - 2026-10-15
 

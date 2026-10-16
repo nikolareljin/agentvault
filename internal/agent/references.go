@@ -165,11 +165,18 @@ func ResolveReferences(dir, baseRel, content string) []Reference {
 	return out
 }
 
-// isRootedPath reports whether p names a location independent of the
-// instruction directory. filepath.IsAbs misses "/etc/passwd", `\x` and "C:x"
-// on Windows, where they are rooted or drive-relative rather than absolute.
-func isRootedPath(p string) bool {
-	return filepath.IsAbs(p) || isWindowsRooted(runtime.GOOS, p)
+// rootedReason returns why p is refused when it names a location independent
+// of the instruction directory, or "" when it does not. filepath.IsAbs misses
+// "/etc/passwd", `\x` and "C:x" on Windows, where they are rooted or
+// drive-relative; the reason says so, since "a:b" is not obviously absolute.
+func rootedReason(goos, p string) string {
+	if filepath.IsAbs(p) {
+		return "absolute path"
+	}
+	if isWindowsRooted(goos, p) {
+		return "rooted or drive-qualified path on Windows"
+	}
+	return ""
 }
 
 // isWindowsRooted applies the Windows rules on goos "windows" only, by hand
@@ -198,7 +205,11 @@ func classifyReference(root, baseRel, raw string) Reference {
 		ref.Status, ref.Reason = ReferenceSkipped, "names a directory"
 		return ref
 	}
-	if isRootedPath(clean) || strings.HasPrefix(clean, "~") {
+	if reason := rootedReason(runtime.GOOS, clean); reason != "" {
+		ref.Status, ref.Reason = ReferenceRefused, reason
+		return ref
+	}
+	if strings.HasPrefix(clean, "~") {
 		ref.Status, ref.Reason = ReferenceRefused, "absolute path"
 		return ref
 	}

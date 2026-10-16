@@ -65,13 +65,18 @@ func TestResolveReferencesRefusesWhatCannotTravel(t *testing.T) {
 		byRaw[r.Raw] = r
 	}
 
+	// "/etc/passwd" is rooted but not absolute on Windows.
+	rootedWant := "absolute path"
+	if runtime.GOOS == "windows" {
+		rootedWant = "rooted or drive-qualified path on Windows"
+	}
 	cases := []struct {
 		raw    string
 		status ReferenceStatus
 		reason string
 	}{
 		{"ok.txt", ReferenceTaken, ""},
-		{"/etc/passwd", ReferenceRefused, "absolute path"},
+		{"/etc/passwd", ReferenceRefused, rootedWant},
 		{"../outside.txt", ReferenceRefused, "leaves the directory"},
 		{"big.txt", ReferenceRefused, "over the"},
 		{"node_modules/dep.md", ReferenceRefused, "under node_modules"},
@@ -162,5 +167,19 @@ func TestIsWindowsRooted(t *testing.T) {
 		if isWindowsRooted("linux", c.p) {
 			t.Errorf("isWindowsRooted(linux, %q) = true, want false", c.p)
 		}
+	}
+}
+
+func TestRootedReasonNamesWindowsCase(t *testing.T) {
+	for _, p := range []string{"a:b", "C:x", `\\x`} {
+		if got, want := rootedReason("windows", p), "rooted or drive-qualified path on Windows"; got != want {
+			t.Errorf("rootedReason(windows, %q) = %q, want %q", p, got, want)
+		}
+		if got := rootedReason("linux", p); got != "" {
+			t.Errorf("rootedReason(linux, %q) = %q, want empty", p, got)
+		}
+	}
+	if got := rootedReason("linux", "/etc/passwd"); got != "absolute path" {
+		t.Errorf("rootedReason(linux, /etc/passwd) = %q, want absolute path", got)
 	}
 }
