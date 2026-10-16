@@ -38,3 +38,10 @@ jobs:
   # difference is that the preset's test default runs `go mod download` first.
   go:
     uses: nikolareljin/ci-helpers/.github/workflows/go.yml@production
+
+  # Windows leg: release.yml ships windows/amd64 binaries. Same preset, only
+  # the runner differs.
+  go-windows:
+    uses: nikolareljin/ci-helpers/.github/workflows/go.yml@production
+    with:
+      runner: windows-latest
