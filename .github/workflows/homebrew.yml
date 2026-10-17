@@ -25,8 +25,6 @@ jobs:
     timeout-minutes: 20
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
-      TAP_REPOSITORY: nikolareljin/homebrew-tap
-      TAP_BRANCH: homebrew/agentvault-${{ inputs.release_tag }}
     steps:
       - name: Validate release tag
         shell: bash
@@ -105,53 +103,29 @@ jobs:
         run: |
           set -euo pipefail
           brew style "$RUNNER_TEMP/agentvault.rb"
-          brew tap-new nikolareljin/tap
-          tap_path="$(brew --repository)/Library/Taps/nikolareljin/homebrew-tap/Formula"
+          brew tap-new local/tap
+          tap_path="$(brew --repository)/Library/Taps/local/homebrew-tap/Formula"
           cp "$RUNNER_TEMP/agentvault.rb" "$tap_path/agentvault.rb"
-          brew install --build-from-source nikolareljin/tap/agentvault
-          brew test nikolareljin/tap/agentvault
+          brew install --build-from-source local/tap/agentvault
+          brew test local/tap/agentvault
           agentvault version | grep -F "$RELEASE_TAG"
 
-      - name: Check out Homebrew tap
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 @ 2026-09-10
+      - name: Upload formula for the tap
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2 @ 2026-10-07
         with:
-          repository: nikolareljin/homebrew-tap
-          ref: main
-          path: homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          name: homebrew-formula-agentvault
+          path: ${{ runner.temp }}/agentvault.rb
+          if-no-files-found: error
 
-      - name: Open Homebrew tap pull request
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$GH_TOKEN"
-          if git -C homebrew-tap ls-remote --exit-code --heads origin "$TAP_BRANCH"; then
-            git -C homebrew-tap fetch origin "$TAP_BRANCH"
-            git -C homebrew-tap switch --track -c "$TAP_BRANCH" "origin/$TAP_BRANCH"
-          else
-            git -C homebrew-tap switch -c "$TAP_BRANCH"
-          fi
-          cp "$RUNNER_TEMP/agentvault.rb" homebrew-tap/Formula/agentvault.rb
-          git -C homebrew-tap add Formula/agentvault.rb
-          # A rerun finds the formula already on the branch: still make sure the PR exists.
-          if ! git -C homebrew-tap diff --cached --quiet; then
-            git -C homebrew-tap config user.name "github-actions[bot]"
-            git -C homebrew-tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git -C homebrew-tap commit -m "feat: add AgentVault ${RELEASE_TAG} formula"
-            git -C homebrew-tap push --set-upstream origin "$TAP_BRANCH"
-          fi
-          if git -C homebrew-tap diff --quiet origin/main HEAD -- Formula/agentvault.rb; then
-            echo "Homebrew tap main already has the ${RELEASE_TAG} formula."
-            exit 0
-          fi
-          title="feat: add AgentVault ${RELEASE_TAG} formula"
-          body="Adds the macOS formula generated from the verified ${RELEASE_TAG} release assets."
-          pr_url="$(gh pr list --repo "$TAP_REPOSITORY" --head "$TAP_BRANCH" --state open --json url --jq '.[0].url')"
-          if [[ -n "$pr_url" ]]; then
-            gh pr edit "$pr_url" --title "$title" --body "$body"
-          else
-            gh pr create --repo "$TAP_REPOSITORY" --head "$TAP_BRANCH" --base main \
-              --title "$title" --body "$body"
-          fi
+  # Commits the formula to the tap with its deploy key; the tap's ruleset lets
+  # that key, and only it, push to main.
+  publish:
+    needs: package
+    uses: nikolareljin/ci-helpers/.github/workflows/homebrew-tap-publish.yml@production
+    with:
+      formula_artifact: homebrew-formula-agentvault
+      formula_file: agentvault.rb
+      commit_message: "agentvault ${{ inputs.release_tag }}"
+    secrets:
+      tap_repo: ${{ secrets.HOMEBREW_TAP_REPO }}
+      tap_deploy_key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
