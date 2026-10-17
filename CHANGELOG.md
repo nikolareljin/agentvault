@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- The Homebrew formula is committed to the tap by ci-helpers
+  `homebrew-tap-publish.yml` with the tap's deploy key
+  (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
+  release opened a tap pull request with `HOMEBREW_TAP_TOKEN` that had to be
+  merged by hand.
+
 ### Fixed
 - `instructions pull` on Windows refuses rooted references such as
   `/etc/passwd`, `C:x` and `a:b` with the reason "rooted or
