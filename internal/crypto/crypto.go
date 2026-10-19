@@ -5,8 +5,9 @@
 //   - Encryption: AES-256-GCM authenticated encryption
 //   - Random nonces: crypto/rand for all nonce/salt generation
 //
-// The Argon2id parameters (64MB memory, 4 threads) balance security against
-// brute-force attacks with reasonable performance on modern hardware.
+// Files written now carry their Argon2id parameters in a format 2 header
+// (see header.go). The constants below are the format 1 parameters, kept so
+// files from earlier releases still open.
 package crypto
 
 import (
@@ -20,8 +21,7 @@ import (
 )
 
 const (
-	// Argon2id parameters -- tuned for a balance of security and usability.
-	// 64MB memory makes brute-force attacks expensive on GPUs.
+	// Format 1 Argon2id parameters. New files use CurrentParams.
 	argonTime    = 1
 	argonMemory  = 64 * 1024 // 64 MB
 	argonThreads = 4
@@ -42,7 +42,8 @@ func GenerateSalt() ([]byte, error) {
 	return salt, nil
 }
 
-// DeriveKey derives an AES-256 key from a password using Argon2id.
+// DeriveKey derives an AES-256 key with the format 1 parameters. New code
+// uses DeriveKeyFor with a Header.
 func DeriveKey(password string, salt []byte) ([]byte, error) {
 	if len(salt) == 0 {
 		return nil, errors.New("salt must not be empty")
