@@ -24,6 +24,7 @@ lint:
 fmt:
 	./dev format
 
+# Plain go vet for this OS only; ./dev lint also vets darwin and windows.
 vet:
 	go vet ./...
 
