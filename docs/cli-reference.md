@@ -634,6 +634,9 @@ Flags:
 - `--dry-run` (default: `false`): Report what would change without writing.
 - `--apply-provider-configs` (default: `false`): Write provider configs and provider asset
   files back to the system after import.
+- `--apply-projects` (default: `false`): Write the bundle's project files into `--project-root`.
+- `--project-root <dir>`: Where `--apply-projects` writes. The exporting machine's `--project` directory is rewritten to it in every file.
+- `--map OLD=NEW` (repeatable): Rewrite another path prefix from the exporting machine.
 - `--confirm` (default: `false`): Skip the confirmation prompt that guards `mirror`.
 
 Environment:
@@ -642,4 +645,21 @@ Environment:
 
 Mirror deletes vault items that are not in the bundle. It asks for confirmation on a
 terminal and refuses to run non-interactively without `--confirm`.
+
+#### Moving to a machine with a different home directory
+
+The bundle records the exporting machine's home directory and `--project` directory. On import, every text file is rewritten:
+- each `--map` first;
+- then the project directory to `--project-root`;
+- then the old home to this machine's home.
+
+Rewrites match whole path segments, so `/home/alex` does not rewrite `/home/alexandra`. Claude's per-project memory directories (`~/.claude/projects/-home-alex-...`) are renamed the same way. A home path that no rewrite covers is reported with the `--map` to add. `--dry-run` prints every rewrite and changes nothing.
+
+Secret values in JSON settings files are blanked on export without `--include-secrets`; the rest of the file travels. On import each blanked value is taken from the same file already on this machine. A value this machine does not have is left out and reported, never written as an empty string.
+
+`--apply-projects` writes prose and the files agent tools read as instructions:
+- Never written: `.git/`, `.githooks/`, `.husky/`, `.github/workflows/`, repository settings and credential files.
+- Other non-prose files, such as scripts, stay staged in `<config dir>/imported-assets/project/`.
+- With `--strategy merge` (the default), an existing file that differs is kept and reported. `replace` and `mirror` overwrite it.
+- Nothing is written executable. The execute bit is kept only for a tool's own `hooks/` scripts.
 

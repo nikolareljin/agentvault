@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
@@ -57,6 +58,35 @@ type SetupAsset struct {
 	// carries. Import merges them into the existing file instead of replacing
 	// it, because the rest of that file is the other machine's own state.
 	MergeKeys []string `json:"merge_keys,omitempty"`
+	// Mode is the source file's permission bits. Import keeps the execute
+	// bit, so a hook script still runs on the other machine.
+	Mode uint32 `json:"mode,omitempty"`
+	// RedactedFields are the JSON Pointers of secret values blanked in
+	// Content. Import fills them from the file already on the machine, or
+	// leaves them out. The rest of the file travels.
+	RedactedFields []string `json:"redacted_fields,omitempty"`
+}
+
+// execAllowed is whether an asset may keep its execute bit on import. The bit
+// comes from the bundle, so it is honoured only where an agent tool runs
+// scripts it was configured to: a tool's own hooks directory. Everything
+// else is written without it, whatever the bundle says.
+func execAllowed(asset SetupAsset) bool {
+	if asset.LogicalRoot == setupAssetRootProviderHome || asset.LogicalRoot == setupAssetRootProject {
+		return false
+	}
+	if _, ok := providerRootDirs[asset.LogicalRoot]; !ok {
+		return false
+	}
+	return strings.HasPrefix(filepath.ToSlash(filepath.Clean(asset.LogicalPath)), "hooks/")
+}
+
+// assetPerm is base, plus owner execute when the source file was executable.
+func assetPerm(asset SetupAsset, base os.FileMode) os.FileMode {
+	if os.FileMode(asset.Mode)&0o111 != 0 {
+		return base | 0o100 | (base&0o044)>>2
+	}
+	return base
 }
 
 type setupAssetCollection struct {
@@ -620,6 +650,7 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		return SetupAsset{}, "", fmt.Errorf("reading asset metadata %q: %w", path, statErr)
 	}
 	asset.SizeBytes = info.Size()
+	asset.Mode = uint32(info.Mode().Perm())
 	if info.Mode()&os.ModeSymlink != 0 {
 		return SetupAsset{}, "", fmt.Errorf("asset %q must not be a symlink", path)
 	}
@@ -635,6 +666,19 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
 	}
 	asset.SizeBytes = int64(len(data))
+	if sensitive && !includeSecrets && strings.EqualFold(filepath.Ext(path), ".json") {
+		if out, pointers, ok := redactJSONSecrets(data); ok {
+			asset.Content = out
+			asset.ContentPresent = true
+			asset.RedactedFields = pointers
+			asset.SizeBytes = int64(len(out))
+			asset.SHA256 = hashSetupAssetContent(out)
+			if len(pointers) == 0 {
+				return asset, "", nil
+			}
+			return asset, fmt.Sprintf("blanked %d secret value(s) in %q (use --include-secrets to carry them)", len(pointers), path), nil
+		}
+	}
 	if sensitive && !includeSecrets {
 		asset.Redacted = true
 		return asset, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
@@ -736,6 +780,15 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 		if err := os.WriteFile(stagePath, asset.Content, 0600); err != nil {
 			return staged, warnings, fmt.Errorf("writing staged asset %q: %w", stagePath, err)
 		}
+		// WriteFile leaves an existing file's mode alone, and the umask can
+		// narrow a new one; set it so applying from the stage keeps it.
+		stagePerm := os.FileMode(0600)
+		if execAllowed(asset) {
+			stagePerm = assetPerm(asset, stagePerm)
+		}
+		if err := os.Chmod(stagePath, stagePerm); err != nil {
+			return staged, warnings, fmt.Errorf("setting mode of staged asset %q: %w", stagePath, err)
+		}
 		staged++
 	}
 	return staged, warnings, nil
@@ -802,17 +855,25 @@ func stagedAssetPath(stageRoot string, asset SetupAsset) (string, error) {
 	}
 }
 
+// applyStagedProjectAssets writes the staged project files into targetDir,
+// through projectAssetWritable. With overwrite false an existing file that
+// differs is kept and reported.
 func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
+	applied, _, err := applyStagedProjectAssetsWith(configDir, targetDir, true)
+	return applied, err
+}
+
+func applyStagedProjectAssetsWith(configDir string, targetDir string, overwrite bool) (int, []string, error) {
 	projectRoot := filepath.Join(configDir, setupImportedAssetsDirName, "project")
 	info, err := os.Stat(projectRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return 0, nil, nil
 		}
-		return 0, fmt.Errorf("reading staged project assets: %w", err)
+		return 0, nil, fmt.Errorf("reading staged project assets: %w", err)
 	}
 	if !info.IsDir() {
-		return 0, nil
+		return 0, nil, nil
 	}
 
 	relPaths := make([]string, 0)
@@ -834,25 +895,36 @@ func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("applying staged project assets: %w", err)
+		return 0, nil, fmt.Errorf("applying staged project assets: %w", err)
 	}
 
 	applied := 0
+	var skipped []string
 	for _, rel := range relPaths {
+		if reason := projectAssetRefusal(rel); reason != "" {
+			skipped = append(skipped, fmt.Sprintf("%s: %s", rel, reason))
+			continue
+		}
 		srcPath, err := safeJoinUnder(projectRoot, rel)
 		if err != nil {
-			return applied, fmt.Errorf("resolving staged asset path: %w", err)
+			return applied, skipped, fmt.Errorf("resolving staged asset path: %w", err)
 		}
 		destPath, err := safeJoinUnder(targetDir, rel)
 		if err != nil {
-			return applied, fmt.Errorf("resolving target asset path: %w", err)
+			return applied, skipped, fmt.Errorf("resolving target asset path: %w", err)
+		}
+		if !overwrite {
+			if same, exists := sameFileContent(srcPath, destPath); exists && !same {
+				skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept (use --strategy replace to overwrite)", rel))
+				continue
+			}
 		}
 		if err := copyRegularFile(srcPath, destPath, 0644); err != nil {
-			return applied, fmt.Errorf("copying staged project asset %q: %w", rel, err)
+			return applied, skipped, fmt.Errorf("copying staged project asset %q: %w", rel, err)
 		}
 		applied++
 	}
-	return applied, nil
+	return applied, skipped, nil
 }
 
 func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []string, error) {
@@ -899,6 +971,18 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				mergeKeys = claudeUserConfigMergeKeys
 			}
 		}
+		if len(asset.RedactedFields) > 0 {
+			existing, _ := os.ReadFile(dest)
+			filled, restored, err := restoreRedactedFields(content, asset.RedactedFields, existing)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				continue
+			}
+			content = filled
+			if left := len(asset.RedactedFields) - restored; left > 0 {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: %d secret value(s) were not in the bundle and are not on this machine; set them by hand", describeSetupAsset(asset), left))
+			}
+		}
 		if len(mergeKeys) > 0 {
 			merged, err := mergeJSONKeysIntoFile(dest, content, mergeKeys)
 			if err != nil {
@@ -906,6 +990,9 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				continue
 			}
 			content = merged
+		}
+		if execAllowed(asset) {
+			perm = assetPerm(asset, perm)
 		}
 		if err := writeRegularFileAtomic(dest, content, perm); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
@@ -972,6 +1059,11 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("empty relative path")
+	}
+	for _, r := range path {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("control character in path %q", path)
+		}
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(path))
 	if filepath.IsAbs(path) || filepath.IsAbs(cleaned) {

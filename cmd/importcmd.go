@@ -52,7 +52,13 @@ Examples:
   agentvault import team.avbundle --strategy mirror
   agentvault import team.avbundle --list
   agentvault import team.avbundle --profile work --dry-run
-  agentvault import team.avbundle --strategy replace --apply-provider-configs`,
+  agentvault import team.avbundle --strategy replace --apply-provider-configs
+  agentvault import team.avbundle --apply-projects --project-root ~/src/app
+  agentvault import team.avbundle --map /mnt/work=/Volumes/work --dry-run
+
+Paths from the exporting machine are rewritten for this one: its home directory
+becomes this home directory, its --project directory becomes --project-root, and
+each --map OLD=NEW is applied first. --dry-run prints every rewrite.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runImport,
 }
@@ -65,6 +71,9 @@ func init() {
 	importCmd.Flags().Bool("dry-run", false, "report what would change without writing to the vault")
 	importCmd.Flags().Bool("apply-provider-configs", false, "apply provider configs and provider asset files to the system after import")
 	importCmd.Flags().Bool("confirm", false, "skip the confirmation prompt for destructive strategies")
+	importCmd.Flags().StringArray("map", nil, "rewrite a path prefix from the exporting machine, OLD=NEW (repeatable); the home directory is rewritten without it")
+	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root")
+	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects")
 	importCmd.Flags().Bool("plain", false, "deprecated: the export format is detected automatically")
 	_ = importCmd.Flags().MarkDeprecated("plain", "the export format is detected automatically")
 }
@@ -79,6 +88,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 	applyConfigs, _ := cmd.Flags().GetBool("apply-provider-configs")
 	confirmFlag, _ := cmd.Flags().GetBool("confirm")
 	profileName := mustString(cmd, "profile")
+	assetOpts, err := importAssetOptionsFromFlags(cmd, applyConfigs)
+	if err != nil {
+		return err
+	}
+	assetOpts.Overwrite = strategy != strategyMerge
 
 	inPath := ""
 	if len(args) == 1 {
@@ -157,12 +171,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 		total.Removed += plan.Report.Removed
 
 		if dryRun {
+			printAssetRemaps(cmd, profile.Setup, assetOpts)
 			continue
 		}
 		if err := commitProfileImport(v, plan); err != nil {
 			return err
 		}
-		if err := importProfileAssets(cmd, profile.Setup, applyConfigs); err != nil {
+		if err := importProfileAssets(cmd, profile.Setup, assetOpts); err != nil {
 			return err
 		}
 	}
@@ -331,7 +346,82 @@ func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w
 
 // importProfileAssets writes the non-vault parts of a profile: workflow
 // templates, staged portable assets, and optionally the live provider configs.
-func importProfileAssets(cmd *cobra.Command, setup SetupBundle, applyConfigs bool) error {
+// importAssetOptions selects what import does with a bundle's files.
+type importAssetOptions struct {
+	ApplyConfigs  bool
+	ApplyProjects bool
+	ProjectRoot   string
+	Maps          []string
+	// Overwrite existing project files that differ. Follows --strategy:
+	// merge keeps what is there; replace and mirror overwrite.
+	Overwrite bool
+}
+
+func importAssetOptionsFromFlags(cmd *cobra.Command, applyConfigs bool) (importAssetOptions, error) {
+	opts := importAssetOptions{ApplyConfigs: applyConfigs}
+	opts.ApplyProjects, _ = cmd.Flags().GetBool("apply-projects")
+	opts.ProjectRoot = mustString(cmd, "project-root")
+	opts.Maps, _ = cmd.Flags().GetStringArray("map")
+	if opts.ApplyProjects && strings.TrimSpace(opts.ProjectRoot) == "" {
+		return opts, errors.New("--apply-projects needs --project-root: the directory to write project files into")
+	}
+	if opts.ProjectRoot != "" {
+		root, err := filepath.Abs(expandUserPath(opts.ProjectRoot))
+		if err != nil {
+			return opts, fmt.Errorf("--project-root: %w", err)
+		}
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			return opts, fmt.Errorf("--project-root %s is not a directory", root)
+		}
+		opts.ProjectRoot = root
+	}
+	if _, err := buildPathRemaps("", "", "", "", opts.Maps); err != nil {
+		return opts, err
+	}
+	return opts, nil
+}
+
+// remapProfileAssets rewrites the exporting machine's paths in every file of
+// one profile for this machine, and returns what it changed.
+func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle, []string, error) {
+	targetHome := exportSourceHome()
+	remaps, err := buildPathRemaps(setup.SourceHome, targetHome, setup.SourceProject, opts.ProjectRoot, opts.Maps)
+	if err != nil {
+		return setup, nil, err
+	}
+	var report, r []string
+	setup.ProviderFiles, r = remapAssets(setup.ProviderFiles, remaps, targetHome)
+	report = append(report, r...)
+	setup.ProjectFiles, r = remapAssets(setup.ProjectFiles, remaps, targetHome)
+	report = append(report, r...)
+	setup.SkillAssets, r = remapAssets(setup.SkillAssets, remaps, targetHome)
+	report = append(report, r...)
+	setup.InstructionOverrides, _ = remapAssets(setup.InstructionOverrides, remaps, targetHome)
+	return setup, report, nil
+}
+
+// printAssetRemaps is the --dry-run view of remapProfileAssets.
+func printAssetRemaps(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) {
+	_, report, err := remapProfileAssets(setup, opts)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", err)
+		return
+	}
+	for _, line := range report {
+		fmt.Fprintf(cmd.OutOrStdout(), "  path: %s\n", line)
+	}
+}
+
+func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) error {
+	applyConfigs := opts.ApplyConfigs
+	setup, remapReport, err := remapProfileAssets(setup, opts)
+	if err != nil {
+		return err
+	}
+	for _, line := range remapReport {
+		fmt.Fprintf(cmd.OutOrStdout(), "  path: %s\n", line)
+	}
 	if setup.Templates.SchemaVersion != "" || len(setup.Templates.Assets) > 0 {
 		imported, warnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), setup.Templates)
 		if err != nil {
@@ -359,6 +449,16 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, applyConfigs boo
 	}
 
 	printPluginInstallCommands(cmd.OutOrStdout(), setup.Plugins)
+	if opts.ApplyProjects {
+		applied, skipped, err := applyStagedProjectAssetsWith(effectiveConfigDir(), opts.ProjectRoot, opts.Overwrite)
+		if err != nil {
+			return fmt.Errorf("applying project files: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  Applied: project files (%d) to %s\n", applied, opts.ProjectRoot)
+		for _, s := range skipped {
+			fmt.Fprintf(cmd.OutOrStdout(), "    not written: %q\n", s)
+		}
+	}
 	if !applyConfigs {
 		return nil
 	}

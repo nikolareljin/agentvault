@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Added
+- `import` rewrites the exporting machine's paths for this one. Its home
+  directory becomes this home directory, its `--project` directory becomes
+  `--project-root`, and each `--map OLD=NEW` is applied first. This covers
+  file content (hook commands, MCP server paths, notes) and Claude's
+  per-project memory directory names. `--dry-run` prints every rewrite.
+- `import --apply-projects --project-root DIR` writes the bundle's project
+  instructions into DIR. Git internals, CI, hook directories, repository
+  settings, credential files and other non-prose files are not written.
+  `--strategy merge` keeps an existing file that differs.
+- JSON settings exported without `--include-secrets` travel with only their
+  secret values blanked (keys with token, secret, password, key and the
+  like, and everything under `env` and `headers`). Import fills each blanked
+  value from the file already on the machine, or leaves it out.
+- The execute bit travels for a tool's own `hooks/` scripts, so a hook still
+  runs after import.
 - `export` carries the user-level setup of Gemini CLI (`~/.gemini`), the
   GitHub Copilot CLI (`~/.copilot`), Cursor and Windsurf MCP configs, Claude's
   user MCP servers from `~/.claude.json` (only `mcpServers`; import merges
@@ -26,6 +41,8 @@
   `sync`.
 
 ### Security
+- Asset paths with control characters are refused, so a path printed during
+  import cannot rewrite the terminal.
 - Reference following (`instructions pull` and `export`) refuses credential
   files by name: `.env` and `.env.*` (templates such as `.env.example` are
   kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`,

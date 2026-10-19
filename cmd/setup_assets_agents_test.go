@@ -59,11 +59,13 @@ func TestCollectSetupAssets_CarriesEveryToolsUserSetup(t *testing.T) {
 			t.Errorf("%s/%s not carried", c.root, c.path)
 			continue
 		}
-		if a.Redacted != c.redacted {
-			t.Errorf("%s/%s redacted = %v, want %v", c.root, c.path, a.Redacted, c.redacted)
-		}
-		if !c.redacted && !a.ContentPresent {
+		// Sensitive JSON travels with secret values blanked, not whole-file
+		// redacted; it must not carry the planted token "x".
+		if !a.ContentPresent {
 			t.Errorf("%s/%s carried without content", c.root, c.path)
+		}
+		if c.redacted && (bytes.Contains(a.Content, []byte(`"x"`)) || !a.Sensitive) {
+			t.Errorf("%s/%s carried a secret value: %s", c.root, c.path, a.Content)
 		}
 	}
 }
@@ -134,8 +136,10 @@ func TestClaudeUserMCPServersExportAndMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := findAsset(redacted.ProviderFiles, setupAssetRootProviderHome, ".claude.json"); r == nil || !r.Redacted || r.ContentPresent {
-		t.Errorf("without --include-secrets the MCP servers must be redacted: %+v", r)
+	// Without --include-secrets the servers travel; secret values in them do not.
+	if r := findAsset(redacted.ProviderFiles, setupAssetRootProviderHome, ".claude.json"); r == nil || !r.ContentPresent ||
+		!bytes.Contains(r.Content, []byte("gh-mcp")) {
+		t.Errorf("without --include-secrets the MCP servers must still travel: %+v", r)
 	}
 }
 

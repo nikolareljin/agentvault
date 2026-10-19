@@ -476,6 +476,8 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 		CreatedAt:       nowFunc(),
 		SourceMachine:   host,
 		SourceOS:        goOSArch(),
+		SourceHome:      exportSourceHome(),
+		SourceProject:   absOrEmpty(opts.ProjectDir),
 		Agents:          v.List(),
 		SharedConfig:    withoutPromptSessions(v.SharedConfig()),
 		ProviderConfigs: v.ProviderConfigs(),

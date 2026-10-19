@@ -68,6 +68,10 @@ type SetupBundle struct {
 	InstallGuide         InstallGuide                 `json:"install_guide"`
 	Declined             []DeclinedAsset              `json:"declined,omitempty"`
 	Plugins              *PluginInventory             `json:"plugins,omitempty"`
+	// SourceHome and SourceProject are where the files lived on the exporting
+	// machine. Import rewrites them to this machine's paths.
+	SourceHome    string `json:"source_home,omitempty"`
+	SourceProject string `json:"source_project,omitempty"`
 }
 
 // MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.
@@ -416,7 +420,7 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 		if err := commitProfileImport(v, plan); err != nil {
 			return err
 		}
-		if err := importProfileAssets(cmd, profile.Setup, applyConfigs); err != nil {
+		if err := importProfileAssets(cmd, profile.Setup, importAssetOptions{ApplyConfigs: applyConfigs}); err != nil {
 			return err
 		}
 	}
