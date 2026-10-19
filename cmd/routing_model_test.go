@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -98,5 +100,39 @@ func TestRoutingModelDownloadRejectsChecksumMismatch(t *testing.T) {
 	}
 	if matches, _ := filepath.Glob(filepath.Join(dir, "*")); len(matches) != 0 {
 		t.Fatalf("expected failed download to leave output dir empty, got %v", matches)
+	}
+}
+
+// A stale .part from an older run (0644) must not keep its mode: the model
+// is written to a fresh 0600 file.
+func TestRoutingModelDownloadReplacesStalePartFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("model-bytes"))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, bitnetModelFilename)
+	if err := os.WriteFile(dest+".part", []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.Flags().String("output", dir, "")
+	cmd.Flags().String("url", srv.URL, "")
+	cmd.Flags().String("sha256", "", "")
+	if err := runRoutingModelDownload(cmd, nil); err != nil {
+		t.Fatalf("runRoutingModelDownload() error = %v", err)
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
 	}
 }

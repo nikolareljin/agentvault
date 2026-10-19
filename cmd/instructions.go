@@ -1154,6 +1154,9 @@ func ensureNoSymlinkBelow(root string, p string) error {
 	if err != nil {
 		return err
 	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("destination %q is outside %q", p, root)
+	}
 	current := filepath.Clean(root)
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		if part == "" || part == "." {

@@ -116,7 +116,12 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	}
 
 	tmp := destPath + ".part"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	// A leftover .part (from an older run, possibly 0644, or a planted
+	// symlink) is removed so O_EXCL creates a fresh 0600 file.
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale temp file: %w", err)
+	}
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
@@ -130,7 +135,10 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 		os.Remove(tmp)
 		return fmt.Errorf("write model: %w", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("write model: %w", err)
+	}
 	if showProgress {
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
@@ -145,6 +153,7 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	}
 
 	if err := os.Rename(tmp, destPath); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("finalize model: %w", err)
 	}
 

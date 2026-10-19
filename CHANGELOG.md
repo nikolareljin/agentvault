@@ -34,8 +34,9 @@
   every component from `/` was checked.
 - `serve --host ::1` builds a valid listen address (`[::1]:8080`).
 - `routing-model download` no longer panics when the downloaded file cannot
-  be stat-ed, writes the partial file at 0600, and gives up after 60s
-  without response headers.
+  be stat-ed, writes the partial file at 0600 (a stale `.part` is replaced,
+  not reused with its old mode), removes it when the write or rename fails,
+  and gives up after 60s without response headers.
 - `instructions pull` on Windows refuses rooted references such as
   `/etc/passwd`, `C:x` and `a:b` with the reason "rooted or
   drive-qualified path on Windows". Before, they were looked up under the
