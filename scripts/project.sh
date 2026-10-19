@@ -6,6 +6,8 @@
 
 AV_APP=agentvault
 AV_PKG=github.com/nikolareljin/agentvault/cmd
+# Pinned: preflight must not run whatever "latest" is on the day.
+AV_GOVULNCHECK_VERSION=v1.9.0
 
 # The Go release go.mod asks for, e.g. "1.26.0".
 av_go_required() {
@@ -119,7 +121,7 @@ project_preflight() {
   project_lint
   project_test
   log_info "preflight: govulncheck"
-  go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+  go run "golang.org/x/vuln/cmd/govulncheck@${AV_GOVULNCHECK_VERSION}" ./...
 }
 
 project_clean() {

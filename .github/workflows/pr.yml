@@ -51,5 +51,6 @@ jobs:
     uses: nikolareljin/ci-helpers/.github/workflows/go-pr-gate.yml@production
     with:
       runner: macos-latest
+      go_version: "1.26"
       check_release_tag: false
       release_branch: ${{ github.head_ref }}
