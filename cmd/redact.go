@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/nikolareljin/agentvault/internal/agent"
 )
 
 // A settings file that can hold a token used to be redacted whole without
@@ -325,11 +328,42 @@ func sameApartFromSecrets(a, b any, prefix string, pointers []string) bool {
 	return bytes.Equal(ja, jb)
 }
 
-// interpreterAllow matches a Claude Code permission that lets any program
-// run through an interpreter or shell without asking: Bash(bash:*),
-// Bash(python3:*), Bash(*). One line in an allow list, copied to another
-// machine, is a blanket grant there that nobody on that machine made.
-var interpreterAllow = regexp.MustCompile(`^Bash\((\*|(bash|sh|zsh|fish|dash|ksh|env|eval|exec|sudo|xargs|python[0-9.]*|node|deno|bun|perl|ruby|php|lua|osascript|pwsh|powershell)(:\*| \*)?)\)$`)
+// interpreters run any program they are given. A Claude allow rule that
+// lets one run with any arguments is a blanket grant.
+var interpreters = map[string]bool{
+	"bash": true, "sh": true, "zsh": true, "fish": true, "dash": true, "ksh": true, "env": true,
+	"eval": true, "exec": true, "sudo": true, "doas": true, "xargs": true, "node": true, "deno": true,
+	"bun": true, "npx": true, "perl": true, "ruby": true, "php": true, "lua": true, "osascript": true,
+	"pwsh": true, "powershell": true, "cmd": true, "busybox": true, "nohup": true, "timeout": true,
+}
+
+var bashRule = regexp.MustCompile(`^Bash(?:\((.*)\))?$`)
+
+// isInterpreterAllow is a Bash rule that lets any program run without asking:
+// bare Bash, Bash(*), or a rule whose command is an interpreter or launcher,
+// by name or by path (/usr/bin/python3:*).
+func isInterpreterAllow(rule string) bool {
+	m := bashRule.FindStringSubmatch(strings.TrimSpace(rule))
+	if m == nil {
+		return false
+	}
+	inner := strings.TrimSpace(m[1])
+	if inner == "" || inner == "*" || inner == ":*" {
+		return true
+	}
+	// "cmd:*" or "cmd args"; a drive letter (C:\...) is part of cmd.
+	cmd := strings.Fields(inner)[0]
+	if i := strings.LastIndex(cmd, ":"); i > 1 {
+		cmd = cmd[:i]
+	}
+	base := strings.ToLower(path.Base(strings.ReplaceAll(cmd, `\`, "/")))
+	base = strings.TrimSuffix(base, ".exe")
+	if interpreters[base] {
+		return true
+	}
+	// python, python3, python3.12
+	return strings.HasPrefix(base, "python")
+}
 
 // dropInterpreterAllows removes interpreter-wildcard entries from
 // permissions.allow in a Claude settings document and returns what it
@@ -345,18 +379,20 @@ func dropInterpreterAllows(data []byte) ([]byte, []string) {
 	if !ok {
 		return data, nil
 	}
-	allow, ok := perms["allow"].([]any)
-	if !ok {
-		return data, nil
-	}
+	allow, _ := perms["allow"].([]any)
 	var kept []any
 	var dropped []string
 	for _, e := range allow {
-		if s, ok := e.(string); ok && interpreterAllow.MatchString(strings.TrimSpace(s)) {
+		if s, ok := e.(string); ok && isInterpreterAllow(s) {
 			dropped = append(dropped, s)
 			continue
 		}
 		kept = append(kept, e)
+	}
+	// bypassPermissions skips every prompt; the same grant in one word.
+	if mode, ok := perms["defaultMode"].(string); ok && strings.EqualFold(mode, "bypassPermissions") {
+		delete(perms, "defaultMode")
+		dropped = append(dropped, "defaultMode: "+mode)
 	}
 	if len(dropped) == 0 {
 		return data, nil
@@ -364,10 +400,34 @@ func dropInterpreterAllows(data []byte) ([]byte, []string) {
 	if kept == nil {
 		kept = []any{}
 	}
-	perms["allow"] = kept
+	if allow != nil {
+		perms["allow"] = kept
+	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return data, nil
 	}
 	return out, dropped
+}
+
+// filterClaudeCustomSettings applies dropInterpreterAllows to the settings
+// SaveClaudeConfig builds from a provider config.
+func filterClaudeCustomSettings(c *agent.ClaudeConfig) []string {
+	if c == nil || c.CustomSettings == nil {
+		return nil
+	}
+	data, err := json.Marshal(c.CustomSettings)
+	if err != nil {
+		return nil
+	}
+	out, dropped := dropInterpreterAllows(data)
+	if len(dropped) == 0 {
+		return nil
+	}
+	var filtered map[string]any
+	if err := json.Unmarshal(out, &filtered); err != nil {
+		return nil
+	}
+	c.CustomSettings = filtered
+	return dropped
 }

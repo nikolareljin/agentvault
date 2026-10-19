@@ -987,7 +987,7 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			}
 		}
 		if asset.LogicalRoot == setupAssetRootProviderClaude && !keepInterpreterAllows &&
-			(asset.LogicalPath == "settings.json" || asset.LogicalPath == "settings.local.json") {
+			(strings.EqualFold(asset.LogicalPath, "settings.json") || strings.EqualFold(asset.LogicalPath, "settings.local.json")) {
 			var dropped []string
 			content, dropped = dropInterpreterAllows(content)
 			for _, d := range dropped {
@@ -1017,6 +1017,15 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) 
 	dir, ok := providerRootDirs[asset.LogicalRoot]
 	if !ok {
 		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
+	}
+	// Checks on the path (settings.json filtering, hooks/ exec) compare the
+	// bundle's spelling, so only the clean spelling is written.
+	clean, err := sanitizeAssetRelativePath(asset.LogicalPath)
+	if err != nil {
+		return "", err
+	}
+	if clean != asset.LogicalPath {
+		return "", fmt.Errorf("%q: not in clean form; refused", asset.LogicalPath)
 	}
 	if asset.LogicalRoot == setupAssetRootProviderHome {
 		// One normalized path for the check and the write.

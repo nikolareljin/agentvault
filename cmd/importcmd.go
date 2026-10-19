@@ -466,6 +466,13 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "  Applying provider configs and assets to system...")
 	if setup.ProviderConfigs.Claude != nil {
+		// Same rule as the settings.json asset: SaveClaudeConfig writes that
+		// file too, from CustomSettings.
+		if !keepInterpreterAllows {
+			for _, d := range filterClaudeCustomSettings(setup.ProviderConfigs.Claude) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: left out Claude permission %q from provider config; add it back on this machine if you want it\n", d)
+			}
+		}
 		if err := agent.SaveClaudeConfig(setup.ProviderConfigs.Claude); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not apply Claude config: %v\n", err)
 		}
