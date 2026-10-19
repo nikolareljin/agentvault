@@ -93,3 +93,17 @@ func TestIsInterpreterAllowSegmentsAndArguments(t *testing.T) {
 		}
 	}
 }
+
+// Upper-case flags such as git -C and grep -E are not exec flags.
+func TestIsInterpreterAllowUpperCaseFlags(t *testing.T) {
+	for _, r := range []string{"Bash(git -C sub status)", "Bash(grep -E foo:*)", "Bash(tar -C out -xf a.tar)"} {
+		if isInterpreterAllow(r) {
+			t.Errorf("%s flagged", r)
+		}
+	}
+	for _, r := range []string{"Bash(git -c x=y:*)", "Bash(sed -e p:*)"} {
+		if !isInterpreterAllow(r) {
+			t.Errorf("%s not flagged", r)
+		}
+	}
+}

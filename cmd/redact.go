@@ -393,7 +393,8 @@ func isInterpreterAllow(rule string) bool {
 		if !plainWord.MatchString(w) {
 			return true
 		}
-		switch strings.ToLower(w) {
+		// Case-sensitive: git -C, grep -E and tar -C are not exec flags.
+		switch w {
 		case "-c", "-e", "--eval", "-exec", "-execdir", "-ok", "-okdir", "--command":
 			return true
 		}
