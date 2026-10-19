@@ -646,7 +646,7 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	}
 	// A hard link has another name that was never checked: notes.md can be
 	// .netrc. Its content is treated as secret.
-	if hardLinkCount(info) > 1 {
+	if agent.HardLinkCount(path, info) > 1 {
 		sensitive = true
 		asset.Sensitive = true
 	}

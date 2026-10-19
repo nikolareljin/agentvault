@@ -1,15 +1,15 @@
 //go:build !windows
 
-package cmd
+package agent
 
 import (
 	"os"
 	"syscall"
 )
 
-// hardLinkCount is how many names the file has. A file with more than one
+// HardLinkCount is how many names the file has. A file with more than one
 // can be a credential under another name, which a check by name cannot see.
-func hardLinkCount(info os.FileInfo) uint64 {
+func HardLinkCount(_ string, info os.FileInfo) uint64 {
 	if st, ok := info.Sys().(*syscall.Stat_t); ok {
 		return uint64(st.Nlink)
 	}

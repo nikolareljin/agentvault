@@ -124,6 +124,8 @@
   directory (`~/.claude/agents/`, `.cursor/rules/`, ...), and any carried
   file with a second hard link, is redacted without `--include-secrets`. A
   hard link named `notes.md` can be `.env` under another name.
+  Reference following (`instructions pull`, `--project`) refuses a file
+  with a second hard link.
 
 ### Fixed
 - `generate mcp` writes by default to Claude Desktop's config for the OS:

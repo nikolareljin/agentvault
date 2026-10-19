@@ -238,3 +238,18 @@ func TestResolveReferencesRefusesSecretFiles(t *testing.T) {
 		t.Errorf(".env.example not taken: %v", got)
 	}
 }
+
+// A hard link named notes.md to .env is .env under another name.
+func TestResolveReferencesRefusesHardLinks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(dir, ".env"), filepath.Join(dir, "notes.md")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	refs := ResolveReferences(dir, ".", "See `notes.md`.")
+	if len(refs) != 1 || refs[0].Status != ReferenceRefused {
+		t.Errorf("hard link not refused: %+v", refs)
+	}
+}
