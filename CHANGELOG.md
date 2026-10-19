@@ -49,8 +49,10 @@
   scripts are redacted without `--include-secrets`. Scripts that
   `settings.json` runs and that cannot be carried are listed as declined.
   `*.env` files are refused like `.env`. A symlinked optional file (for
-  example `~/.gemini/GEMINI.md` or `CONVENTIONS.md`) is skipped with a
-  warning instead of failing the export.
+  example `~/.gemini/GEMINI.md`, `~/.claude/settings.json` or
+  `CONVENTIONS.md`) is skipped with a warning instead of failing the export.
+  Credential and startup directories match with trailing dots and spaces
+  too (`~/.aws./config`), which Windows drops.
 - The plugin inventory drops the user and password from a marketplace URL,
   so `https://token@host/repo` does not carry the token. Only http, https,
   ssh and git URLs with a host are kept, without query or fragment;
