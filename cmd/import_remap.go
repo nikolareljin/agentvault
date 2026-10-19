@@ -152,6 +152,21 @@ func remapText(text string, remaps []pathRemap) (string, int) {
 	return b.String(), total
 }
 
+// startsNewArg is whether the text after a space in a JSON string starts
+// another argument rather than continuing a path such as "My Docs": a flag,
+// a drive, or an absolute or home path.
+func startsNewArg(rest string) bool {
+	if rest == "" {
+		return false
+	}
+	switch rest[0] {
+	case '-', '/', '~', ' ':
+		return true
+	}
+	c := rest[0] | 0x20
+	return len(rest) >= 2 && c >= 'a' && c <= 'z' && rest[1] == ':'
+}
+
 // windowsStylePath is a path with a drive letter or a backslash.
 func windowsStylePath(p string) bool {
 	return strings.Contains(p, `\`) || (len(p) >= 2 && p[1] == ':')
@@ -167,7 +182,7 @@ func convertPathTail(b *strings.Builder, text string, i int, fromWin, esc, inJSO
 	for i < len(text) {
 		c := text[i]
 		if inJSON {
-			if c == '"' {
+			if c == '"' || (c == ' ' && startsNewArg(text[i+1:])) {
 				return i
 			}
 		} else if strings.IndexByte(" \t\r\n\"'`,;:)]}<>|", c) >= 0 {

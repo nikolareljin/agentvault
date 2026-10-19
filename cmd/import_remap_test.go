@@ -326,6 +326,10 @@ func TestRemapTextConvertsJSONPathWithSpaces(t *testing.T) {
 	if want := `{"a":"/home/b/My Docs/x","b":"q"}`; got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
+	got, _ = remapText(`{"a":"C:\\Users\\a\\x --out C:\\tmp\\y","b":"C:\\Users\\a\\x d:\\z ~/w /v/u"}`, []pathRemap{{From: `C:\Users\a`, To: "/home/b"}})
+	if want := `{"a":"/home/b/x --out C:\\tmp\\y","b":"/home/b/x d:\\z ~/w /v/u"}`; got != want {
+		t.Errorf("unrelated path converted:\ngot  %s\nwant %s", got, want)
+	}
 	got, _ = remapText(`{"a":"/home/a/My Docs/x"}`, []pathRemap{{From: "/home/a", To: `C:\Users\b`}})
 	if want := `{"a":"C:\\Users\\b\\My Docs\\x"}`; got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
