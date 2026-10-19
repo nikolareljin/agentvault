@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -82,6 +84,11 @@ var generateMCPCmd = &cobra.Command{
 	Long: `Generate a claude_desktop_config.json file for MCP servers.
 
 This file can be used with Claude Desktop or other MCP-aware clients.
+The default output is Claude Desktop's config for this OS:
+  macOS    ~/Library/Application Support/Claude/claude_desktop_config.json
+  Windows  %APPDATA%\Claude\claude_desktop_config.json
+  Linux    ~/.config/claude/claude_desktop_config.json
+Only the mcpServers key of an existing file is replaced.
 Includes all MCP servers from both shared config and individual agents.
 
 Examples:
@@ -553,28 +560,27 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 		Env     map[string]string `json:"env,omitempty"`
 	}
 
-	config := struct {
+	desktop := struct {
 		MCPServers map[string]MCPServerConfig `json:"mcpServers"`
 	}{
 		MCPServers: make(map[string]MCPServerConfig),
 	}
 
 	for name, s := range servers {
-		config.MCPServers[name] = MCPServerConfig{
+		desktop.MCPServers[name] = MCPServerConfig{
 			Command: s.Command,
 			Args:    s.Args,
 			Env:     s.Env,
 		}
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
+	data, err := json.MarshalIndent(desktop, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding MCP config: %w", err)
 	}
 
 	if outputFile == "" {
-		home, _ := os.UserHomeDir()
-		outputFile = filepath.Join(home, ".config", "claude", "claude_desktop_config.json")
+		outputFile = config.ClaudeDesktopConfigPath()
 	}
 
 	if outputFile == "-" {
@@ -582,6 +588,10 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 		return nil
 	}
 
+	data, err = mergeMCPServersIntoFile(outputFile, data)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(outputFile), 0700); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
 	}
@@ -595,6 +605,32 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 		fmt.Printf("    - %s\n", name)
 	}
 	return nil
+}
+
+// mergeMCPServersIntoFile replaces only the mcpServers key of an existing
+// config file and keeps every other key. The default output is Claude
+// Desktop's own config, which holds the app's other settings too.
+func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
+	existing, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return generated, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return generated, nil
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(existing, &doc); err != nil {
+		return nil, fmt.Errorf("%s is not a JSON object; not overwriting it (pass another output file): %w", path, err)
+	}
+	var gen map[string]json.RawMessage
+	if err := json.Unmarshal(generated, &gen); err != nil {
+		return nil, err
+	}
+	doc["mcpServers"] = gen["mcpServers"]
+	return json.MarshalIndent(doc, "", "  ")
 }
 
 func runGenerateAll(cmd *cobra.Command, args []string) error {

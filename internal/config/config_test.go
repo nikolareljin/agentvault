@@ -33,3 +33,18 @@ func TestVaultPath(t *testing.T) {
 		t.Errorf("VaultPath() = %q, want %q", path, want)
 	}
 }
+
+func TestClaudeDesktopConfigPathFor(t *testing.T) {
+	home := filepath.FromSlash("/h")
+	cases := []struct{ goos, appData, want string }{
+		{"darwin", "", filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")},
+		{"windows", filepath.FromSlash("/ad"), filepath.Join(filepath.FromSlash("/ad"), "Claude", "claude_desktop_config.json")},
+		{"windows", "", filepath.Join(home, "AppData", "Roaming", "Claude", "claude_desktop_config.json")},
+		{"linux", "", filepath.Join(home, ".config", "claude", "claude_desktop_config.json")},
+	}
+	for _, c := range cases {
+		if got := claudeDesktopConfigPathFor(c.goos, home, c.appData); got != c.want {
+			t.Errorf("%s/%q: got %s, want %s", c.goos, c.appData, got, c.want)
+		}
+	}
+}
