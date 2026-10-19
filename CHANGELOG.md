@@ -104,7 +104,8 @@
   instructions that are not prose are redacted without `--include-secrets`.
 - Outside the tools' own directories, import writes back only prose files
   (0600, never executable) and the `mcpServers` key of `~/.claude.json`. The
-  merged keys are fixed in code, not read from the bundle. Referenced scripts
+  merged keys are fixed in code, not read from the bundle, and a machine
+  with no `~/.claude.json` yet gets only those keys. Referenced scripts
   and config files are staged for review and not written. Startup files,
   credential paths and home-root dotfiles are refused in any letter case.
 - Referenced files that are not prose (scripts, config) and `~/.claude/hooks/`
@@ -142,7 +143,8 @@
   does not write those paths from the home root either.
 - `~/.config/github-copilot/hosts.json` and `apps.json` hold GitHub OAuth
   tokens. They are login token files like `auth.json`: never collected,
-  and never written from a bundle, in any spelling.
+  not followed as a reference, and never written from a bundle, in any
+  spelling.
 - A file whose hard link count cannot be read is treated as hard-linked.
   The export warning for a hard-linked file says why it was redacted.
 

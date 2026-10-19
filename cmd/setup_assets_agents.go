@@ -700,6 +700,9 @@ func homeReferenceRefusal(rel string) string {
 	if folded == ".claude.json" {
 		return "carried as its MCP servers only"
 	}
+	if isCredentialFile(rel) {
+		return "a login token file; sign in on the other machine instead"
+	}
 	if reason := agentRootRefusal(folded); reason != "" {
 		return reason
 	}
@@ -1063,7 +1066,8 @@ var projectRepoScopeSettings = []string{
 
 func isProjectRepoScopeSetting(logical string) bool {
 	for _, p := range projectRepoScopeSettings {
-		if filepath.ToSlash(p) == logical {
+		// Any letter case: macOS and Windows match .Claude/settings.json.
+		if strings.EqualFold(filepath.ToSlash(p), logical) {
 			return true
 		}
 	}
@@ -1305,19 +1309,19 @@ func dedupeAssetsByLogicalPath(in []SetupAsset) []SetupAsset {
 }
 
 // mergeJSONKeysIntoFile sets keys from incoming into the JSON object at path
-// and keeps every other key there. A missing or empty file takes incoming as
-// is; a file that is not a JSON object is refused rather than overwritten.
+// and keeps every other key there. A missing or empty file gets those keys
+// only: the rest of incoming is never written. A file that is not a JSON
+// object is refused rather than overwritten.
 func mergeJSONKeysIntoFile(path string, incoming []byte, keys []string) ([]byte, error) {
 	existing, err := os.ReadFile(path)
-	if os.IsNotExist(err) || (err == nil && len(strings.TrimSpace(string(existing))) == 0) {
-		return incoming, nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(existing, &doc); err != nil {
-		return nil, fmt.Errorf("%s is not a JSON object; not overwriting it", path)
+	doc := map[string]json.RawMessage{}
+	if len(strings.TrimSpace(string(existing))) > 0 {
+		if err := json.Unmarshal(existing, &doc); err != nil || doc == nil {
+			return nil, fmt.Errorf("%s is not a JSON object; not overwriting it", path)
+		}
 	}
 	var in map[string]json.RawMessage
 	if err := json.Unmarshal(incoming, &in); err != nil {

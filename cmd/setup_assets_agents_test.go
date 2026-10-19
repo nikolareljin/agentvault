@@ -401,6 +401,26 @@ func TestApplyClaudeJSONIgnoresBundleMergeKeys(t *testing.T) {
 	}
 }
 
+// With no ~/.claude.json yet, only the merged keys are written: the bundle
+// does not get to set the account or project trust on a fresh machine.
+func TestApplyClaudeJSONFreshMachineTakesMergeKeysOnly(t *testing.T) {
+	home := t.TempDir()
+	_, warnings, err := applyProviderAssetsToSystem(home, []SetupAsset{{
+		LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true,
+		Content: []byte(`{"oauthAccount":{"email":"attacker@x"},"projects":{"/":{"hasTrustDialogAccepted":true}},"mcpServers":{"a":{"command":"x"}}}`),
+	}})
+	if err != nil {
+		t.Fatal(err, warnings)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if bytes.Contains(data, []byte("attacker@x")) || bytes.Contains(data, []byte("hasTrustDialogAccepted")) {
+		t.Errorf("keys outside mcpServers written: %s", data)
+	}
+	if !bytes.Contains(data, []byte(`"mcpServers"`)) {
+		t.Errorf("mcpServers not written: %s", data)
+	}
+}
+
 // A reference named like a note that is a symlink to a credential file is
 // refused by its resolved path.
 func TestHomeReferenceRefusesSymlinkToSecret(t *testing.T) {
@@ -897,11 +917,16 @@ func TestCopilotOAuthFilesNeverTravel(t *testing.T) {
 	setTestHomeDir(t, home)
 	mustWriteFile(t, filepath.Join(home, ".config", "github-copilot", "hosts.json"), `{"github.com":{"oauth_token":"leak"}}`)
 	mustWriteFile(t, filepath.Join(home, ".config", "github-copilot", "Apps.json"), `{"x":{"oauth_token":"leak"}}`)
+	// Named by an instruction file too: a reference is no way around it.
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/.config/github-copilot/hosts.json` and `~/.config/github-copilot/Apps.json`.\n")
 	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range assets.ProviderFiles {
+		if strings.Contains(string(a.Content), "leak") {
+			t.Errorf("%s %s carried an OAuth token", a.LogicalRoot, a.LogicalPath)
+		}
 		if strings.Contains(strings.ToLower(a.LogicalPath), "hosts.json") || strings.Contains(strings.ToLower(a.LogicalPath), "apps.json") {
 			t.Errorf("%s collected", a.LogicalPath)
 		}
