@@ -633,7 +633,16 @@ func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
 		return nil, err
 	}
 	doc["mcpServers"] = gen["mcpServers"]
-	return json.MarshalIndent(doc, "", "  ")
+	// Keep the other keys' strings as written: Marshal would turn < > & into
+	// \u003c \u003e \u0026.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // writeFileAtomicKeepMode replaces path through a temp file and a rename, so
@@ -645,12 +654,19 @@ func writeFileAtomicKeepMode(path string, data []byte) error {
 		target = resolved
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("resolving %s: %w", path, err)
-	} else if link, lerr := os.Readlink(path); lerr == nil {
-		// A dangling link: create its target rather than replace the link.
-		if !filepath.IsAbs(link) {
-			link = filepath.Join(filepath.Dir(path), link)
+	} else {
+		// A dangling link: follow every hop and create the final target
+		// rather than replace a link. A loop fails in EvalSymlinks above.
+		for hops := 0; hops < 255; hops++ {
+			link, lerr := os.Readlink(target)
+			if lerr != nil {
+				break
+			}
+			if !filepath.IsAbs(link) {
+				link = filepath.Join(filepath.Dir(target), link)
+			}
+			target = link
 		}
-		target = link
 	}
 	mode := os.FileMode(0600)
 	if info, err := os.Stat(target); err == nil {

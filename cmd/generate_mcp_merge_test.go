@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -130,5 +131,63 @@ func TestMergeMCPServersNewFile(t *testing.T) {
 	out, err := mergeMCPServersIntoFile(filepath.Join(t.TempDir(), "absent.json"), gen)
 	if err != nil || string(out) != string(gen) {
 		t.Fatalf("got %s, %v", out, err)
+	}
+}
+
+// A dangling link to another link: the last link's target is created and
+// neither link is replaced by a file.
+func TestWriteFileAtomicDanglingSymlinkChain(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	link := filepath.Join(dir, "link.json")
+	mid := filepath.Join(dir, "mid.json")
+	if err := os.Symlink("mid.json", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.json", mid); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomicKeepMode(link, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range []string{link, mid} {
+		if fi, err := os.Lstat(l); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s replaced by a file: %v", l, err)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "real.json")); err != nil || string(got) != `{}` {
+		t.Fatalf("target = %q, %v", got, err)
+	}
+}
+
+func TestMergeMCPServersKeepsHTMLCharacters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte(`{"s":"a<b>&c"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := mergeMCPServersIntoFile(path, []byte(`{"mcpServers":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"a<b>&c"`) {
+		t.Fatalf("string rewritten: %s", out)
+	}
+}
+
+// A failed rename must not leave the temp file next to the config.
+func TestWriteFileAtomicRemovesTempOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "c.json")
+	if err := os.MkdirAll(filepath.Join(target, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomicKeepMode(target, []byte(`{}`)); err == nil {
+		t.Fatal("renamed over a non-empty directory")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("temp file left behind: %v", entries)
 	}
 }
