@@ -1,0 +1,824 @@
+#!/usr/bin/env bash
+# SCRIPT: cli.sh
+# DESCRIPTION: The ./dev entry point — one verb set, identical in every repo.
+# USAGE: ./dev <verb> [target] [options]
+#
+# PARAMETERS:
+#   Run ./dev with no arguments for the verb list.
+# EXIT_CODES:
+#   0  The verb succeeded.
+#   1  The verb failed.
+#   2  Unknown verb, or bad options.
+#   3  The verb is not applicable in this repo (R-765 ADR-0061).
+# ----------------------------------------------------
+#
+# Copied from script-helpers templates/dev-cli/. Repo-specific behaviour belongs
+# in scripts/project.sh, which is sourced below when it exists — not in here, so
+# that this file can be refreshed from the template without losing local work.
+#
+# To override a verb, define project_<verb> in scripts/project.sh:
+#
+#     project_run() { flutter run -d "${DEV_DEVICE:-linux}"; }
+#
+# Anything not overridden falls back to the shared implementation, which drives
+# script-helpers' android/flutter/gradle/screencap modules.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/_bootstrap.sh"
+
+shlib_import logging help manifest changelog
+
+# Optional per-repo overrides and configuration.
+# shellcheck source=/dev/null
+[[ -f "$SCRIPT_DIR/project.sh" ]] && source "$SCRIPT_DIR/project.sh"
+
+cd "$DEV_REPO_ROOT" || exit 1
+
+# --- shared options --------------------------------------------------------
+
+DEV_TARGET=""
+DEV_DEVICE="${DEV_DEVICE:-}"
+DEV_RELEASE=false
+DEV_VERBOSE=false
+# Android user to install into. 0 is the device owner. See the note in
+# verb_deploy for why this is pinned rather than left to adb's default.
+DEV_USER="${DEV_USER:-0}"
+declare -a DEV_ARGS=()
+
+parse_dev_options() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      android|ios|host|backend|frontend|linux|web|macos|windows|cloudflare)
+        DEV_TARGET="$1"; shift ;;
+      # Checked before shifting: `shift 2` with one argument left returns
+      # non-zero, and set -e would kill the process before the validation below
+      # could name what was missing.
+      --device)
+        [[ $# -ge 2 ]] || { log_error "--device needs a serial, e.g. --device R5CRC2WANMT"; exit 2; }
+        DEV_DEVICE="$2"; shift 2 ;;
+      --user)
+        [[ $# -ge 2 ]] || { log_error "--user needs a profile id, e.g. --user 0"; exit 2; }
+        DEV_USER="$2"; shift 2 ;;
+      # Options the forwarded scripts take a value for: preflight's --stack and
+      # --dir, screencap's --platform, --out, --seconds, --size and --bitrate.
+      # The value is passed through with its flag, so a value that happens to
+      # be a target word (`./dev preflight --stack ios`, `./dev screenshot
+      # --out web`) is not taken as the target and the flag left dangling.
+      # A next word starting with `-` is another option, not the value: taking
+      # it would swallow `--help` or `--release` (`./dev preflight --stack
+      # --help` ran preflight). The flag is then passed on alone for the script
+      # to reject as missing its value.
+      --stack|--dir|--platform|--out|--seconds|--size|--bitrate|--env|--config|--dist|--status-path|--build-command|--command|--version-file|--source)
+        DEV_ARGS+=("$1"); shift
+        if [[ $# -gt 0 && "$1" != -* ]]; then DEV_ARGS+=("$1"); shift; fi ;;
+      --release) DEV_RELEASE=true; shift ;;
+      --verbose) DEV_VERBOSE=true; shift ;;
+      # Asking a verb for help must not run the verb. Without this, `./dev
+      # deploy --help` builds and installs on a device.
+      -h|--help) usage; exit 0 ;;
+      *) DEV_ARGS+=("$1"); shift ;;
+    esac
+  done
+  [[ "$DEV_USER" =~ ^[0-9]+$ ]] || { log_error "--user must be a number, got '${DEV_USER:-<empty>}'"; exit 2; }
+  [[ "$DEV_VERBOSE" == "true" ]] && set -x
+  return 0
+}
+
+# not_applicable <verb> <reason>; a verb this repo cannot honour exits 3 with an
+# explanation. It is never simply absent: a missing verb is indistinguishable
+# from a typo, and that is what erodes a shared command set. Not 0: a skipped
+# build or deploy must not read as one that ran (R-765 ADR-0061).
+not_applicable() {
+  log_info "$1: not applicable in this repo -- $2"
+  exit 3
+}
+
+# Does this repository declare its services (SVC_BACKEND in scripts/project.sh)?
+# Then start, stop, restart, status and logs are lib/service.sh's.
+dev_has_services() {
+  [[ -n "${SVC_BACKEND:-}" ]] || return 1
+  shlib_import service
+}
+
+# --- stack detection -------------------------------------------------------
+#
+# Delegated to preflight, which is the one implementation of it. Emits
+# "<stack>\t<dir>" lines.
+
+# Detect once per ./dev invocation. Detection cannot change while one command
+# runs, and every caller asked again: `./dev install` alone asked five times --
+# dev_is_flutter, then dev_has_stack and dev_stack_dir for python and node --
+# so one command spawned five preflight subprocesses to answer one question.
+#
+# The guard tests a separate flag rather than the cache being non-empty, because
+# a repository with no detected stack caches an empty string and would otherwise
+# be re-detected on every call: the cheapest case would pay the most.
+_dev_projects_ensure() {
+  [[ "${_DEV_PROJECTS_CACHED:-}" == "1" ]] && return 0
+  # CI cleared for this call only: preflight refuses to run under CI=true, and
+  # with its error discarded every nested project went undetected in CI. --list
+  # only detects; it runs no checks.
+  _DEV_PROJECTS_CACHE="$(CI="" bash "$SCRIPT_HELPERS_DIR/scripts/preflight.sh" --list 2>/dev/null || true)"
+  _DEV_PROJECTS_CACHED=1
+}
+
+dev_projects() {
+  _dev_projects_ensure
+  printf '%s\n' "$_DEV_PROJECTS_CACHE"
+}
+
+# The callers below must not put dev_projects on the left of a pipe or inside a
+# command substitution: both run it in a subshell, where the cache it fills is
+# discarded when that subshell exits, so every call would detect again and the
+# memoization above would do nothing. They match the cached string in this shell
+# instead -- which also drops the grep and awk each call used to spawn.
+dev_has_stack() {
+  _dev_projects_ensure
+  case $'\n'"$_DEV_PROJECTS_CACHE"$'\n' in
+    *$'\n'"$1"$'\t'*) return 0 ;;
+  esac
+  return 1
+}
+
+# Returns 1 when the stack is absent so callers can fall back. awk exited 0 when
+# it matched nothing, so `dev_stack_dir x || echo .` would otherwise be dead
+# code and the caller would receive an empty directory.
+dev_stack_dir() {
+  local want="$1" stack dir
+  _dev_projects_ensure
+  # A here-string keeps the loop in this shell; a pipe would not.
+  while IFS=$'\t' read -r stack dir || [[ -n "$stack" ]]; do
+    [[ "$stack" == "$want" ]] || continue
+    [[ -n "$dir" ]] || return 1
+    printf '%s\n' "$dir"
+    return 0
+  done <<< "$_DEV_PROJECTS_CACHE"
+  return 1
+}
+
+# Ask the detector first, so the cache is filled in this shell rather than
+# inside whichever command substitution happens to run next. With the file test
+# first, a Flutter app at the repository root short-circuits, dev_has_stack
+# never runs here, and the first fill lands in a `$(dev_stack_dir ...)` subshell
+# and is discarded -- which made the memoization worth 5->2 instead of 5->1 on
+# exactly the repositories this template targets.
+dev_is_flutter() { dev_has_stack flutter || [[ -f pubspec.yaml ]]; }
+dev_is_android() { dev_has_stack gradle || [[ -d android ]]; }
+
+# --- verbs -----------------------------------------------------------------
+
+# Point git at the shared hooks. In a repo that has deleted its build workflows
+# the pre-push hook is the only remaining gate, and core.hooksPath lives in
+# .git/config — untracked, so a fresh clone has no gate until something sets it.
+# That something is install.
+dev_install_hooks() {
+  local setup="$SCRIPT_HELPERS_DIR/scripts/setup-hooks.sh"
+  [[ -f "$setup" ]] || { log_warn "install: setup-hooks.sh not found — git hooks not configured"; return 0; }
+  bash "$setup" || log_warn "install: could not configure git hooks — pushes will not be gated"
+}
+
+# Install Python dependencies without writing into an externally managed
+# interpreter. On a PEP 668 host (modern Debian/Ubuntu) `pip install` into the
+# system Python is refused by design, so use the same project-local .venv that
+# local_test_python.sh resolves — one environment, not two.
+dev_python_install() {
+  local d="$1" py=python3
+  command -v python3 >/dev/null 2>&1 || py=python
+  command -v "$py" >/dev/null 2>&1 || { log_warn "install: no python interpreter — skipping $d"; return 0; }
+
+  if [[ -x "$d/.venv/bin/python" ]]; then
+    py="$d/.venv/bin/python"
+  elif [[ -x "$d/venv/bin/python" ]]; then
+    py="$d/venv/bin/python"
+  elif "$py" -c 'import os,sys,sysconfig; sys.exit(0 if os.path.exists(os.path.join(sysconfig.get_path("stdlib"),"EXTERNALLY-MANAGED")) else 1)' 2>/dev/null; then
+    log_info "install: system Python is externally managed (PEP 668); using $d/.venv"
+    shlib_import python
+    python_ensure_venv "$py" "$d/.venv" >/dev/null || {
+      log_error "install: could not create $d/.venv — install python3-venv"
+      return 1
+    }
+    py="$d/.venv/bin/python"
+  fi
+
+  if [[ -f "$d/requirements.txt" ]]; then
+    log_info "install: $py -m pip install -r $d/requirements.txt"
+    "$py" -m pip install -r "$d/requirements.txt" --quiet
+  fi
+  # The dev extra is where a project declares its test and lint tools. Preflight
+  # needs them, so install owes them too. Installed by path rather than by
+  # cd-ing: $py is relative to the repo root, and a cd would break it.
+  if [[ -f "$d/pyproject.toml" ]] && grep -qE '^[[:space:]]*dev[[:space:]]*=' "$d/pyproject.toml"; then
+    # Braced: `$d[dev]` reads as an array subscript to shellcheck (SC1087) and
+    # to anyone maintaining this, where the intent is the path plus a pip extra.
+    log_info "install: $py -m pip install -e '${d}[dev]'"
+    "$py" -m pip install -e "${d}[dev]" --quiet \
+      || log_warn "install: the dev extra did not install; continuing"
+  fi
+}
+
+verb_install() {
+  declare -f project_install >/dev/null && { project_install; return; }
+  log_info "install: submodules"
+  git submodule update --init --recursive
+  dev_install_hooks
+  if dev_is_flutter; then
+    shlib_import flutter
+    flutter_pub_get "$(dev_stack_dir flutter || echo .)"
+  fi
+  if dev_has_stack python; then
+    local d; d="$(dev_stack_dir python || echo .)"
+    dev_python_install "$d"
+  fi
+  if dev_has_stack node; then
+    local d; d="$(dev_stack_dir node || echo .)"
+    log_info "install: npm ci in $d"
+    ( cd "$d" && npm ci )
+  fi
+}
+
+verb_build() {
+  declare -f project_build >/dev/null && { project_build; return; }
+  local mode=debug; [[ "$DEV_RELEASE" == "true" ]] && mode=release
+  if dev_is_flutter; then
+    shlib_import flutter
+    local d; d="$(dev_stack_dir flutter || echo .)"
+    case "${DEV_TARGET:-android}" in
+      android) flutter_build apk "$d" "--$mode" ;;
+      ios)
+        shlib_import ios
+        ios_available || not_applicable "build ios" "iOS builds need macOS with Xcode"
+        if [[ "$mode" == "release" ]]; then
+          # ios_build_release owns the ExportOptions plist and the --no-codesign
+          # fallback; flutter_build reaches neither.
+          ios_build_release "$d" "${IOS_EXPORT_OPTIONS_PLIST:-}"
+        else
+          flutter_build ios "$d" "--$mode" --simulator
+        fi
+        ;;
+      *)       flutter_build "${DEV_TARGET}" "$d" "--$mode" ;;
+    esac
+    return
+  fi
+  if dev_is_android; then
+    shlib_import android
+    android_build "$(dev_stack_dir gradle || echo .)" "$mode" apk
+    return
+  fi
+  not_applicable build "no Flutter or Gradle project detected"
+}
+
+verb_run() {
+  declare -f project_run >/dev/null && { project_run; return; }
+  if dev_is_flutter; then
+    shlib_import flutter
+    local d dev_id
+    d="$(dev_stack_dir flutter || echo .)"
+    if [[ "${DEV_TARGET:-}" == "ios" ]]; then
+      # Resolve against booted simulators rather than `flutter devices`, so the
+      # error when none is booted names the actual problem.
+      shlib_import ios
+      ios_available || not_applicable "run ios" "iOS needs macOS with Xcode"
+      dev_id="$(ios_resolve_device "$DEV_DEVICE")" || exit 1
+    else
+      dev_id="$(flutter_resolve_device "$DEV_DEVICE" "$d")" || exit 1
+    fi
+    flutter_run_cmd "$d" run -d "$dev_id"
+    return
+  fi
+  not_applicable run "no runnable target — use ./dev deploy to install on a device"
+}
+
+# Stop running services without removing them or their data. A compose file at
+# the repository root gets `docker compose stop`; anything else defines
+# project_stop, or is told the verb does not apply.
+verb_stop() {
+  declare -f project_stop >/dev/null && { project_stop; return; }
+  if dev_has_services; then svc_stop; return; fi
+  local f
+  for f in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+    if [[ -f "$DEV_REPO_ROOT/$f" ]]; then
+      shlib_import docker
+      log_info "stop: stopping the compose stack in $f; containers and volumes are kept"
+      docker_compose -f "$DEV_REPO_ROOT/$f" stop
+      return
+    fi
+  done
+  not_applicable "stop" "no compose file; set SVC_BACKEND or define project_stop in scripts/project.sh"
+}
+
+# start [target]: background the services, wait until ready, print their URLs.
+# A target (dev, demo, prod ...) is the repository's to map, in project_start.
+verb_start() {
+  declare -f project_start >/dev/null && { project_start; return; }
+  if dev_has_services; then svc_start ${DEV_ARGS[@]+"${DEV_ARGS[@]}"}; return; fi
+  not_applicable "start" "no services declared; set SVC_BACKEND or define project_start in scripts/project.sh"
+}
+
+verb_restart() {
+  declare -f project_restart >/dev/null && { project_restart; return; }
+  if dev_has_services; then svc_restart ${DEV_ARGS[@]+"${DEV_ARGS[@]}"}; return; fi
+  if declare -f project_stop >/dev/null && declare -f project_start >/dev/null; then
+    project_stop && project_start
+    return
+  fi
+  not_applicable "restart" "no services declared; set SVC_BACKEND or define project_restart in scripts/project.sh"
+}
+
+# status: what runs (project_status or svc_status), then the service's own
+# status payload when SVC_STATUS_URL is set (the R-765 health convention).
+verb_status() {
+  local rc=0 ran=0
+  if declare -f project_status >/dev/null; then project_status || rc=$?; ran=1
+  elif dev_has_services; then svc_status || rc=$?; ran=1
+  fi
+  if [[ -n "${SVC_STATUS_URL:-}" ]]; then
+    ran=1
+    if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$SVC_STATUS_URL"; then
+      echo
+    else
+      log_warn "status: $SVC_STATUS_URL does not answer"
+      rc=1
+    fi
+  fi
+  [[ "$ran" -eq 1 ]] || not_applicable "status" "no services declared; set SVC_BACKEND or define project_status in scripts/project.sh"
+  return "$rc"
+}
+
+verb_test() {
+  declare -f project_test >/dev/null && { project_test; return; }
+  bash "$SCRIPT_HELPERS_DIR/scripts/preflight.sh" --quick --skip-security
+}
+
+# The secret and dependency scan alone: preflight's security step (gitleaks,
+# pip-audit / safety / bandit, npm audit). --docker runs the tools from the
+# pinned images instead of the host.
+verb_scan() {
+  declare -f project_scan >/dev/null && { project_scan; return; }
+  bash "$SCRIPT_HELPERS_DIR/scripts/preflight.sh" --security-only "${DEV_ARGS[@]+"${DEV_ARGS[@]}"}"
+}
+
+# Browser end-to-end tests with Playwright, in every directory that has a
+# playwright.config.*. Not part of preflight: a browser run is too slow for every
+# push. Browsers are installed first (cached after the first run);
+# PLAYWRIGHT_BROWSERS=chromium limits the download. Extra arguments go to
+# `playwright test`.
+verb_e2e() {
+  declare -f project_e2e >/dev/null && { project_e2e; return; }
+  local -a dirs=()
+  local config dir rel up rc=0
+  # What git sees: tracked files and untracked ones it does not ignore. That
+  # leaves out node_modules and the contents of submodules (script-helpers
+  # itself is usually one), whose configs are a dependency's. A tracked config
+  # deleted from the work tree is still listed, so check it exists. One run per
+  # directory, even with playwright.config.ts and .js side by side. -z: without
+  # it git quotes a path with non-ASCII characters, and the project is missed.
+  local pattern='(^|/)playwright\.config\.[^/]+$'
+  while IFS= read -r dir; do
+    [[ -n "$dir" ]] && dirs+=("$DEV_REPO_ROOT/$dir")
+  done < <(
+    if git -C "$DEV_REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      git -C "$DEV_REPO_ROOT" ls-files -z --cached --others --exclude-standard \
+        | while IFS= read -r -d '' config; do
+            [[ "$config" =~ $pattern && -f "$DEV_REPO_ROOT/$config" ]] && dirname "$config"
+          done | sort -u
+    else
+      (cd "$DEV_REPO_ROOT" && find . \( -name node_modules -o -name .git \) -prune -o \
+         -type f -name 'playwright.config.*' -print | sed 's|^\./||' \
+         | while IFS= read -r config; do dirname "$config"; done | sort -u)
+    fi
+  )
+  [[ ${#dirs[@]} -gt 0 ]] || not_applicable "e2e" "no playwright.config.* found; define project_e2e in scripts/project.sh"
+  command -v npx >/dev/null 2>&1 || { log_error "e2e: npx not found; install Node.js"; exit 1; }
+  for dir in "${dirs[@]}"; do
+    rel="${dir#"$DEV_REPO_ROOT"}"; rel="${rel#/}"; rel="${rel:-.}"
+    # A Playwright project declares it; a config without that (a vendored copy,
+    # an example) is not one of this repository's test suites.
+    if ! grep -qE '"(@playwright/test|playwright)"[[:space:]]*:' "$dir/package.json" 2>/dev/null; then
+      log_info "e2e: skipping $rel: its package.json does not depend on Playwright"
+      continue
+    fi
+    log_info "e2e: $rel"
+    # Node resolves packages upward, and a workspace install hoists them to the
+    # root, so look in every node_modules from here up to the repository root.
+    up="$dir"
+    while [[ ! -d "$up/node_modules/@playwright/test" && ! -d "$up/node_modules/playwright" \
+             && "$up" != "$DEV_REPO_ROOT" && "$up" == "$DEV_REPO_ROOT"/* ]]; do
+      up="$(dirname "$up")"
+    done
+    if [[ ! -d "$up/node_modules/@playwright/test" && ! -d "$up/node_modules/playwright" ]]; then
+      log_error "e2e: Playwright is not installed in $rel; run ./dev install first"
+      rc=1
+      continue
+    fi
+    # shellcheck disable=SC2086  # a list of browser names, split on purpose
+    ( cd "$dir" && npx playwright install ${PLAYWRIGHT_BROWSERS:-} \
+        && npx playwright test "${DEV_ARGS[@]+"${DEV_ARGS[@]}"}" ) || rc=1
+  done
+  return "$rc"
+}
+
+verb_preflight() {
+  declare -f project_preflight >/dev/null && { project_preflight; return; }
+  bash "$SCRIPT_HELPERS_DIR/scripts/preflight.sh" "${DEV_ARGS[@]+"${DEV_ARGS[@]}"}"
+}
+
+# Deploy to a booted simulator (debug) or an attached device (release).
+#
+# Kept separate from the Android path because the two share no step: different
+# build flag, different resolver, different installer. `./dev deploy ios` used
+# to fall through to adb and install an APK.
+#
+# The two iOS modes are not interchangeable either. A debug build produces a
+# simulator .app that installs through simctl; a release build produces a signed
+# .ipa that installs through devicectl onto real hardware. Resolving a simulator
+# UDID for an .ipa cannot work, so each mode resolves its own kind of device.
+_deploy_ios() {
+  shlib_import ios flutter
+  ios_available || not_applicable "deploy ios" "iOS needs macOS with Xcode"
+  dev_is_flutter || { log_error "deploy ios: no Flutter project detected"; exit 1; }
+
+  local d mode=debug udid artifact bundle
+  d="$(dev_stack_dir flutter || echo .)"
+  [[ "$DEV_RELEASE" == "true" ]] && mode=release
+
+  if [[ "$mode" == "release" ]]; then
+    # Demanded before anything else runs, because without it this path installs
+    # the wrong build and calls it a success. `ios_build_release` with no plist
+    # falls back to `flutter build ios --release --no-codesign`, which writes an
+    # unsigned .app under build/ios/iphoneos -- nothing at all under
+    # build/ios/ipa. `ios_artifact ... ipa` then globs that directory newest
+    # first, so an .ipa left by an earlier signed build is picked up and
+    # installed: a stale binary on the device, with every step reporting
+    # success. The .app it did build is no use here either, since ios_install
+    # routes a .app to `simctl install`, which cannot address a physical device.
+    [[ -n "${IOS_EXPORT_OPTIONS_PLIST:-}" ]] || {
+      log_error "deploy ios --release: set IOS_EXPORT_OPTIONS_PLIST to your export options plist"
+      log_error "deploy ios --release: a release deploy installs a signed .ipa on an attached device; without a plist the build is an unsigned .app that only a simulator can take"
+      exit 1
+    }
+    [[ -f "$IOS_EXPORT_OPTIONS_PLIST" ]] || {
+      log_error "deploy ios --release: IOS_EXPORT_OPTIONS_PLIST not found: $IOS_EXPORT_OPTIONS_PLIST"
+      exit 1
+    }
+    # Make it absolute before handing it on. This check runs at the repo root;
+    # ios_build_release re-checks it after `cd`-ing into the Flutter project.
+    # In a repo whose app is nested -- mobile/, app/, the layout the shared dev
+    # CLI assumes -- a relative plist path means two different files in those two
+    # places, so the build either fails on a path that just passed validation or,
+    # worse, signs with whichever plist happens to sit inside the project.
+    case "$IOS_EXPORT_OPTIONS_PLIST" in
+      /*) ;;
+      *)  IOS_EXPORT_OPTIONS_PLIST="$PWD/$IOS_EXPORT_OPTIONS_PLIST" ;;
+    esac
+    # Resolved before building: a signed build is slow, and "no device attached"
+    # is worth hearing before it rather than after.
+    udid="$(ios_resolve_physical_device "$DEV_DEVICE")" || exit 1
+    ios_build_release "$d" "$IOS_EXPORT_OPTIONS_PLIST" || exit 1
+    artifact="$(ios_artifact "$d" ipa)" || {
+      log_error "deploy ios: no IPA under $d/build/ios/ipa"
+      exit 1
+    }
+  else
+    udid="$(ios_resolve_device "$DEV_DEVICE")" || exit 1
+    # `flutter build ios` targets a physical device; the .app it produces cannot
+    # be installed on a simulator.
+    flutter_build ios "$d" --debug --simulator || exit 1
+    artifact="$(ios_artifact "$d" simulator)" || {
+      log_error "deploy ios: no .app under $d/build/ios/iphonesimulator"
+      exit 1
+    }
+  fi
+
+  ios_install "$udid" "$artifact" || exit 1
+
+  # Only the simulator can be launched from here: simctl launch has no devicectl
+  # equivalent that works without a debug session, so a device install stops at
+  # installed.
+  if [[ "$artifact" == *.app ]]; then
+    if bundle="$(ios_bundle_id "$artifact")" && [[ -n "$bundle" ]]; then
+      ios_launch "$udid" "$bundle"
+    else
+      log_warn "deploy ios: installed, but the bundle id could not be read — launch it by hand."
+    fi
+  else
+    log_info "deploy ios: installed on $udid — open it on the device."
+  fi
+}
+
+_deploy_android() {
+  shlib_import adb android
+  local mode=debug; [[ "$DEV_RELEASE" == "true" ]] && mode=release
+  local serial="$DEV_DEVICE" artifact _sh_line
+  local -a _serials=()
+
+  if [[ -z "$serial" ]]; then
+    _serials=()
+    while IFS= read -r _sh_line; do _serials+=("$_sh_line"); done < <(adb_ready_serials)
+    [[ ${#_serials[@]} -eq 1 ]] || {
+      log_error "deploy: ${#_serials[@]} devices ready — pass --device <serial>"
+      adb_list_devices
+      exit 1
+    }
+    serial="${_serials[0]}"
+  fi
+
+  if dev_is_flutter; then
+    shlib_import flutter
+    flutter_build apk "$(dev_stack_dir flutter || echo .)" "--$mode"
+  else
+    android_build "$(dev_stack_dir gradle || echo .)" "$mode" apk
+  fi
+
+  local gdir; gdir="$(dev_stack_dir gradle || echo .)"
+  artifact="$(android_artifact "$gdir" "$mode" apk)" || {
+    log_error "deploy: no APK found for variant $mode"
+    exit 1
+  }
+
+  # Install into an explicit user, then confirm the package is actually visible
+  # there. `adb install` can report Success into a work profile or Secure Folder
+  # the shell cannot read back, leaving the app absent from the launcher while
+  # every signal says the install worked. Verifying is what turns that from an
+  # hour of debugging into one line of output.
+  local pkg
+  if pkg="$(android_package_name "$gdir" "$artifact" 2>/dev/null)" && [[ -n "$pkg" ]]; then
+    adb_install_verified "$serial" "$artifact" "$pkg" --user "$DEV_USER"
+  else
+    log_warn "deploy: could not determine the package name — installing without the post-install check."
+    log_warn "deploy: confirm by hand with: adb -s $serial shell pm list packages --user $DEV_USER"
+    adb_install "$serial" "$artifact" --user "$DEV_USER"
+  fi
+}
+
+# Deploy to Cloudflare. Everything after the target word is handed to
+# cloudflare_deploy untouched, so this stays a pass-through rather than a second
+# place where deploy options are enumerated and then drift.
+#
+# The same function is what a CI workflow calls through its deploy_command, so
+# the laptop and the pipeline run one sequence, not two that must be kept in
+# step by hand.
+_deploy_cloudflare() {
+  shlib_import cloudflare
+  local -a args=()
+  args=("${DEV_ARGS[@]+"${DEV_ARGS[@]}"}")
+  # --env is required by cloudflare_deploy and has no safe default: guessing an
+  # environment is how a staging deploy reaches production.
+  cloudflare_deploy "${args[@]+"${args[@]}"}"
+}
+
+verb_deploy() {
+  declare -f project_deploy >/dev/null && { project_deploy; return; }
+  case "${DEV_TARGET:-android}" in
+    android)    _deploy_android ;;
+    ios)        _deploy_ios ;;
+    cloudflare) _deploy_cloudflare ;;
+    *) not_applicable "deploy ${DEV_TARGET}" "targets are android, ios and cloudflare" ;;
+  esac
+}
+
+verb_devices() {
+  declare -f project_devices >/dev/null && { project_devices; return; }
+  shlib_import adb android os
+  echo "Android devices:"
+  adb_list_devices || true
+  echo
+  echo "Android AVDs:"
+  android_avd_list 2>/dev/null || echo "  (none, or no SDK)"
+  # is_macos, not a bare $OSTYPE read: this file runs under `set -u`, where a
+  # caller that has unset OSTYPE aborts the CLI on the expansion, and lib/os.sh
+  # is the one place that knows how to read it -- including the linux-musl and
+  # linux-android spellings a hand-rolled check here would get wrong next.
+  if is_macos; then
+    shlib_import ios
+    echo
+    echo "iOS simulators (booted):"
+    ios_booted_simulators 2>/dev/null || echo "  (none)"
+  fi
+}
+
+verb_screenshot() {
+  declare -f project_screenshot >/dev/null && { project_screenshot; return; }
+  shlib_import screencap
+  local -a args=()
+  [[ -n "$DEV_DEVICE" ]] && args+=(--device "$DEV_DEVICE")
+  [[ -n "$DEV_TARGET" ]] && args+=(--platform "$DEV_TARGET")
+  screencap_shot "${args[@]+"${args[@]}"}" "${DEV_ARGS[@]+"${DEV_ARGS[@]}"}"
+}
+
+verb_record() {
+  declare -f project_record >/dev/null && { project_record; return; }
+  shlib_import screencap
+  local -a args=()
+  [[ -n "$DEV_DEVICE" ]] && args+=(--device "$DEV_DEVICE")
+  [[ -n "$DEV_TARGET" ]] && args+=(--platform "$DEV_TARGET")
+  screencap_record "${args[@]+"${args[@]}"}" "${DEV_ARGS[@]+"${DEV_ARGS[@]}"}"
+}
+
+verb_logs() {
+  # logs android / logs ios stay device logs, whatever else the repo runs.
+  if [[ "$DEV_TARGET" != android && "$DEV_TARGET" != ios ]]; then
+    declare -f project_logs >/dev/null && { project_logs; return; }
+    if dev_has_services; then
+      # A service name may be a target word (web, backend), parsed as the target.
+      svc_logs "${DEV_ARGS[0]:-$DEV_TARGET}"
+      return
+    fi
+  fi
+  shlib_import adb
+  local serial="$DEV_DEVICE" _sh_line
+  local -a _serials=()
+  if [[ -z "$serial" ]]; then
+    _serials=()
+    while IFS= read -r _sh_line; do _serials+=("$_sh_line"); done < <(adb_ready_serials)
+    [[ ${#_serials[@]} -ge 1 ]] || { log_error "logs: no device ready"; exit 1; }
+    serial="${_serials[0]}"
+  fi
+  log_info "logs: streaming from $serial (Ctrl-C to stop)"
+  adb -s "$serial" logcat
+}
+
+verb_clean() {
+  declare -f project_clean >/dev/null && { project_clean; return; }
+  if dev_is_flutter; then
+    shlib_import flutter
+    flutter_run_cmd "$(dev_stack_dir flutter || echo .)" clean || true
+  fi
+  if dev_has_stack gradle; then
+    shlib_import gradle
+    gradle_clean "$(dev_stack_dir gradle)" || true
+  fi
+  log_info "clean: done. User data and .env files are untouched."
+}
+
+verb_update() {
+  declare -f project_update >/dev/null && { project_update; return; }
+  log_info "update: syncing submodules to their tracked branches"
+  git submodule sync --recursive
+  git submodule update --init --remote --recursive || {
+    log_warn "update: --remote failed; falling back to the pinned commits"
+    git submodule update --init --recursive
+  }
+  if dev_is_flutter; then
+    shlib_import flutter
+    flutter_pub_get "$(dev_stack_dir flutter || echo .)" || true
+  fi
+}
+
+verb_release() {
+  declare -f project_release >/dev/null && { project_release; return; }
+  local version="${DEV_ARGS[0]:-}"
+  [[ -n "$version" ]] || { log_error "release: need a version, e.g. ./dev release 1.4.0"; exit 2; }
+  manifest_sync_version . "$version"
+  changelog_new_section CHANGELOG.md "$version"
+  log_info "release: manifests and CHANGELOG updated for $version."
+  log_info "release: review the changes, then commit on a release/$version branch."
+  log_info "release: this does NOT tag or push. Tagging happens on merge."
+}
+
+verb_signing() {
+  local kind="${DEV_ARGS[0]:-}" output="${DEV_ARGS[1]:-}"
+  if [[ "$kind" != "android-keystore" || -z "$output" || ${#DEV_ARGS[@]} -ne 2 ]]; then
+    log_error "signing: usage: ./dev signing android-keystore <output.jks>"
+    exit 2
+  fi
+  shlib_import android
+  android_generate_keystore "$output"
+}
+
+# --- dispatch --------------------------------------------------------------
+
+usage() {
+  cat <<'EOF'
+Usage: ./dev <verb> [target] [options]
+
+Core
+  install       Install dependencies and initialize submodules. Idempotent.
+  build         Produce artifacts. Never starts anything.
+  run           Start the app in the foreground.
+  test          Run the test suite.
+  preflight     Run every check CI would have run. The pre-push hook calls this.
+  scan          Secret and dependency scan only (gitleaks, audits).  [--docker]
+  e2e           Browser tests with Playwright, where playwright.config.* exists.
+  deploy        Build, then install and launch on a connected device,
+                or deploy to Cloudflare with `deploy cloudflare --env <name>`.
+  clean         Remove build output and caches. Never touches user data.
+  update        Sync submodules and refresh pinned dependencies.
+
+Services   (scripts/project.sh: SVC_BACKEND, SVC_* -- lib/service.sh)
+  start         Start in the background, wait until ready, print the URLs.
+  stop          Stop what start or run started. Keeps data; nothing running is ok.
+  restart       Stop, then start.
+  status        What runs, which ports listen, health; then SVC_STATUS_URL.
+  logs [name]   Follow service logs. `logs android|ios` streams device logs.
+
+Mobile
+  devices       List connected devices, emulators, AVDs and simulators.
+  screenshot    Capture a PNG from a device.        [--out <path>]
+  record        Capture screen video.               [--seconds <n>] [--gif]
+  signing       Create a local signing credential.  [android-keystore <output.jks>]
+  release       Bump the version across manifests and open a CHANGELOG section.
+
+Targets   android ios host backend frontend linux web macos windows cloudflare
+Options   --device <id>  --user <id>  --release  --verbose
+
+deploy cloudflare passes its options straight to cloudflare_deploy:
+  --env <name>          required; also the wrangler --env
+  --config <path>       wrangler config to deploy
+  --dist <dir>          build output holding a generated deploy config
+  --status-path <path>  JSON endpoint carrying the deployed version
+  --yes                 skip the typed confirmation for a protected environment
+  --dry-run             build and validate, deploy nothing
+A protected environment (default: production) asks you to type its name. With
+no terminal it refuses rather than waiting, so pass --yes in automation.
+
+--user is the Android profile to install into, default 0 (the device owner).
+deploy verifies the package is visible there afterwards: an unqualified install
+can succeed into a work profile or Secure Folder the shell cannot read back,
+leaving the app absent from the launcher while adb reports Success.
+List profiles with: adb shell pm list users
+
+Captured media defaults to docs/screenshots/. Override with $SCREENCAP_DIR.
+
+Exit codes: 0 ok, 1 failed, 2 unknown verb or bad options, 3 not applicable here.
+EOF
+  local own
+  own="$(dev_repo_verbs)"
+  if [[ -n "$own" ]]; then
+    printf '\nThis repository (scripts/project.sh)\n%s\n' "$own"
+  fi
+}
+
+# The verbs this file implements; a repository may override each with
+# project_<verb>, and may add others, but not redefine one by another name.
+DEV_STANDARD_VERBS="install build run start stop restart status test preflight scan e2e deploy devices screenshot record logs clean update signing release"
+
+dev_is_standard_verb() {
+  case " $DEV_STANDARD_VERBS " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+# The repository's own verbs, from its project_* functions that are not
+# overrides of a standard verb. Printed by usage.
+dev_repo_verbs() {
+  local f v
+  for f in $(declare -F | awk '{ print $3 }'); do
+    case "$f" in project_*) ;; *) continue ;; esac
+    v="${f#project_}"; v="${v//_/-}"
+    dev_is_standard_verb "$v" || dev_is_standard_verb "${f#project_}" || printf '  %s\n' "$v"
+  done
+}
+
+main() {
+  local verb="${1:-}"
+  [[ $# -gt 0 ]] && shift || true
+  case "$verb" in
+    ""|-h|--help|help) usage; exit 0 ;;
+  esac
+  # A verb of the repository's own (project_<verb> in scripts/project.sh, a
+  # "-" in the verb is "_" in the name) gets its arguments as typed: they are
+  # its own, not this file's options.
+  if ! dev_is_standard_verb "$verb" && [[ "$verb" =~ ^[a-z][a-z0-9_-]*$ ]] \
+     && declare -f "project_${verb//-/_}" >/dev/null; then
+    "project_${verb//-/_}" "$@"
+    exit $?
+  fi
+  parse_dev_options "$@"
+  case "$verb" in
+    install)    verb_install ;;
+    build)      verb_build ;;
+    run)        verb_run ;;
+    start)      verb_start ;;
+    stop)       verb_stop ;;
+    restart)    verb_restart ;;
+    status)     verb_status ;;
+    test)       verb_test ;;
+    preflight)  verb_preflight ;;
+    scan)       verb_scan ;;
+    e2e)        verb_e2e ;;
+    deploy)     verb_deploy ;;
+    devices)    verb_devices ;;
+    screenshot) verb_screenshot ;;
+    record)     verb_record ;;
+    logs)       verb_logs ;;
+    clean)      verb_clean ;;
+    update)     verb_update ;;
+    signing)    verb_signing ;;
+    release)    verb_release ;;
+    *)
+      echo "Unknown verb: $verb" >&2
+      echo >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+# Guarded so the verb functions can be exercised by a test without running the
+# CLI. Under `./dev`, which execs `bash .../scripts/cli.sh`, $0 and BASH_SOURCE
+# are the same path, so this still runs.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

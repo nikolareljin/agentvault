@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- `./dev` (and `./dev.ps1` on Windows) is the entry point for install, build,
+  test, lint, format, preflight, doctor, clean and install-bin. The commands
+  live in `scripts/project.sh`, and `make` targets are shims onto them.
+  Without Go, `./dev install` and `./dev test` exit 1 and name the Go version
+  from `go.mod`. Verbs that do not apply, such as `deploy`, exit 3.
+- script-helpers as a submodule at `scripts/script-helpers`, tracking
+  `production`.
+- `tests/machine/install_check.sh`: installs into a scratch `GOBIN` and runs
+  the installed binary.
 - `export` carries the user-level setup of Gemini CLI (`~/.gemini`), the
   GitHub Copilot CLI (`~/.copilot`), Cursor and Windsurf MCP configs, Claude's
   user MCP servers from `~/.claude.json` (only `mcpServers`; import merges
@@ -25,7 +34,43 @@
 - `GEMINI.md` is a well-known instruction file for `instructions pull` and
   `sync`.
 
+### Changed
+- `actions/checkout` and `actions/github-script` are pinned to commit SHAs.
+- The Homebrew formula is committed to the tap by ci-helpers
+  `homebrew-tap-publish.yml` with the tap's deploy key
+  (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
+  release opened a tap pull request with `HOMEBREW_TAP_TOKEN` that had to be
+  merged by hand.
+- Go 1.26 (toolchain go1.26.9) and `golang.org/x/crypto` v0.56.0. Go 1.25
+  is no longer supported upstream.
+- CI runs the tests on macOS (`macos-latest`) on push and pull request, next
+  to Linux and Windows.
+
 ### Security
+- Vault and bundle files carry their key-derivation parameters in a versioned
+  header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
+  Before, t=1 was fixed in the code. The header is authenticated with the
+  ciphertext. Files from earlier releases still open; a vault is rewritten in
+  the new format on its next save, and unlocking alone changes nothing. The
+  first such save keeps the old file as `<vault>.v1.bak`. A header asking for
+  more than t=8, 256 MiB or 16 lanes is refused before Argon2 runs.
+  Compatibility: earlier releases cannot open AVK2 vaults or bundles.
+- New vault and bundle passwords need 12 characters (was 8). Existing ones
+  keep working.
+- An instruction whose filename escapes the target directory, such as
+  `../../.bashrc` or `/etc/profile`, is refused by `instructions set`, by
+  import, and at the write in `instructions push` and `setup apply`. Before,
+  a crafted bundle could make `push` write outside the project. The write
+  also refuses symlinked path components below the target directory, and
+  `instructions diff` reports such an entry as refused instead of reading
+  the file it names.
+- Prompts reach `codex` and `claude` after `--`, and `gemini` as
+  `--prompt=<text>`. Before, a prompt such as `--help` sent to
+  `POST /api/v1/prompt` was parsed as a CLI option.
+- `serve` caps JSON request bodies at 1 MiB. At most 4 KiB of a failed
+  provider response is read into an error.
+- A referenced file is re-checked after it is opened: it must still be a
+  regular file inside the directory and at most 256 KiB.
 - Reference following (`instructions pull` and `export`) refuses credential
   files by name: `.env` and `.env.*` (templates such as `.env.example` are
   kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`,
@@ -60,50 +105,22 @@
 - Plugin install commands are printed only for IDs and sources that cannot
   carry shell syntax. Anything else is printed quoted, as a comment.
 
-### Changed
-- A project's own settings files (`.claude/settings.json`, `.mcp.json`,
-  `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`,
-  `.vscode/mcp.json`) are listed in the bundle as `repository` and not
-  carried. They travel with the repository. Before, `.claude/settings.json`
-  was carried.
-- Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
-  `google_accounts.json`) are never collected, even with `--include-secrets`,
-  and import never writes one from a bundle, under any spelling
-  (`x/../auth.json`, `auth.json/.`, `Auth.json.`). Import takes provider
-  paths only in clean form.
-- `~/.copilot/config.json` travels without its login keys (`copilot_tokens`,
-  `logged_in_users`, `last_logged_in_user`, any key named like a token
-  except counts and limits such as `max_tokens` and `tokenLimit`),
-  even with `--include-secrets`. The export lists it as carried in part and
-  skips it when it is not JSON. Import strips the same keys from a bundle and
-  keeps this machine's sign-in.
-- The Homebrew formula is committed to the tap by ci-helpers
-  `homebrew-tap-publish.yml` with the tap's deploy key
-  (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
-  release opened a tap pull request with `HOMEBREW_TAP_TOKEN` that had to be
-  merged by hand.
-- Go 1.26 (toolchain go1.26.9) and `golang.org/x/crypto` v0.56.0. Go 1.25
-  is no longer supported upstream.
-- CI runs the tests on macOS (`macos-latest`) on push and pull request, next
-  to Linux and Windows.
-
-### Security
-- An instruction whose filename escapes the target directory, such as
-  `../../.bashrc` or `/etc/profile`, is refused by `instructions set`, by
-  import, and at the write in `instructions push` and `setup apply`. Before,
-  a crafted bundle could make `push` write outside the project. The write
-  also refuses symlinked path components below the target directory, and
-  `instructions diff` reports such an entry as refused instead of reading
-  the file it names.
-- Prompts reach `codex` and `claude` after `--`, and `gemini` as
-  `--prompt=<text>`. Before, a prompt such as `--help` sent to
-  `POST /api/v1/prompt` was parsed as a CLI option.
-- `serve` caps JSON request bodies at 1 MiB. At most 4 KiB of a failed
-  provider response is read into an error.
-- A referenced file is re-checked after it is opened: it must still be a
-  regular file inside the directory and at most 256 KiB.
-
 ### Fixed
+- `generate mcp` writes by default to Claude Desktop's config for the OS:
+  `~/Library/Application Support/Claude/` on macOS and `%APPDATA%\Claude\` on
+  Windows. Before, it wrote `~/.config/claude/` everywhere, which Claude
+  Desktop on macOS and Windows never reads. It replaces only the `mcpServers`
+  key of an existing file, keeps the other keys in their order with their
+  values as written, the file mode and, outside Windows, its owner; a UTF-8
+  BOM is accepted. It writes
+  through a symlink to its target, replaces the file atomically (fsync of
+  the file and, outside Windows, its directory), writes a device or FIFO
+  such as `/dev/stdout` in place, and refuses a file that is not a JSON
+  object or a path under a symlink to a missing directory. With no home
+  directory it fails instead of writing a relative path into the working
+  directory.
+- `export --help`, the README and the CLI reference name
+  `~/.config/github-copilot`, the directory export reads, not `~/.copilot`.
 - `import --apply-provider-configs` and `setup apply` work when the home or
   target directory sits under a symlink, as `/var` and `/tmp` do on macOS.
   Symlinks are still refused below the home or target directory. Before,
@@ -163,6 +180,22 @@
   `TODO.md` (one `## ` section per item). A copy stored by an earlier release
   keeps working and prints the version warning; run
   `agentvault templates refresh --force` to take the new text.
+- A project's own settings files (`.claude/settings.json`, `.mcp.json`,
+  `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`,
+  `.vscode/mcp.json`) are listed in the bundle as `repository` and not
+  carried. They travel with the repository. Before, `.claude/settings.json`
+  was carried.
+- Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
+  `google_accounts.json`) are never collected, even with `--include-secrets`,
+  and import never writes one from a bundle, under any spelling
+  (`x/../auth.json`, `auth.json/.`, `Auth.json.`). Import takes provider
+  paths only in clean form.
+- `~/.copilot/config.json` travels without its login keys (`copilot_tokens`,
+  `logged_in_users`, `last_logged_in_user`, any key named like a token
+  except counts and limits such as `max_tokens` and `tokenLimit`),
+  even with `--include-secrets`. The export lists it as carried in part and
+  skips it when it is not JSON. Import strips the same keys from a bundle and
+  keeps this machine's sign-in.
 
 ## [0.13.0] - 2026-09-01
 
