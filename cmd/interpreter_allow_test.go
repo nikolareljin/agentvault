@@ -69,12 +69,14 @@ func TestFilterClaudeCustomSettings(t *testing.T) {
 
 func TestIsInterpreterAllowSegmentsAndArguments(t *testing.T) {
 	for _, r := range []string{"Bash(ls && bash:*)", "Bash(git log | sh)", "Bash(true; python3 x)",
-		"Bash(nice -n 5 bash:*)", "Bash(nice:*)", "Bash(echo $(bash))"} {
+		"Bash(nice -n 5 bash:*)", "Bash(nice:*)", "Bash(echo $(bash))",
+		"Bash(if true; then bash; fi)", "Bash(! bash)", "Bash(nice -n hd bash)", "Bash(timeout 10s ./run)",
+		"Bash(find . -exec rm {} +)", "Bash(git -c core.pager=x log)", "Bash(nice -n 5 make bash)"} {
 		if !isInterpreterAllow(r) {
 			t.Errorf("%s not flagged", r)
 		}
 	}
-	for _, r := range []string{"Bash(grep -r env:*)", "Bash(git commit -m time)", "Bash(make:*)", "Bash(rg python)"} {
+	for _, r := range []string{"Bash(make:*)", "Bash(git status:*)", "Bash(go test ./...)"} {
 		if isInterpreterAllow(r) {
 			t.Errorf("%s flagged", r)
 		}

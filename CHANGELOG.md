@@ -5,7 +5,8 @@
 ### Added
 - `import` rewrites the exporting machine's paths for this one. Its home
   directory becomes this home directory, its `--project` directory becomes
-  `--project-root`, and each `--map OLD=NEW` is applied first. This covers
+  `--project-root`, and each `--map OLD=NEW` is applied first (OLD must be
+  an absolute path). This covers
   file content (hook commands, MCP server paths, notes) and Claude's
   per-project memory directory names. `--dry-run` prints every rewrite.
 - `import --apply-projects --project-root DIR` writes the bundle's project
@@ -16,7 +17,8 @@
   secret values blanked (keys with token, secret, password, key and the
   like, and everything under `env` and `headers`). Import fills each blanked
   value from the file already on the machine, or leaves it out. A
-  value is restored only into an unchanged definition, so a bundle that
+  value is restored only into an unchanged definition (for settings.json's
+  own `env`, the rest of `env` must match), so a bundle that
   points an MCP server elsewhere does not receive the local token. A file
   with secret-shaped values under neutral keys (`--token x` in `args`, URL
   credentials, known token prefixes) is redacted whole.

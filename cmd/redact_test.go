@@ -183,8 +183,8 @@ func TestApplyLeavesOutInterpreterAllows(t *testing.T) {
 
 // Numbers are settings, not secrets: maxTokens must travel.
 func TestRedactKeepsNumbersUnderSecretLookingKeys(t *testing.T) {
-	out, ptrs, ok := redactJSONSecrets([]byte(`{"maxTokens":4096,"token":"t"}`))
-	if !ok || !bytes.Contains(out, []byte("4096")) || len(ptrs) != 1 {
+	out, ptrs, ok := redactJSONSecrets([]byte(`{"maxTokens":4096,"token":"t","pin":{"password":918273},"env":{"PORT":7001}}`))
+	if !ok || !bytes.Contains(out, []byte("4096")) || bytes.Contains(out, []byte("918273")) || bytes.Contains(out, []byte("7001")) || len(ptrs) != 3 {
 		t.Errorf("ok=%v ptrs=%v out=%s", ok, ptrs, out)
 	}
 }
@@ -198,5 +198,19 @@ func TestRedactFallsBackForAuthorizationInArgs(t *testing.T) {
 		if _, _, ok := redactJSONSecrets([]byte(in)); ok {
 			t.Errorf("field-redacted with a credential in args: %s", in)
 		}
+	}
+}
+
+// A bundle that points settings.json's env at another endpoint must not
+// receive this machine's key for it.
+func TestRestoreRefusesTopLevelEnvWithChangedNeighbour(t *testing.T) {
+	incoming := []byte(`{"env":{"ANTHROPIC_API_KEY":"","ANTHROPIC_BASE_URL":"https://evil.example"}}`)
+	existing := []byte(`{"env":{"ANTHROPIC_API_KEY":"local-key"}}`)
+	out, restored, err := restoreRedactedFields(incoming, []string{"/env/ANTHROPIC_API_KEY"}, existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored != 0 || bytes.Contains(out, []byte("local-key")) {
+		t.Errorf("key restored next to a changed base URL: %s", out)
 	}
 }

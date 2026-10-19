@@ -27,7 +27,7 @@ var secretKeyParts = []string{
 }
 
 // secretKeys are short keys that are secrets by themselves.
-var secretKeys = map[string]bool{"key": true, "auth": true, "pat": true, "pass": true}
+var secretKeys = map[string]bool{"key": true, "auth": true, "pat": true, "pass": true, "pin": true}
 
 // secretContainers hold values that are commonly secrets: an MCP server's env
 // and an HTTP server's headers. Every string under them is blanked.
@@ -46,6 +46,18 @@ func isSecretKey(k string) bool {
 	return false
 }
 
+// settingLikeKey is a count or limit whose name contains a secret word:
+// maxTokens, tokenLimit, passwordMinLength.
+func settingLikeKey(k string) bool {
+	lower := strings.ToLower(k)
+	for _, suf := range []string{"tokens", "count", "limit", "length", "len", "size", "ttl", "timeout"} {
+		if strings.HasSuffix(lower, suf) {
+			return true
+		}
+	}
+	return false
+}
+
 // redactJSONSecrets blanks every secret-looking value in a JSON object and
 // returns the new document and the JSON Pointers (RFC 6901) of the blanked
 // values. ok is false when data is not a JSON object; the caller then
@@ -57,22 +69,29 @@ func redactJSONSecrets(data []byte) (out []byte, pointers []string, ok bool) {
 	if err := dec.Decode(&doc); err != nil || doc == nil {
 		return nil, nil, false
 	}
-	var walk func(v any, ptr string, under bool) any
-	walk = func(v any, ptr string, under bool) any {
+	var walk func(v any, ptr string, under, numUnder bool) any
+	walk = func(v any, ptr string, under, numUnder bool) any {
 		switch t := v.(type) {
 		case map[string]any:
 			for k, inner := range t {
-				t[k] = walk(inner, ptr+"/"+escapePointer(k), under || isSecretKey(k) || secretContainers[strings.ToLower(k)])
+				t[k] = walk(inner, ptr+"/"+escapePointer(k), under || isSecretKey(k) || secretContainers[strings.ToLower(k)],
+					numUnder || (isSecretKey(k) && !settingLikeKey(k)) || secretContainers[strings.ToLower(k)])
 			}
 			return t
 		case []any:
 			for i, inner := range t {
-				t[i] = walk(inner, ptr+"/"+strconv.Itoa(i), under)
+				t[i] = walk(inner, ptr+"/"+strconv.Itoa(i), under, numUnder)
+			}
+			return t
+		case json.Number:
+			// A number under a key such as maxTokens is a setting; under
+			// password or pin it is a secret.
+			if numUnder {
+				pointers = append(pointers, ptr)
+				return ""
 			}
 			return t
 		case string:
-			// Only strings: a number under a key such as maxTokens is a
-			// setting, and blanking it would drop it on import.
 			if under {
 				pointers = append(pointers, ptr)
 				return ""
@@ -82,7 +101,7 @@ func redactJSONSecrets(data []byte) (out []byte, pointers []string, ok bool) {
 			return t
 		}
 	}
-	walk(doc, "", false)
+	walk(doc, "", false, false)
 	// A secret can sit under a key that says nothing: an args list holding
 	// "--token", "x", or a URL with credentials in it. Field-level redaction
 	// cannot place those, so such a file falls back to whole-file redaction.
@@ -284,9 +303,14 @@ func restorable(doc, have map[string]any, p string, pointers []string) bool {
 		cut--
 	}
 	if cut == 0 {
-		// A top-level secret (settings.json's own env) belongs to the tool
-		// that reads the file, on both machines.
-		return true
+		if len(parts) == 1 {
+			// A top-level secret (apiKeyHelper) belongs to the tool that
+			// reads the file, on both machines.
+			return true
+		}
+		// settings.json's own env: the rest of env must match too, or a
+		// bundle that sets ANTHROPIC_BASE_URL elsewhere receives the key.
+		cut = 1
 	}
 	escaped := make([]string, cut)
 	for i, part := range parts[:cut] {
@@ -354,8 +378,7 @@ func isInterpreterAllow(rule string) bool {
 		return true
 	}
 	// Claude matches a rule against the whole command line, so a command
-	// after a separator (ls && bash:*) runs too. Each segment's command
-	// position is checked; arguments are not (grep env:* is not env).
+	// after a separator (ls && bash:*) runs too. Every segment is checked.
 	for _, seg := range shellSegments.Split(inner, -1) {
 		if commandRunsAnything(strings.Fields(seg)) {
 			return true
@@ -366,35 +389,70 @@ func isInterpreterAllow(rule string) bool {
 
 var shellSegments = regexp.MustCompile("&&|\\|\\||[;&|()\n`]|\\$\\(")
 
-// commandRunsAnything checks the command word of one segment, and the word
-// after each wrapper (nice -n 5 bash).
+// shellReserved words sit in command position without being the command
+// (if true; then bash; fi, ! bash).
+var shellReserved = map[string]bool{"if": true, "then": true, "else": true, "elif": true, "do": true,
+	"while": true, "until": true, "!": true, "{": true, "}": true, "time": true, "fi": true, "done": true}
+
+// durationArg is a wrapper's numeric argument (nice -n 5, timeout 10s).
+var durationArg = regexp.MustCompile(`^[0-9.]+[smhd]?$`)
+
+// commandRunsAnything is true when any word of the segment names an
+// interpreter or launcher (false positives are accepted: a dropped rule
+// only means a prompt), when an exec-style flag appears, or when the
+// command word is a glob, an env assignment or a bare wrapper.
 func commandRunsAnything(words []string) bool {
-	afterWrapper := false
 	for _, w := range words {
-		if afterWrapper && (strings.HasPrefix(w, "-") || strings.Trim(w, "0123456789.smhd") == "") {
-			continue
+		lw := strings.ToLower(w)
+		switch lw {
+		case "-exec", "-execdir", "-c", "--command", "-e", "--eval":
+			return true
 		}
-		// "cmd:*" suffix; a drive letter (C:\...) is part of the word.
-		if i := strings.LastIndex(w, ":"); i > 1 {
-			w = w[:i]
+		if strings.Contains(lw, "pager=") || strings.Contains(lw, "--command=") {
+			return true
+		}
+		base := commandBase(w)
+		if interpreters[base] || strings.HasPrefix(base, "python") {
+			return true
+		}
+	}
+	i := 0
+	for i < len(words) && shellReserved[words[i]] {
+		i++
+	}
+	for i < len(words) {
+		w := words[i]
+		if j := strings.LastIndex(w, ":"); j > 1 {
+			w = w[:j]
 		}
 		// The command name must be a literal: a glob there (b*sh:*, ?ython)
 		// matches interpreters, and an env assignment (FOO=1 bash) runs one.
 		if strings.ContainsAny(w, "*?[]{}$`") || strings.Contains(w, "=") {
 			return true
 		}
-		base := strings.ToLower(path.Base(strings.ReplaceAll(w, `\`, "/")))
-		base = strings.TrimSuffix(base, ".exe")
-		if interpreters[base] || strings.HasPrefix(base, "python") {
-			return true
-		}
-		if !commandWrappers[base] {
+		if !commandWrappers[commandBase(w)] {
 			return false
 		}
-		afterWrapper = true
+		i++
+		for i < len(words) && (strings.HasPrefix(words[i], "-") || durationArg.MatchString(words[i])) {
+			i++
+		}
+		if i == len(words) {
+			// A wrapper with nothing after it (nice:*) runs whatever follows.
+			return true
+		}
 	}
-	// A wrapper with nothing after it (nice:*) runs whatever follows.
-	return afterWrapper
+	return false
+}
+
+// commandBase is a word's program name: no "cmd:*" suffix (a drive letter,
+// C:\..., stays), no directory, no .exe, lower case.
+func commandBase(w string) string {
+	if i := strings.LastIndex(w, ":"); i > 1 {
+		w = w[:i]
+	}
+	base := strings.ToLower(path.Base(strings.ReplaceAll(w, `\`, "/")))
+	return strings.TrimSuffix(base, ".exe")
 }
 
 // commandWrappers run another command given as an argument.
