@@ -133,3 +133,39 @@ func keysOf(m map[string]bool) []string {
 	}
 	return out
 }
+
+// instructions pull follows references into the vault. A mention of `.env`
+// must not store the secrets file there.
+func TestPullDoesNotFollowIntoSecretFiles(t *testing.T) {
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv(ConfigDirsEnv, "")
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	cfgDir := filepath.Join(root, config.AppName)
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	v := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := v.Init(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	useConfigDir(t, cfgDir)
+
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "AGENTS.md"), "Copy `.env.example` to `.env`.\n")
+	writeFile(t, filepath.Join(src, ".env"), "TOKEN=s3cret\n")
+	writeFile(t, filepath.Join(src, ".env.example"), "TOKEN=\n")
+	if err := instPullCmd.RunE(instPullCmd, []string{src}); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	reopened := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := reopened.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	for _, inst := range reopened.ListInstructions() {
+		if strings.Contains(inst.Content, "s3cret") {
+			t.Fatalf("pull stored the secrets file as %q", inst.Filename)
+		}
+	}
+}

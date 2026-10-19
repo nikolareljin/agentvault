@@ -53,6 +53,10 @@ type SetupAsset struct {
 	SizeBytes           int64  `json:"size_bytes,omitempty"`
 	Content             []byte `json:"content,omitempty"`
 	SHA256              string `json:"sha256,omitempty"`
+	// MergeKeys, when set, are the only top-level JSON keys this asset
+	// carries. Import merges them into the existing file instead of replacing
+	// it, because the rest of that file is the other machine's own state.
+	MergeKeys []string `json:"merge_keys,omitempty"`
 }
 
 type setupAssetCollection struct {
@@ -74,6 +78,9 @@ type setupAssetOptions struct {
 	// per-machine values and some hold credentials, so carrying them is a
 	// decision about a specific file, not a mode.
 	IncludeLocalFiles []string
+	// Agent memory (Claude project memory, Codex memories). Opt-in: it is
+	// personal, and carrying it is a choice per export.
+	IncludeMemory bool
 }
 
 func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string, error) {
@@ -93,6 +100,32 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
+	extraAssets, extraWarnings, err := collectExtraProviderAssets(homeDir, opts.IncludeSecrets)
+	if err != nil {
+		return setupAssetCollection{}, nil, err
+	}
+	warnings = append(warnings, extraWarnings...)
+	if opts.IncludeMemory {
+		memoryAssets, memoryWarnings, err := collectMemoryAssets(homeDir, opts.IncludeSecrets)
+		if err != nil {
+			return setupAssetCollection{}, nil, err
+		}
+		extraAssets = append(extraAssets, memoryAssets...)
+		warnings = append(warnings, memoryWarnings...)
+	}
+	extraAssets, localWarnings, localDeclined := declineLocalFiles(extraAssets, optedLocalFiles(opts.IncludeLocalFiles))
+	warnings = append(warnings, localWarnings...)
+	providerDeclined = append(providerDeclined, localDeclined...)
+	providerAssets = append(providerAssets, extraAssets...)
+
+	referenced, referencedDeclined, referencedWarnings, err := collectHomeReferencedFiles(homeDir, providerAssets, opts.IncludeSecrets)
+	if err != nil {
+		return setupAssetCollection{}, nil, err
+	}
+	providerAssets = append(providerAssets, referenced...)
+	providerDeclined = append(providerDeclined, referencedDeclined...)
+	warnings = append(warnings, referencedWarnings...)
+
 	assets.ProviderFiles = providerAssets
 	assets.Declined = append(assets.Declined, providerDeclined...)
 	warnings = append(warnings, providerWarnings...)
@@ -325,6 +358,11 @@ func collectProjectAgentSettings(projectDir string, includeSecrets bool, include
 				strings.HasPrefix(logical, ".claude/commands/")) {
 				continue
 			}
+			// Repository-scope settings are listed, not carried; see
+			// projectRepoScopeSettings.
+			if isProjectRepoScopeSetting(logical) {
+				continue
+			}
 			assets = append(assets, a)
 		}
 	}
@@ -426,32 +464,24 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	}
 	warnings = append(warnings, workflowWarnings...)
 
-	// What the instruction files name, and what became of it. Without this the
-	// bundle records a refusal by policy and nothing at all about a rule that
-	// points at a file which is not there, which is the failure this whole
-	// epic is about: on the far end both look like a file that is not here.
-	for _, inst := range projectFiles {
-		if inst.Kind != setupAssetKindProjectFile || !inst.ContentPresent {
-			continue
-		}
-		base := filepath.Dir(filepath.FromSlash(inst.LogicalPath))
-		for _, ref := range agent.ResolveReferences(projectDir, base, string(inst.Content)) {
-			switch ref.Status {
-			case agent.ReferenceNotFound:
-				projectDeclined = append(projectDeclined, DeclinedAsset{
-					Path:     ref.Raw,
-					Category: DeclinedAbsent,
-					Reason:   fmt.Sprintf("named by %s and not present", inst.LogicalPath),
-				})
-			case agent.ReferenceRefused:
-				projectDeclined = append(projectDeclined, DeclinedAsset{
-					Path:     ref.Raw,
-					Category: DeclinedByPolicy,
-					Reason:   fmt.Sprintf("named by %s: %s", inst.LogicalPath, ref.Reason),
-				})
-			}
-		}
+	extras, extraWarnings, err := collectProjectInstructionExtras(projectDir, includeSecrets)
+	if err != nil {
+		return nil, nil, warnings, projectDeclined, err
 	}
+	projectFiles = append(projectFiles, extras...)
+	warnings = append(warnings, extraWarnings...)
+
+	// What the instruction files name, followed to the files it names in turn,
+	// is carried; what cannot be is recorded with the reason. Without the
+	// files, a rule pointing at a checklist arrives pointing at nothing.
+	closure, closureDeclined, closureWarnings, err := collectProjectReferenceClosure(projectDir, projectFiles, includeSecrets)
+	if err != nil {
+		return nil, nil, warnings, projectDeclined, err
+	}
+	projectFiles = append(projectFiles, closure...)
+	projectDeclined = append(projectDeclined, closureDeclined...)
+	warnings = append(warnings, closureWarnings...)
+	projectDeclined = append(projectDeclined, declineProjectRepoScopeSettings(projectDir)...)
 
 	// Directory scope: the project's own agent configuration. An agent reads
 	// system, user and directory scope; the bundle covered parts of two.
@@ -462,6 +492,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	projectFiles = append(projectFiles, dirScope...)
 	warnings = append(warnings, dirWarnings...)
 	projectDeclined = append(projectDeclined, dirDeclined...)
+	projectFiles = dedupeAssetsByLogicalPath(projectFiles)
 
 	return projectFiles, instructionOverrides, warnings, projectDeclined, nil
 }
@@ -522,6 +553,10 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		}
 		if d.Type()&os.ModeSymlink != 0 {
 			warnings = append(warnings, fmt.Sprintf("skipping symlink asset %q under %q", path, root))
+			return nil
+		}
+		if isCredentialFile(path) {
+			warnings = append(warnings, fmt.Sprintf("skipping credential file %q; sign in on the other machine instead", path))
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)
@@ -853,7 +888,16 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		} else if !os.IsNotExist(err) {
 			return applied, warnings, fmt.Errorf("checking provider asset destination %q: %w", dest, err)
 		}
-		if err := writeRegularFileAtomic(dest, asset.Content, 0600); err != nil {
+		content := asset.Content
+		if len(asset.MergeKeys) > 0 {
+			merged, err := mergeJSONKeysIntoFile(dest, content, asset.MergeKeys)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				continue
+			}
+			content = merged
+		}
+		if err := writeRegularFileAtomic(dest, content, 0600); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
 		}
 		applied++
@@ -862,37 +906,16 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 }
 
 func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) {
-	switch asset.LogicalRoot {
-	case setupAssetRootProviderClaude:
-		return safeJoinUnder(filepath.Join(homeDir, ".claude"), asset.LogicalPath)
-	case setupAssetRootProviderCodex:
-		return safeJoinUnder(filepath.Join(homeDir, ".codex"), asset.LogicalPath)
-	case setupAssetRootProviderCopilot:
-		return safeJoinUnder(filepath.Join(homeDir, ".config", "github-copilot"), asset.LogicalPath)
-	case setupAssetRootProviderClaudeSkill:
-		return safeJoinUnder(filepath.Join(homeDir, ".claude", "skills"), asset.LogicalPath)
-	case setupAssetRootProviderCodexSkill:
-		return safeJoinUnder(filepath.Join(homeDir, ".codex", "skills"), asset.LogicalPath)
-	default:
+	dir, ok := providerRootDirs[asset.LogicalRoot]
+	if !ok {
 		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
 	}
+	return safeJoinUnder(filepath.Join(homeDir, dir), asset.LogicalPath)
 }
 
 func providerStageDirectoryName(logicalRoot string) (string, bool) {
-	switch logicalRoot {
-	case setupAssetRootProviderClaude:
-		return setupAssetRootProviderClaude, true
-	case setupAssetRootProviderCodex:
-		return setupAssetRootProviderCodex, true
-	case setupAssetRootProviderCopilot:
-		return setupAssetRootProviderCopilot, true
-	case setupAssetRootProviderClaudeSkill:
-		return setupAssetRootProviderClaudeSkill, true
-	case setupAssetRootProviderCodexSkill:
-		return setupAssetRootProviderCodexSkill, true
-	default:
-		return "", false
-	}
+	_, ok := providerRootDirs[logicalRoot]
+	return logicalRoot, ok
 }
 
 func safeSubpath(root string, path string) (string, error) {

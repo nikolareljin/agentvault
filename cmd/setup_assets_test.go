@@ -931,13 +931,19 @@ func TestCollectSetupAssets_CarriesDirectoryScopeAndDeclinesLocalFiles(t *testin
 			agentAsset.Redacted, agentAsset.ContentPresent)
 	}
 
-	// settings.json can hold credentials, so without --include-secrets it is
-	// carried as metadata only, exactly as the user-level one is.
-	settingsAsset := findAsset(assets.ProjectFiles, setupAssetRootProject, ".claude/settings.json")
-	if settingsAsset == nil {
-		t.Error(".claude/settings.json was not carried")
-	} else if !settingsAsset.Redacted {
-		t.Error(".claude/settings.json was carried unredacted without --include-secrets")
+	// settings.json is the repository's own: it travels with the repository,
+	// so the bundle lists it and does not carry it.
+	if findAsset(assets.ProjectFiles, setupAssetRootProject, ".claude/settings.json") != nil {
+		t.Error(".claude/settings.json was carried; repository-scope settings are listed only")
+	}
+	listed := false
+	for _, d := range assets.Declined {
+		if d.Path == ".claude/settings.json" && d.Category == DeclinedRepoScope {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Errorf(".claude/settings.json was not listed as repository-scope; declined: %v", assets.Declined)
 	}
 	if hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.local.json") {
 		t.Fatal("a .local. file was carried by default; it may hold credentials")

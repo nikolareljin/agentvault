@@ -32,6 +32,7 @@ type exportOptions struct {
 	IncludeSkills       bool
 	IncludeStatus       bool
 	IncludeDetected     bool
+	IncludeMemory       bool
 	ProjectDir          string
 	Encrypt             bool
 	VaultOnly           bool
@@ -101,8 +102,9 @@ func init() {
 	exportCmd.Flags().Bool("include-secrets", defaults.IncludeSecrets, "include secret-bearing provider and asset file content")
 	exportCmd.Flags().Bool("include-sessions", defaults.IncludeSessions, "include multi-agent session definitions")
 	exportCmd.Flags().Bool("include-templates", defaults.IncludeTemplates, "include workflow templates")
-	exportCmd.Flags().Bool("include-provider-files", defaults.IncludeProviderFile, "include provider home files (~/.claude, ~/.codex, ~/.copilot)")
+	exportCmd.Flags().Bool("include-provider-files", defaults.IncludeProviderFile, "include provider home files (~/.claude, ~/.claude.json MCP servers, ~/.codex, ~/.gemini, ~/.copilot, ~/.config/github-copilot, Cursor and Windsurf MCP configs, and the files they reference)")
 	exportCmd.Flags().Bool("include-skills", defaults.IncludeSkills, "include skill assets")
+	exportCmd.Flags().Bool("include-memory", false, "include agent memory: ~/.claude/projects/*/memory and ~/.codex/memories (personal; off unless asked)")
 	exportCmd.Flags().StringArray("include-local", nil,
 		"carry one project-relative .local. file anyway, e.g. .claude/settings.local.json (repeatable; they are left behind by default because they are per-machine and may hold credentials)")
 	exportCmd.Flags().Bool("include-status", defaults.IncludeStatus, "include a provider token/quota status snapshot")
@@ -206,6 +208,7 @@ func applyExportFlags(cmd *cobra.Command, opts *exportOptions) {
 		"include-templates":      &opts.IncludeTemplates,
 		"include-provider-files": &opts.IncludeProviderFile,
 		"include-skills":         &opts.IncludeSkills,
+		"include-memory":         &opts.IncludeMemory,
 		"include-status":         &opts.IncludeStatus,
 		"detect":                 &opts.IncludeDetected,
 		"encrypt":                &opts.Encrypt,
@@ -286,6 +289,7 @@ func buildProfileBundle(cmd *cobra.Command, profile discoveredProfile, opts expo
 		IncludeSkills:        opts.IncludeSkills,
 		IncludeStatus:        opts.IncludeStatus,
 		IncludeDetected:      opts.IncludeDetected,
+		IncludeMemory:        opts.IncludeMemory,
 		ProjectDir:           opts.ProjectDir,
 		IncludeLocalFiles:    opts.IncludeLocalFiles,
 	})
@@ -439,6 +443,7 @@ type setupCollectOptions struct {
 	IncludeSkills        bool
 	IncludeStatus        bool
 	IncludeDetected      bool
+	IncludeMemory        bool
 	ProjectDir           string
 	AgentName            string
 	// Project-relative `.local.` files to carry anyway, named one at a time.
@@ -503,12 +508,20 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 			ProjectDir:        opts.ProjectDir,
 			IncludeSecrets:    opts.IncludeSecrets,
 			IncludeLocalFiles: opts.IncludeLocalFiles,
+			IncludeMemory:     opts.IncludeMemory,
 		})
 		if err != nil {
 			return setupCollectResult{}, fmt.Errorf("collecting portable setup assets: %w", err)
 		}
 		if opts.IncludeProviderFiles {
 			bundle.ProviderFiles = collected.ProviderFiles
+			if homeDir, err := os.UserHomeDir(); err == nil {
+				inv, err := collectClaudePluginInventory(homeDir)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: plugin inventory not exported: %v\n", err)
+				}
+				bundle.Plugins = inv
+			}
 		}
 		if opts.IncludeSkills {
 			bundle.SkillAssets = collected.SkillAssets

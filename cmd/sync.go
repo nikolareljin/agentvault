@@ -18,7 +18,7 @@ var syncCmd = &cobra.Command{
 	Short: "Synchronize unified rules across all agent instruction files",
 	Long: `Generate and synchronize instruction files for all agents.
 
-This command creates/updates instruction files (AGENTS.md, CLAUDE.md, codex.md,
+This command creates/updates instruction files (AGENTS.md, CLAUDE.md, GEMINI.md, codex.md,
 MELDBOT.md, etc.) with unified rules, ensuring all agents follow the same guidelines.
 
 The sync command:

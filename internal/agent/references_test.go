@@ -182,3 +182,59 @@ func TestRootedReasonNamesWindowsCase(t *testing.T) {
 		}
 	}
 }
+
+// Claude Code imports another file with "@path". An address such as
+// user@example.com is not one: the "@" must start a word.
+func TestFindReferencesAtImports(t *testing.T) {
+	content := "Read @docs/rules.md first.\n@~/.claude/personal.md\n" +
+		"Mail nik@example.com, ping @team, see @README.md.\n"
+	got := FindReferences(content)
+	want := map[string]bool{"docs/rules.md": true, "~/.claude/personal.md": true, "README.md": true}
+	for _, g := range got {
+		if !want[g] {
+			t.Errorf("unexpected reference %q in %v", g, got)
+		}
+		delete(want, g)
+	}
+	for w := range want {
+		t.Errorf("missing reference %q in %v", w, got)
+	}
+}
+
+func TestSecretBearingReason(t *testing.T) {
+	secret := []string{".env", "app/.env", ".env.production", "certs/server.pem", "deploy.key",
+		".ssh/config", "home/.aws/config", "id_ed25519", ".npmrc", "store.p12", ".git-credentials"}
+	for _, p := range secret {
+		if SecretBearingReason(p) == "" {
+			t.Errorf("%s: not flagged", p)
+		}
+	}
+	plain := []string{".env.example", "docs/env.md", "README.md", "keys.md", "scripts/check.sh", "config/app.toml"}
+	for _, p := range plain {
+		if r := SecretBearingReason(p); r != "" {
+			t.Errorf("%s: flagged as %q", p, r)
+		}
+	}
+}
+
+// "Copy `.env.example` to `.env`" names a secrets file. It is refused, and
+// the template is taken.
+func TestResolveReferencesRefusesSecretFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{".env", ".env.example", "server.pem"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs := ResolveReferences(dir, ".", "Copy `.env.example` to `.env`; the cert is `server.pem`.")
+	got := map[string]ReferenceStatus{}
+	for _, r := range refs {
+		got[r.Raw] = r.Status
+	}
+	if got[".env"] != ReferenceRefused || got["server.pem"] != ReferenceRefused {
+		t.Errorf("secret files not refused: %v", got)
+	}
+	if got[".env.example"] != ReferenceTaken {
+		t.Errorf(".env.example not taken: %v", got)
+	}
+}

@@ -2,7 +2,45 @@
 
 ## [Unreleased]
 
+### Added
+- `export` carries the user-level setup of Gemini CLI (`~/.gemini`), the
+  GitHub Copilot CLI (`~/.copilot`), Cursor and Windsurf MCP configs, Claude's
+  user MCP servers from `~/.claude.json` (only `mcpServers`; import merges
+  that key and keeps the rest of the file), Claude output styles and hooks,
+  and Codex's global `AGENTS.md` and prompts.
+- Files named by user-level instruction files (backticks, markdown links,
+  `@path` imports) are carried, followed up to 10 hops, anywhere under the
+  home directory. So are the scripts `settings.json` runs from `hooks` and
+  `statusLine`.
+- With `--project`, every file and directory the instruction files name is
+  carried. Before, the export only recorded what it could not take. Also new
+  with `--project`: `GEMINI.md`, `CONVENTIONS.md`, `.github/instructions/`,
+  `.github/prompts/`, `.cursor/rules/`, `.windsurf/rules/`,
+  `.gemini/commands/` and `.clinerules`.
+- `--include-memory` carries Claude project memory and Codex memories. It is
+  off by default, and the export wizard asks each time.
+- A Claude Code plugin inventory travels in the bundle. Import prints the
+  `claude plugin marketplace add` / `claude plugin install` commands; it
+  installs nothing.
+- `GEMINI.md` is a well-known instruction file for `instructions pull` and
+  `sync`.
+
+### Security
+- Reference following (`instructions pull` and `export`) refuses credential
+  files by name: `.env` and `.env.*` (templates such as `.env.example` are
+  kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`,
+  `.npmrc`, `.git-credentials`, SSH keys, and anything under `.ssh`,
+  `.gnupg`, `.aws`, `.kube`, `.docker` or `.azure`. Before, an instruction
+  file that said "copy `.env.example` to `.env`" pulled `.env` into the vault.
+
 ### Changed
+- A project's own settings files (`.claude/settings.json`, `.mcp.json`,
+  `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`,
+  `.vscode/mcp.json`) are listed in the bundle as `repository` and not
+  carried. They travel with the repository. Before, `.claude/settings.json`
+  was carried.
+- Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
+  `google_accounts.json`) are never collected, even with `--include-secrets`.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key
   (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
