@@ -18,7 +18,9 @@
   `../../.bashrc` or `/etc/profile`, is refused by `instructions set`, by
   import, and at the write in `instructions push` and `setup apply`. Before,
   a crafted bundle could make `push` write outside the project. The write
-  also refuses symlinked path components below the target directory.
+  also refuses symlinked path components below the target directory, and
+  `instructions diff` reports such an entry as refused instead of reading
+  the file it names.
 - Prompts reach `codex` and `claude` after `--`, and `gemini` as
   `--prompt=<text>`. Before, a prompt such as `--help` sent to
   `POST /api/v1/prompt` was parsed as a CLI option.

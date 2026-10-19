@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,6 +26,28 @@ func TestWriteInstructionFileRefusesEscape(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "escaped.txt")); !os.IsNotExist(err) {
 		t.Fatalf("file escaped the target dir: %v", err)
+	}
+}
+
+// diff reads the same names push writes; an escaping one must not be read.
+func TestReadInstructionOnDiskRefusesEscape(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "project")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte("s"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readInstructionOnDisk(dir, agent.InstructionFile{Name: "x", Filename: "../secret.txt"})
+	if !errors.Is(err, errUnsafeInstructionFilename) {
+		t.Fatalf("err = %v, want errUnsafeInstructionFilename", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := readInstructionOnDisk(dir, agent.InstructionFile{Name: "x", Filename: "AGENTS.md"}); err != nil || string(b) != "ok" {
+		t.Fatalf("got %q, %v", b, err)
 	}
 }
 

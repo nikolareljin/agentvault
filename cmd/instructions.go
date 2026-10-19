@@ -663,8 +663,12 @@ Examples:
 
 		diffs := 0
 		for _, inst := range instructions {
-			p := filepath.Join(dir, inst.Filename)
-			diskData, err := os.ReadFile(p)
+			diskData, err := readInstructionOnDisk(dir, inst)
+			if errors.Is(err, errUnsafeInstructionFilename) {
+				fmt.Printf("  %-12s  %s  (refused: %v)\n", inst.Name, inst.Filename, err)
+				diffs++
+				continue
+			}
 			if err != nil {
 				fmt.Printf("  %-12s  %s  (not on disk)\n", inst.Name, inst.Filename)
 				diffs++
@@ -1145,6 +1149,21 @@ func writeInstructionFile(dir string, inst agent.InstructionFile) error {
 		return fmt.Errorf("writing %s: %w", p, err)
 	}
 	return nil
+}
+
+var errUnsafeInstructionFilename = errors.New("unsafe instruction filename")
+
+// readInstructionOnDisk reads inst's file under dir. A vault written before
+// filenames were validated can hold an escaping name; it is refused, not read.
+func readInstructionOnDisk(dir string, inst agent.InstructionFile) ([]byte, error) {
+	if err := agent.ValidateInstructionFilename(inst.Filename); err != nil {
+		return nil, fmt.Errorf("%w: %v", errUnsafeInstructionFilename, err)
+	}
+	p, err := safeJoinUnder(dir, inst.Filename)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errUnsafeInstructionFilename, err)
+	}
+	return os.ReadFile(p)
 }
 
 // ensureNoSymlinkBelow rejects symlinks in the components of p below root.
