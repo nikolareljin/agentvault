@@ -903,27 +903,37 @@ func (v *Vault) write() error {
 // rewritten in format 2, so an earlier release can still be pointed at it.
 const LegacyBackupSuffix = ".v1.bak"
 
-// backupLegacyVault copies the format 1 vault at path to path+".v1.bak". An
-// existing backup is kept: it is the older one.
+// backupLegacyVault copies the format 1 vault at path to path+".v1.bak". The
+// copy is written and synced under a unique name first, then hard-linked into
+// place, so a crash never leaves a partial file at the backup name. An
+// existing backup is never overwritten: if it holds other bytes (an older
+// vault at the same path), this copy stays under its unique name.
 func backupLegacyVault(path string) error {
 	old, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("backing up format 1 vault: %w", err)
 	}
-	f, err := os.OpenFile(path+LegacyBackupSuffix, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if errors.Is(err, os.ErrExist) {
-		return nil
-	}
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".v1.*.bak")
 	if err != nil {
 		return fmt.Errorf("backing up format 1 vault: %w", err)
 	}
+	tmp := f.Name()
 	_, werr := f.Write(old)
 	serr := f.Sync()
 	cerr := f.Close()
 	if err := errors.Join(werr, serr, cerr); err != nil {
-		_ = os.Remove(path + LegacyBackupSuffix)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("backing up format 1 vault: %w", err)
 	}
+	final := path + LegacyBackupSuffix
+	if err := os.Link(tmp, final); err != nil {
+		if existing, rerr := os.ReadFile(final); rerr != nil || !bytes.Equal(existing, old) {
+			// No link support, or the name holds another file: keep the
+			// complete copy under its unique name.
+			return nil
+		}
+	}
+	_ = os.Remove(tmp)
 	return nil
 }
 

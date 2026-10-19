@@ -1494,3 +1494,43 @@ func TestSetInstructionRejectsEscapingFilename(t *testing.T) {
 		t.Fatal("absolute filename accepted")
 	}
 }
+
+// A backup name that already holds another file is left alone, and the
+// format 1 copy is kept under a unique name instead of being lost.
+func TestLegacyBackupKeepsExistingFile(t *testing.T) {
+	path := tempVaultPath(t)
+	original := []byte("format 1 bytes")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := []byte("some other vault")
+	if err := os.WriteFile(path+LegacyBackupSuffix, stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupLegacyVault(path); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path + LegacyBackupSuffix); !bytes.Equal(got, stale) {
+		t.Fatal("existing backup was overwritten")
+	}
+	matches, _ := filepath.Glob(path + ".v1.*.bak")
+	if len(matches) != 1 {
+		t.Fatalf("want one unique backup, got %v", matches)
+	}
+	if got, _ := os.ReadFile(matches[0]); !bytes.Equal(got, original) {
+		t.Fatal("unique backup does not hold the format 1 vault")
+	}
+	// Same bytes already at the backup name: no extra copy.
+	if err := os.Remove(matches[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+LegacyBackupSuffix, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupLegacyVault(path); err != nil {
+		t.Fatal(err)
+	}
+	if matches, _ := filepath.Glob(path + ".v1.*.bak"); len(matches) != 0 {
+		t.Fatalf("left a duplicate backup: %v", matches)
+	}
+}
