@@ -12,7 +12,7 @@ This document provides comprehensive instructions for testing AgentVault functio
 
 ```bash
 # Standard pure-Go build (no CGo, cross-compilable)
-make build
+./dev build
 
 # Or build directly with Go
 go build -o agentvault .
@@ -45,7 +45,7 @@ ls -lh agentvault-bitnet              # ~30–40 MB
 
 ```bash
 # Run all unit tests
-make test
+./dev test
 
 # Run tests with verbose output
 go test -v ./...
