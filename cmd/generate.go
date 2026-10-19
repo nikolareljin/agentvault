@@ -592,11 +592,7 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 		return nil
 	}
 
-	data, err = mergeMCPServersIntoFile(outputFile, data)
-	if err != nil {
-		return err
-	}
-	if err := writeFileAtomicKeepMode(outputFile, data); err != nil {
+	if err := writeMCPConfigFile(outputFile, data); err != nil {
 		return err
 	}
 
@@ -606,6 +602,23 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 		fmt.Printf("    - %s\n", name)
 	}
 	return nil
+}
+
+// writeMCPConfigFile merges data into outputFile and writes it. A device or
+// FIFO such as /dev/stdout is written in place: a rename would replace it,
+// and reading it first could block.
+func writeMCPConfigFile(outputFile string, data []byte) error {
+	if fi, err := os.Stat(outputFile); err == nil && !fi.Mode().IsRegular() && !fi.IsDir() {
+		if err := os.WriteFile(outputFile, data, 0600); err != nil {
+			return fmt.Errorf("writing %s: %w", outputFile, err)
+		}
+		return nil
+	}
+	merged, err := mergeMCPServersIntoFile(outputFile, data)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomicKeepMode(outputFile, merged)
 }
 
 // mergeMCPServersIntoFile replaces only the mcpServers key of an existing
@@ -619,6 +632,8 @@ func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
+	// Notepad saves UTF-8 with a BOM, which json.Unmarshal rejects.
+	existing = bytes.TrimPrefix(existing, []byte("\xef\xbb\xbf"))
 	if len(bytes.TrimSpace(existing)) == 0 {
 		return generated, nil
 	}
@@ -634,17 +649,66 @@ func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
 	if err := json.Unmarshal(generated, &gen); err != nil {
 		return nil, err
 	}
-	doc["mcpServers"] = gen["mcpServers"]
-	// Keep the other keys' strings as written: Marshal would turn < > & into
-	// \u003c \u003e \u0026.
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(doc); err != nil {
+	// Rebuild the object in the file's key order, replacing mcpServers in
+	// place. Values are copied as written, only re-indented, so strings and
+	// numbers keep their exact text.
+	type member struct {
+		key   string
+		value json.RawMessage
+	}
+	var members []member
+	dec := json.NewDecoder(bytes.NewReader(existing))
+	if _, err := dec.Token(); err != nil {
 		return nil, err
 	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+		key, _ := tok.(string)
+		if key == "mcpServers" {
+			value = gen["mcpServers"]
+		}
+		dup := false
+		for i := range members {
+			if members[i].key == key {
+				// A repeated key: the last value wins, as in json.Unmarshal.
+				members[i].value, dup = value, true
+			}
+		}
+		if !dup {
+			members = append(members, member{key, value})
+		}
+	}
+	if _, ok := doc["mcpServers"]; !ok {
+		members = append(members, member{"mcpServers", gen["mcpServers"]})
+	}
+	var buf bytes.Buffer
+	buf.WriteString("{")
+	for i, m := range members {
+		if i > 0 {
+			buf.WriteString(",")
+		}
+		buf.WriteString("\n  ")
+		// Marshal would turn < > & in a key into \u003c \u003e \u0026.
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(m.key); err != nil {
+			return nil, err
+		}
+		buf.Truncate(buf.Len() - 1)
+		buf.WriteString(": ")
+		if err := json.Indent(&buf, m.value, "  ", "  "); err != nil {
+			return nil, err
+		}
+	}
+	buf.WriteString("\n}")
+	return buf.Bytes(), nil
 }
 
 // writeFileAtomicKeepMode replaces path through a temp file and a rename, so
@@ -665,7 +729,14 @@ func writeFileAtomicKeepMode(path string, data []byte) error {
 				break
 			}
 			if !filepath.IsAbs(link) {
-				link = filepath.Join(filepath.Dir(target), link)
+				link = filepath.Dir(target) + string(filepath.Separator) + link
+			}
+			// Resolve the parent as the OS does: filepath.Join would clean
+			// "dirlink/../x" lexically, but ".." applies after dirlink.
+			if i := strings.LastIndexByte(link, filepath.Separator); i > 0 {
+				if parent, perr := filepath.EvalSymlinks(link[:i]); perr == nil {
+					link = filepath.Join(parent, link[i+1:])
+				}
 			}
 			target = link
 		}

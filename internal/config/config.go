@@ -44,7 +44,7 @@ func ClaudeDesktopConfigPath() (string, error) {
 	home, _ := os.UserHomeDir()
 	p := claudeDesktopConfigPathFor(runtime.GOOS, home, os.Getenv("APPDATA"))
 	if !filepath.IsAbs(p) {
-		return "", fmt.Errorf("cannot locate Claude Desktop config (got %q): set HOME or pass an output file", p)
+		return "", fmt.Errorf("cannot locate Claude Desktop config (got %q): set HOME (USERPROFILE or APPDATA on Windows) or pass an output file", p)
 	}
 	return p, nil
 }

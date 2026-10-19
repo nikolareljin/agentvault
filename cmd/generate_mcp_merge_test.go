@@ -164,14 +164,14 @@ func TestWriteFileAtomicDanglingSymlinkChain(t *testing.T) {
 
 func TestMergeMCPServersKeepsHTMLCharacters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "c.json")
-	if err := os.WriteFile(path, []byte(`{"s":"a<b>&c"}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"s<":"a<b>&c"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out, err := mergeMCPServersIntoFile(path, []byte(`{"mcpServers":{}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), `"a<b>&c"`) {
+	if !strings.Contains(string(out), `"s<": "a<b>&c"`) {
 		t.Fatalf("string rewritten: %s", out)
 	}
 }
@@ -217,5 +217,108 @@ func TestSyncDir(t *testing.T) {
 	}
 	if err := syncDir(filepath.Join(t.TempDir(), "absent")); err == nil {
 		t.Fatal("synced a missing directory")
+	}
+}
+
+// A Notepad-saved config starts with a UTF-8 BOM; it is still a JSON object.
+func TestMergeMCPServersAcceptsBOM(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte("\xef\xbb\xbf{\"k\":1}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := mergeMCPServersIntoFile(path, []byte(`{"mcpServers":{}}`))
+	if err != nil || !strings.Contains(string(out), `"k": 1`) {
+		t.Fatalf("got %s, %v", out, err)
+	}
+}
+
+// A device is written in place, as before, not replaced by a rename.
+func TestWriteMCPConfigFileDevice(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no /dev/null")
+	}
+	if err := writeMCPConfigFile(os.DevNull, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(os.DevNull); err != nil || fi.Mode()&os.ModeDevice == 0 {
+		t.Fatalf("%s replaced: %v", os.DevNull, err)
+	}
+}
+
+// A dangling relative link with ".." after a directory link resolves ".."
+// from the directory the link points to, as the OS does.
+func TestWriteFileAtomicDanglingSymlinkDotDot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "a", "b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("a", "b"), filepath.Join(dir, "dl")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink("dl/../real.json", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomicKeepMode(link, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(link); err != nil {
+		t.Fatalf("link still dangling: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "real.json")); err == nil {
+		t.Fatal("wrote the lexically cleaned path")
+	}
+}
+
+// The temp file goes next to the resolved target, so the rename stays on one
+// filesystem; here the lexical parent is read-only.
+func TestWriteFileAtomicDanglingSymlinkTempInTargetDir(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions that bind the user")
+	}
+	dir := t.TempDir()
+	ro := filepath.Join(dir, "ro")
+	if err := os.MkdirAll(filepath.Join(dir, "w", "b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(ro, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "w", "b"), filepath.Join(ro, "dl")); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(ro, "link.json")
+	if err := os.Symlink("dl/../real.json", link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ro, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
+	if err := writeFileAtomicKeepMode(link, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "w", "real.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Claude Desktop's file keeps its key order, and numbers keep their text.
+func TestMergeMCPServersKeepsOrderAndNumbers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	in := `{"z":1,"mcpServers":{"old":{}},"a":12345678901234567890,"z":2}`
+	if err := os.WriteFile(path, []byte(in), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := mergeMCPServersIntoFile(path, []byte(`{"mcpServers":{"n":{"command":"y"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\n  \"z\": 2,\n  \"mcpServers\": {\n    \"n\": {\n      \"command\": \"y\"\n    }\n  },\n  \"a\": 12345678901234567890\n}"
+	if string(out) != want {
+		t.Fatalf("got\n%s\nwant\n%s", out, want)
 	}
 }
