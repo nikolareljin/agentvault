@@ -115,8 +115,37 @@
   (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
   release opened a tap pull request with `HOMEBREW_TAP_TOKEN` that had to be
   merged by hand.
+- Go 1.26 (toolchain go1.26.9) and `golang.org/x/crypto` v0.56.0. Go 1.25
+  is no longer supported upstream.
+- CI runs the tests on macOS (`macos-latest`) on push and pull request, next
+  to Linux and Windows.
+
+### Security
+- An instruction whose filename escapes the target directory, such as
+  `../../.bashrc` or `/etc/profile`, is refused by `instructions set`, by
+  import, and at the write in `instructions push` and `setup apply`. Before,
+  a crafted bundle could make `push` write outside the project. The write
+  also refuses symlinked path components below the target directory, and
+  `instructions diff` reports such an entry as refused instead of reading
+  the file it names.
+- Prompts reach `codex` and `claude` after `--`, and `gemini` as
+  `--prompt=<text>`. Before, a prompt such as `--help` sent to
+  `POST /api/v1/prompt` was parsed as a CLI option.
+- `serve` caps JSON request bodies at 1 MiB. At most 4 KiB of a failed
+  provider response is read into an error.
+- A referenced file is re-checked after it is opened: it must still be a
+  regular file inside the directory and at most 256 KiB.
 
 ### Fixed
+- `import --apply-provider-configs` and `setup apply` work when the home or
+  target directory sits under a symlink, as `/var` and `/tmp` do on macOS.
+  Symlinks are still refused below the home or target directory. Before,
+  every component from `/` was checked.
+- `serve --host ::1` builds a valid listen address (`[::1]:8080`).
+- `routing-model download` no longer panics when the downloaded file cannot
+  be stat-ed, writes the partial file at 0600 (a stale `.part` is replaced,
+  not reused with its old mode), removes it when the write or rename fails,
+  and gives up after 60s without response headers.
 - `instructions pull` on Windows refuses rooted references such as
   `/etc/passwd`, `C:x` and `a:b` with the reason "rooted or
   drive-qualified path on Windows". Before, they were looked up under the

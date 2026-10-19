@@ -692,7 +692,7 @@ func TestWriteRegularFileAtomicOverwritesExistingFile(t *testing.T) {
 	destPath := filepath.Join(destDir, "settings.json")
 	mustWriteFile(t, destPath, `old`)
 
-	if err := writeRegularFileAtomic(destPath, []byte(`new`), 0600); err != nil {
+	if err := writeRegularFileAtomic(destDir, destPath, []byte(`new`), 0600); err != nil {
 		t.Fatalf("writeRegularFileAtomic() error = %v", err)
 	}
 	if data, err := os.ReadFile(destPath); err != nil || string(data) != "new" {
@@ -745,7 +745,7 @@ func TestCopyRegularFileOverwritesExistingFile(t *testing.T) {
 	destPath := filepath.Join(destDir, "dest.txt")
 	mustWriteFile(t, destPath, "old")
 
-	err := copyRegularFile(srcPath, destPath, 0644)
+	err := copyRegularFile(srcPath, destDir, destPath, 0644)
 	if err != nil {
 		t.Fatalf("copyRegularFile() error = %v", err)
 	}
@@ -766,7 +766,7 @@ func TestCopyRegularFileRejectsSymlinkDestination(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 
-	err := copyRegularFile(srcPath, link, 0644)
+	err := copyRegularFile(srcPath, destDir, link, 0644)
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("copyRegularFile() err = %v, want symlink destination error", err)
 	}
@@ -775,28 +775,38 @@ func TestCopyRegularFileRejectsSymlinkDestination(t *testing.T) {
 	}
 }
 
-func TestEnsureNoSymlinkPathRejectsRelativeFirstComponent(t *testing.T) {
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("os.Getwd() error = %v", err)
-	}
-	tmpDir := t.TempDir()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("os.Chdir() error = %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(wd) })
-
+func TestEnsureNoSymlinkBelowRejectsFirstComponent(t *testing.T) {
+	root := t.TempDir()
 	outsideDir := t.TempDir()
-	if err := os.Symlink(outsideDir, filepath.Join(tmpDir, "docs")); err != nil {
+	if err := os.Symlink(outsideDir, filepath.Join(root, "docs")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-
-	err = ensureNoSymlinkPath(filepath.Join("docs", "nested", "file.txt"))
+	err := ensureNoSymlinkBelow(root, filepath.Join(root, "docs", "nested", "file.txt"))
 	if err == nil || !strings.Contains(err.Error(), "destination directory contains a symlink") {
-		t.Fatalf("ensureNoSymlinkPath() err = %v, want first relative component symlink error", err)
+		t.Fatalf("ensureNoSymlinkBelow() err = %v, want first component symlink error", err)
 	}
 }
 
+// The root and its ancestors may be symlinks: macOS /var and /tmp are, and so
+// is a symlinked home or project directory. Writing below them must work.
+func TestApplyProviderAssetsUnderSymlinkedHome(t *testing.T) {
+	base := t.TempDir()
+	realHome := filepath.Join(base, "real-home")
+	if err := os.MkdirAll(realHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(base, "home")
+	if err := os.Symlink(realHome, home); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	dest := filepath.Join(home, ".claude", "keybindings.json")
+	if err := writeRegularFileAtomic(home, dest, []byte(`{}`), 0600); err != nil {
+		t.Fatalf("write under symlinked home refused: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(realHome, ".claude", "keybindings.json")); err != nil || string(b) != "{}" {
+		t.Fatalf("got %q, %v", b, err)
+	}
+}
 func TestCopyRegularFileRejectsSymlinkDestinationDirectory(t *testing.T) {
 	srcDir := t.TempDir()
 	srcPath := filepath.Join(srcDir, "source.txt")
@@ -808,7 +818,7 @@ func TestCopyRegularFileRejectsSymlinkDestinationDirectory(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 
-	err := copyRegularFile(srcPath, filepath.Join(link, "dest.txt"), 0644)
+	err := copyRegularFile(srcPath, rootDir, filepath.Join(link, "dest.txt"), 0644)
 	if err == nil || !strings.Contains(err.Error(), "destination directory contains a symlink") {
 		t.Fatalf("copyRegularFile() err = %v, want symlink directory error", err)
 	}

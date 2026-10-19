@@ -197,7 +197,7 @@ func TestBuildCodexExecArgs(t *testing.T) {
 	}
 
 	args := BuildCodexExecArgs("gpt-5", "/tmp/out.txt", repo, "fix the bug")
-	want := []string{"exec", "--json", "--output-last-message", "/tmp/out.txt", "--full-auto", "--model", "gpt-5", "fix the bug"}
+	want := []string{"exec", "--json", "--output-last-message", "/tmp/out.txt", "--full-auto", "--model", "gpt-5", "--", "fix the bug"}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("BuildCodexExecArgs() = %#v, want %#v", args, want)
 	}
@@ -248,7 +248,7 @@ func TestBuildClaudeExecArgs(t *testing.T) {
 func TestBuildGeminiExecArgs(t *testing.T) {
 	args := BuildGeminiExecArgs("gemini-2.5-pro", "fix the bug")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"--prompt fix the bug", "--output-format json", "--approval-mode auto_edit", "--model gemini-2.5-pro"} {
+	for _, want := range []string{"--prompt=fix the bug", "--output-format json", "--approval-mode auto_edit", "--model gemini-2.5-pro"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected %q in args: %#v", want, args)
 		}
@@ -284,4 +284,35 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// A prompt that looks like a flag must reach the CLI as the prompt, not as an
+// option: the gateway takes prompts from HTTP callers.
+func TestBuildArgsKeepFlagLikePromptAsPrompt(t *testing.T) {
+	const p = "--help"
+	cases := map[string][]string{
+		"codex exec":    BuildCodexExecArgs("", "/tmp/o", "", p),
+		"codex stream":  BuildCodexStreamArgs("", "", p),
+		"claude exec":   BuildClaudeExecArgs("", p),
+		"claude stream": BuildClaudeStreamArgs("", p),
+	}
+	for name, args := range cases {
+		n := len(args)
+		if n < 2 || args[n-2] != "--" || args[n-1] != p {
+			t.Errorf("%s: prompt not after \"--\": %#v", name, args)
+		}
+	}
+	for name, args := range map[string][]string{
+		"gemini exec":   BuildGeminiExecArgs("", p),
+		"gemini stream": BuildGeminiStreamArgs("", p),
+	} {
+		if args[0] != "--prompt="+p {
+			t.Errorf("%s: prompt not bound to --prompt: %#v", name, args)
+		}
+		for _, a := range args[1:] {
+			if a == p {
+				t.Errorf("%s: prompt passed as a separate argv entry: %#v", name, args)
+			}
+		}
+	}
 }

@@ -172,6 +172,10 @@ type gatewayPulseMsg struct {
 	at time.Time
 }
 
+// maxErrorBodyBytes caps how much of a failed provider response is read
+// into an error message.
+const maxErrorBodyBytes = 4096
+
 func trimLastRune(value string) string {
 	if value == "" {
 		return value
@@ -2671,7 +2675,7 @@ func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return "", gatewayUsage{}, fmt.Errorf("ollama error %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 
