@@ -126,8 +126,11 @@
   hard link named `notes.md` can be `.env` under another name.
   Reference following (`instructions pull`, `--project`) refuses a file
   with a second hard link.
-- A user-level reference to agent state (`~/.claude/projects/`,
-  `~/.codex/sessions/`, history, caches) is declined. Before, naming
+- A user-level reference inside a tool's directory (`~/.claude`, `~/.codex`,
+  `~/.gemini`, `~/.copilot`, `~/.cursor`, `~/.codeium`) is followed only into
+  the setup the bundle carries, rule directories, and prose files at the
+  top of that directory. Memory, session transcripts, archived sessions,
+  history, backups and caches are declined. Before, naming
   `~/.claude/projects/` carried session transcripts, and memory without
   `--include-memory`.
 

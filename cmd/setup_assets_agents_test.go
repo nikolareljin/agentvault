@@ -912,8 +912,12 @@ func TestHomeReferenceNeverCarriesAgentState(t *testing.T) {
 	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p", "memory", "m.md"), "MEMORY\n")
 	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p", "s.jsonl"), "TRANSCRIPT\n")
 	mustWriteFile(t, filepath.Join(home, ".codex", "sessions", "a.jsonl"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".codex", "archived_sessions", "x.jsonl"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "todos", "x.json"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "team-rules.md"), "team\n")
 	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"),
-		"See `~/.claude/projects/`, `~/.codex/sessions/` and `~/.Claude/projects/p/memory/m.md`.\n")
+		"See `~/.claude/projects/`, `~/.codex/sessions/`, `~/.Claude/projects/p/memory/m.md`, "+
+			"`~/.codex/archived_sessions/x.jsonl`, `~/.claude/todos/x.json`, `~/.claude./todos/x.json`, `~/.claude/` and `~/.claude/team-rules.md`.\n")
 	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
 	if err != nil {
 		t.Fatal(err)
@@ -924,6 +928,14 @@ func TestHomeReferenceNeverCarriesAgentState(t *testing.T) {
 				t.Errorf("%s %s carried agent state", a.LogicalRoot, a.LogicalPath)
 			}
 		}
+	}
+	for _, p := range []string{"~/.claude/projects/", "~/.codex/archived_sessions/x.jsonl", "~/.claude/todos/x.json", "~/.claude./todos/x.json"} {
+		if !declinedHas(assets.Declined, p, DeclinedByPolicy) {
+			t.Errorf("%s not declined: %v", p, assets.Declined)
+		}
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, ".claude/team-rules.md") == nil {
+		t.Error("~/.claude/team-rules.md not carried")
 	}
 	if !declinedHas(assets.Declined, "~/.claude/projects/", DeclinedByPolicy) {
 		t.Errorf("state directory reference not declined: %v", assets.Declined)

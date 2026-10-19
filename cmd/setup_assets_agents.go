@@ -670,24 +670,52 @@ func homeReferenceRefusal(rel string) string {
 	if folded == ".claude.json" {
 		return "carried as its MCP servers only"
 	}
-	for _, p := range agentStatePaths {
-		if folded == p || strings.HasPrefix(folded, p+"/") {
-			return "agent memory, history or session state; memory travels only with --include-memory"
-		}
+	if reason := agentRootRefusal(folded); reason != "" {
+		return reason
 	}
 	return homeAssetRefusal(rel)
 }
 
-// agentStatePaths are what the tools write while they run: memory, session
-// transcripts, history, caches. A reference such as `~/.claude/projects/`
-// would carry them; memory is opt-in and the rest is never setup.
-var agentStatePaths = []string{
-	".claude/projects", ".claude/todos", ".claude/shell-snapshots", ".claude/statsig",
-	".claude/file-history", ".claude/history.jsonl", ".claude/session-env", ".claude/ide",
-	".claude/debug", ".claude/plugins",
-	".codex/sessions", ".codex/memories", ".codex/history.jsonl", ".codex/log",
-	".gemini/tmp", ".gemini/history",
-	".copilot/session-state", ".copilot/history-session-state", ".copilot/logs",
+// agentRootAllowed are the parts of each tool's directory a reference may
+// reach: the setup the bundle carries anyway, and rule directories. The rest
+// is what the tools write while they run (memory, session transcripts,
+// archived sessions, history, backups, caches), so it fails closed: a new
+// state store a tool adds later is refused without a change here.
+var agentRootAllowed = map[string][]string{
+	".claude":  {"claude.md", "settings.json", "keybindings.json", "agents", "commands", "output-styles", "hooks", "skills", "rules"},
+	".codex":   {"agents.md", "config.toml", "rules", "prompts", "skills"},
+	".gemini":  {"gemini.md", "settings.json", "commands"},
+	".copilot": {"config.json", "mcp-config.json", "agents"},
+	".cursor":  {"mcp.json", "rules"},
+	".codeium": {"windsurf/mcp_config.json"},
+}
+
+// agentRootRefusal returns why a folded home-relative path inside a tool's
+// directory may not be followed, or "". A prose file directly in the tool's
+// directory (~/.claude/team-rules.md) is allowed.
+func agentRootRefusal(folded string) string {
+	// Windows drops trailing dots and spaces: ".claude./todos" is .claude/todos.
+	segs := strings.Split(folded, "/")
+	for i, seg := range segs {
+		segs[i] = strings.TrimRight(seg, ". ")
+	}
+	folded = strings.Join(segs, "/")
+	for root, allowed := range agentRootAllowed {
+		if !strings.HasPrefix(folded, root+"/") {
+			continue
+		}
+		sub := strings.TrimPrefix(folded, root+"/")
+		if !strings.Contains(sub, "/") && isProseFile(sub) {
+			return ""
+		}
+		for _, p := range allowed {
+			if sub == p || strings.HasPrefix(sub, p+"/") {
+				return ""
+			}
+		}
+		return "inside " + root + " but not its setup (memory, sessions, history or caches); memory travels only with --include-memory"
+	}
+	return ""
 }
 
 // isRootedPath is an absolute path on any OS. On Windows "/etc/hosts" has no
