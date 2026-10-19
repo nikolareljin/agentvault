@@ -10,8 +10,6 @@
   from `go.mod`. Verbs that do not apply, such as `deploy`, exit 3.
 - script-helpers as a submodule at `scripts/script-helpers`, tracking
   `production`.
-- macOS CI legs on push and pull request (`macos-latest`), next to Linux and
-  Windows.
 - `tests/machine/install_check.sh`: installs into a scratch `GOBIN` and runs
   the installed binary.
 
