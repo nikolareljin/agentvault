@@ -384,6 +384,7 @@ var interpreters = map[string]bool{
 	"systemd-run": true, "pkexec": true, "py": true, "ipython": true, "tcsh": true, "csh": true, "ash": true,
 	"mksh": true, "yash": true, "nu": true, "xonsh": true, "elvish": true, "ts-node": true, "tsx": true,
 	"rscript": true, "wsl": true, "run0": true, "setpriv": true, "parallel": true, "pnpx": true,
+	"r": true, "julia": true, "wish": true, "toybox": true,
 }
 
 var bashRule = regexp.MustCompile(`^Bash(?:\((.*)\))?$`)
@@ -463,6 +464,8 @@ var commandWrappers = map[string]bool{
 	"command": true, "nice": true, "time": true, "stdbuf": true, "ionice": true, "setsid": true,
 	"chrt": true, "taskset": true, "watch": true, "flock": true, "unbuffer": true, "script": true,
 	"strace": true, "ltrace": true, "chroot": true, "runuser": true, "su": true, "start": true,
+	"sg": true, "firejail": true, "xvfb-run": true, "gnome-terminal": true, "konsole": true, "xterm": true,
+	"tmux": true, "screen": true,
 }
 
 // dropInterpreterAllows removes interpreter-wildcard entries from

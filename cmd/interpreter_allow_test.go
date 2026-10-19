@@ -14,12 +14,15 @@ func TestIsInterpreterAllow(t *testing.T) {
 		"Bash(python3.12 *)", "Bash(env:*)", `Bash(C:\Windows\System32\cmd.exe:*)`, "Bash(sudo:*)", "Bash(npx:*)",
 		"Bash(b*sh:*)", "Bash(?ython3:*)", "Bash(FOO=1 bash:*)", "Bash(nice bash:*)", "Bash(time python3 *)",
 		"Bash(command sh:*)", "Bash($SHELL:*)", "Bash(py:*)", "Bash(tcsh:*)", "Bash(wsl:*)", "Bash(tsx *)", "Bash(Rscript:*)"}
+	for _, n := range []string{"sg", "firejail", "xvfb-run", "parallel", "Rscript", "R", "julia", "lua", "php", "ruby", "perl", "node", "deno", "bun", "tclsh", "wish", "pwsh", "powershell", "cmd", "osascript", "busybox", "toybox", "sudo", "doas", "su", "runuser", "setpriv", "chrt", "ionice", "taskset", "stdbuf", "nohup", "timeout", "env", "gnome-terminal", "konsole", "xterm", "tmux", "screen"} {
+		blanket = append(blanket, "Bash("+n+":*)")
+	}
 	for _, r := range blanket {
 		if !isInterpreterAllow(r) {
 			t.Errorf("%s not flagged", r)
 		}
 	}
-	for _, r := range []string{"Bash(git status:*)", "Bash(go test:*)", "Read(~/x)", "Bash(make test)"} {
+	for _, r := range []string{"Bash(git status:*)", "Bash(go test:*)", "Read(~/x)", "Bash(make test)", "Bash(git:*)", "Bash(go:*)", "Bash(make:*)", "Bash(npm run:*)", "Bash(ls:*)", "Bash(find .)", "Bash(grep -E:*)", "Bash(tar -C:*)"} {
 		if isInterpreterAllow(r) {
 			t.Errorf("%s flagged", r)
 		}
@@ -36,7 +39,7 @@ func TestDropsBypassPermissionsMode(t *testing.T) {
 // A second spelling of settings.json must not slip past the filter.
 func TestApplyRefusesUncleanProviderPath(t *testing.T) {
 	home := t.TempDir()
-	for _, p := range []string{"./settings.json", "x/../settings.json", " settings.json"} {
+	for _, p := range []string{"./settings.json", "x/../settings.json", " settings.json", "settings.json::$DATA"} {
 		applied, _, err := applyProviderAssetsToSystem(home, []SetupAsset{{LogicalRoot: setupAssetRootProviderClaude,
 			LogicalPath: p, ContentPresent: true, Content: []byte(`{"permissions":{"allow":["Bash(*)"]}}`)}})
 		if err != nil {
@@ -106,4 +109,31 @@ func TestIsInterpreterAllowUpperCaseFlags(t *testing.T) {
 			t.Errorf("%s not flagged", r)
 		}
 	}
+}
+
+// Windows writes "settings.json." to settings.json: the filter must see it.
+func TestApplyFiltersTrailingDotSettings(t *testing.T) {
+	home := t.TempDir()
+	content, _, err := applyAndRead(t, home, "settings.json.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(content, []byte("Bash(*)")) {
+		t.Errorf("Bash(*) kept in %q: %s", "settings.json.", content)
+	}
+}
+
+func applyAndRead(t *testing.T, home, name string) ([]byte, int, error) {
+	t.Helper()
+	applied, _, err := applyProviderAssetsToSystem(home, []SetupAsset{{LogicalRoot: setupAssetRootProviderClaude,
+		LogicalPath: name, ContentPresent: true, Content: []byte(`{"permissions":{"allow":["Bash(*)"]}}`)}})
+	if err != nil || applied != 1 {
+		return nil, applied, err
+	}
+	entries, _ := os.ReadDir(filepath.Join(home, ".claude"))
+	for _, e := range entries {
+		b, _ := os.ReadFile(filepath.Join(home, ".claude", e.Name()))
+		return b, applied, nil
+	}
+	return nil, applied, nil
 }

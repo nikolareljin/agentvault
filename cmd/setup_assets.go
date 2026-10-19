@@ -994,7 +994,8 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		}
 		content := asset.Content
 		perm := os.FileMode(0600)
-		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.json") {
+		copilotConfig := asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.json")
+		if copilotConfig {
 			// Trailing dots and spaces too: Windows writes "config.json." to config.json.
 			// A bundle is not trusted to replace this machine's sign-in.
 			stripped, _, err := stripCopilotLoginState(content)
@@ -1002,7 +1003,7 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 				continue
 			}
-			content = keepLocalCopilotLogin(dest, stripped)
+			content = stripped
 		}
 		mergeKeys := asset.MergeKeys
 		if asset.LogicalRoot == setupAssetRootProviderHome {
@@ -1025,8 +1026,15 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				warnings = append(warnings, fmt.Sprintf("provider asset %s: %d secret value(s) were not in the bundle and are not on this machine; set them by hand", describeSetupAsset(asset), left))
 			}
 		}
+		if copilotConfig {
+			// After the restore: a redacted pointer naming a login key must
+			// not remove this machine's sign-in.
+			content = keepLocalCopilotLogin(dest, content)
+		}
+		// Trailing dots and spaces too: Windows writes "settings.json." to settings.json.
+		claudeName := strings.TrimRight(asset.LogicalPath, ". ")
 		if asset.LogicalRoot == setupAssetRootProviderClaude && !keepInterpreterAllows &&
-			(strings.EqualFold(asset.LogicalPath, "settings.json") || strings.EqualFold(asset.LogicalPath, "settings.local.json")) {
+			(strings.EqualFold(claudeName, "settings.json") || strings.EqualFold(claudeName, "settings.local.json")) {
 			var dropped []string
 			content, dropped = dropInterpreterAllows(content)
 			for _, d := range dropped {

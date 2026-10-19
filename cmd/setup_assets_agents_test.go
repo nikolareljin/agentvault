@@ -1187,3 +1187,19 @@ func TestCollectCopilotConfigFieldRedacted(t *testing.T) {
 		t.Errorf("redacted fields = %v", a.RedactedFields)
 	}
 }
+
+// A redacted pointer that names a login key must not sign this machine out.
+func TestCopilotRedactedPointerKeepsLocalLogin(t *testing.T) {
+	dst := t.TempDir()
+	mustWriteFile(t, filepath.Join(dst, ".copilot", "config.json"), `{"copilot_tokens":{"me":"LOCAL"},"model":"a"}`)
+	_, _, err := applyProviderAssetsToSystem(dst, []SetupAsset{{LogicalRoot: setupAssetRootProviderCopilotCLI,
+		LogicalPath: "config.json", ContentPresent: true, Content: []byte(`{"model":"b"}`),
+		RedactedFields: []string{"/copilot_tokens"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dst, ".copilot", "config.json"))
+	if !strings.Contains(string(b), "LOCAL") {
+		t.Fatalf("local sign-in removed: %s", b)
+	}
+}
