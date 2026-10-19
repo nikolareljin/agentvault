@@ -377,6 +377,11 @@ func isInterpreterAllow(rule string) bool {
 	if inner == "" || inner == "*" || inner == ":*" {
 		return true
 	}
+	// Quotes and backslashes can spell a name the checks below do not see
+	// ('bash', b\ash, ba''sh). Fail closed.
+	if strings.ContainsAny(inner, `'"\`) {
+		return true
+	}
 	// Claude matches a rule against the whole command line, so a command
 	// after a separator (ls && bash:*) runs too. Every segment is checked.
 	for _, seg := range shellSegments.Split(inner, -1) {
@@ -416,6 +421,16 @@ func commandRunsAnything(words []string) bool {
 			return true
 		}
 	}
+	// A prefix wildcard at the end (nice:*, timeout 5:*, nice -n 5 :*) lets
+	// a wrapper run anything after it, whatever its arguments.
+	endsWild := len(words) > 0 && strings.HasSuffix(words[len(words)-1], "*")
+	var trimmed []string
+	for _, w := range words {
+		if w = strings.TrimSuffix(strings.TrimSuffix(w, "*"), ":"); w != "" {
+			trimmed = append(trimmed, w)
+		}
+	}
+	words = trimmed
 	i := 0
 	for i < len(words) && shellReserved[words[i]] {
 		i++
@@ -432,6 +447,9 @@ func commandRunsAnything(words []string) bool {
 		}
 		if !commandWrappers[commandBase(w)] {
 			return false
+		}
+		if endsWild {
+			return true
 		}
 		i++
 		for i < len(words) && (strings.HasPrefix(words[i], "-") || durationArg.MatchString(words[i])) {
