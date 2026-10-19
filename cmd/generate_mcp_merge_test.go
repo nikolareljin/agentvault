@@ -191,3 +191,28 @@ func TestWriteFileAtomicRemovesTempOnFailure(t *testing.T) {
 		t.Fatalf("temp file left behind: %v", entries)
 	}
 }
+
+// A dangling symlinked directory in the path is refused with a clear error,
+// not MkdirAll's bare "file exists".
+func TestWriteFileAtomicRefusesDanglingDirLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, "d")); err != nil {
+		t.Fatal(err)
+	}
+	err := writeFileAtomicKeepMode(filepath.Join(dir, "d", "sub", "c.json"), []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "symlink to a missing directory") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSyncDir(t *testing.T) {
+	if err := syncDir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncDir(filepath.Join(t.TempDir(), "absent")); err == nil {
+		t.Fatal("synced a missing directory")
+	}
+}

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -673,6 +675,9 @@ func writeFileAtomicKeepMode(path string, data []byte) error {
 		mode = info.Mode().Perm()
 	}
 	dir := filepath.Dir(target)
+	if err := refuseDanglingDirLink(dir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
 	}
@@ -700,7 +705,44 @@ func writeFileAtomicKeepMode(path string, data []byte) error {
 	if err := os.Rename(tmpPath, target); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}
+	// Persist the rename itself. Windows cannot open a directory for Sync.
+	if runtime.GOOS != "windows" {
+		if err := syncDir(dir); err != nil {
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
+	}
 	return nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, errors.ErrUnsupported) {
+		return err
+	}
+	return nil
+}
+
+// refuseDanglingDirLink fails when the nearest existing ancestor of dir is a
+// symlink to nothing. MkdirAll would fail there with a bare "file exists".
+func refuseDanglingDirLink(dir string) error {
+	for p := dir; ; p = filepath.Dir(p) {
+		fi, err := os.Lstat(p)
+		if err == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				if _, serr := os.Stat(p); serr != nil {
+					return fmt.Errorf("%s is a symlink to a missing directory; create its target or pass another output file", p)
+				}
+			}
+			return nil
+		}
+		if filepath.Dir(p) == p {
+			return nil
+		}
+	}
 }
 
 func runGenerateAll(cmd *cobra.Command, args []string) error {
