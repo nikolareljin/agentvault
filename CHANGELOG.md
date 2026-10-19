@@ -8,7 +8,8 @@
   `--project-root`, and each `--map OLD=NEW` is applied first (OLD must be
   an absolute path). This covers
   file content (hook commands, MCP server paths, notes) and Claude's
-  per-project memory directory names. Windows paths match in any case, and
+  per-project memory directory names. Windows paths match in any case and
+  with either separator (`C:/Users/x`), and
   a path moved between Windows and POSIX gets the new separators to its end.
   `--dry-run` prints every rewrite.
 - `import --apply-projects --project-root DIR` writes the bundle's project

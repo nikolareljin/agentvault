@@ -112,6 +112,10 @@ func remapText(text string, remaps []pathRemap) (string, int) {
 		if fromWin {
 			rules = append(rules, rule{r.From, r.To, false, true, true, toWin})
 			rules = append(rules, rule{strings.ReplaceAll(r.From, `\`, `\\`), r.To, true, true, true, toWin})
+			// C:/Users/a is the same path, as Git Bash, Node and VS Code write it.
+			if fwd := strings.ReplaceAll(r.From, `\`, "/"); fwd != r.From {
+				rules = append(rules, rule{fwd, r.To, isJSON && toWin, true, true, toWin})
+			}
 		} else {
 			rules = append(rules, rule{r.From, r.To, isJSON, false, false, toWin})
 		}
@@ -250,8 +254,18 @@ func remapLogicalPath(asset SetupAsset, remaps []pathRemap) string {
 }
 
 // foreignHomePath finds a home-directory path that no rewrite covered.
-// A Windows path may sit in JSON with its backslashes doubled.
-var foreignHomePath = regexp.MustCompile(`(/home/[` + pathChar + `]+|/Users/[` + pathChar + `]+|(?i:[A-Za-z]:\\{1,2}Users\\{1,2})[` + pathChar + `]+)`)
+// A Windows path may sit in JSON with its backslashes doubled. The match
+// starts a path: /mnt/c/Users/b and ~/home/x are not home paths.
+var foreignHomePath = regexp.MustCompile(`(?:^|[^~/\\` + pathChar + `])(/home/[` + pathChar + `]+|/Users/[` + pathChar + `]+|(?i:[A-Za-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/))[` + pathChar + `]+)`)
+
+// foreignHomePaths returns each home path foreignHomePath finds in text.
+func foreignHomePaths(text string) []string {
+	var out []string
+	for _, m := range foreignHomePath.FindAllStringSubmatch(text, -1) {
+		out = append(out, m[1])
+	}
+	return uniqueStrings(out)
+}
 
 // remapAssets applies the rewrites to every asset with text content, and
 // reports what changed and what still names another machine's home.
@@ -273,7 +287,7 @@ func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]
 			}
 		}
 		if a.ContentPresent && isRemappableText(a.Content) {
-			for _, m := range uniqueStrings(foreignHomePath.FindAllString(string(a.Content), -1)) {
+			for _, m := range foreignHomePaths(string(a.Content)) {
 				if isTargetHome(m, targetHome) {
 					continue
 				}
@@ -292,7 +306,7 @@ func isTargetHome(m, targetHome string) bool {
 		return false
 	}
 	if windowsStylePath(m) {
-		m = strings.ToLower(strings.ReplaceAll(m, `\\`, `\`))
+		m = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(m, `\\`, `\`), "/", `\`))
 		targetHome = strings.ToLower(targetHome)
 	}
 	return m == targetHome || strings.HasPrefix(targetHome, m+"/") || strings.HasPrefix(targetHome, m+`\`)

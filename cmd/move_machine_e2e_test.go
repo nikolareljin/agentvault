@@ -142,6 +142,9 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dstHome, ".claude", ".credentials.json")); !os.IsNotExist(err) {
 		t.Error("login token carried")
 	}
+	if !strings.Contains(read(filepath.Join(dstProject, "AGENTS.md")), "docs/style.md") {
+		t.Error("project instruction file not written with --apply-projects")
+	}
 	if read(filepath.Join(dstProject, "docs", "style.md")) != "style\n" {
 		t.Error("referenced project file missing")
 	}

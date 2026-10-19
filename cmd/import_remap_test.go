@@ -335,3 +335,34 @@ func TestRemapTextConvertsJSONPathWithSpaces(t *testing.T) {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
+
+func TestForeignHomePathsStartAPath(t *testing.T) {
+	got := foreignHomePaths(`cd /mnt/c/Users/b/x; /home/alex/bin "C:\\Users\\Ann\\y" /srv/home/z ~/home/q`)
+	want := []string{"/home/alex", `C:\\Users\\Ann`}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("foreignHomePaths = %q, want %q", got, want)
+	}
+	if got := foreignHomePaths("/Users/b/notes"); len(got) != 1 || got[0] != "/Users/b" {
+		t.Fatalf("at start of text: %q", got)
+	}
+}
+
+// C:/Users/alex is a Windows home too, as Git Bash and Node write it.
+func TestRemapWindowsHomeWithForwardSlashes(t *testing.T) {
+	w2p := []pathRemap{{From: `C:\Users\alex`, To: "/home/alex"}}
+	got, n := remapText(`{"a":"c:/Users/alex/bin/x","b":"C:/Users/alexandra"}`, w2p)
+	if n != 1 || got != `{"a":"/home/alex/bin/x","b":"C:/Users/alexandra"}` {
+		t.Fatalf("w2p = %d %s", n, got)
+	}
+	w2w := []pathRemap{{From: `C:\Users\alex`, To: `D:\Users\bo`}}
+	got, _ = remapText(`{"a":"C:/Users/alex/x"}`, w2w)
+	if got != `{"a":"D:\\Users\\bo/x"}` {
+		t.Fatalf("w2w = %s", got)
+	}
+	if got := foreignHomePaths(`"c:/Users/zed/x"`); len(got) != 1 || got[0] != "c:/Users/zed" {
+		t.Fatalf("foreignHomePaths = %q", got)
+	}
+	if isTargetHome("c:/users/BO", `C:\Users\bo`) != true {
+		t.Fatal("own home in forward slashes reported as foreign")
+	}
+}

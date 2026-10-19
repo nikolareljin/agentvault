@@ -13,7 +13,7 @@ func TestIsInterpreterAllow(t *testing.T) {
 	blanket := []string{"Bash", "Bash()", "Bash(*)", "Bash(bash:*)", "Bash(/usr/bin/python3:*)",
 		"Bash(python3.12 *)", "Bash(env:*)", `Bash(C:\Windows\System32\cmd.exe:*)`, "Bash(sudo:*)", "Bash(npx:*)",
 		"Bash(b*sh:*)", "Bash(?ython3:*)", "Bash(FOO=1 bash:*)", "Bash(nice bash:*)", "Bash(time python3 *)",
-		"Bash(command sh:*)", "Bash($SHELL:*)"}
+		"Bash(command sh:*)", "Bash($SHELL:*)", "Bash(py:*)", "Bash(tcsh:*)", "Bash(wsl:*)", "Bash(tsx *)", "Bash(Rscript:*)"}
 	for _, r := range blanket {
 		if !isInterpreterAllow(r) {
 			t.Errorf("%s not flagged", r)

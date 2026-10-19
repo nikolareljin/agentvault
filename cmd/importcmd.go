@@ -437,7 +437,13 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		}
 	}
 
-	filteredProjectFiles := filterProjectFilesForStaging(setup.ProjectFiles, setup.InstructionOverrides)
+	// An instruction override (the project's AGENTS.md or CLAUDE.md) goes to
+	// the vault and is left out of the stage, except with --apply-projects:
+	// it is the file the user asked to have in the project.
+	filteredProjectFiles := setup.ProjectFiles
+	if !opts.ApplyProjects {
+		filteredProjectFiles = filterProjectFilesForStaging(setup.ProjectFiles, setup.InstructionOverrides)
+	}
 	assets := append(append(append([]SetupAsset{}, setup.ProviderFiles...), filteredProjectFiles...), setup.SkillAssets...)
 	staged, stageWarnings, err := stageImportedAssets(effectiveConfigDir(), assets)
 	if err != nil {

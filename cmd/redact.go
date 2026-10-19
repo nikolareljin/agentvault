@@ -381,7 +381,9 @@ var interpreters = map[string]bool{
 	"pwsh": true, "powershell": true, "cmd": true, "busybox": true, "nohup": true, "timeout": true,
 	"source": true, "builtin": true, "awk": true, "gawk": true, "mawk": true, "nawk": true, "bunx": true,
 	"uvx": true, "pipx": true, "expect": true, "tclsh": true, "unshare": true, "nsenter": true,
-	"systemd-run": true, "pkexec": true,
+	"systemd-run": true, "pkexec": true, "py": true, "ipython": true, "tcsh": true, "csh": true, "ash": true,
+	"mksh": true, "yash": true, "nu": true, "xonsh": true, "elvish": true, "ts-node": true, "tsx": true,
+	"rscript": true, "wsl": true, "run0": true, "setpriv": true, "parallel": true, "pnpx": true,
 }
 
 var bashRule = regexp.MustCompile(`^Bash(?:\((.*)\))?$`)
