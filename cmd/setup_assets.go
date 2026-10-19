@@ -927,20 +927,28 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
 	}
+	// The path the bundle gives must already be the clean form, so checks
+	// made on it hold for the file written: "x/../auth.json" is auth.json.
+	rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
+	if err != nil {
+		return "", err
+	}
+	if rel != asset.LogicalPath {
+		return "", fmt.Errorf("%q: not in clean form (%q); refused", asset.LogicalPath, rel)
+	}
 	// Export never carries login tokens; a bundle that does is not trusted
 	// to replace the ones here.
-	if isCredentialFile(asset.LogicalPath) {
-		return "", fmt.Errorf("%s: a login token file; sign in on this machine instead", asset.LogicalPath)
+	if isCredentialFile(rel) {
+		return "", fmt.Errorf("%s: a login token file; sign in on this machine instead", rel)
 	}
 	if asset.LogicalRoot == setupAssetRootProviderHome {
-		// One normalized path for the check and the write.
-		rel, err := homeAssetWritable(asset.LogicalPath)
+		rel, err := homeAssetWritable(rel)
 		if err != nil {
 			return "", err
 		}
 		return safeJoinUnder(homeDir, rel)
 	}
-	return safeJoinUnder(filepath.Join(homeDir, dir), asset.LogicalPath)
+	return safeJoinUnder(filepath.Join(homeDir, dir), rel)
 }
 
 func providerStageDirectoryName(logicalRoot string) (string, bool) {

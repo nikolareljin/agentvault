@@ -61,7 +61,9 @@ var credentialFileNames = map[string]bool{
 
 func isCredentialFile(path string) bool {
 	// Lower-cased: macOS and Windows file systems ignore case.
-	return credentialFileNames[strings.ToLower(filepath.Base(path))]
+	// Trailing dots and spaces too: Windows drops them, so "auth.json." is
+	// auth.json there.
+	return credentialFileNames[strings.TrimRight(strings.ToLower(filepath.Base(path)), ". ")]
 }
 
 // homeStartupPaths run code at login or shell start, or grant access. The home

@@ -675,3 +675,25 @@ func TestApplyNeverWritesCredentialFiles(t *testing.T) {
 		t.Errorf("applied = %d credential files, want 0", applied)
 	}
 }
+
+// A second spelling of a token file is the same file once joined.
+func TestApplyRefusesUncleanCredentialPaths(t *testing.T) {
+	home := t.TempDir()
+	var assets []SetupAsset
+	for _, p := range []string{"x/../.credentials.json", "./auth.json", "auth.json.", "oauth_creds.json/."} {
+		assets = append(assets, SetupAsset{LogicalRoot: setupAssetRootProviderCodex, LogicalPath: p,
+			ContentPresent: true, Content: []byte("{}")})
+	}
+	applied, _, err := applyProviderAssetsToSystem(home, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != 0 {
+		t.Errorf("applied = %d, want 0", applied)
+	}
+	for _, f := range []string{".credentials.json", "auth.json", "auth.json.", "oauth_creds.json"} {
+		if _, err := os.Lstat(filepath.Join(home, ".codex", f)); !os.IsNotExist(err) {
+			t.Errorf("%s written", f)
+		}
+	}
+}

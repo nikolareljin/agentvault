@@ -62,7 +62,9 @@
   was carried.
 - Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
   `google_accounts.json`) are never collected, even with `--include-secrets`,
-  and import never writes one from a bundle.
+  and import never writes one from a bundle, under any spelling
+  (`x/../auth.json`, `auth.json/.`, `Auth.json.`). Import takes provider
+  paths only in clean form.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key
   (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
