@@ -59,6 +59,10 @@ var credentialFileNames = map[string]bool{
 	"auth.json":            true, // Codex
 	"oauth_creds.json":     true, // Gemini CLI
 	"google_accounts.json": true, // Gemini CLI
+	// GitHub OAuth tokens of the Copilot editor plugins, in
+	// ~/.config/github-copilot.
+	"hosts.json": true,
+	"apps.json":  true,
 }
 
 func isCredentialFile(path string) bool {
@@ -134,6 +138,11 @@ func homeAssetWritable(logicalPath string) (string, error) {
 		return "", fmt.Errorf("%q: not in clean form (%q); refused", logicalPath, rel)
 	}
 	if reason := homeAssetRefusal(rel); reason != "" {
+		return "", fmt.Errorf("%s: %s", rel, reason)
+	}
+	// Export never carries a tool's memory or session files from the home
+	// root, so a bundle that does was not made by export.
+	if reason := agentRootRefusal(strings.ToLower(rel)); reason != "" {
 		return "", fmt.Errorf("%s: %s", rel, reason)
 	}
 	if rel != ".claude.json" && !isProseFile(rel) {
@@ -286,13 +295,25 @@ func stripLoginKeys(v any) (any, int) {
 	return v, n
 }
 
+// decodeJSONObject decodes a JSON object keeping numbers as written: a
+// float64 round trip would change an ID such as 12345678901234567890.
+func decodeJSONObject(raw []byte) (map[string]any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc map[string]any
+	if err := dec.Decode(&doc); err != nil || doc == nil {
+		return nil, fmt.Errorf("not a JSON object")
+	}
+	return doc, nil
+}
+
 // stripCopilotLoginState returns config.json without its login keys and how
 // many were removed. Content that is not a JSON object is an error: it is
 // never carried or written raw.
 func stripCopilotLoginState(raw []byte) ([]byte, int, error) {
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil || doc == nil {
-		return nil, 0, fmt.Errorf("not a JSON object")
+	doc, err := decodeJSONObject(raw)
+	if err != nil {
+		return nil, 0, err
 	}
 	_, n := stripLoginKeys(doc)
 	out, err := json.MarshalIndent(doc, "", "  ")
@@ -361,20 +382,36 @@ func keepLocalCopilotLogin(dest string, incoming []byte) []byte {
 	if err != nil {
 		return incoming
 	}
-	var local, doc map[string]json.RawMessage
-	if json.Unmarshal(existing, &local) != nil || json.Unmarshal(incoming, &doc) != nil || doc == nil {
+	local, err := decodeJSONObject(existing)
+	if err != nil {
 		return incoming
 	}
-	for k, v := range local {
-		if isLoginKey(k) {
-			doc[k] = v
-		}
+	doc, err := decodeJSONObject(incoming)
+	if err != nil {
+		return incoming
 	}
+	restoreLoginKeys(local, doc)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return incoming
 	}
 	return out
+}
+
+// restoreLoginKeys copies every login key of local into doc, at the depth
+// stripLoginKeys removed it from: a token nested in an object is kept too.
+func restoreLoginKeys(local, doc map[string]any) {
+	for k, v := range local {
+		if isLoginKey(k) {
+			doc[k] = v
+			continue
+		}
+		lm, ok1 := v.(map[string]any)
+		dm, ok2 := doc[k].(map[string]any)
+		if ok1 && ok2 {
+			restoreLoginKeys(lm, dm)
+		}
+	}
 }
 
 // symlinkedAsset reports a symlink where a single optional file is expected.
@@ -609,7 +646,7 @@ type homeRefResult struct {
 // resolveHomeReference decides one reference named by a file in fromDir. It
 // may point anywhere under home, through ~, $HOME, an absolute path or a
 // relative one, and nowhere else.
-func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
+func resolveHomeReference(homeDir, fromDir, raw string, aliases []agentRootAlias) homeRefResult {
 	clean := strings.TrimPrefix(raw, "./")
 	var abs string
 	if p, ok := expandHomePath(clean, homeDir); ok {
@@ -649,6 +686,9 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	// Spelled under the home path, so a directory walked from it yields paths
 	// relative to home, and one file has one key however it was named.
 	real = filepath.Join(cleanHome, mustRel(realHome, real))
+	if reason := agentAliasRefusal(aliases, real); reason != "" {
+		return homeRefResult{reason: reason}
+	}
 	info, err := os.Stat(real)
 	if err != nil {
 		return homeRefResult{absent: true, reason: "named but not present"}
@@ -669,10 +709,128 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 // carried as its mcpServers only, and a reference to it would carry the rest
 // (the signed-in account, every project's history).
 func homeReferenceRefusal(rel string) string {
-	if strings.ToLower(filepath.ToSlash(filepath.Clean(rel))) == ".claude.json" {
+	folded := strings.ToLower(filepath.ToSlash(filepath.Clean(rel)))
+	if folded == ".claude.json" {
 		return "carried as its MCP servers only"
 	}
+	if isCredentialFile(rel) {
+		return "a login token file; sign in on the other machine instead"
+	}
+	if reason := agentRootRefusal(folded); reason != "" {
+		return reason
+	}
 	return homeAssetRefusal(rel)
+}
+
+// agentRootAllowed are the parts of each tool's directory a reference may
+// reach: the setup the bundle carries anyway, and rule directories. The rest
+// is what the tools write while they run (memory, session transcripts,
+// archived sessions, history, backups, caches), so it fails closed: a new
+// state store a tool adds later is refused without a change here.
+var agentRootAllowed = map[string][]string{
+	".claude":  {"claude.md", "settings.json", "keybindings.json", "agents", "commands", "output-styles", "hooks", "skills", "rules"},
+	".codex":   {"agents.md", "config.toml", "rules", "prompts", "skills"},
+	".gemini":  {"gemini.md", "settings.json", "commands"},
+	".copilot": {"config.json", "mcp-config.json", "agents"},
+	".cursor":  {"mcp.json", "rules"},
+	".codeium": {"windsurf/mcp_config.json"},
+}
+
+// agentRootRefusal returns why a folded home-relative path inside a tool's
+// directory may not be followed, or "". A prose file directly in the tool's
+// directory (~/.claude/team-rules.md) is allowed.
+func agentRootRefusal(folded string) string {
+	// Windows drops trailing dots and spaces: ".claude./todos" is .claude/todos.
+	segs := strings.Split(folded, "/")
+	for i, seg := range segs {
+		segs[i] = strings.TrimRight(seg, ". ")
+	}
+	folded = strings.Join(segs, "/")
+	for root, allowed := range agentRootAllowed {
+		if !strings.HasPrefix(folded, root+"/") {
+			continue
+		}
+		sub := strings.TrimPrefix(folded, root+"/")
+		if !strings.Contains(sub, "/") && isProseFile(sub) {
+			return ""
+		}
+		for _, p := range allowed {
+			if sub == p || strings.HasPrefix(sub, p+"/") {
+				return ""
+			}
+		}
+		return "inside " + root + " but not its setup (memory, sessions, history or caches); memory travels only with --include-memory"
+	}
+	return ""
+}
+
+// agentRootAlias is where a tool directory, or one of its entries, really
+// lives when it is a symlink: ~/.claude -> ~/dotfiles/claude.
+type agentRootAlias struct {
+	real    string // spelled under the home path, as resolveHomeReference spells files
+	logical string // the home-relative path it stands for, e.g. ".claude/projects"
+}
+
+// agentRootAliases resolves each tool directory and every link inside it, at
+// any depth. A reference through a target (~/dotfiles/claude/todos, or
+// ~/notes/mem with ~/.claude/projects/p/memory linked there) names the same
+// files as one through the tool directory and gets the same answer.
+func agentRootAliases(homeDir string) []agentRootAlias {
+	cleanHome := filepath.Clean(homeDir)
+	realHome, err := filepath.EvalSymlinks(homeDir)
+	if err != nil {
+		realHome = cleanHome
+	}
+	spell := func(p string) (string, bool) {
+		real, err := filepath.EvalSymlinks(p)
+		if err != nil || !isUnder(realHome, real) {
+			return "", false
+		}
+		return filepath.Join(cleanHome, mustRel(realHome, real)), true
+	}
+	var out []agentRootAlias
+	for root := range agentRootAllowed {
+		dir := filepath.Join(cleanHome, root)
+		walkFrom, ok := spell(dir)
+		if !ok {
+			continue
+		}
+		if walkFrom != dir {
+			out = append(out, agentRootAlias{walkFrom, root})
+		}
+		// WalkDir does not follow links, so each one is resolved here. Every
+		// entry that is not a plain file or directory is tried: a Windows
+		// junction is not reported as a symlink.
+		_ = filepath.WalkDir(walkFrom, func(p string, d os.DirEntry, err error) error {
+			if err != nil || p == walkFrom || d.Type().IsRegular() || d.IsDir() {
+				return nil
+			}
+			if real, ok := spell(p); ok && real != p {
+				out = append(out, agentRootAlias{real, root + "/" + filepath.ToSlash(mustRel(walkFrom, p))})
+			}
+			return nil
+		})
+	}
+	return out
+}
+
+// agentAliasRefusal is agentRootRefusal for a path reached through the
+// target of a symlinked tool directory or entry.
+func agentAliasRefusal(aliases []agentRootAlias, p string) string {
+	// Compared in lower case: macOS and Windows match ~/DotFiles/claude to
+	// ~/dotfiles/claude. On Linux that can only refuse more.
+	p = strings.ToLower(p)
+	for _, a := range aliases {
+		target := strings.ToLower(a.real)
+		if p != target && !isUnder(target, p) {
+			continue
+		}
+		logical := path.Join(a.logical, filepath.ToSlash(mustRel(target, p)))
+		if reason := agentRootRefusal(strings.ToLower(logical)); reason != "" {
+			return reason
+		}
+	}
+	return ""
 }
 
 // isRootedPath is an absolute path on any OS. On Windows "/etc/hosts" has no
@@ -712,6 +870,9 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		depth int
 	}
 	var queue []item
+	// Resolved once: walking the tool directories per reference would cost
+	// a full walk of ~/.claude/projects each time.
+	aliases := agentRootAliases(homeDir)
 	for _, s := range userInstructionSeeds(carried) {
 		queue = append(queue, item{s, 0})
 	}
@@ -754,17 +915,20 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 
 	takeDir := func(dir, by string, depth int) error {
 		n := 0
+		refused := func(p string) bool {
+			return homeReferenceRefusal(mustRel(homeDir, p)) != "" || agentAliasRefusal(aliases, p) != ""
+		}
 		return filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
 			if d.IsDir() {
-				if p != dir && skipReferenceDir(d.Name()) {
+				if p != dir && (skipReferenceDir(d.Name()) || refused(p)) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if d.Type()&os.ModeSymlink != 0 || homeReferenceRefusal(mustRel(homeDir, p)) != "" {
+			if d.Type()&os.ModeSymlink != 0 || refused(p) {
 				return nil
 			}
 			if n >= maxDirReferenceFiles {
@@ -798,7 +962,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		}
 		by := "~/" + filepath.ToSlash(mustRel(homeDir, settings.SourcePath))
 		for _, p := range settingsCommandPaths(content, homeDir) {
-			r := resolveHomeReference(homeDir, homeDir, p)
+			r := resolveHomeReference(homeDir, homeDir, p, aliases)
 			shown := "~/" + filepath.ToSlash(mustRel(homeDir, p))
 			switch {
 			case r.absent:
@@ -824,7 +988,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		fromDir := filepath.Dir(cur.asset.SourcePath)
 		by := "~/" + filepath.ToSlash(mustRel(homeDir, cur.asset.SourcePath))
 		for _, raw := range agent.FindReferences(string(cur.asset.Content)) {
-			r := resolveHomeReference(homeDir, fromDir, raw)
+			r := resolveHomeReference(homeDir, fromDir, raw, aliases)
 			switch {
 			case r.absent:
 				declined = append(declined, DeclinedAsset{Path: raw, Category: DeclinedAbsent,
@@ -915,7 +1079,8 @@ var projectRepoScopeSettings = []string{
 
 func isProjectRepoScopeSetting(logical string) bool {
 	for _, p := range projectRepoScopeSettings {
-		if filepath.ToSlash(p) == logical {
+		// Any letter case: macOS and Windows match .Claude/settings.json.
+		if strings.EqualFold(filepath.ToSlash(p), logical) {
 			return true
 		}
 	}
@@ -964,6 +1129,16 @@ func collectProjectInstructionExtras(projectDir string, includeSecrets bool) ([]
 			setupAssetRootProject, slashed, slashed, false, includeSecrets)
 		if err != nil {
 			return nil, warnings, err
+		}
+		for i := range found {
+			// Rules are prose and Gemini commands are TOML prompts. Anything
+			// else here (a JSON or YAML file) can hold a token, as at user scope.
+			a := &found[i]
+			ext := strings.ToLower(filepath.Ext(a.LogicalPath))
+			if !includeSecrets && a.ContentPresent && !isProseFile(a.LogicalPath) && ext != ".toml" {
+				a.Sensitive, a.Redacted, a.ContentPresent, a.Content, a.SHA256 = true, true, false, nil, ""
+				warnings = append(warnings, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", a.SourcePath))
+			}
 		}
 		assets = append(assets, found...)
 		warnings = append(warnings, warns...)
@@ -1014,6 +1189,8 @@ func collectProjectReferenceClosure(projectDir string, seeds []SetupAsset, inclu
 		}
 		have[rel] = true
 		if isProjectRepoScopeSetting(rel) {
+			declined = append(declined, DeclinedAsset{Path: rel, Category: DeclinedRepoScope,
+				Reason: "repository-scope settings travel with the repository; listed, not exported"})
 			return nil
 		}
 		// Not prose (a script, a config file): redacted without
@@ -1147,19 +1324,19 @@ func dedupeAssetsByLogicalPath(in []SetupAsset) []SetupAsset {
 }
 
 // mergeJSONKeysIntoFile sets keys from incoming into the JSON object at path
-// and keeps every other key there. A missing or empty file takes incoming as
-// is; a file that is not a JSON object is refused rather than overwritten.
+// and keeps every other key there. A missing or empty file gets those keys
+// only: the rest of incoming is never written. A file that is not a JSON
+// object is refused rather than overwritten.
 func mergeJSONKeysIntoFile(path string, incoming []byte, keys []string) ([]byte, error) {
 	existing, err := os.ReadFile(path)
-	if os.IsNotExist(err) || (err == nil && len(strings.TrimSpace(string(existing))) == 0) {
-		return incoming, nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(existing, &doc); err != nil {
-		return nil, fmt.Errorf("%s is not a JSON object; not overwriting it", path)
+	doc := map[string]json.RawMessage{}
+	if len(strings.TrimSpace(string(existing))) > 0 {
+		if err := json.Unmarshal(existing, &doc); err != nil || doc == nil {
+			return nil, fmt.Errorf("%s is not a JSON object; not overwriting it", path)
+		}
 	}
 	var in map[string]json.RawMessage
 	if err := json.Unmarshal(incoming, &in); err != nil {

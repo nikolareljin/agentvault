@@ -85,7 +85,7 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 	mustWriteFile(t, filepath.Join(homeDir, ".claude", "keybindings.json"), `{"up":"k"}`)
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "config.toml"), `model = "gpt"`)
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "rules", "review.md"), "review rules")
-	mustWriteFile(t, filepath.Join(homeDir, ".config", "github-copilot", "hosts.json"), `{"github.com":{"oauth_token":"secret"}}`)
+	mustWriteFile(t, filepath.Join(homeDir, ".config", "github-copilot", "versions.json"), `{"token":"secret"}`)
 
 	assets, _, err := collectSetupAssets(setupAssetOptions{})
 	if err != nil {
@@ -103,13 +103,13 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 		t.Fatalf("claude settings asset = %#v, want content with /apiKey blanked", settings)
 	}
 
-	copilotHosts := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilot, "hosts.json")
+	copilotHosts := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilot, "versions.json")
 	if copilotHosts == nil {
 		t.Fatalf("provider files missing copilot config")
 	}
 	if !copilotHosts.Sensitive || bytes.Contains(copilotHosts.Content, []byte("secret")) ||
-		len(copilotHosts.RedactedFields) != 1 || copilotHosts.RedactedFields[0] != "/github.com/oauth_token" {
-		t.Fatalf("copilot config asset = %#v, want oauth_token blanked", copilotHosts)
+		len(copilotHosts.RedactedFields) != 1 || copilotHosts.RedactedFields[0] != "/token" {
+		t.Fatalf("copilot config asset = %#v, want /token blanked", copilotHosts)
 	}
 
 	keybindings := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "keybindings.json")
@@ -621,7 +621,7 @@ func TestApplyProviderAssetsToSystemRejectsSymlinkProviderDirectory(t *testing.T
 	applied, warnings, err := applyProviderAssetsToSystem(homeDir, []SetupAsset{{
 		Kind:           setupAssetKindProviderFile,
 		LogicalRoot:    setupAssetRootProviderCopilot,
-		LogicalPath:    "hosts.json",
+		LogicalPath:    "versions.json",
 		ContentPresent: true,
 		Content:        []byte(`{"github.com":{"oauth_token":"secret"}}`),
 	}})
@@ -632,7 +632,7 @@ func TestApplyProviderAssetsToSystemRejectsSymlinkProviderDirectory(t *testing.T
 	if applied != 0 || !strings.Contains(joined, "destination directory contains a symlink") {
 		t.Fatalf("applyProviderAssetsToSystem() = (%d, %v), want provider-dir symlink warning", applied, warnings)
 	}
-	if _, err := os.Stat(filepath.Join(outsideDir, "hosts.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(outsideDir, "versions.json")); !os.IsNotExist(err) {
 		t.Fatalf("copilot provider symlink target should remain untouched, got err=%v", err)
 	}
 }
@@ -1232,5 +1232,23 @@ func TestDedupeDeclined_KeepsOnePerPathAndCategory(t *testing.T) {
 	}
 	if got[0].Reason != "named by AGENTS.md" {
 		t.Errorf("kept %q, want the first seen", got[0].Reason)
+	}
+}
+
+// A credential by location is redacted whole, not field by field: the
+// secret in .docker/config.json sits under "auth", which no pattern names.
+func TestCollectSetupAssets_SecretBearingJSONRedactedWhole(t *testing.T) {
+	homeDir := t.TempDir()
+	setTestHomeDir(t, homeDir)
+	mustMkdirAll(t, filepath.Join(homeDir, ".codex", "rules", ".docker"))
+	mustWriteFile(t, filepath.Join(homeDir, ".codex", "rules", ".docker", "config.json"), `{"auths":{"r":{"auth":"leak6"}}}`)
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+	a := findAsset(assets.ProviderFiles, setupAssetRootProviderCodex, "rules/.docker/config.json")
+	if a == nil || !a.Redacted || a.ContentPresent || bytes.Contains(a.Content, []byte("leak6")) {
+		t.Fatalf("docker config asset = %+v, want redacted whole", a)
 	}
 }

@@ -1,16 +1,20 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -82,6 +86,11 @@ var generateMCPCmd = &cobra.Command{
 	Long: `Generate a claude_desktop_config.json file for MCP servers.
 
 This file can be used with Claude Desktop or other MCP-aware clients.
+The default output is Claude Desktop's config for this OS:
+  macOS    ~/Library/Application Support/Claude/claude_desktop_config.json
+  Windows  %APPDATA%\Claude\claude_desktop_config.json
+  Linux    ~/.config/claude/claude_desktop_config.json
+Only the mcpServers key of an existing file is replaced.
 Includes all MCP servers from both shared config and individual agents.
 
 Examples:
@@ -553,28 +562,29 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 		Env     map[string]string `json:"env,omitempty"`
 	}
 
-	config := struct {
+	desktop := struct {
 		MCPServers map[string]MCPServerConfig `json:"mcpServers"`
 	}{
 		MCPServers: make(map[string]MCPServerConfig),
 	}
 
 	for name, s := range servers {
-		config.MCPServers[name] = MCPServerConfig{
+		desktop.MCPServers[name] = MCPServerConfig{
 			Command: s.Command,
 			Args:    s.Args,
 			Env:     s.Env,
 		}
 	}
 
-	data, err := json.MarshalIndent(config, "", "  ")
+	data, err := json.MarshalIndent(desktop, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding MCP config: %w", err)
 	}
 
 	if outputFile == "" {
-		home, _ := os.UserHomeDir()
-		outputFile = filepath.Join(home, ".config", "claude", "claude_desktop_config.json")
+		if outputFile, err = config.ClaudeDesktopConfigPath(); err != nil {
+			return err
+		}
 	}
 
 	if outputFile == "-" {
@@ -582,11 +592,8 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 		return nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(outputFile), 0700); err != nil {
-		return fmt.Errorf("creating directory: %w", err)
-	}
-	if err := os.WriteFile(outputFile, data, 0600); err != nil {
-		return fmt.Errorf("writing %s: %w", outputFile, err)
+	if err := writeMCPConfigFile(outputFile, data); err != nil {
+		return err
 	}
 
 	fmt.Printf("Generated MCP config: %s\n", outputFile)
@@ -595,6 +602,225 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 		fmt.Printf("    - %s\n", name)
 	}
 	return nil
+}
+
+// writeMCPConfigFile merges data into outputFile and writes it. A device or
+// FIFO such as /dev/stdout is written in place: a rename would replace it,
+// and reading it first could block.
+func writeMCPConfigFile(outputFile string, data []byte) error {
+	if fi, err := os.Stat(outputFile); err == nil && !fi.Mode().IsRegular() && !fi.IsDir() {
+		if err := os.WriteFile(outputFile, data, 0600); err != nil {
+			return fmt.Errorf("writing %s: %w", outputFile, err)
+		}
+		return nil
+	}
+	merged, err := mergeMCPServersIntoFile(outputFile, data)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomicKeepMode(outputFile, merged)
+}
+
+// mergeMCPServersIntoFile replaces only the mcpServers key of an existing
+// config file and keeps every other key. The default output is Claude
+// Desktop's own config, which holds the app's other settings too.
+func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
+	existing, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return generated, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	// Notepad saves UTF-8 with a BOM, which json.Unmarshal rejects.
+	existing = bytes.TrimPrefix(existing, []byte("\xef\xbb\xbf"))
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return generated, nil
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(existing, &doc); err != nil || doc == nil {
+		// A literal null decodes to a nil map with no error.
+		if err == nil {
+			err = errors.New("top-level value is null")
+		}
+		return nil, fmt.Errorf("%s is not a JSON object; not overwriting it (pass another output file): %w", path, err)
+	}
+	var gen map[string]json.RawMessage
+	if err := json.Unmarshal(generated, &gen); err != nil {
+		return nil, err
+	}
+	// Rebuild the object in the file's key order, replacing mcpServers in
+	// place. Values are copied as written, only re-indented, so strings and
+	// numbers keep their exact text.
+	type member struct {
+		key   string
+		value json.RawMessage
+	}
+	var members []member
+	dec := json.NewDecoder(bytes.NewReader(existing))
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, err
+		}
+		key, _ := tok.(string)
+		if key == "mcpServers" {
+			value = gen["mcpServers"]
+		}
+		dup := false
+		for i := range members {
+			if members[i].key == key {
+				// A repeated key: the last value wins, as in json.Unmarshal.
+				members[i].value, dup = value, true
+			}
+		}
+		if !dup {
+			members = append(members, member{key, value})
+		}
+	}
+	if _, ok := doc["mcpServers"]; !ok {
+		members = append(members, member{"mcpServers", gen["mcpServers"]})
+	}
+	var buf bytes.Buffer
+	buf.WriteString("{")
+	for i, m := range members {
+		if i > 0 {
+			buf.WriteString(",")
+		}
+		buf.WriteString("\n  ")
+		// Marshal would turn < > & in a key into \u003c \u003e \u0026.
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(m.key); err != nil {
+			return nil, err
+		}
+		buf.Truncate(buf.Len() - 1)
+		buf.WriteString(": ")
+		if err := json.Indent(&buf, m.value, "  ", "  "); err != nil {
+			return nil, err
+		}
+	}
+	buf.WriteString("\n}")
+	return buf.Bytes(), nil
+}
+
+// writeFileAtomicKeepMode replaces path through a temp file and a rename, so
+// a crash never leaves Claude Desktop a half-written config. A symlinked path
+// is written through to its target, and an existing file keeps its mode.
+func writeFileAtomicKeepMode(path string, data []byte) error {
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("resolving %s: %w", path, err)
+	} else {
+		// A dangling link: follow every hop and create the final target
+		// rather than replace a link. A loop fails in EvalSymlinks above.
+		for hops := 0; hops < 255; hops++ {
+			link, lerr := os.Readlink(target)
+			if lerr != nil {
+				break
+			}
+			if !filepath.IsAbs(link) {
+				link = filepath.Dir(target) + string(filepath.Separator) + link
+			}
+			// Resolve the parent as the OS does: filepath.Join would clean
+			// "dirlink/../x" lexically, but ".." applies after dirlink.
+			if i := strings.LastIndexByte(link, filepath.Separator); i > 0 {
+				if parent, perr := filepath.EvalSymlinks(link[:i]); perr == nil {
+					link = filepath.Join(parent, link[i+1:])
+				}
+			}
+			target = link
+		}
+	}
+	mode := os.FileMode(0600)
+	existing, statErr := os.Stat(target)
+	if statErr == nil {
+		mode = existing.Mode().Perm()
+	}
+	dir := filepath.Dir(target)
+	if err := refuseDanglingDirLink(dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("creating directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".claude_desktop_config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if statErr == nil {
+		if err := keepOwner(tmp, existing); err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	// Persist the rename itself. Windows cannot open a directory for Sync.
+	if runtime.GOOS != "windows" {
+		if err := syncDir(dir); err != nil {
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	if err := d.Sync(); err != nil && !errors.Is(err, syscall.EINVAL) && !errors.Is(err, errors.ErrUnsupported) {
+		return err
+	}
+	return nil
+}
+
+// refuseDanglingDirLink fails when the nearest existing ancestor of dir is a
+// symlink to nothing. MkdirAll would fail there with a bare "file exists".
+func refuseDanglingDirLink(dir string) error {
+	for p := dir; ; p = filepath.Dir(p) {
+		fi, err := os.Lstat(p)
+		if err == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				if _, serr := os.Stat(p); serr != nil {
+					return fmt.Errorf("%s is a symlink to a missing directory; create its target or pass another output file", p)
+				}
+			}
+			return nil
+		}
+		if filepath.Dir(p) == p {
+			return nil
+		}
+	}
 }
 
 func runGenerateAll(cmd *cobra.Command, args []string) error {

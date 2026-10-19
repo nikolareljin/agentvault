@@ -12,12 +12,15 @@
 
 ## Build, Test, and Development Commands
 
-- Build: `make build` (produces `./agentvault` binary)
-- Test: `make test` (runs `go test ./...`)
-- Lint: `make lint` (gofmt check + go vet)
-- Format: `make fmt`
-- Clean: `make clean`
-- Install: `make install` (copies to $GOPATH/bin)
+- Entry point: `./dev` (`./dev.ps1` on Windows); `make` targets are shims onto it. Commands live in `scripts/project.sh`.
+- Setup: `./dev install` (submodules, git hooks, Go modules)
+- Build: `./dev build` (produces `./agentvault`)
+- Test: `./dev test` (runs `go test ./...`)
+- Lint: `./dev lint` (gofmt check, go vet for this OS, darwin and windows)
+- Format: `./dev format`
+- Before pushing: `./dev preflight` (lint, test, govulncheck)
+- Clean: `./dev clean`
+- Install the binary: `./dev install-bin` (GOBIN, GOPATH/bin, or ~/.local/bin)
 - Run: `./agentvault --help`
 
 ## Coding Style

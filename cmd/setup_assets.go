@@ -606,6 +606,9 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 			return fmt.Errorf("computing relative path for %q: %w", path, err)
 		}
 		rel = filepath.ToSlash(rel)
+		// A .env or a key file inside a rules or agents directory holds a
+		// secret like any other: redacted without --include-secrets.
+		fileSensitive := sensitive || agent.SecretBearingReason(rel) != ""
 		logicalPath := rel
 		if logicalPrefix != "" {
 			logicalPath = filepath.ToSlash(filepath.Join(logicalPrefix, rel))
@@ -614,7 +617,7 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		if projectPrefix != "" {
 			projectRelative = filepath.ToSlash(filepath.Join(projectPrefix, rel))
 		}
-		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, sensitive, includeSecrets, false)
+		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, fileSensitive, includeSecrets, false)
 		if err != nil {
 			return err
 		}
@@ -672,13 +675,27 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	if asset.SizeBytes > maxSetupAssetBytes {
 		return asset, fmt.Sprintf("asset %q exceeds %d bytes; exporting metadata only", path, maxSetupAssetBytes), nil
 	}
+	// A hard link has another name that was never checked: notes.md can be
+	// .netrc. Its content is treated as secret.
+	hardLinked := agent.HardLinkCount(path, info) > 1
+	if hardLinked {
+		sensitive = true
+		asset.Sensitive = true
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
 	}
 	asset.SizeBytes = int64(len(data))
-	if sensitive && !includeSecrets && strings.EqualFold(filepath.Ext(path), ".json") {
+	if hardLinked && !includeSecrets {
+		asset.Redacted = true
+		return asset, fmt.Sprintf("asset %q has a second hard link; redacted, use --include-secrets to carry", path), nil
+	}
+	// A credential by name or location (.aws/, .docker/config.json) is
+	// redacted whole: its secret may sit under a key no pattern names.
+	if sensitive && !includeSecrets && strings.EqualFold(filepath.Ext(path), ".json") &&
+		agent.SecretBearingReason(safeLogicalPath) == "" && agent.SecretBearingReason(path) == "" {
 		if out, pointers, ok := redactJSONSecrets(data); ok {
 			asset.Content = out
 			asset.ContentPresent = true
@@ -977,7 +994,8 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		}
 		content := asset.Content
 		perm := os.FileMode(0600)
-		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(asset.LogicalPath, "config.json") {
+		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.json") {
+			// Trailing dots and spaces too: Windows writes "config.json." to config.json.
 			// A bundle is not trusted to replace this machine's sign-in.
 			stripped, _, err := stripCopilotLoginState(content)
 			if err != nil {

@@ -22,8 +22,8 @@ var initCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if len(pw) < 8 {
-			return fmt.Errorf("password must be at least 8 characters")
+		if len(pw) < minNewBundlePasswordLen {
+			return fmt.Errorf("password must be at least %d characters", minNewBundlePasswordLen)
 		}
 		confirm, err := readPassword("Confirm master password: ")
 		if err != nil {

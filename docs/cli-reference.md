@@ -482,6 +482,14 @@ Flags:
 - `--agent <name>`
 
 ### `agentvault generate mcp [output-file]`
+Default output is Claude Desktop's config for the OS:
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS),
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows),
+`~/.config/claude/claude_desktop_config.json` (Linux). `-` prints to stdout.
+An existing file keeps every key except `mcpServers`, in order, its mode and (outside Windows) its owner; a file
+that is not a JSON object is left alone and the command fails.
+The file is replaced by a rename, so a hard link to it keeps the old content.
+
 Flags:
 - `--agent <name>`
 - `--shared-only` (default: `false`)
@@ -601,13 +609,14 @@ Also carried:
 - A Claude Code plugin inventory. Import prints the `claude plugin marketplace add` and `claude plugin install` commands; it installs nothing itself.
 
 Never carried:
-- Login tokens: `~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json` and `google_accounts.json`. The login keys of `~/.copilot/config.json` (`copilot_tokens`, `logged_in_users`, `last_logged_in_user`, any key named like a token, except counts and limits such as `max_tokens` and `tokenLimit`) are removed; the rest of that file is carried. They are not carried even with `--include-secrets`. Sign in on the other machine.
+- Login tokens: `~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, `~/.gemini/google_accounts.json`, `~/.config/github-copilot/hosts.json` and `apps.json`. The login keys of `~/.copilot/config.json` (`copilot_tokens`, `logged_in_users`, `last_logged_in_user`, any key named like a token, except counts and limits such as `max_tokens` and `tokenLimit`) are removed; the rest of that file is carried. They are not carried even with `--include-secrets`. Sign in on the other machine.
 - A project's own settings (`.claude/settings.json`, `.mcp.json`, `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`, `.vscode/mcp.json`). They travel with the repository. The bundle lists them as `repository`.
 - `.local.` files, unless named with `--include-local`.
+- Anything else a reference names inside a tool's directory: only the setup in the table above, rule directories and prose files at the top of that directory are followed. Memory, session transcripts (`~/.claude/projects/`, `~/.codex/sessions/`, `~/.codex/archived_sessions/`), history, backups, caches and logs are declined, also when named through the target of a symlinked tool directory (`~/dotfiles/claude/todos/` with `~/.claude` linked there) or of a link at any depth inside it. Memory travels only with `--include-memory`.
 - Credential files an instruction names, in any letter case and also through a symlink: `.env`, `.env.*` and `*.env` (templates such as `.env.example` are kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`, `.npmrc`, `.git-credentials`, SSH keys, and anything under `.ssh`, `.gnupg`, `.aws`, `.kube`, `.docker` or `.azure`. They are listed as declined.
 - Shell and login startup files (`.bashrc`, `.zshrc`, `.profile`, `.config/autostart`, `Library/LaunchAgents`, ...) and any other dotfile at the home root except `~/.claude.json`. Import refuses to write them from a bundle, too.
 
-Without `--include-secrets`, JSON settings files that can hold tokens (`~/.copilot/config.json` included) travel with their secret values blanked, as described below; other settings files that can hold tokens are redacted whole. So are `~/.claude/hooks/` scripts, which are code and cannot be blanked field by field, and referenced files that are not prose, such as scripts and config files. Import names each redacted file it could not write. Markdown and text are carried as is.
+Without `--include-secrets`, JSON settings files that can hold tokens (`~/.copilot/config.json` included) travel with their secret values blanked, as described below. Other settings files that can hold tokens are redacted whole. So are `~/.claude/hooks/` scripts, which are code and cannot be blanked field by field, files in project rule directories that are neither prose nor TOML, credential-named files in any carried directory, files with a second hard link, and referenced files that are not prose, such as scripts and config files. Import names each redacted file it could not write. Markdown and text are carried as is.
 
 Files referenced outside the tools' own directories are written back on import only when they are prose. They are written 0600 and never executable. `~/.claude.json` only gets its `mcpServers` key merged in. Referenced scripts and config files are staged under `<config dir>/imported-assets/provider/provider_home/` for review, and never written to the home directory: placed on `PATH` or named by a hook, a file from a bundle runs code.
 

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,6 +282,29 @@ func TestCollectSetupAssets_ProjectInstructionsClosureAndRepoSettings(t *testing
 	}
 }
 
+// Repository settings named in another letter case are the same file on
+// macOS and Windows: listed as repository settings, not carried.
+func TestProjectRepoScopeSettingsMatchAnyCase(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "See `.Claude/settings.json` and `.MCP.json`.\n")
+	mustWriteFile(t, filepath.Join(project, ".Claude", "settings.json"), `{"env":{"T":"leak"}}`)
+	mustWriteFile(t, filepath.Join(project, ".MCP.json"), `{"mcpServers":{}}`)
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project, IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{".Claude/settings.json", ".MCP.json"} {
+		if findAsset(assets.ProjectFiles, setupAssetRootProject, p) != nil {
+			t.Errorf("%s carried; repository settings are listed only", p)
+		}
+		if !declinedHas(assets.Declined, p, DeclinedRepoScope) {
+			t.Errorf("%s not listed as repository settings: %v", p, assets.Declined)
+		}
+	}
+}
+
 func TestPluginInventoryAndInstallCommands(t *testing.T) {
 	home := t.TempDir()
 	mustWriteFile(t, filepath.Join(home, ".claude", "plugins", "known_marketplaces.json"),
@@ -353,7 +377,8 @@ func TestApplyHomeRootIsAnAllowlist(t *testing.T) {
 	var assets []SetupAsset
 	refused := []string{".bashrc", ".BASHRC", " .bashrc", " .claude.json", "./.claude.json", "docs//x.md", ".zshrc", ".ssh/authorized_keys", ".SSH/authorized_keys",
 		".netrc", ".config/autostart/x.desktop", "Library/LaunchAgents/x.plist", ".hidden-at-root",
-		"bin/guard.sh", ".local/bin/git", "notes/run.sh"}
+		"bin/guard.sh", ".local/bin/git", "notes/run.sh",
+		".claude/projects/p/memory/m.md", ".codex/memories/x.md", ".Claude/todos/x.md"}
 	for _, p := range refused {
 		assets = append(assets, SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: p,
 			ContentPresent: true, Content: []byte("payload")})
@@ -400,6 +425,26 @@ func TestApplyClaudeJSONIgnoresBundleMergeKeys(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(`"mcpServers"`)) {
 		t.Errorf("mcpServers not merged: %s", data)
+	}
+}
+
+// With no ~/.claude.json yet, only the merged keys are written: the bundle
+// does not get to set the account or project trust on a fresh machine.
+func TestApplyClaudeJSONFreshMachineTakesMergeKeysOnly(t *testing.T) {
+	home := t.TempDir()
+	_, warnings, err := applyProviderAssetsToSystem(home, []SetupAsset{{
+		LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true,
+		Content: []byte(`{"oauthAccount":{"email":"attacker@x"},"projects":{"/":{"hasTrustDialogAccepted":true}},"mcpServers":{"a":{"command":"x"}}}`),
+	}})
+	if err != nil {
+		t.Fatal(err, warnings)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if bytes.Contains(data, []byte("attacker@x")) || bytes.Contains(data, []byte("hasTrustDialogAccepted")) {
+		t.Errorf("keys outside mcpServers written: %s", data)
+	}
+	if !bytes.Contains(data, []byte(`"mcpServers"`)) {
+		t.Errorf("mcpServers not written: %s", data)
 	}
 }
 
@@ -822,7 +867,7 @@ func TestSymlinkedClaudeSettingsDoNotAbortExport(t *testing.T) {
 func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 	home := t.TempDir()
 	setTestHomeDir(t, home)
-	cfg := `{"model":"gpt-5","max_tokens":100,"maxOutputTokens":200,"tokenLimit":300,"minOutputTokens":5,"minted_token":"SECRET4","output-token-count":9,"access_tokens":["SECRET3"],"copilot_tokens":{"u":"ghu_SECRET1"},"logged_in_users":[{"login":"u"}],` +
+	cfg := `{"model":"gpt-5","big":12345678901234567890,"max_tokens":100,"maxOutputTokens":200,"tokenLimit":300,"minOutputTokens":5,"minted_token":"SECRET4","output-token-count":9,"access_tokens":["SECRET3"],"copilot_tokens":{"u":"ghu_SECRET1"},"logged_in_users":[{"login":"u"}],` +
 		`"last_logged_in_user":{"login":"u"},"nested":{"oauthToken":"SECRET2","keep":1}}`
 	mustWriteFile(t, filepath.Join(home, ".copilot", "config.json"), cfg)
 	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
@@ -839,7 +884,7 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 			t.Errorf("config.json carries %q: %s", bad, body)
 		}
 	}
-	if !strings.Contains(body, `"model"`) || !strings.Contains(body, `"keep"`) ||
+	if !strings.Contains(body, "12345678901234567890") || !strings.Contains(body, `"model"`) || !strings.Contains(body, `"keep"`) ||
 		!strings.Contains(body, `"max_tokens"`) || !strings.Contains(body, `"maxOutputTokens"`) || !strings.Contains(body, `"tokenLimit"`) ||
 		!strings.Contains(body, `"minOutputTokens"`) || !strings.Contains(body, `"output-token-count"`) {
 		t.Errorf("settings lost: %s", body)
@@ -860,7 +905,7 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 
 	// Import from a bundle that still holds them.
 	dst := t.TempDir()
-	mustWriteFile(t, filepath.Join(dst, ".copilot", "config.json"), `{"copilot_tokens":{"me":"LOCAL"}}`)
+	mustWriteFile(t, filepath.Join(dst, ".copilot", "config.json"), `{"copilot_tokens":{"me":"LOCAL"},"nested":{"oauthToken":"LOCAL_NESTED"}}`)
 	in := SetupAsset{Kind: setupAssetKindProviderFile, LogicalRoot: setupAssetRootProviderCopilotCLI,
 		LogicalPath: "config.json", Content: []byte(cfg), ContentPresent: true}
 	if _, _, err := applyProviderAssetsToSystem(dst, []SetupAsset{in}); err != nil {
@@ -870,8 +915,257 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 	if strings.Contains(string(got), "SECRET") || strings.Contains(string(got), "logged_in_users") {
 		t.Errorf("import wrote login tokens: %s", got)
 	}
-	if !strings.Contains(string(got), "LOCAL") || !strings.Contains(string(got), `"model"`) {
+	if !strings.Contains(string(got), `"LOCAL"`) || !strings.Contains(string(got), "LOCAL_NESTED") || !strings.Contains(string(got), `"model"`) {
 		t.Errorf("import lost this machine's sign-in or the settings: %s", got)
+	}
+
+	// Windows writes "config.json." to config.json: the same file.
+	in.LogicalPath = "config.json."
+	other := t.TempDir()
+	if _, _, err := applyProviderAssetsToSystem(other, []SetupAsset{in}); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(other, ".copilot"))
+	if len(entries) == 0 {
+		t.Fatal("config.json. not written; the check below would pass on nothing")
+	}
+	for _, e := range entries {
+		b, _ := os.ReadFile(filepath.Join(other, ".copilot", e.Name()))
+		if strings.Contains(string(b), "SECRET") {
+			t.Errorf("import wrote login tokens to %q: %s", e.Name(), b)
+		}
+	}
+}
+
+// ~/.config/github-copilot/hosts.json and apps.json hold GitHub OAuth tokens:
+// never collected, never written from a bundle, in any spelling.
+func TestCopilotOAuthFilesNeverTravel(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".config", "github-copilot", "hosts.json"), `{"github.com":{"oauth_token":"leak"}}`)
+	mustWriteFile(t, filepath.Join(home, ".config", "github-copilot", "Apps.json"), `{"x":{"oauth_token":"leak"}}`)
+	// Named by an instruction file too: a reference is no way around it.
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/.config/github-copilot/hosts.json` and `~/.config/github-copilot/Apps.json`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		if strings.Contains(string(a.Content), "leak") {
+			t.Errorf("%s %s carried an OAuth token", a.LogicalRoot, a.LogicalPath)
+		}
+		if strings.Contains(strings.ToLower(a.LogicalPath), "hosts.json") || strings.Contains(strings.ToLower(a.LogicalPath), "apps.json") {
+			t.Errorf("%s collected", a.LogicalPath)
+		}
+	}
+	dst := t.TempDir()
+	var in []SetupAsset
+	for _, p := range []string{"hosts.json", "apps.json", "HOSTS.JSON", "apps.json."} {
+		in = append(in, SetupAsset{Kind: setupAssetKindProviderFile, LogicalRoot: setupAssetRootProviderCopilot,
+			LogicalPath: p, Content: []byte("planted"), ContentPresent: true})
+	}
+	in = append(in, SetupAsset{Kind: setupAssetKindProviderFile, LogicalRoot: setupAssetRootProviderCopilot,
+		LogicalPath: "versions.json", Content: []byte("{}"), ContentPresent: true})
+	applied, _, err := applyProviderAssetsToSystem(dst, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != 1 {
+		t.Errorf("applied = %d, want 1 (versions.json)", applied)
+	}
+}
+
+// A .env or key file inside a tool's own directory, and any file with a
+// second hard link, is redacted without --include-secrets: its name is no
+// proof of what it holds.
+func TestDirSecretsAndHardLinksAreRedacted(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", "agents", "sub", ".env"), "TOKEN=leak1\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "agents", "k.pem"), "leak2\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "agents", "ok.md"), "fine\n")
+	mustWriteFile(t, filepath.Join(project, ".cursor", "rules", ".env"), "leak3\n")
+	mustWriteFile(t, filepath.Join(project, ".github", "instructions", "token.json"), `{"t":"leak5"}`)
+	mustWriteFile(t, filepath.Join(project, ".gemini", "commands", "ship.toml"), "prompt = 'ship'\n")
+	mustWriteFile(t, filepath.Join(project, ".env"), "leak4\n")
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "See `hl.md`.\n")
+	if err := os.Link(filepath.Join(project, ".env"), filepath.Join(project, "hl.md")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+
+	mustWriteFile(t, filepath.Join(home, "token.txt"), "leak6\n")
+	if err := os.Link(filepath.Join(home, "token.txt"), filepath.Join(home, ".claude", "agents", "hl.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	assets, warnings, err := collectSetupAssets(setupAssetOptions{ProjectDir: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "hl.md\" has a second hard link; redacted, use --include-secrets to carry") {
+		t.Errorf("hard link redaction does not say why: %v", warnings)
+	}
+	all := append(append([]SetupAsset{}, assets.ProviderFiles...), assets.ProjectFiles...)
+	for _, a := range all {
+		if strings.Contains(string(a.Content), "leak") {
+			t.Errorf("%s %s carried its secret", a.LogicalRoot, a.LogicalPath)
+		}
+	}
+	if a := findAsset(assets.ProjectFiles, setupAssetRootProject, ".gemini/commands/ship.toml"); a == nil || !a.ContentPresent {
+		t.Errorf("Gemini command not carried: %+v", a)
+	}
+	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "agents/ok.md"); a == nil || !a.ContentPresent {
+		t.Errorf("agents/ok.md not carried: %+v", a)
+	}
+}
+
+// A reference to an agent's state directory carries neither memory (opt-in)
+// nor session transcripts.
+func TestHomeReferenceNeverCarriesAgentState(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p", "memory", "m.md"), "MEMORY\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p", "s.jsonl"), "TRANSCRIPT\n")
+	mustWriteFile(t, filepath.Join(home, ".codex", "sessions", "a.jsonl"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".codex", "archived_sessions", "x.jsonl"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "todos", "x.json"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "team-rules.md"), "team\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"),
+		"See `~/.claude/projects/`, `~/.codex/sessions/`, `~/.Claude/projects/p/memory/m.md`, "+
+			"`~/.codex/archived_sessions/x.jsonl`, `~/.claude/todos/x.json`, `~/.claude./todos/x.json`, `~/.claude/` and `~/.claude/team-rules.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		for _, bad := range []string{"MEMORY", "TRANSCRIPT", "SESSION"} {
+			if strings.Contains(string(a.Content), bad) {
+				t.Errorf("%s %s carried agent state", a.LogicalRoot, a.LogicalPath)
+			}
+		}
+	}
+	for _, p := range []string{"~/.claude/projects/", "~/.codex/archived_sessions/x.jsonl", "~/.claude/todos/x.json", "~/.claude./todos/x.json"} {
+		if !declinedHas(assets.Declined, p, DeclinedByPolicy) {
+			t.Errorf("%s not declined: %v", p, assets.Declined)
+		}
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, ".claude/team-rules.md") == nil {
+		t.Error("~/.claude/team-rules.md not carried")
+	}
+	if !declinedHas(assets.Declined, "~/.claude/projects/", DeclinedByPolicy) {
+		t.Errorf("state directory reference not declined: %v", assets.Declined)
+	}
+}
+
+// A tool directory kept in dotfiles (~/.claude -> ~/dotfiles/claude), or a
+// state directory moved out by symlink, is refused through its real path too.
+func TestHomeReferenceRefusesAgentStateThroughSymlinkTarget(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "claude", "todos", "t.md"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "claude", "rules", "r.md"), "rule\n")
+	mustWriteFile(t, filepath.Join(home, "data", "sessions", "s.md"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".codex", "AGENTS.md"), "codex\n")
+	if err := os.Symlink(filepath.Join(home, "dotfiles", "claude"), filepath.Join(home, ".claude")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(home, "data", "sessions"), filepath.Join(home, ".codex", "sessions")); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "claude", "CLAUDE.md"),
+		"See `~/dotfiles/claude/todos/t.md`, `~/data/sessions/s.md`, `~/DATA/Sessions/s.md`, `~/dotfiles/` and `~/dotfiles/claude/rules/r.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ~/DATA/Sessions/s.md is the same file on macOS and Windows; this check
+	// catches it there.
+	for _, a := range assets.ProviderFiles {
+		if strings.Contains(string(a.Content), "SESSION") {
+			t.Errorf("%s %s carried agent state", a.LogicalRoot, a.LogicalPath)
+		}
+	}
+	for _, p := range []string{"~/dotfiles/claude/todos/t.md", "~/data/sessions/s.md"} {
+		if !declinedHas(assets.Declined, p, DeclinedByPolicy) {
+			t.Errorf("%s not declined: %v", p, assets.Declined)
+		}
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, "dotfiles/claude/rules/r.md") == nil {
+		t.Error("rules file under the symlink target not carried")
+	}
+}
+
+// A link deep inside a tool directory (~/.claude/projects/p/memory ->
+// ~/notes/mem) and a link elsewhere landing in its state (~/x.md ->
+// ~/.claude/todos/t.md) are both declined.
+func TestHomeReferenceRefusesDeepAgentStateLinks(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, "notes", "mem", "m.md"), "MEMORY\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "todos", "t.md"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p", "keep.txt"), "x\n")
+	if err := os.Symlink(filepath.Join(home, "notes", "mem"), filepath.Join(home, ".claude", "projects", "p", "memory")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(home, ".claude", "todos", "t.md"), filepath.Join(home, "x.md")); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/notes/mem/m.md`, `~/notes/` and `~/x.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		if strings.Contains(string(a.Content), "MEMORY") || strings.Contains(string(a.Content), "SESSION") {
+			t.Errorf("%s %s carried agent state", a.LogicalRoot, a.LogicalPath)
+		}
+	}
+	for _, p := range []string{"~/notes/mem/m.md", "~/x.md"} {
+		if !declinedHas(assets.Declined, p, DeclinedByPolicy) {
+			t.Errorf("%s not declined: %v", p, assets.Declined)
+		}
+	}
+}
+
+// References stop at maxReferenceDepth hops, a cycle ends, and a named
+// directory carries at most maxDirReferenceFiles files.
+func TestHomeReferenceDepthCycleAndDirCaps(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "Start at `~/chain/n1.md`; see `~/big/`.\n")
+	last := maxReferenceDepth + 2
+	for i := 1; i <= last; i++ {
+		next := fmt.Sprintf("`~/chain/n%d.md`", i+1)
+		if i == last {
+			next = "`~/.claude/CLAUDE.md`" // back to the start
+		}
+		mustWriteFile(t, filepath.Join(home, "chain", fmt.Sprintf("n%d.md", i)), "next "+next+"\n")
+	}
+	for i := 0; i < maxDirReferenceFiles+5; i++ {
+		mustWriteFile(t, filepath.Join(home, "big", fmt.Sprintf("f%03d.md", i)), "x\n")
+	}
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, fmt.Sprintf("chain/n%d.md", maxReferenceDepth+1)) == nil {
+		t.Errorf("hop %d not carried", maxReferenceDepth+1)
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, fmt.Sprintf("chain/n%d.md", maxReferenceDepth+2)) != nil {
+		t.Errorf("hop %d carried past the depth cap", maxReferenceDepth+2)
+	}
+	n := 0
+	for _, a := range assets.ProviderFiles {
+		if strings.HasPrefix(a.LogicalPath, "big/") {
+			n++
+		}
+	}
+	if n != maxDirReferenceFiles {
+		t.Errorf("directory carried %d files, want %d", n, maxDirReferenceFiles)
+	}
+	if !declinedHas(assets.Declined, "~/big", DeclinedByPolicy) {
+		t.Errorf("directory cap not reported: %v", assets.Declined)
 	}
 }
 

@@ -277,6 +277,12 @@ func classifyReference(root, baseRel, raw string) Reference {
 		ref.Reason = fmt.Sprintf("%d bytes, over the %d byte ceiling", info.Size(), MaxReferenceBytes)
 		return ref
 	}
+	// A second hard link is another name for the same file, and that name
+	// was never checked: notes.md can be .env.
+	if HardLinkCount(full, info) > 1 {
+		ref.Status, ref.Reason = ReferenceRefused, "has another hard link; its other name cannot be checked"
+		return ref
+	}
 
 	rel, err := filepath.Rel(root, real)
 	if err != nil {

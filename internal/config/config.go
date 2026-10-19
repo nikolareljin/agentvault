@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 const (
@@ -33,4 +35,34 @@ func ConfigPath() string {
 // TemplatesDir returns the template storage directory.
 func TemplatesDir() string {
 	return filepath.Join(Dir(), "templates")
+}
+
+// ClaudeDesktopConfigPath returns where Claude Desktop reads its MCP config on
+// this OS. It fails rather than return a relative path, which would put the
+// file in the working directory when HOME (or USERPROFILE and APPDATA) is unset.
+func ClaudeDesktopConfigPath() (string, error) {
+	home, _ := os.UserHomeDir()
+	p := claudeDesktopConfigPathFor(runtime.GOOS, home, os.Getenv("APPDATA"))
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("cannot locate Claude Desktop config (got %q): set HOME (USERPROFILE or APPDATA on Windows) or pass an output file", p)
+	}
+	return p, nil
+}
+
+// claudeDesktopConfigPathFor is ClaudeDesktopConfigPath with its inputs
+// passed in, so every OS can be tested on one. Linux has no official Claude
+// Desktop; the path there is the one this tool has always written.
+func claudeDesktopConfigPathFor(goos, home, appData string) string {
+	const file = "claude_desktop_config.json"
+	switch goos {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "Claude", file)
+	case "windows":
+		if appData == "" {
+			appData = filepath.Join(home, "AppData", "Roaming")
+		}
+		return filepath.Join(appData, "Claude", file)
+	default:
+		return filepath.Join(home, ".config", "claude", file)
+	}
 }

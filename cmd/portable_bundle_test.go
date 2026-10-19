@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nikolareljin/agentvault/internal/crypto"
 )
 
 func TestProfileNameForDir(t *testing.T) {
@@ -312,5 +315,35 @@ func TestDedupeProfileNamesSkipsTakenSuffixes(t *testing.T) {
 			t.Fatalf("dedupeProfileNames() produced duplicate name %q in %v", p.Name, discoveredProfileNames(out))
 		}
 		seen[key] = struct{}{}
+	}
+}
+
+// Bundles from earlier releases (format 1) still import; new ones are format
+// 2 and need a 12-character password.
+func TestBundleFormatsAndPasswordLength(t *testing.T) {
+	salt, err := crypto.GenerateSalt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.DeriveKey("eight-ch", salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := crypto.Encrypt([]byte(`{"x":1}`), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := decryptBundlePayload(append(salt, ct...), "eight-ch"); err != nil || string(got) != `{"x":1}` {
+		t.Fatalf("format 1 bundle = %q, %v", got, err)
+	}
+	if _, err := encryptBundlePayload([]byte("x"), "elevenchars"); err == nil {
+		t.Error("an 11-character password was accepted for a new bundle")
+	}
+	data, err := encryptBundlePayload([]byte("x"), "twelve-chars")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte("AVK2")) {
+		t.Error("new bundle is not format 2")
 	}
 }

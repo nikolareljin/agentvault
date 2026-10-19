@@ -50,8 +50,10 @@ type Vault struct {
 	providerConfigs   agent.ProviderConfig
 	sessions          agent.SessionConfig
 	modelCapabilities []agent.ModelCapabilityEntry
-	key               []byte // derived key, set after Init or Unlock
-	salt              []byte // persisted salt
+	key               []byte        // derived key, set after Init or Unlock
+	header            crypto.Header // key-derivation header written ahead of the ciphertext
+	legacyOnDisk      bool          // file on disk is format 1; back it up before the first write
+	legacySalt        []byte        // salt of that format 1 file, to recognise it at backup time
 }
 
 // New creates a Vault instance at the given path.
@@ -79,15 +81,15 @@ func (v *Vault) Init(masterPassword string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating vault directory: %w", err)
 	}
-	salt, err := crypto.GenerateSalt()
+	header, err := crypto.NewHeader()
 	if err != nil {
 		return err
 	}
-	key, err := crypto.DeriveKey(masterPassword, salt)
+	key, err := crypto.DeriveKeyFor(masterPassword, header)
 	if err != nil {
 		return err
 	}
-	v.salt = salt
+	v.header = header
 	v.key = key
 	v.agents = []agent.Agent{}
 	v.shared = agent.SharedConfig{}
@@ -102,32 +104,45 @@ func (v *Vault) Unlock(masterPassword string) error {
 	if err != nil {
 		return fmt.Errorf("reading vault: %w", err)
 	}
-	if len(data) < crypto.SaltLen {
-		return errors.New("vault file is corrupted (too short)")
-	}
-	salt := data[:crypto.SaltLen]
-	ciphertext := data[crypto.SaltLen:]
-
-	key, err := crypto.DeriveKey(masterPassword, salt)
+	plaintext, header, key, err := crypto.Open(data, masterPassword)
 	if err != nil {
-		return err
-	}
-	plaintext, err := crypto.Decrypt(ciphertext, key)
-	if err != nil {
+		if errors.Is(err, crypto.ErrHeader) {
+			return fmt.Errorf("vault file: %w", err)
+		}
 		return errors.New("wrong password or corrupted vault")
+	}
+	// A format 1 vault is upgraded on its next write: derive the key for a
+	// current header now, while the password is at hand. Nothing is written
+	// by unlocking alone.
+	wasLegacy := header.Legacy
+	legacySalt := header.Salt
+	if wasLegacy {
+		upgraded, err := crypto.NewHeader()
+		if err != nil {
+			crypto.Zero(key)
+			return err
+		}
+		newKey, err := crypto.DeriveKeyFor(masterPassword, upgraded)
+		crypto.Zero(key)
+		if err != nil {
+			return err
+		}
+		key, header = newKey, upgraded
 	}
 	var vd vaultData
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
 		// try legacy format (plain agent array) for backward compat
 		var agents []agent.Agent
 		if legacyDecodeErr := json.Unmarshal(plaintext, &agents); legacyDecodeErr != nil {
+			crypto.Zero(key)
 			return fmt.Errorf("decoding vault data: %w", legacyDecodeErr)
 		}
 		vd = vaultData{Agents: agents}
 	}
-	// Copy the salt out of the file buffer to avoid retaining/aliasing the entire encrypted blob.
-	v.salt = append([]byte(nil), salt...)
+	v.header = header
 	v.key = key
+	v.legacyOnDisk = wasLegacy
+	v.legacySalt = legacySalt
 	v.agents = vd.Agents
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
@@ -836,20 +851,17 @@ func sessionParallelLimitDefined(data []byte) bool {
 }
 
 // write encrypts the entire vault state and writes it atomically to disk.
-// The output format is: [salt bytes][nonce + AES-256-GCM ciphertext].
+// The output format is: [format 2 header][nonce + AES-256-GCM ciphertext].
 func (v *Vault) write() error {
 	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities}
 	plaintext, err := json.Marshal(vd)
 	if err != nil {
 		return fmt.Errorf("encoding vault: %w", err)
 	}
-	ciphertext, err := crypto.Encrypt(plaintext, v.key)
+	data, err := crypto.Seal(v.header, v.key, plaintext)
 	if err != nil {
 		return err
 	}
-	data := make([]byte, len(v.salt)+len(ciphertext))
-	copy(data, v.salt)
-	copy(data[len(v.salt):], ciphertext)
 	dir := filepath.Dir(v.path)
 	tmp, err := os.CreateTemp(dir, ".agentvault-*.tmp")
 	if err != nil {
@@ -879,11 +891,82 @@ func (v *Vault) write() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing temp vault file: %w", err)
 	}
+	if v.legacyOnDisk {
+		if err := backupLegacyVault(v.path, v.legacySalt); err != nil {
+			return err
+		}
+	}
 	if err := replaceFile(tmpPath, v.path); err != nil {
 		return fmt.Errorf("replacing vault file: %w", err)
 	}
 	cleanup = false
+	v.legacyOnDisk = false
 	return nil
+}
+
+// LegacyBackupSuffix names the copy of a format 1 vault kept when it is first
+// rewritten in format 2, so an earlier release can still be pointed at it.
+const LegacyBackupSuffix = ".v1.bak"
+
+// backupLegacyVault copies the format 1 vault at path to path+".v1.bak". The
+// copy is written and synced under a unique name first, then hard-linked into
+// place, so a crash never leaves a partial file at the backup name. Where hard
+// links are not supported (FAT, some network shares) the backup name is
+// created exclusively and written, and the unique copy is removed only after
+// that succeeds. An existing backup is never overwritten: if it holds other
+// bytes (an older vault at the same path), this copy stays under its unique
+// name. If the file no longer starts with salt, another process has already
+// replaced it, and there is no format 1 file left to back up.
+func backupLegacyVault(path string, salt []byte) error {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("backing up format 1 vault: %w", err)
+	}
+	if len(salt) == 0 || !bytes.HasPrefix(old, salt) {
+		return nil
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".v1.*.bak")
+	if err != nil {
+		return fmt.Errorf("backing up format 1 vault: %w", err)
+	}
+	tmp := f.Name()
+	if err := writeSynced(f, old); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("backing up format 1 vault: %w", err)
+	}
+	final := path + LegacyBackupSuffix
+	if err := linkFile(tmp, final); err != nil {
+		existing, rerr := os.ReadFile(final)
+		switch {
+		case rerr == nil && bytes.Equal(existing, old):
+		case rerr == nil || !errors.Is(rerr, os.ErrNotExist):
+			// The name holds another file: keep the copy under its unique name.
+			return nil
+		default:
+			// No hard links here: write the backup name directly.
+			bf, cerr := os.OpenFile(final, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if cerr != nil {
+				return nil
+			}
+			if werr := writeSynced(bf, old); werr != nil {
+				_ = os.Remove(final)
+				return nil
+			}
+		}
+	}
+	_ = os.Remove(tmp)
+	return nil
+}
+
+// linkFile is os.Link; tests replace it to act as a file system without
+// hard links.
+var linkFile = os.Link
+
+func writeSynced(f *os.File, data []byte) error {
+	_, werr := f.Write(data)
+	serr := f.Sync()
+	cerr := f.Close()
+	return errors.Join(werr, serr, cerr)
 }
 
 func replaceFile(source, target string) error {
