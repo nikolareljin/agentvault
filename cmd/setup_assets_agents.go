@@ -890,8 +890,9 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		asset, warn, err := loadSetupAsset(real, setupAssetKindProviderFile, setupAssetOriginProviderHome,
 			setupAssetRootProviderHome, filepath.ToSlash(rel), "", !isProseFile(abs) || !isProseFile(real), includeSecrets, true)
 		if err != nil {
-			// One unreadable file a note names does not end the export.
-			declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedByPolicy, Reason: "named, but cannot be read"})
+			// One unreadable file a note names, or one named aux.md, does not
+			// end the export.
+			declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedByPolicy, Reason: "named, but not carried: unreadable, or a name import refuses"})
 			return nil
 		}
 		if warn != "" {
@@ -1215,8 +1216,9 @@ func collectProjectReferenceClosure(projectDir string, seeds []SetupAsset, inclu
 			setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject,
 			rel, rel, !isProseFile(rel), includeSecrets, true)
 		if err != nil {
-			// One unreadable file a note names does not end the export.
-			declined = append(declined, DeclinedAsset{Path: rel, Category: DeclinedByPolicy, Reason: "named, but cannot be read"})
+			// One unreadable file a note names, or one named aux.md, does not
+			// end the export.
+			declined = append(declined, DeclinedAsset{Path: rel, Category: DeclinedByPolicy, Reason: "named, but not carried: unreadable, or a name import refuses"})
 			return nil
 		}
 		if warn != "" {
