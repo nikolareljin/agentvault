@@ -80,7 +80,7 @@ cd agentvault
 agentvault --help
 ```
 
-On Windows use `./dev.ps1` with the same verbs.
+On Windows use `./dev.ps1` with the same verbs (`build bitnet` is Linux and macOS only).
 
 ### Homebrew (macOS)
 

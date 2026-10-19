@@ -33,9 +33,13 @@ function Assert-Go {
 
 function Get-AvLdflags {
     $version = (Get-Content (Join-Path $DEV_REPO_ROOT 'VERSION') -Raw).Trim()
-    $commit = (& git -C $DEV_REPO_ROOT rev-parse --short HEAD 2>$null)
+    # try: Windows PowerShell 5.1 with ErrorActionPreference Stop throws on
+    # native stderr, as in a tarball with no .git.
+    $commit = $null
+    try { $commit = (& git -C $DEV_REPO_ROOT rev-parse --short HEAD 2>$null) } catch { }
     if ($LASTEXITCODE -ne 0 -or -not $commit) { $commit = 'none' }
-    $date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    # Invariant culture: ':' in a format string is the culture's time separator.
+    $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH':'mm':'ss'Z'", [Globalization.CultureInfo]::InvariantCulture)
     "-s -w -X $script:AvPkg.Version=$version -X $script:AvPkg.Commit=$commit -X $script:AvPkg.Date=$date"
 }
 
