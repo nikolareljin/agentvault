@@ -645,6 +645,12 @@ func writeFileAtomicKeepMode(path string, data []byte) error {
 		target = resolved
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("resolving %s: %w", path, err)
+	} else if link, lerr := os.Readlink(path); lerr == nil {
+		// A dangling link: create its target rather than replace the link.
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(filepath.Dir(path), link)
+		}
+		target = link
 	}
 	mode := os.FileMode(0600)
 	if info, err := os.Stat(target); err == nil {

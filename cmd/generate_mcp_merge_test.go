@@ -89,6 +89,26 @@ func TestWriteFileAtomicKeepsModeAndSymlink(t *testing.T) {
 	}
 }
 
+func TestWriteFileAtomicDanglingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	dir := t.TempDir()
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(filepath.Join("sub", "real.json"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomicKeepMode(link, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink replaced by a file: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "sub", "real.json")); err != nil || string(got) != `{}` {
+		t.Fatalf("target = %q, %v", got, err)
+	}
+}
+
 func TestWriteFileAtomicCreatesDirAndPrivateFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a", "b", "c.json")
 	if err := writeFileAtomicKeepMode(path, []byte(`{}`)); err != nil {
