@@ -352,20 +352,32 @@ func keepLocalCopilotLogin(dest string, incoming []byte) []byte {
 	if err != nil {
 		return incoming
 	}
-	var local, doc map[string]json.RawMessage
+	var local, doc map[string]any
 	if json.Unmarshal(existing, &local) != nil || json.Unmarshal(incoming, &doc) != nil || doc == nil {
 		return incoming
 	}
-	for k, v := range local {
-		if isLoginKey(k) {
-			doc[k] = v
-		}
-	}
+	restoreLoginKeys(local, doc)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return incoming
 	}
 	return out
+}
+
+// restoreLoginKeys copies every login key of local into doc, at the depth
+// stripLoginKeys removed it from: a token nested in an object is kept too.
+func restoreLoginKeys(local, doc map[string]any) {
+	for k, v := range local {
+		if isLoginKey(k) {
+			doc[k] = v
+			continue
+		}
+		lm, ok1 := v.(map[string]any)
+		dm, ok2 := doc[k].(map[string]any)
+		if ok1 && ok2 {
+			restoreLoginKeys(lm, dm)
+		}
+	}
 }
 
 // symlinkedAsset reports a symlink where a single optional file is expected.

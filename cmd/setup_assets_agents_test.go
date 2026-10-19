@@ -856,7 +856,7 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 
 	// Import from a bundle that still holds them.
 	dst := t.TempDir()
-	mustWriteFile(t, filepath.Join(dst, ".copilot", "config.json"), `{"copilot_tokens":{"me":"LOCAL"}}`)
+	mustWriteFile(t, filepath.Join(dst, ".copilot", "config.json"), `{"copilot_tokens":{"me":"LOCAL"},"nested":{"oauthToken":"LOCAL_NESTED"}}`)
 	in := SetupAsset{Kind: setupAssetKindProviderFile, LogicalRoot: setupAssetRootProviderCopilotCLI,
 		LogicalPath: "config.json", Content: []byte(cfg), ContentPresent: true}
 	if _, _, err := applyProviderAssetsToSystem(dst, []SetupAsset{in}); err != nil {
@@ -866,7 +866,7 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 	if strings.Contains(string(got), "SECRET") || strings.Contains(string(got), "logged_in_users") {
 		t.Errorf("import wrote login tokens: %s", got)
 	}
-	if !strings.Contains(string(got), "LOCAL") || !strings.Contains(string(got), `"model"`) {
+	if !strings.Contains(string(got), `"LOCAL"`) || !strings.Contains(string(got), "LOCAL_NESTED") || !strings.Contains(string(got), `"model"`) {
 		t.Errorf("import lost this machine's sign-in or the settings: %s", got)
 	}
 }
