@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -926,5 +927,46 @@ func TestHomeReferenceNeverCarriesAgentState(t *testing.T) {
 	}
 	if !declinedHas(assets.Declined, "~/.claude/projects/", DeclinedByPolicy) {
 		t.Errorf("state directory reference not declined: %v", assets.Declined)
+	}
+}
+
+// References stop at maxReferenceDepth hops, a cycle ends, and a named
+// directory carries at most maxDirReferenceFiles files.
+func TestHomeReferenceDepthCycleAndDirCaps(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "Start at `~/chain/n1.md`; see `~/big/`.\n")
+	last := maxReferenceDepth + 2
+	for i := 1; i <= last; i++ {
+		next := fmt.Sprintf("`~/chain/n%d.md`", i+1)
+		if i == last {
+			next = "`~/.claude/CLAUDE.md`" // back to the start
+		}
+		mustWriteFile(t, filepath.Join(home, "chain", fmt.Sprintf("n%d.md", i)), "next "+next+"\n")
+	}
+	for i := 0; i < maxDirReferenceFiles+5; i++ {
+		mustWriteFile(t, filepath.Join(home, "big", fmt.Sprintf("f%03d.md", i)), "x\n")
+	}
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, fmt.Sprintf("chain/n%d.md", maxReferenceDepth+1)) == nil {
+		t.Errorf("hop %d not carried", maxReferenceDepth+1)
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, fmt.Sprintf("chain/n%d.md", maxReferenceDepth+2)) != nil {
+		t.Errorf("hop %d carried past the depth cap", maxReferenceDepth+2)
+	}
+	n := 0
+	for _, a := range assets.ProviderFiles {
+		if strings.HasPrefix(a.LogicalPath, "big/") {
+			n++
+		}
+	}
+	if n != maxDirReferenceFiles {
+		t.Errorf("directory carried %d files, want %d", n, maxDirReferenceFiles)
+	}
+	if !declinedHas(assets.Declined, "~/big", DeclinedByPolicy) {
+		t.Errorf("directory cap not reported: %v", assets.Declined)
 	}
 }
