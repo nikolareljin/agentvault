@@ -80,18 +80,46 @@ var homeStartupPaths = []string{
 // dotfile there is shell or login state.
 func homeAssetRefusal(rel string) string {
 	slashed := filepath.ToSlash(filepath.Clean(rel))
-	if reason := agent.SecretBearingReason(slashed); reason != "" {
+	for _, seg := range strings.Split(slashed, "/") {
+		if seg != strings.TrimSpace(seg) {
+			return "a path segment with leading or trailing whitespace"
+		}
+	}
+	// macOS and Windows home directories are case-insensitive: .BASHRC is
+	// .bashrc there.
+	folded := strings.ToLower(slashed)
+	if reason := agent.SecretBearingReason(folded); reason != "" {
 		return reason
 	}
 	for _, p := range homeStartupPaths {
-		if slashed == p || strings.HasPrefix(slashed, p+"/") {
+		p = strings.ToLower(p)
+		if folded == p || strings.HasPrefix(folded, p+"/") {
 			return "a login or shell startup path; never written from a bundle"
 		}
 	}
-	if !strings.Contains(slashed, "/") && strings.HasPrefix(slashed, ".") && slashed != ".claude.json" {
+	if !strings.Contains(folded, "/") && strings.HasPrefix(folded, ".") && folded != ".claude.json" {
 		return "a dotfile at the home root; never written from a bundle"
 	}
 	return ""
+}
+
+// homeAssetWritable decides whether import writes a home-root asset, and
+// returns its cleaned relative path. The home root is open-ended, so it is an
+// allowlist: ~/.claude.json (merged) and prose. A referenced script or config
+// file is staged for review and never written: placed on PATH or named by a
+// hook, a file from a bundle runs code.
+func homeAssetWritable(logicalPath string) (string, error) {
+	rel, err := sanitizeAssetRelativePath(logicalPath)
+	if err != nil {
+		return "", err
+	}
+	if reason := homeAssetRefusal(rel); reason != "" {
+		return "", fmt.Errorf("%s: %s", rel, reason)
+	}
+	if rel != ".claude.json" && !isProseFile(rel) {
+		return "", fmt.Errorf("%s: not prose; staged for review, copy it by hand if you want it", rel)
+	}
+	return rel, nil
 }
 
 type providerFileSpec struct {

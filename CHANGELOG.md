@@ -34,8 +34,11 @@
   file that said "copy `.env.example` to `.env`" pulled `.env` into the vault.
   The check also runs on a reference's resolved path, so a symlink named
   `notes.md` that points at `.netrc` is refused.
-- Import never writes shell or login startup files, or any home-root dotfile
-  other than `~/.claude.json`, from a bundle.
+- Outside the tools' own directories, import writes back only prose files
+  (0600, never executable) and the `mcpServers` key of `~/.claude.json`. The
+  merged keys are fixed in code, not read from the bundle. Referenced scripts
+  and config files are staged for review and not written. Startup files,
+  credential paths and home-root dotfiles are refused in any letter case.
 - Referenced files that are not prose (scripts, config) are redacted without
   `--include-secrets`.
 - Plugin install commands are printed only for IDs and sources that cannot

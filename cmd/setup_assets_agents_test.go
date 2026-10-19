@@ -339,29 +339,61 @@ func TestCollectSetupAssets_NeverFollowsIntoSecretFiles(t *testing.T) {
 	}
 }
 
-// A bundle from someone else must not be able to plant shell startup files,
-// SSH keys or other home-root dotfiles through the home root.
-func TestApplyRefusesHomeStartupAndSecretPaths(t *testing.T) {
+// The home root is an allowlist: ~/.claude.json, merged, and prose. A bundle
+// from someone else must not plant startup files, keys, PATH entries or
+// anything executable, whatever the spelling.
+func TestApplyHomeRootIsAnAllowlist(t *testing.T) {
 	home := t.TempDir()
 	var assets []SetupAsset
-	for _, p := range []string{".bashrc", ".zshrc", ".ssh/authorized_keys", ".netrc", ".config/autostart/x.desktop",
-		"Library/LaunchAgents/x.plist", ".hidden-at-root"} {
+	refused := []string{".bashrc", ".BASHRC", " .bashrc", ".zshrc", ".ssh/authorized_keys", ".SSH/authorized_keys",
+		".netrc", ".config/autostart/x.desktop", "Library/LaunchAgents/x.plist", ".hidden-at-root",
+		"bin/guard.sh", ".local/bin/git", "notes/run.sh"}
+	for _, p := range refused {
 		assets = append(assets, SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: p,
 			ContentPresent: true, Content: []byte("payload")})
 	}
-	assets = append(assets, SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: "bin/guard.sh",
-		ContentPresent: true, Content: []byte("#!/bin/sh\n")})
+	assets = append(assets, SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: "docs/howto.md",
+		ContentPresent: true, Content: []byte("how\n")})
 	applied, warnings, err := applyProviderAssetsToSystem(home, assets)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if applied != 1 {
-		t.Errorf("applied = %d, want 1 (bin/guard.sh only); warnings: %v", applied, warnings)
+		t.Errorf("applied = %d, want 1 (docs/howto.md); warnings: %v", applied, warnings)
 	}
-	for _, a := range assets[:len(assets)-1] {
-		if _, err := os.Stat(filepath.Join(home, a.LogicalPath)); !os.IsNotExist(err) {
-			t.Errorf("%s was written", a.LogicalPath)
+	for _, p := range refused {
+		if _, err := os.Lstat(filepath.Join(home, strings.TrimSpace(p))); !os.IsNotExist(err) {
+			t.Errorf("%q was written", p)
 		}
+	}
+	info, err := os.Stat(filepath.Join(home, "docs", "howto.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 != 0 {
+		t.Errorf("prose written executable: %v", info.Mode())
+	}
+}
+
+// The keys merged into ~/.claude.json are fixed in code: a bundle that asks
+// to merge oauthAccount does not get to replace the account.
+func TestApplyClaudeJSONIgnoresBundleMergeKeys(t *testing.T) {
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude.json"), `{"oauthAccount":{"email":"mine@x"}}`)
+	_, warnings, err := applyProviderAssetsToSystem(home, []SetupAsset{{
+		LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true,
+		Content:   []byte(`{"oauthAccount":{"email":"attacker@x"},"mcpServers":{"a":{"command":"x"}}}`),
+		MergeKeys: []string{"oauthAccount", "mcpServers"},
+	}})
+	if err != nil {
+		t.Fatal(err, warnings)
+	}
+	data, _ := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if !bytes.Contains(data, []byte("mine@x")) || bytes.Contains(data, []byte("attacker@x")) {
+		t.Errorf("account replaced from the bundle: %s", data)
+	}
+	if !bytes.Contains(data, []byte(`"mcpServers"`)) {
+		t.Errorf("mcpServers not merged: %s", data)
 	}
 }
 

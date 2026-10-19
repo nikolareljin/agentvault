@@ -608,6 +608,8 @@ Never carried:
 
 Settings files that can hold tokens are redacted without `--include-secrets`. So are referenced files that are not prose, such as scripts and config files; Markdown and text are carried as is.
 
+Files referenced outside the tools' own directories are written back on import only when they are prose. They are written 0600 and never executable. `~/.claude.json` only gets its `mcpServers` key merged in. Referenced scripts and config files are staged under `<config dir>/imported-assets/provider/provider_home/` for review, and never written to the home directory: placed on `PATH` or named by a hook, a file from a bundle runs code.
+
 Import prints plugin commands only for plugin IDs shaped like `name@marketplace` and sources shaped like `owner/repo` or an `https://` URL. Anything else is printed quoted, as a comment.
 
 Stored prompt sessions are excluded from bundles: they are local run history holding

@@ -889,15 +889,25 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			return applied, warnings, fmt.Errorf("checking provider asset destination %q: %w", dest, err)
 		}
 		content := asset.Content
-		if len(asset.MergeKeys) > 0 {
-			merged, err := mergeJSONKeysIntoFile(dest, content, asset.MergeKeys)
+		perm := os.FileMode(0600)
+		mergeKeys := asset.MergeKeys
+		if asset.LogicalRoot == setupAssetRootProviderHome {
+			// Never executable from the home root, and the keys merged into
+			// ~/.claude.json are fixed here, not taken from the bundle.
+			mergeKeys = nil
+			if filepath.ToSlash(filepath.Clean(asset.LogicalPath)) == ".claude.json" {
+				mergeKeys = claudeUserConfigMergeKeys
+			}
+		}
+		if len(mergeKeys) > 0 {
+			merged, err := mergeJSONKeysIntoFile(dest, content, mergeKeys)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 				continue
 			}
 			content = merged
 		}
-		if err := writeRegularFileAtomic(dest, content, 0600); err != nil {
+		if err := writeRegularFileAtomic(dest, content, perm); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
 		}
 		applied++
@@ -911,9 +921,12 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) 
 		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
 	}
 	if asset.LogicalRoot == setupAssetRootProviderHome {
-		if reason := homeAssetRefusal(asset.LogicalPath); reason != "" {
-			return "", fmt.Errorf("%s: %s", asset.LogicalPath, reason)
+		// One normalized path for the check and the write.
+		rel, err := homeAssetWritable(asset.LogicalPath)
+		if err != nil {
+			return "", err
 		}
+		return safeJoinUnder(homeDir, rel)
 	}
 	return safeJoinUnder(filepath.Join(homeDir, dir), asset.LogicalPath)
 }
