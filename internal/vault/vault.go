@@ -50,8 +50,8 @@ type Vault struct {
 	providerConfigs   agent.ProviderConfig
 	sessions          agent.SessionConfig
 	modelCapabilities []agent.ModelCapabilityEntry
-	key               []byte // derived key, set after Init or Unlock
-	salt              []byte // persisted salt
+	key               []byte        // derived key, set after Init or Unlock
+	header            crypto.Header // key-derivation header written ahead of the ciphertext
 }
 
 // New creates a Vault instance at the given path.
@@ -79,15 +79,15 @@ func (v *Vault) Init(masterPassword string) error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating vault directory: %w", err)
 	}
-	salt, err := crypto.GenerateSalt()
+	header, err := crypto.NewHeader()
 	if err != nil {
 		return err
 	}
-	key, err := crypto.DeriveKey(masterPassword, salt)
+	key, err := crypto.DeriveKeyFor(masterPassword, header)
 	if err != nil {
 		return err
 	}
-	v.salt = salt
+	v.header = header
 	v.key = key
 	v.agents = []agent.Agent{}
 	v.shared = agent.SharedConfig{}
@@ -102,19 +102,30 @@ func (v *Vault) Unlock(masterPassword string) error {
 	if err != nil {
 		return fmt.Errorf("reading vault: %w", err)
 	}
-	if len(data) < crypto.SaltLen {
-		return errors.New("vault file is corrupted (too short)")
+	header, ciphertext, err := crypto.ParseHeader(data)
+	if err != nil {
+		return fmt.Errorf("vault file: %w", err)
 	}
-	salt := data[:crypto.SaltLen]
-	ciphertext := data[crypto.SaltLen:]
-
-	key, err := crypto.DeriveKey(masterPassword, salt)
+	key, err := crypto.DeriveKeyFor(masterPassword, header)
 	if err != nil {
 		return err
 	}
 	plaintext, err := crypto.Decrypt(ciphertext, key)
 	if err != nil {
 		return errors.New("wrong password or corrupted vault")
+	}
+	// A format 1 vault is upgraded on its next write: derive the key for a
+	// current header now, while the password is at hand. Nothing is written
+	// by unlocking alone.
+	if header.Legacy {
+		upgraded, err := crypto.NewHeader()
+		if err != nil {
+			return err
+		}
+		if key, err = crypto.DeriveKeyFor(masterPassword, upgraded); err != nil {
+			return err
+		}
+		header = upgraded
 	}
 	var vd vaultData
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
@@ -125,8 +136,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 		}
 		vd = vaultData{Agents: agents}
 	}
-	// Copy the salt out of the file buffer to avoid retaining/aliasing the entire encrypted blob.
-	v.salt = append([]byte(nil), salt...)
+	v.header = header
 	v.key = key
 	v.agents = vd.Agents
 	v.shared = vd.Shared
@@ -836,7 +846,7 @@ func sessionParallelLimitDefined(data []byte) bool {
 }
 
 // write encrypts the entire vault state and writes it atomically to disk.
-// The output format is: [salt bytes][nonce + AES-256-GCM ciphertext].
+// The output format is: [format 2 header][nonce + AES-256-GCM ciphertext].
 func (v *Vault) write() error {
 	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities}
 	plaintext, err := json.Marshal(vd)
@@ -847,9 +857,7 @@ func (v *Vault) write() error {
 	if err != nil {
 		return err
 	}
-	data := make([]byte, len(v.salt)+len(ciphertext))
-	copy(data, v.salt)
-	copy(data[len(v.salt):], ciphertext)
+	data := append(v.header.Bytes(), ciphertext...)
 	dir := filepath.Dir(v.path)
 	tmp, err := os.CreateTemp(dir, ".agentvault-*.tmp")
 	if err != nil {

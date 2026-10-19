@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/crypto"
 )
 
 func tempVaultPath(t *testing.T) string {
@@ -1387,5 +1389,50 @@ func TestAddWithMCPServers(t *testing.T) {
 	}
 	if got.MCPServers[0].Name != "fs" {
 		t.Errorf("MCP[0].Name = %q, want %q", got.MCPServers[0].Name, "fs")
+	}
+}
+
+// A vault written by an earlier release (format 1) opens, unlocking alone
+// leaves the file as it was, and the next save writes format 2 that opens
+// with the same password.
+func TestLegacyVaultUpgradesOnNextWrite(t *testing.T) {
+	path := tempVaultPath(t)
+	salt, err := crypto.GenerateSalt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.DeriveKey("old-pass", salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := crypto.Encrypt([]byte(`{"agents":[{"name":"legacy","provider":"claude"}]}`), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := append(salt, ct...)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	v := New(path)
+	if err := v.Unlock("old-pass"); err != nil {
+		t.Fatalf("legacy vault did not open: %v", err)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, original) {
+		t.Fatal("unlocking rewrote the vault")
+	}
+	if err := v.Add(agent.Agent{Name: "new", Provider: agent.ProviderCodex}); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, _ := os.ReadFile(path)
+	if !bytes.HasPrefix(upgraded, []byte("AVK2")) {
+		t.Fatal("save did not write format 2")
+	}
+	again := New(path)
+	if err := again.Unlock("old-pass"); err != nil {
+		t.Fatalf("upgraded vault did not open: %v", err)
+	}
+	if len(again.List()) != 2 {
+		t.Errorf("agents = %v", again.List())
 	}
 }

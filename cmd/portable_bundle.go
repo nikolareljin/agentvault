@@ -288,38 +288,27 @@ func newPortableBundle(now time.Time) PortableBundle {
 	}
 }
 
-// encryptBundlePayload encrypts plaintext with a password-derived key, using the
-// same [salt][ciphertext] layout as the vault file itself.
+// minNewBundlePasswordLen applies to bundles written now. Reading accepts
+// whatever an older bundle was written with.
+const minNewBundlePasswordLen = 12
+
+// encryptBundlePayload encrypts plaintext with a password-derived key, in the
+// same format 2 layout as the vault file.
 func encryptBundlePayload(plaintext []byte, password string) ([]byte, error) {
-	if len(password) < 8 {
-		return nil, errors.New("password must be at least 8 characters")
+	if len(password) < minNewBundlePasswordLen {
+		return nil, fmt.Errorf("password must be at least %d characters", minNewBundlePasswordLen)
 	}
-	salt, err := crypto.GenerateSalt()
-	if err != nil {
-		return nil, err
-	}
-	key, err := crypto.DeriveKey(password, salt)
-	if err != nil {
-		return nil, err
-	}
-	ciphertext, err := crypto.Encrypt(plaintext, key)
-	if err != nil {
-		return nil, err
-	}
-	return append(salt, ciphertext...), nil
+	return crypto.SealWithPassword(plaintext, password)
 }
 
-// decryptBundlePayload reverses encryptBundlePayload.
+// decryptBundlePayload reverses encryptBundlePayload, and reads format 1
+// bundles from earlier releases.
 func decryptBundlePayload(data []byte, password string) ([]byte, error) {
-	if len(data) < crypto.SaltLen {
-		return nil, errors.New("bundle file is too short (corrupted?)")
-	}
-	key, err := crypto.DeriveKey(password, data[:crypto.SaltLen])
+	plaintext, _, err := crypto.OpenWithPassword(data, password)
 	if err != nil {
-		return nil, err
-	}
-	plaintext, err := crypto.Decrypt(data[crypto.SaltLen:], key)
-	if err != nil {
+		if strings.Contains(err.Error(), "out-of-range") || strings.Contains(err.Error(), "truncated") || strings.Contains(err.Error(), "too short") {
+			return nil, fmt.Errorf("bundle: %w", err)
+		}
 		return nil, errors.New("wrong password or corrupted bundle")
 	}
 	return plaintext, nil

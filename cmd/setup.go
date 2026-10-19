@@ -453,13 +453,7 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		salt := data[:crypto.SaltLen]
-		ciphertext := data[crypto.SaltLen:]
-		key, err := crypto.DeriveKey(password, salt)
-		if err != nil {
-			return err
-		}
-		plaintext, err := crypto.Decrypt(ciphertext, key)
+		plaintext, err := decryptBundlePayload(data, password)
 		if err != nil {
 			return fmt.Errorf("decryption failed (wrong password?)")
 		}

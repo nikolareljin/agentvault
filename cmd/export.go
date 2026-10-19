@@ -374,8 +374,8 @@ func writeExportFile(path string, data []byte) error {
 // non-interactive runs can still produce encrypted output.
 func resolveExportPassword(isTerminal bool) (string, error) {
 	if envPassword := os.Getenv(ExportPasswordEnv); envPassword != "" {
-		if len(envPassword) < 8 {
-			return "", fmt.Errorf("%s must be at least 8 characters", ExportPasswordEnv)
+		if len(envPassword) < minNewBundlePasswordLen {
+			return "", fmt.Errorf("%s must be at least %d characters", ExportPasswordEnv, minNewBundlePasswordLen)
 		}
 		return envPassword, nil
 	}
@@ -386,8 +386,8 @@ func resolveExportPassword(isTerminal bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(pw) < 8 {
-		return "", fmt.Errorf("password must be at least 8 characters")
+	if len(pw) < minNewBundlePasswordLen {
+		return "", fmt.Errorf("password must be at least %d characters", minNewBundlePasswordLen)
 	}
 	confirm, err := readPassword("Confirm bundle password: ")
 	if err != nil {
