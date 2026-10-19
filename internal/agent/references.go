@@ -316,7 +316,7 @@ var (
 func SecretBearingReason(rel string) string {
 	slashed := filepath.ToSlash(rel)
 	for _, seg := range strings.Split(slashed, "/") {
-		if secretDirs[seg] {
+		if secretDirs[strings.ToLower(seg)] {
 			return "under " + seg + ", which holds credentials"
 		}
 	}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/nikolareljin/agentvault/internal/agent"
 )
 
 func declinedHas(d []DeclinedAsset, path, category string) bool {
@@ -468,5 +470,61 @@ func TestIsRootedPath(t *testing.T) {
 		if isRootedPath(p) {
 			t.Errorf("%q rooted", p)
 		}
+	}
+}
+
+// A reference that is a symlink to a file under home (a dotfiles checkout) is
+// carried with the target's content. It must not abort the export.
+func TestHomeReferenceThroughSymlinkIsCarried(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "rules.md"), "rules body\n")
+	if err := os.Symlink(filepath.Join(home, "dotfiles", "rules.md"), filepath.Join(home, "rules.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "@~/rules.md\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatalf("export failed on a symlinked reference: %v", err)
+	}
+	a := findAsset(assets.ProviderFiles, setupAssetRootProviderHome, "rules.md")
+	if a == nil || string(a.Content) != "rules body\n" {
+		t.Errorf("rules.md not carried through its symlink: %+v", a)
+	}
+}
+
+// ~/.claude.json is carried as its mcpServers only. A reference to it, in any
+// case spelling, must not carry the whole file (account, project history).
+func TestHomeReferenceNeverCarriesWholeClaudeJSON(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".claude.json"), `{"oauthAccount":{"email":"x"},"mcpServers":{}}`)
+	// On a case-sensitive file system this stands in for the same file seen
+	// through another spelling on macOS or Windows.
+	mustWriteFile(t, filepath.Join(home, ".CLAUDE.json"), `{"oauthAccount":{"email":"x"},"mcpServers":{}}`)
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/.claude.json` and `~/.CLAUDE.json`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		if bytes.Contains(a.Content, []byte("oauthAccount")) {
+			t.Fatalf("whole ~/.claude.json carried as %s", a.LogicalPath)
+		}
+	}
+}
+
+// macOS and Windows file systems ignore case: .SSH is .ssh there.
+func TestSecretBearingDirsIgnoreCase(t *testing.T) {
+	for _, p := range []string{".SSH/config", "x/.Aws/credentials", ".GnuPG/key.txt"} {
+		if r := homeAssetRefusal(p); r == "" {
+			t.Errorf("%s: not refused", p)
+		}
+	}
+	if agent.SecretBearingReason(".SSH/config") == "" {
+		t.Error(".SSH/config not secret-bearing")
+	}
+	if !isCredentialFile(filepath.Join("x", "Auth.JSON")) {
+		t.Error("Auth.JSON not treated as a credential file")
 	}
 }

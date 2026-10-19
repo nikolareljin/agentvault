@@ -60,7 +60,8 @@ var credentialFileNames = map[string]bool{
 }
 
 func isCredentialFile(path string) bool {
-	return credentialFileNames[filepath.Base(path)]
+	// Lower-cased: macOS and Windows file systems ignore case.
+	return credentialFileNames[strings.ToLower(filepath.Base(path))]
 }
 
 // homeStartupPaths run code at login or shell start, or grant access. The home
@@ -401,7 +402,8 @@ func expandHomePath(word, homeDir string) (string, bool) {
 
 // homeRefResult is what became of one path named by a user-level file.
 type homeRefResult struct {
-	abs    string // set when taken
+	abs    string // set when taken; the path as named, under home
+	real   string // the file read: abs with symlinks resolved
 	isDir  bool
 	reason string // set when declined
 	absent bool
@@ -424,10 +426,16 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	if err != nil {
 		realHome = filepath.Clean(homeDir)
 	}
-	if !isUnder(filepath.Clean(homeDir), abs) && !isUnder(realHome, abs) {
-		return homeRefResult{reason: "outside the home directory"}
+	cleanHome := filepath.Clean(homeDir)
+	if !isUnder(cleanHome, abs) {
+		if !isUnder(realHome, abs) {
+			return homeRefResult{reason: "outside the home directory"}
+		}
+		// Named through the resolved home (/private/var/... for /var/...):
+		// the same file, recorded under the home path the bundle uses.
+		abs = filepath.Join(cleanHome, mustRel(realHome, abs))
 	}
-	if reason := homeAssetRefusal(mustRel(homeDir, abs)); reason != "" {
+	if reason := homeReferenceRefusal(mustRel(homeDir, abs)); reason != "" {
 		return homeRefResult{reason: reason}
 	}
 	real, err := filepath.EvalSymlinks(abs)
@@ -438,15 +446,18 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 		return homeRefResult{reason: "resolves outside the home directory"}
 	}
 	// Again on the resolved path: a symlink named notes.md can point at .netrc.
-	if reason := homeAssetRefusal(mustRel(realHome, real)); reason != "" {
+	if reason := homeReferenceRefusal(mustRel(realHome, real)); reason != "" {
 		return homeRefResult{reason: reason}
 	}
+	// Spelled under the home path, so a directory walked from it yields paths
+	// relative to home, and one file has one key however it was named.
+	real = filepath.Join(cleanHome, mustRel(realHome, real))
 	info, err := os.Stat(real)
 	if err != nil {
 		return homeRefResult{absent: true, reason: "named but not present"}
 	}
 	if info.IsDir() {
-		return homeRefResult{abs: abs, isDir: true}
+		return homeRefResult{abs: abs, real: real, isDir: true}
 	}
 	if !info.Mode().IsRegular() {
 		return homeRefResult{reason: "not a regular file"}
@@ -454,7 +465,17 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	if info.Size() > agent.MaxReferenceBytes {
 		return homeRefResult{reason: fmt.Sprintf("%d bytes, over the %d byte ceiling", info.Size(), agent.MaxReferenceBytes)}
 	}
-	return homeRefResult{abs: abs}
+	return homeRefResult{abs: abs, real: real}
+}
+
+// homeReferenceRefusal is homeAssetRefusal plus ~/.claude.json: that file is
+// carried as its mcpServers only, and a reference to it would carry the rest
+// (the signed-in account, every project's history).
+func homeReferenceRefusal(rel string) string {
+	if strings.ToLower(filepath.ToSlash(filepath.Clean(rel))) == ".claude.json" {
+		return "carried as its MCP servers only"
+	}
+	return homeAssetRefusal(rel)
 }
 
 // isRootedPath is an absolute path on any OS. On Windows "/etc/hosts" has no
@@ -498,12 +519,16 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		queue = append(queue, item{s, 0})
 	}
 
-	take := func(abs string, depth int) error {
+	// take carries the file at abs, reading it from real (abs with symlinks
+	// resolved, already checked to stay under home).
+	take := func(abs, real string, depth int) error {
 		abs = filepath.Clean(abs)
-		if have[abs] {
+		real = filepath.Clean(real)
+		if have[abs] || have[real] {
 			return nil
 		}
 		have[abs] = true
+		have[real] = true
 		rel, err := filepath.Rel(homeDir, abs)
 		if err != nil {
 			return nil
@@ -511,7 +536,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		// Prose is carried as is. Anything else a reference reaches (a script,
 		// a config file) can hold a secret, so it is redacted without
 		// --include-secrets, like every other settings file.
-		asset, warn, err := loadSetupAsset(abs, setupAssetKindProviderFile, setupAssetOriginProviderHome,
+		asset, warn, err := loadSetupAsset(real, setupAssetKindProviderFile, setupAssetOriginProviderHome,
 			setupAssetRootProviderHome, filepath.ToSlash(rel), "", !isProseFile(abs), includeSecrets, true)
 		if err != nil {
 			return err
@@ -541,7 +566,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				}
 				return nil
 			}
-			if d.Type()&os.ModeSymlink != 0 || homeAssetRefusal(mustRel(homeDir, p)) != "" {
+			if d.Type()&os.ModeSymlink != 0 || homeReferenceRefusal(mustRel(homeDir, p)) != "" {
 				return nil
 			}
 			if n >= maxDirReferenceFiles {
@@ -558,7 +583,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				return nil
 			}
 			n++
-			return take(p, depth)
+			return take(p, p, depth)
 		})
 	}
 
@@ -578,7 +603,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 			if r.abs == "" || r.isDir {
 				continue
 			}
-			if err := take(r.abs, maxReferenceDepth); err != nil {
+			if err := take(r.abs, r.real, maxReferenceDepth); err != nil {
 				return nil, nil, warnings, err
 			}
 		}
@@ -599,11 +624,11 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				declined = append(declined, DeclinedAsset{Path: raw, Category: DeclinedByPolicy,
 					Reason: fmt.Sprintf("named by %s: %s", by, r.reason)})
 			case r.isDir:
-				if err := takeDir(r.abs, by, cur.depth); err != nil {
+				if err := takeDir(r.real, by, cur.depth); err != nil {
 					return nil, nil, warnings, err
 				}
 			default:
-				if err := take(r.abs, cur.depth); err != nil {
+				if err := take(r.abs, r.real, cur.depth); err != nil {
 					return nil, nil, warnings, err
 				}
 			}
