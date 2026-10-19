@@ -883,6 +883,8 @@ func TestDirSecretsAndHardLinksAreRedacted(t *testing.T) {
 	mustWriteFile(t, filepath.Join(home, ".claude", "agents", "k.pem"), "leak2\n")
 	mustWriteFile(t, filepath.Join(home, ".claude", "agents", "ok.md"), "fine\n")
 	mustWriteFile(t, filepath.Join(project, ".cursor", "rules", ".env"), "leak3\n")
+	mustWriteFile(t, filepath.Join(project, ".github", "instructions", "token.json"), `{"t":"leak5"}`)
+	mustWriteFile(t, filepath.Join(project, ".gemini", "commands", "ship.toml"), "prompt = 'ship'\n")
 	mustWriteFile(t, filepath.Join(project, ".env"), "leak4\n")
 	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "See `hl.md`.\n")
 	if err := os.Link(filepath.Join(project, ".env"), filepath.Join(project, "hl.md")); err != nil {
@@ -898,6 +900,9 @@ func TestDirSecretsAndHardLinksAreRedacted(t *testing.T) {
 		if strings.Contains(string(a.Content), "leak") {
 			t.Errorf("%s %s carried its secret", a.LogicalRoot, a.LogicalPath)
 		}
+	}
+	if a := findAsset(assets.ProjectFiles, setupAssetRootProject, ".gemini/commands/ship.toml"); a == nil || !a.ContentPresent {
+		t.Errorf("Gemini command not carried: %+v", a)
 	}
 	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "agents/ok.md"); a == nil || !a.ContentPresent {
 		t.Errorf("agents/ok.md not carried: %+v", a)

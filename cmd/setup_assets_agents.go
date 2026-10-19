@@ -1025,6 +1025,16 @@ func collectProjectInstructionExtras(projectDir string, includeSecrets bool) ([]
 		if err != nil {
 			return nil, warnings, err
 		}
+		for i := range found {
+			// Rules are prose and Gemini commands are TOML prompts. Anything
+			// else here (a JSON or YAML file) can hold a token, as at user scope.
+			a := &found[i]
+			ext := strings.ToLower(filepath.Ext(a.LogicalPath))
+			if !includeSecrets && a.ContentPresent && !isProseFile(a.LogicalPath) && ext != ".toml" {
+				a.Sensitive, a.Redacted, a.ContentPresent, a.Content, a.SHA256 = true, true, false, nil, ""
+				warnings = append(warnings, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", a.SourcePath))
+			}
+		}
 		assets = append(assets, found...)
 		warnings = append(warnings, warns...)
 	}

@@ -125,7 +125,9 @@
   file with a second hard link, is redacted without `--include-secrets`. A
   hard link named `notes.md` can be `.env` under another name.
   Reference following (`instructions pull`, `--project`) refuses a file
-  with a second hard link.
+  with a second hard link. Files in project rule directories that are
+  neither prose nor TOML (`.github/instructions/token.json`) are redacted
+  too.
 - A user-level reference inside a tool's directory (`~/.claude`, `~/.codex`,
   `~/.gemini`, `~/.copilot`, `~/.cursor`, `~/.codeium`) is followed only into
   the setup the bundle carries, rule directories, and prose files at the

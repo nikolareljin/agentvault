@@ -616,7 +616,7 @@ Never carried:
 - Credential files an instruction names, in any letter case and also through a symlink: `.env`, `.env.*` and `*.env` (templates such as `.env.example` are kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`, `.npmrc`, `.git-credentials`, SSH keys, and anything under `.ssh`, `.gnupg`, `.aws`, `.kube`, `.docker` or `.azure`. They are listed as declined.
 - Shell and login startup files (`.bashrc`, `.zshrc`, `.profile`, `.config/autostart`, `Library/LaunchAgents`, ...) and any other dotfile at the home root except `~/.claude.json`. Import refuses to write them from a bundle, too.
 
-Settings files that can hold tokens are redacted without `--include-secrets`. So are `~/.claude/hooks/` scripts and referenced files that are not prose, such as scripts and config files; Markdown and text are carried as is.
+Settings files that can hold tokens are redacted without `--include-secrets`. So are `~/.claude/hooks/` scripts, files in project rule directories that are neither prose nor TOML, credential-named files in any carried directory, files with a second hard link, and referenced files that are not prose, such as scripts and config files; Markdown and text are carried as is.
 
 Files referenced outside the tools' own directories are written back on import only when they are prose. They are written 0600 and never executable. `~/.claude.json` only gets its `mcpServers` key merged in. Referenced scripts and config files are staged under `<config dir>/imported-assets/provider/provider_home/` for review, and never written to the home directory: placed on `PATH` or named by a hook, a file from a bundle runs code.
 
