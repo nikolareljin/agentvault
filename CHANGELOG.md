@@ -72,7 +72,8 @@
   (`x/../auth.json`, `auth.json/.`, `Auth.json.`). Import takes provider
   paths only in clean form.
 - `~/.copilot/config.json` travels without its login keys (`copilot_tokens`,
-  `logged_in_users`, `last_logged_in_user`, any key named like a token),
+  `logged_in_users`, `last_logged_in_user`, any key named like a token
+  except counts and limits such as `max_tokens` and `tokenLimit`),
   even with `--include-secrets`. The export lists it as carried in part and
   skips it when it is not JSON. Import strips the same keys from a bundle and
   keeps this machine's sign-in.

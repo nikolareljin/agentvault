@@ -601,7 +601,7 @@ Also carried:
 - A Claude Code plugin inventory. Import prints the `claude plugin marketplace add` and `claude plugin install` commands; it installs nothing itself.
 
 Never carried:
-- Login tokens: `~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json` and `google_accounts.json`. The login keys of `~/.copilot/config.json` (`copilot_tokens`, `logged_in_users`, `last_logged_in_user`, any key named like a token) are removed; the rest of that file is carried. They are not carried even with `--include-secrets`. Sign in on the other machine.
+- Login tokens: `~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json` and `google_accounts.json`. The login keys of `~/.copilot/config.json` (`copilot_tokens`, `logged_in_users`, `last_logged_in_user`, any key named like a token, except counts and limits such as `max_tokens` and `tokenLimit`) are removed; the rest of that file is carried. They are not carried even with `--include-secrets`. Sign in on the other machine.
 - A project's own settings (`.claude/settings.json`, `.mcp.json`, `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`, `.vscode/mcp.json`). They travel with the repository. The bundle lists them as `repository`.
 - `.local.` files, unless named with `--include-local`.
 - Credential files an instruction names, in any letter case and also through a symlink: `.env`, `.env.*` and `*.env` (templates such as `.env.example` are kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`, `.npmrc`, `.git-credentials`, SSH keys, and anything under `.ssh`, `.gnupg`, `.aws`, `.kube`, `.docker` or `.azure`. They are listed as declined.

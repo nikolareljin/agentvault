@@ -240,6 +240,18 @@ func isLoginKey(k string) bool {
 		return true
 	}
 	l := strings.ToLower(k)
+	// Counts and limits are settings: max_tokens, maxOutputTokens, tokenLimit.
+	n := strings.NewReplacer("_", "", "-", "").Replace(l)
+	// Only as a count: "minted_token" starts with "min" and is a token.
+	if (strings.HasPrefix(n, "max") || strings.HasPrefix(n, "min")) && strings.HasSuffix(n, "tokens") {
+		return false
+	}
+	// A bare "...tokens" suffix is not exempt: access_tokens is a token map.
+	for _, suffix := range []string{"tokenlimit", "tokencount", "maxtokens"} {
+		if strings.HasSuffix(n, suffix) {
+			return false
+		}
+	}
 	for _, w := range []string{"token", "secret", "password", "credential", "oauth"} {
 		if strings.Contains(l, w) {
 			return true
