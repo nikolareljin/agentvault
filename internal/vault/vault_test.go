@@ -1,7 +1,9 @@
 package vault
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/crypto"
 )
 
 func tempVaultPath(t *testing.T) string {
@@ -1390,6 +1393,74 @@ func TestAddWithMCPServers(t *testing.T) {
 	}
 }
 
+// A vault written by an earlier release (format 1) opens, unlocking alone
+// leaves the file as it was, and the next save writes format 2 that opens
+// with the same password.
+func TestLegacyVaultUpgradesOnNextWrite(t *testing.T) {
+	path := tempVaultPath(t)
+	salt, err := crypto.GenerateSalt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := crypto.DeriveKey("old-pass", salt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := crypto.Encrypt([]byte(`{"agents":[{"name":"legacy","provider":"claude"}]}`), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := append(salt, ct...)
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	v := New(path)
+	if err := v.Unlock("old-pass"); err != nil {
+		t.Fatalf("legacy vault did not open: %v", err)
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, original) {
+		t.Fatal("unlocking rewrote the vault")
+	}
+	if err := v.Add(agent.Agent{Name: "new", Provider: agent.ProviderCodex}); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, _ := os.ReadFile(path)
+	if !bytes.HasPrefix(upgraded, []byte("AVK2")) {
+		t.Fatal("save did not write format 2")
+	}
+	if backup, err := os.ReadFile(path + LegacyBackupSuffix); err != nil || !bytes.Equal(backup, original) {
+		t.Fatalf("format 1 backup missing or changed: %v", err)
+	}
+	if err := v.Add(agent.Agent{Name: "third", Provider: agent.ProviderCodex}); err != nil {
+		t.Fatal(err)
+	}
+	if backup, _ := os.ReadFile(path + LegacyBackupSuffix); !bytes.Equal(backup, original) {
+		t.Fatal("a later save overwrote the format 1 backup")
+	}
+	again := New(path)
+	if err := again.Unlock("old-pass"); err != nil {
+		t.Fatalf("upgraded vault did not open: %v", err)
+	}
+	if len(again.List()) != 3 {
+		t.Errorf("agents = %v", again.List())
+	}
+}
+
+// A header with out-of-range parameters is reported as such, not as a wrong
+// password.
+func TestUnlockReportsBadHeader(t *testing.T) {
+	path := tempVaultPath(t)
+	h := crypto.Header{Params: crypto.KDFParams{Time: 3, MemoryKiB: 1 << 30, Threads: 4}, Salt: make([]byte, crypto.SaltLen)}
+	if err := os.WriteFile(path, append(h.Bytes(), make([]byte, 64)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := New(path).Unlock("whatever-password")
+	if !errors.Is(err, crypto.ErrHeader) {
+		t.Fatalf("err = %v, want ErrHeader", err)
+	}
+}
+
 // A crafted bundle must not plant an instruction whose filename escapes the
 // project; push would write it there.
 func TestImportDataRejectsEscapingInstructionFilename(t *testing.T) {
@@ -1421,5 +1492,83 @@ func TestSetInstructionRejectsEscapingFilename(t *testing.T) {
 	}
 	if err := v.SetInstruction(agent.InstructionFile{Name: "evil", Filename: "/etc/profile"}); err == nil {
 		t.Fatal("absolute filename accepted")
+	}
+}
+
+// A backup name that already holds another file is left alone, and the
+// format 1 copy is kept under a unique name instead of being lost.
+func TestLegacyBackupKeepsExistingFile(t *testing.T) {
+	path := tempVaultPath(t)
+	original := []byte("format 1 bytes")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := []byte("some other vault")
+	if err := os.WriteFile(path+LegacyBackupSuffix, stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupLegacyVault(path, original[:4]); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path + LegacyBackupSuffix); !bytes.Equal(got, stale) {
+		t.Fatal("existing backup was overwritten")
+	}
+	matches, _ := filepath.Glob(path + ".v1.*.bak")
+	if len(matches) != 1 {
+		t.Fatalf("want one unique backup, got %v", matches)
+	}
+	if got, _ := os.ReadFile(matches[0]); !bytes.Equal(got, original) {
+		t.Fatal("unique backup does not hold the format 1 vault")
+	}
+	// Same bytes already at the backup name: no extra copy.
+	if err := os.Remove(matches[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+LegacyBackupSuffix, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupLegacyVault(path, original[:4]); err != nil {
+		t.Fatal(err)
+	}
+	if matches, _ := filepath.Glob(path + ".v1.*.bak"); len(matches) != 0 {
+		t.Fatalf("left a duplicate backup: %v", matches)
+	}
+}
+
+// Without hard links the backup is still written under the documented name,
+// and no unique copy is left behind.
+func TestLegacyBackupWithoutHardLinks(t *testing.T) {
+	path := tempVaultPath(t)
+	original := []byte("format 1 bytes")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkFile = func(string, string) error { return errors.New("links not supported") }
+	t.Cleanup(func() { linkFile = os.Link })
+	if err := backupLegacyVault(path, original[:4]); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(path + LegacyBackupSuffix); err != nil || !bytes.Equal(got, original) {
+		t.Fatalf("backup = %q, %v", got, err)
+	}
+	if matches, _ := filepath.Glob(path + ".v1.*.bak"); len(matches) != 0 {
+		t.Fatalf("left a unique copy: %v", matches)
+	}
+}
+
+// A file another process has already rewritten is not backed up as format 1.
+func TestLegacyBackupSkipsReplacedFile(t *testing.T) {
+	path := tempVaultPath(t)
+	if err := os.WriteFile(path, []byte("AVK2 written by another process"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupLegacyVault(path, []byte("old-salt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + LegacyBackupSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backed up a file that is not the format 1 vault: %v", err)
+	}
+	if matches, _ := filepath.Glob(path + ".v1.*.bak"); len(matches) != 0 {
+		t.Fatalf("left a copy: %v", matches)
 	}
 }
