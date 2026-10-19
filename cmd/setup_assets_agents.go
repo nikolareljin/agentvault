@@ -1176,6 +1176,8 @@ func collectProjectReferenceClosure(projectDir string, seeds []SetupAsset, inclu
 		}
 		have[rel] = true
 		if isProjectRepoScopeSetting(rel) {
+			declined = append(declined, DeclinedAsset{Path: rel, Category: DeclinedRepoScope,
+				Reason: "repository-scope settings travel with the repository; listed, not exported"})
 			return nil
 		}
 		// Not prose (a script, a config file): redacted without

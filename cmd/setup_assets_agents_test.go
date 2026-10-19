@@ -278,6 +278,29 @@ func TestCollectSetupAssets_ProjectInstructionsClosureAndRepoSettings(t *testing
 	}
 }
 
+// Repository settings named in another letter case are the same file on
+// macOS and Windows: listed as repository settings, not carried.
+func TestProjectRepoScopeSettingsMatchAnyCase(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "See `.Claude/settings.json` and `.MCP.json`.\n")
+	mustWriteFile(t, filepath.Join(project, ".Claude", "settings.json"), `{"env":{"T":"leak"}}`)
+	mustWriteFile(t, filepath.Join(project, ".MCP.json"), `{"mcpServers":{}}`)
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project, IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{".Claude/settings.json", ".MCP.json"} {
+		if findAsset(assets.ProjectFiles, setupAssetRootProject, p) != nil {
+			t.Errorf("%s carried; repository settings are listed only", p)
+		}
+		if !declinedHas(assets.Declined, p, DeclinedRepoScope) {
+			t.Errorf("%s not listed as repository settings: %v", p, assets.Declined)
+		}
+	}
+}
+
 func TestPluginInventoryAndInstallCommands(t *testing.T) {
 	home := t.TempDir()
 	mustWriteFile(t, filepath.Join(home, ".claude", "plugins", "known_marketplaces.json"),

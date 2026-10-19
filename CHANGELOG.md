@@ -48,7 +48,7 @@
 - A project's own settings files (`.claude/settings.json`, `.mcp.json`,
   `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`,
   `.vscode/mcp.json`) are listed in the bundle as `repository` and not
-  carried. They travel with the repository. Before, `.claude/settings.json`
+  carried, in any letter case and also when an instruction file names them. They travel with the repository. Before, `.claude/settings.json`
   was carried.
 - Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
   `google_accounts.json`) are never collected, even with `--include-secrets`,
