@@ -2,19 +2,19 @@
 
 ## [Unreleased]
 
-### Security
-- Vault and bundle files carry their key-derivation parameters in a versioned
-  header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
-  Before, t=1 was fixed in the code. The header is authenticated with the
-  ciphertext. Files from earlier releases still open; a vault is rewritten in
-  the new format on its next save, and unlocking alone changes nothing. The
-  first such save keeps the old file as `<vault>.v1.bak`. A header asking for
-  more than t=8, 256 MiB or 16 lanes is refused before Argon2 runs.
-  Compatibility: earlier releases cannot open AVK2 vaults or bundles.
-- New vault and bundle passwords need 12 characters (was 8). Existing ones
-  keep working.
+### Added
+- `./dev` (and `./dev.ps1` on Windows) is the entry point for install, build,
+  test, lint, format, preflight, doctor, clean and install-bin. The commands
+  live in `scripts/project.sh`, and `make` targets are shims onto them.
+  Without Go, `./dev install` and `./dev test` exit 1 and name the Go version
+  from `go.mod`. Verbs that do not apply, such as `deploy`, exit 3.
+- script-helpers as a submodule at `scripts/script-helpers`, tracking
+  `production`.
+- `tests/machine/install_check.sh`: installs into a scratch `GOBIN` and runs
+  the installed binary.
 
 ### Changed
+- `actions/checkout` and `actions/github-script` are pinned to commit SHAs.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key
   (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
@@ -26,6 +26,16 @@
   to Linux and Windows.
 
 ### Security
+- Vault and bundle files carry their key-derivation parameters in a versioned
+  header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
+  Before, t=1 was fixed in the code. The header is authenticated with the
+  ciphertext. Files from earlier releases still open; a vault is rewritten in
+  the new format on its next save, and unlocking alone changes nothing. The
+  first such save keeps the old file as `<vault>.v1.bak`. A header asking for
+  more than t=8, 256 MiB or 16 lanes is refused before Argon2 runs.
+  Compatibility: earlier releases cannot open AVK2 vaults or bundles.
+- New vault and bundle passwords need 12 characters (was 8). Existing ones
+  keep working.
 - An instruction whose filename escapes the target directory, such as
   `../../.bashrc` or `/etc/profile`, is refused by `instructions set`, by
   import, and at the write in `instructions push` and `setup apply`. Before,
@@ -42,6 +52,21 @@
   regular file inside the directory and at most 256 KiB.
 
 ### Fixed
+- `generate mcp` writes by default to Claude Desktop's config for the OS:
+  `~/Library/Application Support/Claude/` on macOS and `%APPDATA%\Claude\` on
+  Windows. Before, it wrote `~/.config/claude/` everywhere, which Claude
+  Desktop on macOS and Windows never reads. It replaces only the `mcpServers`
+  key of an existing file, keeps the other keys in their order with their
+  values as written, the file mode and, outside Windows, its owner; a UTF-8
+  BOM is accepted. It writes
+  through a symlink to its target, replaces the file atomically (fsync of
+  the file and, outside Windows, its directory), writes a device or FIFO
+  such as `/dev/stdout` in place, and refuses a file that is not a JSON
+  object or a path under a symlink to a missing directory. With no home
+  directory it fails instead of writing a relative path into the working
+  directory.
+- `export --help`, the README and the CLI reference name
+  `~/.config/github-copilot`, the directory export reads, not `~/.copilot`.
 - `import --apply-provider-configs` and `setup apply` work when the home or
   target directory sits under a symlink, as `/var` and `/tmp` do on macOS.
   Symlinks are still refused below the home or target directory. Before,

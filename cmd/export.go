@@ -101,7 +101,7 @@ func init() {
 	exportCmd.Flags().Bool("include-secrets", defaults.IncludeSecrets, "include secret-bearing provider and asset file content")
 	exportCmd.Flags().Bool("include-sessions", defaults.IncludeSessions, "include multi-agent session definitions")
 	exportCmd.Flags().Bool("include-templates", defaults.IncludeTemplates, "include workflow templates")
-	exportCmd.Flags().Bool("include-provider-files", defaults.IncludeProviderFile, "include provider home files (~/.claude, ~/.codex, ~/.copilot)")
+	exportCmd.Flags().Bool("include-provider-files", defaults.IncludeProviderFile, "include provider home files (~/.claude, ~/.codex, ~/.config/github-copilot)")
 	exportCmd.Flags().Bool("include-skills", defaults.IncludeSkills, "include skill assets")
 	exportCmd.Flags().StringArray("include-local", nil,
 		"carry one project-relative .local. file anyway, e.g. .claude/settings.local.json (repeatable; they are left behind by default because they are per-machine and may hold credentials)")
