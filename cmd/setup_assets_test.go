@@ -1233,3 +1233,16 @@ func TestDedupeDeclined_KeepsOnePerPathAndCategory(t *testing.T) {
 		t.Errorf("kept %q, want the first seen", got[0].Reason)
 	}
 }
+
+// Windows opens SETTIN~1.JSO as settings.json: a short name would dodge
+// every check by name, so import refuses it.
+func TestSanitizeAssetRelativePathRefusesShortNames(t *testing.T) {
+	for _, p := range []string{"SETTIN~1.JSO", ".claude/.CREDE~1.JSO", "CREDEN~1.JSO", "PROGRA~1/x.md"} {
+		if _, err := sanitizeAssetRelativePath(p); err == nil {
+			t.Errorf("%s: accepted", p)
+		}
+	}
+	if _, err := sanitizeAssetRelativePath("notes~draft.md"); err != nil {
+		t.Errorf("notes~draft.md: %v", err)
+	}
+}

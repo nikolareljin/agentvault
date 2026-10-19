@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -1035,8 +1036,17 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 	if strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal is not allowed: %q", path)
 	}
+	// Windows resolves a short name such as SETTIN~1.JSO to the long file,
+	// so a name check on the bundle path would judge the wrong name.
+	for _, seg := range strings.Split(filepath.ToSlash(cleaned), "/") {
+		if windowsShortName.MatchString(seg) {
+			return "", fmt.Errorf("Windows short name (~N) is not allowed: %q", path)
+		}
+	}
 	return filepath.ToSlash(cleaned), nil
 }
+
+var windowsShortName = regexp.MustCompile(`~[0-9]`)
 
 func replaceRegularFile(tmpPath string, destPath string) error {
 	err := renameFile(tmpPath, destPath)

@@ -64,6 +64,10 @@
   `config.json.`, which Windows writes to `config.json`.
 
 ### Security
+- Windows short names (`SETTIN~1.JSO`) and alternate data streams
+  (`.env::$DATA`) name another file there. Import refuses any bundle path
+  segment with `~N`, and the reference closure refuses both forms, so no
+  name check is judged against the wrong name.
 - Vault and bundle files carry their key-derivation parameters in a versioned
   header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
   Before, t=1 was fixed in the code. The header is authenticated with the
