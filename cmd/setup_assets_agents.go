@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -133,6 +134,11 @@ func homeAssetWritable(logicalPath string) (string, error) {
 		return "", fmt.Errorf("%q: not in clean form (%q); refused", logicalPath, rel)
 	}
 	if reason := homeAssetRefusal(rel); reason != "" {
+		return "", fmt.Errorf("%s: %s", rel, reason)
+	}
+	// Export never carries a tool's memory or session files from the home
+	// root, so a bundle that does was not made by export.
+	if reason := agentRootRefusal(strings.ToLower(rel)); reason != "" {
 		return "", fmt.Errorf("%s: %s", rel, reason)
 	}
 	if rel != ".claude.json" && !isProseFile(rel) {
@@ -663,6 +669,9 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	// Spelled under the home path, so a directory walked from it yields paths
 	// relative to home, and one file has one key however it was named.
 	real = filepath.Join(cleanHome, mustRel(realHome, real))
+	if reason := agentAliasRefusal(agentRootAliases(homeDir), real); reason != "" {
+		return homeRefResult{reason: reason}
+	}
 	info, err := os.Stat(real)
 	if err != nil {
 		return homeRefResult{absent: true, reason: "named but not present"}
@@ -731,6 +740,67 @@ func agentRootRefusal(folded string) string {
 			}
 		}
 		return "inside " + root + " but not its setup (memory, sessions, history or caches); memory travels only with --include-memory"
+	}
+	return ""
+}
+
+// agentRootAlias is where a tool directory, or one of its entries, really
+// lives when it is a symlink: ~/.claude -> ~/dotfiles/claude.
+type agentRootAlias struct {
+	real    string // spelled under the home path, as resolveHomeReference spells files
+	logical string // the home-relative path it stands for, e.g. ".claude/projects"
+}
+
+// agentRootAliases resolves each tool directory and its direct entries. A
+// reference through the target (~/dotfiles/claude/todos) names the same files
+// as one through the tool directory and gets the same answer.
+func agentRootAliases(homeDir string) []agentRootAlias {
+	cleanHome := filepath.Clean(homeDir)
+	realHome, err := filepath.EvalSymlinks(homeDir)
+	if err != nil {
+		realHome = cleanHome
+	}
+	spell := func(p string) (string, bool) {
+		real, err := filepath.EvalSymlinks(p)
+		if err != nil || !isUnder(realHome, real) {
+			return "", false
+		}
+		return filepath.Join(cleanHome, mustRel(realHome, real)), true
+	}
+	var out []agentRootAlias
+	for root := range agentRootAllowed {
+		dir := filepath.Join(cleanHome, root)
+		if real, ok := spell(dir); ok && real != dir {
+			out = append(out, agentRootAlias{real, root})
+		}
+		// Every entry, not only those typed as symlinks: a Windows junction
+		// is not reported as one.
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			entry := filepath.Join(dir, e.Name())
+			if real, ok := spell(entry); ok && real != entry {
+				out = append(out, agentRootAlias{real, root + "/" + e.Name()})
+			}
+		}
+	}
+	return out
+}
+
+// agentAliasRefusal is agentRootRefusal for a path reached through the
+// target of a symlinked tool directory or entry.
+func agentAliasRefusal(aliases []agentRootAlias, p string) string {
+	// Compared in lower case: macOS and Windows match ~/DotFiles/claude to
+	// ~/dotfiles/claude. On Linux that can only refuse more.
+	p = strings.ToLower(p)
+	for _, a := range aliases {
+		target := strings.ToLower(a.real)
+		if p != target && !isUnder(target, p) {
+			continue
+		}
+		logical := path.Join(a.logical, filepath.ToSlash(mustRel(target, p)))
+		if reason := agentRootRefusal(strings.ToLower(logical)); reason != "" {
+			return reason
+		}
 	}
 	return ""
 }
@@ -814,17 +884,21 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 
 	takeDir := func(dir, by string, depth int) error {
 		n := 0
+		aliases := agentRootAliases(homeDir)
+		refused := func(p string) bool {
+			return homeReferenceRefusal(mustRel(homeDir, p)) != "" || agentAliasRefusal(aliases, p) != ""
+		}
 		return filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
 			if d.IsDir() {
-				if p != dir && (skipReferenceDir(d.Name()) || homeReferenceRefusal(mustRel(homeDir, p)) != "") {
+				if p != dir && (skipReferenceDir(d.Name()) || refused(p)) {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			if d.Type()&os.ModeSymlink != 0 || homeReferenceRefusal(mustRel(homeDir, p)) != "" {
+			if d.Type()&os.ModeSymlink != 0 || refused(p) {
 				return nil
 			}
 			if n >= maxDirReferenceFiles {

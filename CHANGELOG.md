@@ -60,7 +60,8 @@
   except counts and limits such as `max_tokens` and `tokenLimit`),
   even with `--include-secrets`. The export lists it as carried in part and
   skips it when it is not JSON. Import strips the same keys from a bundle and
-  keeps this machine's sign-in.
+  keeps this machine's sign-in, also when the bundle spells the name
+  `config.json.`, which Windows writes to `config.json`.
 
 ### Security
 - Vault and bundle files carry their key-derivation parameters in a versioned
@@ -134,7 +135,10 @@
   top of that directory. Memory, session transcripts, archived sessions,
   history, backups and caches are declined. Before, naming
   `~/.claude/projects/` carried session transcripts, and memory without
-  `--include-memory`.
+  `--include-memory`. The same holds through a symlink: with `~/.claude`
+  linked to `~/dotfiles/claude`, a reference to
+  `~/dotfiles/claude/todos/` is declined too. Import does not write those
+  paths from the home root either.
 
 ### Fixed
 - `generate mcp` writes by default to Claude Desktop's config for the OS:

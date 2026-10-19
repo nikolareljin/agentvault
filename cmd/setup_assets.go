@@ -911,7 +911,8 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		}
 		content := asset.Content
 		perm := os.FileMode(0600)
-		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(asset.LogicalPath, "config.json") {
+		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.json") {
+			// Trailing dots and spaces too: Windows writes "config.json." to config.json.
 			// A bundle is not trusted to replace this machine's sign-in.
 			stripped, _, err := stripCopilotLoginState(content)
 			if err != nil {

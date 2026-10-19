@@ -350,7 +350,8 @@ func TestApplyHomeRootIsAnAllowlist(t *testing.T) {
 	var assets []SetupAsset
 	refused := []string{".bashrc", ".BASHRC", " .bashrc", " .claude.json", "./.claude.json", "docs//x.md", ".zshrc", ".ssh/authorized_keys", ".SSH/authorized_keys",
 		".netrc", ".config/autostart/x.desktop", "Library/LaunchAgents/x.plist", ".hidden-at-root",
-		"bin/guard.sh", ".local/bin/git", "notes/run.sh"}
+		"bin/guard.sh", ".local/bin/git", "notes/run.sh",
+		".claude/projects/p/memory/m.md", ".codex/memories/x.md", ".Claude/todos/x.md"}
 	for _, p := range refused {
 		assets = append(assets, SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: p,
 			ContentPresent: true, Content: []byte("payload")})
@@ -870,6 +871,23 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 	if !strings.Contains(string(got), `"LOCAL"`) || !strings.Contains(string(got), "LOCAL_NESTED") || !strings.Contains(string(got), `"model"`) {
 		t.Errorf("import lost this machine's sign-in or the settings: %s", got)
 	}
+
+	// Windows writes "config.json." to config.json: the same file.
+	in.LogicalPath = "config.json."
+	other := t.TempDir()
+	if _, _, err := applyProviderAssetsToSystem(other, []SetupAsset{in}); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(other, ".copilot"))
+	if len(entries) == 0 {
+		t.Fatal("config.json. not written; the check below would pass on nothing")
+	}
+	for _, e := range entries {
+		b, _ := os.ReadFile(filepath.Join(other, ".copilot", e.Name()))
+		if strings.Contains(string(b), "SECRET") {
+			t.Errorf("import wrote login tokens to %q: %s", e.Name(), b)
+		}
+	}
 }
 
 // A .env or key file inside a tool's own directory, and any file with a
@@ -944,6 +962,44 @@ func TestHomeReferenceNeverCarriesAgentState(t *testing.T) {
 	}
 	if !declinedHas(assets.Declined, "~/.claude/projects/", DeclinedByPolicy) {
 		t.Errorf("state directory reference not declined: %v", assets.Declined)
+	}
+}
+
+// A tool directory kept in dotfiles (~/.claude -> ~/dotfiles/claude), or a
+// state directory moved out by symlink, is refused through its real path too.
+func TestHomeReferenceRefusesAgentStateThroughSymlinkTarget(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "claude", "todos", "t.md"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "claude", "rules", "r.md"), "rule\n")
+	mustWriteFile(t, filepath.Join(home, "data", "sessions", "s.md"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".codex", "AGENTS.md"), "codex\n")
+	if err := os.Symlink(filepath.Join(home, "dotfiles", "claude"), filepath.Join(home, ".claude")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(home, "data", "sessions"), filepath.Join(home, ".codex", "sessions")); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "claude", "CLAUDE.md"),
+		"See `~/dotfiles/claude/todos/t.md`, `~/data/sessions/s.md`, `~/DATA/Sessions/s.md`, `~/dotfiles/` and `~/dotfiles/claude/rules/r.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ~/DATA/Sessions/s.md is the same file on macOS and Windows; this check
+	// catches it there.
+	for _, a := range assets.ProviderFiles {
+		if strings.Contains(string(a.Content), "SESSION") {
+			t.Errorf("%s %s carried agent state", a.LogicalRoot, a.LogicalPath)
+		}
+	}
+	for _, p := range []string{"~/dotfiles/claude/todos/t.md", "~/data/sessions/s.md"} {
+		if !declinedHas(assets.Declined, p, DeclinedByPolicy) {
+			t.Errorf("%s not declined: %v", p, assets.Declined)
+		}
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, "dotfiles/claude/rules/r.md") == nil {
+		t.Error("rules file under the symlink target not carried")
 	}
 }
 
