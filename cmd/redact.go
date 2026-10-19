@@ -426,7 +426,8 @@ func commandRunsAnything(words []string) bool {
 	endsWild := len(words) > 0 && strings.HasSuffix(words[len(words)-1], "*")
 	var trimmed []string
 	for _, w := range words {
-		if w = strings.TrimSuffix(strings.TrimSuffix(w, "*"), ":"); w != "" {
+		// Only the ":*" suffix and a lone "*": ba* is still a glob.
+		if w = strings.TrimSuffix(w, ":*"); w != "" && w != "*" {
 			trimmed = append(trimmed, w)
 		}
 	}

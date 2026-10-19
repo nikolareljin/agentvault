@@ -73,7 +73,7 @@ func TestIsInterpreterAllowSegmentsAndArguments(t *testing.T) {
 		"Bash(if true; then bash; fi)", "Bash(! bash)", "Bash(nice -n hd bash)", "Bash(timeout 10s ./run)",
 		"Bash(find . -exec rm {} +)", "Bash(git -c core.pager=x log)", "Bash(nice -n 5 make bash)",
 		"Bash(timeout 5:*)", "Bash(nice -n 5 :*)", "Bash(nice -n 5 make:*)", "Bash('bash' -c x)", `Bash(b\ash:*)`,
-		`Bash("python3" x)`, "Bash(ba''sh:*)"} {
+		`Bash("python3" x)`, "Bash(ba''sh:*)", "Bash(py*)", "Bash(ls; ba*)"} {
 		if !isInterpreterAllow(r) {
 			t.Errorf("%s not flagged", r)
 		}
