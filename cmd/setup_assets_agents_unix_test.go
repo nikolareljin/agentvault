@@ -48,3 +48,25 @@ func TestReferencedDirPipesAndUnreadableFilesDoNotAbort(t *testing.T) {
 		t.Errorf("unreadable file not reported: %v", assets.Declined)
 	}
 }
+
+// A pipe, or a name import would refuse (backup~1.md, aux.md), inside a
+// carried tool directory is skipped with a warning; the export goes on.
+func TestToolDirOddEntriesDoNotAbortExport(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	agents := filepath.Join(home, ".claude", "agents")
+	mustWriteFile(t, filepath.Join(agents, "ok.md"), "fine\n")
+	mustWriteFile(t, filepath.Join(agents, "backup~1.md"), "old\n")
+	mustWriteFile(t, filepath.Join(agents, "aux.md"), "x\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p~1", "memory", "m.md"), "m\n")
+	if err := syscall.Mkfifo(filepath.Join(agents, "p.md"), 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeMemory: true})
+	if err != nil {
+		t.Fatalf("export aborted: %v", err)
+	}
+	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "agents/ok.md"); a == nil || !a.ContentPresent {
+		t.Errorf("agents/ok.md not carried: %+v", a)
+	}
+}

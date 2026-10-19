@@ -75,6 +75,9 @@
   or without `--include-secrets`, as one named directly is. Pipes, sockets
   and unreadable files there are listed as declined instead of ending the
   export.
+- A pipe, socket or a name import would refuse (`backup~1.md`, `aux.md`)
+  inside a carried tool directory is skipped with a warning instead of
+  ending the export.
 - Vault and bundle files carry their key-derivation parameters in a versioned
   header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
   Before, t=1 was fixed in the code. The header is authenticated with the

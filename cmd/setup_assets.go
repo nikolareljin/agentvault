@@ -568,6 +568,11 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 			warnings = append(warnings, fmt.Sprintf("skipping symlink asset %q under %q", path, root))
 			return nil
 		}
+		if !d.Type().IsRegular() {
+			// A pipe or socket would block or fail the read, and end the export.
+			warnings = append(warnings, fmt.Sprintf("skipping %q under %q: not a regular file", path, root))
+			return nil
+		}
 		if isCredentialFile(path) {
 			warnings = append(warnings, fmt.Sprintf("skipping credential file %q; sign in on the other machine instead", path))
 			return nil
@@ -587,6 +592,12 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		projectRelative := ""
 		if projectPrefix != "" {
 			projectRelative = filepath.ToSlash(filepath.Join(projectPrefix, rel))
+		}
+		// A name import would refuse (NOTES~1.MD, aux.md) is left behind
+		// here with a warning, not an error that ends the export.
+		if _, err := sanitizeAssetRelativePath(logicalPath); err != nil {
+			warnings = append(warnings, fmt.Sprintf("skipping %q under %q: %v", path, root, err))
+			return nil
 		}
 		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, fileSensitive, includeSecrets, false)
 		if err != nil {
