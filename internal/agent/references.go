@@ -326,11 +326,12 @@ func SecretBearingReason(rel string) string {
 		}
 	}
 	base := path.Base(slashed)
-	lower := strings.ToLower(base)
+	// Trailing dots and spaces are dropped by Windows: ".env." is .env there.
+	lower := strings.TrimRight(strings.ToLower(base), ". ")
 	if envTemplates[lower] {
 		return ""
 	}
-	if secretBaseNames[lower] || strings.HasPrefix(lower, ".env.") {
+	if secretBaseNames[lower] || strings.HasPrefix(lower, ".env.") || strings.HasSuffix(lower, ".env") {
 		return "a credential file by name; never followed"
 	}
 	if secretExtensions[strings.ToLower(path.Ext(lower))] {

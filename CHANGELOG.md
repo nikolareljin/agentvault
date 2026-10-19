@@ -45,8 +45,12 @@
   merged keys are fixed in code, not read from the bundle. Referenced scripts
   and config files are staged for review and not written. Startup files,
   credential paths and home-root dotfiles are refused in any letter case.
-- Referenced files that are not prose (scripts, config) are redacted without
-  `--include-secrets`.
+- Referenced files that are not prose (scripts, config) and `~/.claude/hooks/`
+  scripts are redacted without `--include-secrets`. Scripts that
+  `settings.json` runs and that cannot be carried are listed as declined.
+  `*.env` files are refused like `.env`. A symlinked optional file (for
+  example `~/.gemini/GEMINI.md` or `CONVENTIONS.md`) is skipped with a
+  warning instead of failing the export.
 - The plugin inventory drops the user and password from a marketplace URL,
   so `https://token@host/repo` does not carry the token. Only http, https,
   ssh and git URLs with a host are kept, without query or fragment;

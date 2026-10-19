@@ -697,3 +697,69 @@ func TestApplyRefusesUncleanCredentialPaths(t *testing.T) {
 		}
 	}
 }
+
+// A symlinked optional file (a dotfiles link) is skipped with a warning; it
+// must not end the export. Before this change these files were not collected
+// at all, so the export did not fail on them.
+func TestSymlinkedOptionalFilesDoNotAbortExport(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "GEMINI.md"), "g\n")
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "a\n")
+	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "dotfiles", "GEMINI.md"), filepath.Join(home, ".gemini", "GEMINI.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(project, "AGENTS.md"), filepath.Join(project, "CONVENTIONS.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if _, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project}); err != nil {
+		t.Fatalf("export failed on a symlinked optional file: %v", err)
+	}
+}
+
+// Hook scripts are code: redacted without --include-secrets.
+func TestClaudeHookScriptsAreSensitive(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".claude", "hooks", "notify.sh"), "curl https://hooks.example/T0K3N\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "hooks/notify.sh"); a == nil || !a.Redacted {
+		t.Errorf("hooks/notify.sh not redacted: %+v", a)
+	}
+}
+
+// A script settings.json runs that cannot be carried is reported, not dropped.
+func TestSettingsRunScriptsDeclinedAreReported(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	settings := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"~/bin/gone.sh && ~/.ssh/run.sh"}]}]}}`
+	mustWriteFile(t, filepath.Join(home, ".claude", "settings.json"), settings)
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !declinedHas(assets.Declined, "~/bin/gone.sh", DeclinedAbsent) {
+		t.Errorf("~/bin/gone.sh not reported absent: %v", assets.Declined)
+	}
+	if !declinedHas(assets.Declined, "~/.ssh/run.sh", DeclinedByPolicy) {
+		t.Errorf("~/.ssh/run.sh not reported as refused: %v", assets.Declined)
+	}
+}
+
+func TestSecretBearingReasonEnvSuffixAndTrailingDot(t *testing.T) {
+	for _, p := range []string{"prod.env", "deploy/app.env", ".env.", "id_rsa "} {
+		if agent.SecretBearingReason(p) == "" {
+			t.Errorf("%q not flagged", p)
+		}
+	}
+	if r := agent.SecretBearingReason("docs/env.md"); r != "" {
+		t.Errorf("docs/env.md flagged: %s", r)
+	}
+}

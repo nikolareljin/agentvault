@@ -145,7 +145,8 @@ func extraProviderSpecs() []providerFileSpec {
 	return []providerFileSpec{
 		{root: setupAssetRootProviderClaude, rel: "settings.local.json", sensitive: true},
 		{root: setupAssetRootProviderClaude, rel: "output-styles", dir: true},
-		{root: setupAssetRootProviderClaude, rel: "hooks", dir: true},
+		// Hook scripts are code and can hold tokens, like any referenced script.
+		{root: setupAssetRootProviderClaude, rel: "hooks", dir: true, sensitive: true},
 		{root: setupAssetRootProviderCodex, rel: "AGENTS.md"},
 		{root: setupAssetRootProviderCodex, rel: "prompts", dir: true},
 		{root: setupAssetRootProviderGemini, rel: "GEMINI.md"},
@@ -175,6 +176,10 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 			warnings = append(warnings, quietMissingRoots(warns)...)
 			continue
 		}
+		if warn, skip := symlinkedAsset(filepath.Join(base, spec.rel)); skip {
+			warnings = append(warnings, warn)
+			continue
+		}
 		asset, _, err := loadSetupAsset(filepath.Join(base, spec.rel),
 			setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root,
 			filepath.ToSlash(spec.rel), "", spec.sensitive, includeSecrets, true)
@@ -197,6 +202,17 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 		assets = append(assets, *userMCP)
 	}
 	return assets, warnings, nil
+}
+
+// symlinkedAsset reports a symlink where a single optional file is expected.
+// loadSetupAsset refuses symlinks with an error, which would end the whole
+// export over one dotfiles link; these are skipped with a warning instead.
+func symlinkedAsset(path string) (string, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("skipping symlink asset %q; copy its target by hand if you want it", path), true
 }
 
 // quietMissingRoots drops the "not found" note for optional directories. Most
@@ -601,9 +617,20 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		if err != nil {
 			continue
 		}
+		by := "~/" + filepath.ToSlash(mustRel(homeDir, settings.SourcePath))
 		for _, p := range settingsCommandPaths(content, homeDir) {
 			r := resolveHomeReference(homeDir, homeDir, p)
-			if r.abs == "" || r.isDir {
+			shown := "~/" + filepath.ToSlash(mustRel(homeDir, p))
+			switch {
+			case r.absent:
+				declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedAbsent,
+					Reason: fmt.Sprintf("run by %s and not present", by)})
+				continue
+			case r.reason != "":
+				declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedByPolicy,
+					Reason: fmt.Sprintf("run by %s: %s", by, r.reason)})
+				continue
+			case r.isDir:
 				continue
 			}
 			if err := take(r.abs, r.real, maxReferenceDepth); err != nil {
@@ -763,6 +790,10 @@ func collectProjectInstructionExtras(projectDir string, includeSecrets bool) ([]
 		warnings = append(warnings, warns...)
 	}
 	for _, rel := range projectInstructionFiles {
+		if warn, skip := symlinkedAsset(filepath.Join(projectDir, rel)); skip {
+			warnings = append(warnings, warn)
+			continue
+		}
 		asset, _, err := loadSetupAsset(filepath.Join(projectDir, rel), setupAssetKindProjectFile,
 			setupAssetOriginProjectLocal, setupAssetRootProject, rel, rel, false, includeSecrets, true)
 		if err != nil {
