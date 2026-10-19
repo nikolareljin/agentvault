@@ -870,3 +870,35 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 		t.Errorf("import lost this machine's sign-in or the settings: %s", got)
 	}
 }
+
+// A .env or key file inside a tool's own directory, and any file with a
+// second hard link, is redacted without --include-secrets: its name is no
+// proof of what it holds.
+func TestDirSecretsAndHardLinksAreRedacted(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", "agents", "sub", ".env"), "TOKEN=leak1\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "agents", "k.pem"), "leak2\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "agents", "ok.md"), "fine\n")
+	mustWriteFile(t, filepath.Join(project, ".cursor", "rules", ".env"), "leak3\n")
+	mustWriteFile(t, filepath.Join(project, ".env"), "leak4\n")
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "See `hl.md`.\n")
+	if err := os.Link(filepath.Join(project, ".env"), filepath.Join(project, "hl.md")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := append(append([]SetupAsset{}, assets.ProviderFiles...), assets.ProjectFiles...)
+	for _, a := range all {
+		if strings.Contains(string(a.Content), "leak") {
+			t.Errorf("%s %s carried its secret", a.LogicalRoot, a.LogicalPath)
+		}
+	}
+	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "agents/ok.md"); a == nil || !a.ContentPresent {
+		t.Errorf("agents/ok.md not carried: %+v", a)
+	}
+}

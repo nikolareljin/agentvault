@@ -73,11 +73,14 @@ agentvault
 ### From Source
 
 ```bash
-git clone https://github.com/nikolareljin/agentvault.git
+git clone --recursive https://github.com/nikolareljin/agentvault.git
 cd agentvault
-make build
-./agentvault --help
+./dev install       # submodules, git hooks, Go module download; needs Go (see go.mod)
+./dev install-bin   # build and copy the binary to GOBIN, GOPATH/bin or ~/.local/bin
+agentvault --help
 ```
+
+On Windows use `./dev.ps1` with the same verbs (`build bitnet` is Linux and macOS only).
 
 ### Homebrew (macOS)
 
@@ -502,22 +505,29 @@ agentvault session import session.json
 
 ## Development
 
-```bash
-make build          # Build pure-Go binary (no CGo, cross-compilable)
-make test           # Run tests
-make lint           # Check formatting
-make fmt            # Auto-format
-make clean          # Remove built binaries
+`./dev` is the entry point; `make` targets are shims onto it. Run `./dev` for
+the full verb list.
 
-# Embedded inference engine (optional — requires cmake + gcc)
-make build-llama    # Build llama.cpp static library (one-time, ~5 min)
-make build-bitnet   # Build binary with embedded inference → ./agentvault-bitnet
+```bash
+./dev doctor        # what this machine has against what the repo needs
+./dev build         # pure-Go binary ./agentvault (no CGo, cross-compilable)
+./dev test          # go test ./...
+./dev lint          # gofmt check, go vet for this OS, darwin and windows
+./dev format        # gofmt -w
+./dev preflight     # lint, test, govulncheck: run before pushing
+./dev clean         # remove built binaries; vault and config are untouched
+
+# Embedded inference engine (optional, needs cmake and a C++ compiler)
+make build-llama    # llama.cpp static library (one-time, ~5 min)
+./dev build bitnet  # binary with embedded inference: ./agentvault-bitnet
 ```
+
+Machine checks that need a real host are in `tests/machine/`.
 
 ## Security
 
 - **Encryption**: AES-256-GCM with random nonces
-- **Key Derivation**: Argon2id (64MB memory)
+- **Key Derivation**: Argon2id (t=3, 64 MiB, 4 lanes; RFC 9106), parameters stored in a versioned file header. Files from earlier releases still open and are upgraded on the next save (the old vault is kept as `<vault>.v1.bak`); earlier releases cannot open the new format. New vault and bundle passwords need 12 characters.
 - **Storage**: Vault file is mode 0600
 - **API Keys**: Masked in TUI; included in `agentvault export` bundles by default (which are encrypted by default), excluded with `--include-keys=false`
 

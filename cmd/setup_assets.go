@@ -576,6 +576,9 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 			return fmt.Errorf("computing relative path for %q: %w", path, err)
 		}
 		rel = filepath.ToSlash(rel)
+		// A .env or a key file inside a rules or agents directory holds a
+		// secret like any other: redacted without --include-secrets.
+		fileSensitive := sensitive || agent.SecretBearingReason(rel) != ""
 		logicalPath := rel
 		if logicalPrefix != "" {
 			logicalPath = filepath.ToSlash(filepath.Join(logicalPrefix, rel))
@@ -584,7 +587,7 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		if projectPrefix != "" {
 			projectRelative = filepath.ToSlash(filepath.Join(projectPrefix, rel))
 		}
-		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, sensitive, includeSecrets, false)
+		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, fileSensitive, includeSecrets, false)
 		if err != nil {
 			return err
 		}
@@ -640,6 +643,12 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	}
 	if asset.SizeBytes > maxSetupAssetBytes {
 		return asset, fmt.Sprintf("asset %q exceeds %d bytes; exporting metadata only", path, maxSetupAssetBytes), nil
+	}
+	// A hard link has another name that was never checked: notes.md can be
+	// .netrc. Its content is treated as secret.
+	if hardLinkCount(info) > 1 {
+		sensitive = true
+		asset.Sensitive = true
 	}
 
 	data, err := os.ReadFile(path)
