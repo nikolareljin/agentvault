@@ -283,6 +283,11 @@ func classifyReference(root, baseRel, raw string) Reference {
 		ref.Status, ref.Reason = ReferenceRefused, "cannot be expressed relative to the directory"
 		return ref
 	}
+	// Again on the resolved name: a symlink called notes.md can point at .env.
+	if reason := SecretBearingReason(rel); reason != "" {
+		ref.Status, ref.Reason = ReferenceRefused, reason
+		return ref
+	}
 	ref.Rel = filepath.ToSlash(rel)
 	ref.Status = ReferenceTaken
 	return ref
@@ -316,16 +321,18 @@ var (
 func SecretBearingReason(rel string) string {
 	slashed := filepath.ToSlash(rel)
 	for _, seg := range strings.Split(slashed, "/") {
-		if secretDirs[seg] {
+		// Windows drops trailing dots and spaces: ".aws." is .aws there.
+		if secretDirs[strings.TrimRight(strings.ToLower(seg), ". ")] {
 			return "under " + seg + ", which holds credentials"
 		}
 	}
 	base := path.Base(slashed)
-	lower := strings.ToLower(base)
+	// Trailing dots and spaces are dropped by Windows: ".env." is .env there.
+	lower := strings.TrimRight(strings.ToLower(base), ". ")
 	if envTemplates[lower] {
 		return ""
 	}
-	if secretBaseNames[lower] || strings.HasPrefix(lower, ".env.") {
+	if secretBaseNames[lower] || strings.HasPrefix(lower, ".env.") || strings.HasSuffix(lower, ".env") {
 		return "a credential file by name; never followed"
 	}
 	if secretExtensions[strings.ToLower(path.Ext(lower))] {

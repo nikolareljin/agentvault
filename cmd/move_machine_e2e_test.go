@@ -15,7 +15,8 @@ import (
 // project whose instructions name other files, exported; a second home, with
 // a different path and its own login token, importing with
 // --apply-provider-configs and --apply-projects. Every file arrives, every
-// path names the new home, and no secret travels.
+// path names the new home, and no secret travels. Hook scripts stay behind
+// and are reported; TestApplyKeepsExecOnlyForToolHooks covers the execute bit.
 func TestMoveToAnotherMachine(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("paths in this test are POSIX")
@@ -119,8 +120,13 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	if !strings.Contains(settings, "dst-key") {
 		t.Errorf("this machine's token was lost: %s", settings)
 	}
-	if info, err := os.Stat(filepath.Join(dstHome, ".claude", "hooks", "notify.sh")); err != nil || info.Mode().Perm()&0o100 == 0 {
-		t.Errorf("hook script missing or not executable: %v %v", info, err)
+	// Hook scripts are code that can embed tokens and cannot be field-redacted,
+	// so without --include-secrets they stay behind, and import names each one.
+	if _, err := os.Stat(filepath.Join(dstHome, ".claude", "hooks", "notify.sh")); !os.IsNotExist(err) {
+		t.Errorf("hook script carried without --include-secrets: %v", err)
+	}
+	if !strings.Contains(in.String(), "path=hooks/notify.sh") {
+		t.Errorf("import did not report the hook script it left behind:\n%s", in.String())
 	}
 	claudeJSON := read(filepath.Join(dstHome, ".claude.json"))
 	if !strings.Contains(claudeJSON, "b@x") || !strings.Contains(claudeJSON, dstHome+"/bin/fs-mcp") {

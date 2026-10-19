@@ -130,10 +130,11 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
-	extraAssets, extraWarnings, err := collectExtraProviderAssets(homeDir, opts.IncludeSecrets)
+	extraAssets, extraWarnings, extraDeclined, err := collectExtraProviderAssets(homeDir, opts.IncludeSecrets)
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
+	providerDeclined = append(providerDeclined, extraDeclined...)
 	warnings = append(warnings, extraWarnings...)
 	if opts.IncludeMemory {
 		memoryAssets, memoryWarnings, err := collectMemoryAssets(homeDir, opts.IncludeSecrets)
@@ -152,6 +153,9 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
+	referenced, localWarnings, localDeclined = declineLocalFiles(referenced, optedLocalFiles(opts.IncludeLocalFiles))
+	warnings = append(warnings, localWarnings...)
+	providerDeclined = append(providerDeclined, localDeclined...)
 	providerAssets = append(providerAssets, referenced...)
 	providerDeclined = append(providerDeclined, referencedDeclined...)
 	warnings = append(warnings, referencedWarnings...)
@@ -238,6 +242,10 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 	var warnings []string
 	var declinedAssets []DeclinedAsset
 	for _, spec := range specs {
+		if warn, skip := symlinkedAsset(spec.path); skip && spec.optional {
+			warnings = append(warnings, warn)
+			continue
+		}
 		asset, warn, err := loadSetupAsset(spec.path, setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root, spec.logicalPath, "", spec.sensitive, includeSecrets, spec.optional)
 		if err != nil {
 			return nil, warnings, declinedAssets, err
@@ -508,6 +516,10 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	if err != nil {
 		return nil, nil, warnings, projectDeclined, err
 	}
+	// A named .local. file follows the same rule as everywhere else.
+	closure, localWarnings, localDeclined := declineLocalFiles(closure, optedLocalFiles(includeLocal))
+	warnings = append(warnings, localWarnings...)
+	projectDeclined = append(projectDeclined, localDeclined...)
 	projectFiles = append(projectFiles, closure...)
 	projectDeclined = append(projectDeclined, closureDeclined...)
 	warnings = append(warnings, closureWarnings...)
@@ -965,6 +977,15 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		}
 		content := asset.Content
 		perm := os.FileMode(0600)
+		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(asset.LogicalPath, "config.json") {
+			// A bundle is not trusted to replace this machine's sign-in.
+			stripped, _, err := stripCopilotLoginState(content)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				continue
+			}
+			content = keepLocalCopilotLogin(dest, stripped)
+		}
 		mergeKeys := asset.MergeKeys
 		if asset.LogicalRoot == setupAssetRootProviderHome {
 			// Never executable from the home root, and the keys merged into
@@ -1018,24 +1039,28 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
 	}
-	// Checks on the path (settings.json filtering, hooks/ exec) compare the
-	// bundle's spelling, so only the clean spelling is written.
-	clean, err := sanitizeAssetRelativePath(asset.LogicalPath)
+	// The path the bundle gives must already be the clean form, so checks
+	// made on it hold for the file written: "x/../auth.json" is auth.json.
+	rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
 	if err != nil {
 		return "", err
 	}
-	if clean != asset.LogicalPath {
-		return "", fmt.Errorf("%q: not in clean form; refused", asset.LogicalPath)
+	if rel != asset.LogicalPath {
+		return "", fmt.Errorf("%q: not in clean form (%q); refused", asset.LogicalPath, rel)
+	}
+	// Export never carries login tokens; a bundle that does is not trusted
+	// to replace the ones here.
+	if isCredentialFile(rel) {
+		return "", fmt.Errorf("%s: a login token file; sign in on this machine instead", rel)
 	}
 	if asset.LogicalRoot == setupAssetRootProviderHome {
-		// One normalized path for the check and the write.
-		rel, err := homeAssetWritable(asset.LogicalPath)
+		rel, err := homeAssetWritable(rel)
 		if err != nil {
 			return "", err
 		}
 		return safeJoinUnder(homeDir, rel)
 	}
-	return safeJoinUnder(filepath.Join(homeDir, dir), asset.LogicalPath)
+	return safeJoinUnder(filepath.Join(homeDir, dir), rel)
 }
 
 func providerStageDirectoryName(logicalRoot string) (string, bool) {

@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // PluginInventory lists the Claude Code plugins and marketplaces of the
@@ -52,12 +54,12 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 		return nil, err
 	}
 	for name, m := range markets {
-		src := m.Source.Repo
+		src := withoutURLCredentials(m.Source.Repo)
 		if src == "" {
-			src = m.Source.URL
+			src = withoutURLCredentials(m.Source.URL)
 		}
 		if src == "" {
-			src = m.Source.Path
+			src = withoutURLCredentials(m.Source.Path)
 		}
 		inv.Marketplaces = append(inv.Marketplaces, PluginMarketplace{Name: name, Source: src, Kind: m.Source.Source})
 	}
@@ -85,6 +87,49 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 		return nil, nil
 	}
 	return inv, nil
+}
+
+// withoutURLCredentials returns a marketplace source with no credentials in
+// it, or "" when it cannot tell. A private marketplace added as
+// https://token@host/repo would otherwise carry the token into the bundle.
+// It fails closed: a URL must be http, https, ssh or git with a host, and
+// loses its user, query and fragment; an scp form user@host:path keeps
+// host:path only when the user part has no ":"; anything else with an "@"
+// is dropped. owner/repo and local paths pass as they are.
+func withoutURLCredentials(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			return ""
+		}
+		switch strings.ToLower(u.Scheme) {
+		case "http", "https", "ssh", "git":
+		default:
+			return ""
+		}
+		u.User = nil
+		u.RawQuery = ""
+		u.ForceQuery = false
+		u.Fragment = ""
+		u.RawFragment = ""
+		out := u.String()
+		if strings.Contains(out, "@") {
+			return ""
+		}
+		return out
+	}
+	at := strings.LastIndex(raw, "@")
+	if at < 0 {
+		return raw
+	}
+	user, rest := raw[:at], raw[at+1:]
+	if strings.Contains(user, ":") || !strings.Contains(rest, ":") {
+		return ""
+	}
+	return rest
 }
 
 // readJSONIfPresent decodes path into v. A missing file leaves v empty; a file

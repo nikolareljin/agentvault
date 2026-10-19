@@ -62,7 +62,10 @@ var credentialFileNames = map[string]bool{
 }
 
 func isCredentialFile(path string) bool {
-	return credentialFileNames[filepath.Base(path)]
+	// Lower-cased: macOS and Windows file systems ignore case.
+	// Trailing dots and spaces too: Windows drops them, so "auth.json." is
+	// auth.json there.
+	return credentialFileNames[strings.TrimRight(strings.ToLower(filepath.Base(path)), ". ")]
 }
 
 // homeStartupPaths run code at login or shell start, or grant access. The home
@@ -93,9 +96,18 @@ func homeAssetRefusal(rel string) string {
 	if reason := agent.SecretBearingReason(folded); reason != "" {
 		return reason
 	}
+	// Windows drops trailing dots from a segment: ".config/fish." is
+	// .config/fish there.
+	segs := strings.Split(folded, "/")
+	for i, seg := range segs {
+		if seg != "." && seg != ".." {
+			segs[i] = strings.TrimRight(seg, ".")
+		}
+	}
+	trimmed := strings.Join(segs, "/")
 	for _, p := range homeStartupPaths {
 		p = strings.ToLower(p)
-		if folded == p || strings.HasPrefix(folded, p+"/") {
+		if trimmed == p || strings.HasPrefix(trimmed, p+"/") {
 			return "a login or shell startup path; never written from a bundle"
 		}
 	}
@@ -144,7 +156,8 @@ func extraProviderSpecs() []providerFileSpec {
 	return []providerFileSpec{
 		{root: setupAssetRootProviderClaude, rel: "settings.local.json", sensitive: true},
 		{root: setupAssetRootProviderClaude, rel: "output-styles", dir: true},
-		{root: setupAssetRootProviderClaude, rel: "hooks", dir: true},
+		// Hook scripts are code and can hold tokens, like any referenced script.
+		{root: setupAssetRootProviderClaude, rel: "hooks", dir: true, sensitive: true},
 		{root: setupAssetRootProviderCodex, rel: "AGENTS.md"},
 		{root: setupAssetRootProviderCodex, rel: "prompts", dir: true},
 		{root: setupAssetRootProviderGemini, rel: "GEMINI.md"},
@@ -158,9 +171,10 @@ func extraProviderSpecs() []providerFileSpec {
 	}
 }
 
-func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAsset, []string, error) {
+func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAsset, []string, []DeclinedAsset, error) {
 	var assets []SetupAsset
 	var warnings []string
+	var declined []DeclinedAsset
 	for _, spec := range extraProviderSpecs() {
 		base := filepath.Join(homeDir, providerRootDirs[spec.root])
 		if spec.dir {
@@ -168,17 +182,35 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 				setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root,
 				filepath.ToSlash(spec.rel), "", spec.sensitive, includeSecrets)
 			if err != nil {
-				return nil, warnings, err
+				return nil, warnings, declined, err
 			}
 			assets = append(assets, found...)
 			warnings = append(warnings, quietMissingRoots(warns)...)
+			continue
+		}
+		if warn, skip := symlinkedAsset(filepath.Join(base, spec.rel)); skip {
+			warnings = append(warnings, warn)
+			continue
+		}
+		if spec.root == setupAssetRootProviderCopilotCLI && spec.rel == "config.json" {
+			asset, d, warn, err := collectCopilotConfig(filepath.Join(base, spec.rel), includeSecrets)
+			if err != nil {
+				return nil, warnings, declined, err
+			}
+			if warn != "" {
+				warnings = append(warnings, warn)
+			}
+			declined = append(declined, d...)
+			if asset != nil {
+				assets = append(assets, *asset)
+			}
 			continue
 		}
 		asset, _, err := loadSetupAsset(filepath.Join(base, spec.rel),
 			setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root,
 			filepath.ToSlash(spec.rel), "", spec.sensitive, includeSecrets, true)
 		if err != nil {
-			return nil, warnings, err
+			return nil, warnings, declined, err
 		}
 		if !asset.Missing {
 			assets = append(assets, asset)
@@ -187,7 +219,7 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 
 	userMCP, warn, err := collectClaudeUserMCPServers(homeDir, includeSecrets)
 	if err != nil {
-		return nil, warnings, err
+		return nil, warnings, declined, err
 	}
 	if warn != "" {
 		warnings = append(warnings, warn)
@@ -195,7 +227,165 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 	if userMCP != nil {
 		assets = append(assets, *userMCP)
 	}
-	return assets, warnings, nil
+	return assets, warnings, declined, nil
+}
+
+// copilotLoginKeys are the keys of ~/.copilot/config.json that hold the
+// signed-in account and, without a keychain, its tokens. Any key that looks
+// like a token is removed too, at any depth.
+var copilotLoginKeys = map[string]bool{
+	"copilot_tokens": true, "logged_in_users": true, "last_logged_in_user": true,
+}
+
+func isLoginKey(k string) bool {
+	if copilotLoginKeys[strings.ToLower(k)] {
+		return true
+	}
+	l := strings.ToLower(k)
+	// Counts and limits are settings: max_tokens, maxOutputTokens, tokenLimit.
+	n := strings.NewReplacer("_", "", "-", "").Replace(l)
+	// Only as a count: "minted_token" starts with "min" and is a token.
+	if (strings.HasPrefix(n, "max") || strings.HasPrefix(n, "min")) && strings.HasSuffix(n, "tokens") {
+		return false
+	}
+	// A bare "...tokens" suffix is not exempt: access_tokens is a token map.
+	for _, suffix := range []string{"tokenlimit", "tokencount", "maxtokens"} {
+		if strings.HasSuffix(n, suffix) {
+			return false
+		}
+	}
+	for _, w := range []string{"token", "secret", "password", "credential", "oauth"} {
+		if strings.Contains(l, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func stripLoginKeys(v any) (any, int) {
+	n := 0
+	switch t := v.(type) {
+	case map[string]any:
+		for k, inner := range t {
+			if isLoginKey(k) {
+				delete(t, k)
+				n++
+				continue
+			}
+			var m int
+			t[k], m = stripLoginKeys(inner)
+			n += m
+		}
+	case []any:
+		for i := range t {
+			var m int
+			t[i], m = stripLoginKeys(t[i])
+			n += m
+		}
+	}
+	return v, n
+}
+
+// stripCopilotLoginState returns config.json without its login keys and how
+// many were removed. Content that is not a JSON object is an error: it is
+// never carried or written raw.
+func stripCopilotLoginState(raw []byte) ([]byte, int, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil || doc == nil {
+		return nil, 0, fmt.Errorf("not a JSON object")
+	}
+	_, n := stripLoginKeys(doc)
+	out, err := json.MarshalIndent(doc, "", "  ")
+	return out, n, err
+}
+
+// collectCopilotConfig carries ~/.copilot/config.json without its login
+// state, even with --include-secrets: a copied token is a session someone
+// else can use.
+func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []DeclinedAsset, string, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil, nil, "", nil
+	}
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	shown := "~/.copilot/config.json"
+	if !info.Mode().IsRegular() {
+		return nil, nil, fmt.Sprintf("skipping %s: not a regular file", path), nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	data, n, err := stripCopilotLoginState(raw)
+	if err != nil {
+		return nil, []DeclinedAsset{{Path: shown, Category: DeclinedByPolicy,
+			Reason: "not a JSON object; may hold login tokens, so not carried"}}, "", nil
+	}
+	var declined []DeclinedAsset
+	if n > 0 {
+		declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedByPolicy,
+			Reason: fmt.Sprintf("carried in part: %d login key(s) removed; sign in on the other machine", n)})
+	}
+	asset := SetupAsset{
+		Kind:        setupAssetKindProviderFile,
+		Origin:      setupAssetOriginProviderHome,
+		LogicalRoot: setupAssetRootProviderCopilotCLI,
+		LogicalPath: "config.json",
+		SourcePath:  path,
+		Sensitive:   true,
+		SizeBytes:   int64(len(data)),
+	}
+	if !includeSecrets {
+		// Login keys are gone; other secret values are blanked, not the file.
+		out, pointers, ok := redactJSONSecrets(data)
+		if !ok {
+			asset.Redacted = true
+			return &asset, declined, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
+		}
+		data = out
+		asset.RedactedFields = pointers
+		asset.SizeBytes = int64(len(data))
+	}
+	asset.Content = data
+	asset.ContentPresent = true
+	asset.SHA256 = hashSetupAssetContent(data)
+	return &asset, declined, "", nil
+}
+
+// keepLocalCopilotLogin puts this machine's own login keys from the config.json
+// at dest back into incoming, so applying a bundle does not sign anyone out.
+func keepLocalCopilotLogin(dest string, incoming []byte) []byte {
+	existing, err := os.ReadFile(dest)
+	if err != nil {
+		return incoming
+	}
+	var local, doc map[string]json.RawMessage
+	if json.Unmarshal(existing, &local) != nil || json.Unmarshal(incoming, &doc) != nil || doc == nil {
+		return incoming
+	}
+	for k, v := range local {
+		if isLoginKey(k) {
+			doc[k] = v
+		}
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return incoming
+	}
+	return out
+}
+
+// symlinkedAsset reports a symlink where a single optional file is expected.
+// loadSetupAsset refuses symlinks with an error, which would end the whole
+// export over one dotfiles link; these are skipped with a warning instead.
+func symlinkedAsset(path string) (string, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", false
+	}
+	return fmt.Sprintf("skipping symlink asset %q; copy its target by hand if you want it", path), true
 }
 
 // quietMissingRoots drops the "not found" note for optional directories. Most
@@ -409,7 +599,8 @@ func expandHomePath(word, homeDir string) (string, bool) {
 
 // homeRefResult is what became of one path named by a user-level file.
 type homeRefResult struct {
-	abs    string // set when taken
+	abs    string // set when taken; the path as named, under home
+	real   string // the file read: abs with symlinks resolved
 	isDir  bool
 	reason string // set when declined
 	absent bool
@@ -432,10 +623,16 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	if err != nil {
 		realHome = filepath.Clean(homeDir)
 	}
-	if !isUnder(filepath.Clean(homeDir), abs) && !isUnder(realHome, abs) {
-		return homeRefResult{reason: "outside the home directory"}
+	cleanHome := filepath.Clean(homeDir)
+	if !isUnder(cleanHome, abs) {
+		if !isUnder(realHome, abs) {
+			return homeRefResult{reason: "outside the home directory"}
+		}
+		// Named through the resolved home (/private/var/... for /var/...):
+		// the same file, recorded under the home path the bundle uses.
+		abs = filepath.Join(cleanHome, mustRel(realHome, abs))
 	}
-	if reason := homeAssetRefusal(mustRel(homeDir, abs)); reason != "" {
+	if reason := homeReferenceRefusal(mustRel(homeDir, abs)); reason != "" {
 		return homeRefResult{reason: reason}
 	}
 	real, err := filepath.EvalSymlinks(abs)
@@ -446,15 +643,18 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 		return homeRefResult{reason: "resolves outside the home directory"}
 	}
 	// Again on the resolved path: a symlink named notes.md can point at .netrc.
-	if reason := homeAssetRefusal(mustRel(realHome, real)); reason != "" {
+	if reason := homeReferenceRefusal(mustRel(realHome, real)); reason != "" {
 		return homeRefResult{reason: reason}
 	}
+	// Spelled under the home path, so a directory walked from it yields paths
+	// relative to home, and one file has one key however it was named.
+	real = filepath.Join(cleanHome, mustRel(realHome, real))
 	info, err := os.Stat(real)
 	if err != nil {
 		return homeRefResult{absent: true, reason: "named but not present"}
 	}
 	if info.IsDir() {
-		return homeRefResult{abs: abs, isDir: true}
+		return homeRefResult{abs: abs, real: real, isDir: true}
 	}
 	if !info.Mode().IsRegular() {
 		return homeRefResult{reason: "not a regular file"}
@@ -462,7 +662,17 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	if info.Size() > agent.MaxReferenceBytes {
 		return homeRefResult{reason: fmt.Sprintf("%d bytes, over the %d byte ceiling", info.Size(), agent.MaxReferenceBytes)}
 	}
-	return homeRefResult{abs: abs}
+	return homeRefResult{abs: abs, real: real}
+}
+
+// homeReferenceRefusal is homeAssetRefusal plus ~/.claude.json: that file is
+// carried as its mcpServers only, and a reference to it would carry the rest
+// (the signed-in account, every project's history).
+func homeReferenceRefusal(rel string) string {
+	if strings.ToLower(filepath.ToSlash(filepath.Clean(rel))) == ".claude.json" {
+		return "carried as its MCP servers only"
+	}
+	return homeAssetRefusal(rel)
 }
 
 // isRootedPath is an absolute path on any OS. On Windows "/etc/hosts" has no
@@ -506,21 +716,26 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		queue = append(queue, item{s, 0})
 	}
 
-	take := func(abs string, depth int) error {
+	// take carries the file at abs, reading it from real (abs with symlinks
+	// resolved, already checked to stay under home).
+	take := func(abs, real string, depth int) error {
 		abs = filepath.Clean(abs)
-		if have[abs] {
+		real = filepath.Clean(real)
+		if have[abs] || have[real] {
 			return nil
 		}
 		have[abs] = true
+		have[real] = true
 		rel, err := filepath.Rel(homeDir, abs)
 		if err != nil {
 			return nil
 		}
 		// Prose is carried as is. Anything else a reference reaches (a script,
 		// a config file) can hold a secret, so it is redacted without
-		// --include-secrets, like every other settings file.
-		asset, warn, err := loadSetupAsset(abs, setupAssetKindProviderFile, setupAssetOriginProviderHome,
-			setupAssetRootProviderHome, filepath.ToSlash(rel), "", !isProseFile(abs), includeSecrets, true)
+		// --include-secrets, like every other settings file. Both the name and
+		// the target count: notes.md can be a symlink to a JSON config.
+		asset, warn, err := loadSetupAsset(real, setupAssetKindProviderFile, setupAssetOriginProviderHome,
+			setupAssetRootProviderHome, filepath.ToSlash(rel), "", !isProseFile(abs) || !isProseFile(real), includeSecrets, true)
 		if err != nil {
 			return err
 		}
@@ -549,7 +764,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				}
 				return nil
 			}
-			if d.Type()&os.ModeSymlink != 0 || homeAssetRefusal(mustRel(homeDir, p)) != "" {
+			if d.Type()&os.ModeSymlink != 0 || homeReferenceRefusal(mustRel(homeDir, p)) != "" {
 				return nil
 			}
 			if n >= maxDirReferenceFiles {
@@ -566,7 +781,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				return nil
 			}
 			n++
-			return take(p, depth)
+			return take(p, p, depth)
 		})
 	}
 
@@ -581,12 +796,23 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		if err != nil {
 			continue
 		}
+		by := "~/" + filepath.ToSlash(mustRel(homeDir, settings.SourcePath))
 		for _, p := range settingsCommandPaths(content, homeDir) {
 			r := resolveHomeReference(homeDir, homeDir, p)
-			if r.abs == "" || r.isDir {
+			shown := "~/" + filepath.ToSlash(mustRel(homeDir, p))
+			switch {
+			case r.absent:
+				declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedAbsent,
+					Reason: fmt.Sprintf("run by %s and not present", by)})
+				continue
+			case r.reason != "":
+				declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedByPolicy,
+					Reason: fmt.Sprintf("run by %s: %s", by, r.reason)})
+				continue
+			case r.isDir:
 				continue
 			}
-			if err := take(r.abs, maxReferenceDepth); err != nil {
+			if err := take(r.abs, r.real, maxReferenceDepth); err != nil {
 				return nil, nil, warnings, err
 			}
 		}
@@ -607,11 +833,11 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				declined = append(declined, DeclinedAsset{Path: raw, Category: DeclinedByPolicy,
 					Reason: fmt.Sprintf("named by %s: %s", by, r.reason)})
 			case r.isDir:
-				if err := takeDir(r.abs, by, cur.depth); err != nil {
+				if err := takeDir(r.real, by, cur.depth); err != nil {
 					return nil, nil, warnings, err
 				}
 			default:
-				if err := take(r.abs, cur.depth); err != nil {
+				if err := take(r.abs, r.real, cur.depth); err != nil {
 					return nil, nil, warnings, err
 				}
 			}
@@ -743,6 +969,10 @@ func collectProjectInstructionExtras(projectDir string, includeSecrets bool) ([]
 		warnings = append(warnings, warns...)
 	}
 	for _, rel := range projectInstructionFiles {
+		if warn, skip := symlinkedAsset(filepath.Join(projectDir, rel)); skip {
+			warnings = append(warnings, warn)
+			continue
+		}
 		asset, _, err := loadSetupAsset(filepath.Join(projectDir, rel), setupAssetKindProjectFile,
 			setupAssetOriginProjectLocal, setupAssetRootProject, rel, rel, false, includeSecrets, true)
 		if err != nil {
@@ -786,9 +1016,11 @@ func collectProjectReferenceClosure(projectDir string, seeds []SetupAsset, inclu
 		if isProjectRepoScopeSetting(rel) {
 			return nil
 		}
+		// Not prose (a script, a config file): redacted without
+		// --include-secrets, as at user scope.
 		asset, warn, err := loadSetupAsset(filepath.Join(projectDir, filepath.FromSlash(rel)),
 			setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject,
-			rel, rel, false, includeSecrets, true)
+			rel, rel, !isProseFile(rel), includeSecrets, true)
 		if err != nil {
 			return err
 		}

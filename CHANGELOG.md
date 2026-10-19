@@ -25,7 +25,8 @@
   with secret-shaped values under neutral keys (`--token x` in `args` or a command,
   `X-API-Key: x` header arguments, URL credentials, known token prefixes) is redacted whole.
 - The execute bit travels for a tool's own `hooks/` scripts, so a hook still
-  runs after import.
+  runs after import. The scripts travel only with `--include-secrets`;
+  without it import names each one it left behind.
 - Import leaves out Claude permissions that let any program run without
   asking (`Bash(bash:*)`, `Bash(python3:*)`, `Bash(*)` and the like) and
   names each one. Only a plain command line is kept: literal words, no
@@ -65,14 +66,30 @@
   `.gnupg`, `.aws`, `.kube`, `.docker` or `.azure`. Before, an instruction
   file that said "copy `.env.example` to `.env`" pulled `.env` into the vault.
   The check also runs on a reference's resolved path, so a symlink named
-  `notes.md` that points at `.netrc` is refused.
+  `notes.md` that points at `.netrc` is refused. Directory names (`.SSH`)
+  and token file names (`Auth.json`) match in any letter case. A reference
+  to `~/.claude.json` is declined: that file travels as `mcpServers` only.
+- A referenced file is judged by its name and by its symlink target, at user
+  and at project scope. A `.local.` file named by an instruction file stays
+  behind unless named with `--include-local`. Project files named by
+  instructions that are not prose are redacted without `--include-secrets`.
 - Outside the tools' own directories, import writes back only prose files
   (0600, never executable) and the `mcpServers` key of `~/.claude.json`. The
   merged keys are fixed in code, not read from the bundle. Referenced scripts
   and config files are staged for review and not written. Startup files,
   credential paths and home-root dotfiles are refused in any letter case.
-- Referenced files that are not prose (scripts, config) are redacted without
-  `--include-secrets`.
+- Referenced files that are not prose (scripts, config) and `~/.claude/hooks/`
+  scripts are redacted without `--include-secrets`. Scripts that
+  `settings.json` runs and that cannot be carried are listed as declined.
+  `*.env` files are refused like `.env`. A symlinked optional file (for
+  example `~/.gemini/GEMINI.md`, `~/.claude/settings.json` or
+  `CONVENTIONS.md`) is skipped with a warning instead of failing the export.
+  Credential and startup directories match with trailing dots and spaces
+  too (`~/.aws./config`), which Windows drops.
+- The plugin inventory drops the user and password from a marketplace URL,
+  so `https://token@host/repo` does not carry the token. Only http, https,
+  ssh and git URLs with a host are kept, without query or fragment;
+  `user@host:path` keeps `host:path`; any other source with an `@` is dropped.
 - Plugin install commands are printed only for IDs and sources that cannot
   carry shell syntax. Anything else is printed quoted, as a comment.
 
@@ -83,7 +100,16 @@
   carried. They travel with the repository. Before, `.claude/settings.json`
   was carried.
 - Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
-  `google_accounts.json`) are never collected, even with `--include-secrets`.
+  `google_accounts.json`) are never collected, even with `--include-secrets`,
+  and import never writes one from a bundle, under any spelling
+  (`x/../auth.json`, `auth.json/.`, `Auth.json.`). Import takes provider
+  paths only in clean form.
+- `~/.copilot/config.json` travels without its login keys (`copilot_tokens`,
+  `logged_in_users`, `last_logged_in_user`, any key named like a token
+  except counts and limits such as `max_tokens` and `tokenLimit`),
+  even with `--include-secrets`. The export lists it as carried in part and
+  skips it when it is not JSON. Import strips the same keys from a bundle and
+  keeps this machine's sign-in.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key
   (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
