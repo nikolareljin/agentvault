@@ -43,6 +43,10 @@ func TestReadInstructionOnDiskRefusesEscape(t *testing.T) {
 	if !errors.Is(err, errUnsafeInstructionFilename) {
 		t.Fatalf("err = %v, want errUnsafeInstructionFilename", err)
 	}
+	// An unplaced entry is "not on disk", not refused.
+	if _, err := readInstructionOnDisk(dir, agent.InstructionFile{Name: "x"}); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty filename: err = %v, want os.ErrNotExist", err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("ok"), 0o644); err != nil {
 		t.Fatal(err)
 	}

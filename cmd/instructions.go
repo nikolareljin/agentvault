@@ -1159,6 +1159,10 @@ func readInstructionOnDisk(dir string, inst agent.InstructionFile) ([]byte, erro
 	if err := agent.ValidateInstructionFilename(inst.Filename); err != nil {
 		return nil, fmt.Errorf("%w: %v", errUnsafeInstructionFilename, err)
 	}
+	if strings.TrimSpace(inst.Filename) == "" {
+		// Not placed yet: nothing on disk to compare, not an unsafe name.
+		return nil, os.ErrNotExist
+	}
 	p, err := safeJoinUnder(dir, inst.Filename)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errUnsafeInstructionFilename, err)
