@@ -38,6 +38,10 @@ jobs:
   # difference is that the preset's test default runs `go mod download` first.
   go:
     uses: nikolareljin/ci-helpers/.github/workflows/go.yml@production
+    with:
+      # Matches go.mod. The preset defaults to 1.25 with GOTOOLCHAIN=local and does
+      # not read go.mod yet, so without this the build fails on `go >= 1.26.0`.
+      go_version: "1.26"
 
   # Windows leg: release.yml ships windows/amd64 binaries. Same preset, only
   # the runner differs.
@@ -45,3 +49,12 @@ jobs:
     uses: nikolareljin/ci-helpers/.github/workflows/go.yml@production
     with:
       runner: windows-latest
+      go_version: "1.26"
+
+  # macOS leg: release.yml ships darwin/amd64 and darwin/arm64 binaries and
+  # Homebrew installs them, so the tests run there too.
+  go-macos:
+    uses: nikolareljin/ci-helpers/.github/workflows/go.yml@production
+    with:
+      runner: macos-latest
+      go_version: "1.26"

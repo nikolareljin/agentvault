@@ -891,3 +891,28 @@ func TestRefusalNeverReusesSelectedForAPlainString(t *testing.T) {
 		t.Error(`a refusal payload puts a string under "selected"; use "agent" instead`)
 	}
 }
+
+// A body over the cap is refused before it is decoded into memory.
+func TestServeMuxRejectsOversizedBody(t *testing.T) {
+	v := testServeVault(t)
+	srv := httptest.NewServer(newServeMux(v, "/tmp/vault.enc", "secret-key"))
+	defer srv.Close()
+
+	huge := `{"prompt":"` + strings.Repeat("a", maxRequestBodyBytes+1) + `"}`
+	for _, path := range []string{"/api/v1/route", "/api/v1/prompt"} {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, strings.NewReader(huge))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", "secret-key")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want %d", path, resp.StatusCode, http.StatusBadRequest)
+		}
+	}
+}

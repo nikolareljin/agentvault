@@ -859,7 +859,7 @@ func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
 		if err != nil {
 			return applied, fmt.Errorf("resolving target asset path: %w", err)
 		}
-		if err := copyRegularFile(srcPath, destPath, 0644); err != nil {
+		if err := copyRegularFile(srcPath, targetDir, destPath, 0644); err != nil {
 			return applied, fmt.Errorf("copying staged project asset %q: %w", rel, err)
 		}
 		applied++
@@ -885,7 +885,7 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 			continue
 		}
-		if err := ensureNoSymlinkPath(filepath.Dir(dest)); err != nil {
+		if err := ensureNoSymlinkBelow(homeDir, filepath.Dir(dest)); err != nil {
 			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 			continue
 		}
@@ -928,7 +928,7 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			}
 			content = merged
 		}
-		if err := writeRegularFileAtomic(dest, content, perm); err != nil {
+		if err := writeRegularFileAtomic(homeDir, dest, content, perm); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
 		}
 		applied++
@@ -1023,60 +1023,6 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 	return filepath.ToSlash(cleaned), nil
 }
 
-func ensureNoSymlinkPath(path string) error {
-	if path == "" {
-		return nil
-	}
-	cleaned := filepath.Clean(path)
-	sep := string(filepath.Separator)
-	volume := filepath.VolumeName(cleaned)
-
-	var parts []string
-	var current string
-
-	if filepath.IsAbs(cleaned) {
-		if volume != "" {
-			current = volume + sep
-			rest := strings.TrimPrefix(cleaned[len(volume):], sep)
-			if rest == "" {
-				return nil
-			}
-			parts = strings.Split(rest, sep)
-		} else {
-			current = sep
-			rest := strings.TrimPrefix(cleaned, sep)
-			if rest == "" {
-				return nil
-			}
-			parts = strings.Split(rest, sep)
-		}
-	} else {
-		parts = strings.Split(cleaned, sep)
-		if len(parts) == 0 {
-			return nil
-		}
-		current = "."
-	}
-
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("destination directory contains a symlink: %q", current)
-		}
-	}
-	return nil
-}
-
 func replaceRegularFile(tmpPath string, destPath string) error {
 	err := renameFile(tmpPath, destPath)
 	if err == nil {
@@ -1105,9 +1051,11 @@ func replaceRegularFile(tmpPath string, destPath string) error {
 	return nil
 }
 
-func writeRegularFileAtomic(destPath string, content []byte, perm os.FileMode) error {
+// writeRegularFileAtomic writes destPath, refusing symlinks in the path below
+// root. root and its ancestors are trusted (macOS /var -> /private/var).
+func writeRegularFileAtomic(root string, destPath string, content []byte, perm os.FileMode) error {
 	destDir := filepath.Dir(destPath)
-	if err := ensureNoSymlinkPath(destDir); err != nil {
+	if err := ensureNoSymlinkBelow(root, destDir); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -1148,7 +1096,7 @@ func writeRegularFileAtomic(destPath string, content []byte, perm os.FileMode) e
 	return nil
 }
 
-func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
+func copyRegularFile(srcPath string, root string, destPath string, perm os.FileMode) error {
 	src, err := os.Open(srcPath)
 	if err != nil {
 		return err
@@ -1164,7 +1112,7 @@ func copyRegularFile(srcPath string, destPath string, perm os.FileMode) error {
 	}
 
 	destDir := filepath.Dir(destPath)
-	if err := ensureNoSymlinkPath(destDir); err != nil {
+	if err := ensureNoSymlinkBelow(root, destDir); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {

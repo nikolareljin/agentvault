@@ -61,6 +61,10 @@ type tailBuffer struct {
 	buf   []byte
 }
 
+// maxErrorBodyBytes caps how much of a failed provider response is read
+// into an error message.
+const maxErrorBodyBytes = 4096
+
 func newTailBuffer(limit int) *tailBuffer {
 	if limit <= 0 {
 		limit = streamCaptureLimitBytes
@@ -665,7 +669,7 @@ func validateOllamaEndpoint(baseURL string, timeout time.Duration, operationName
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return fmt.Errorf("%s failed (%d): %s", operationName, resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return nil
@@ -701,7 +705,7 @@ func executeOllamaPrompt(ctx context.Context, a agent.Agent, prompt string, time
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return promptResult{}, fmt.Errorf("ollama error %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 
@@ -756,7 +760,7 @@ func executeOpenAIPrompt(ctx context.Context, a agent.Agent, prompt string, time
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return promptResult{}, fmt.Errorf("openai error %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	var out struct {
@@ -805,7 +809,7 @@ func validateOpenAIEndpoint(baseURL, apiKey string, timeout time.Duration) error
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return fmt.Errorf("openai validation failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	return nil

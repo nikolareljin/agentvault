@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -105,7 +106,7 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("create download request: %w", err)
 	}
-	resp, err := http.DefaultClient.Do(dlReq)
+	resp, err := modelDownloadClient.Do(dlReq)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -115,7 +116,12 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	}
 
 	tmp := destPath + ".part"
-	f, err := os.Create(tmp)
+	// A leftover .part (from an older run, possibly 0644, or a planted
+	// symlink) is removed so O_EXCL creates a fresh 0600 file.
+	if err := os.Remove(tmp); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove stale temp file: %w", err)
+	}
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
@@ -129,7 +135,10 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 		os.Remove(tmp)
 		return fmt.Errorf("write model: %w", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("write model: %w", err)
+	}
 	if showProgress {
 		fmt.Fprintln(cmd.OutOrStdout())
 	}
@@ -144,15 +153,28 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	}
 
 	if err := os.Rename(tmp, destPath); err != nil {
+		os.Remove(tmp)
 		return fmt.Errorf("finalize model: %w", err)
 	}
 
-	info, _ := os.Stat(destPath)
-	fmt.Fprintf(cmd.OutOrStdout(), "\ndownloaded: %s (%s)\n", destPath, formatBytes(info.Size()))
+	size := "unknown size"
+	if info, err := os.Stat(destPath); err == nil {
+		size = formatBytes(info.Size())
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\ndownloaded: %s (%s)\n", destPath, size)
 	fmt.Fprintf(cmd.OutOrStdout(), "SHA256:     %s\n", got)
 	fmt.Fprintf(cmd.OutOrStdout(), "use with:   --llm-router-model-path %s\n", destPath)
 	return nil
 }
+
+// modelDownloadClient bounds the wait for response headers. The body is a
+// multi-GB model, so there is no whole-request timeout; the command context
+// cancels it.
+var modelDownloadClient = func() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.ResponseHeaderTimeout = 60 * time.Second
+	return &http.Client{Transport: t}
+}()
 
 func defaultModelDir() string {
 	// XDG Base Directory Specification: use XDG_DATA_HOME when set, otherwise
