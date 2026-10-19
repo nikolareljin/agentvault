@@ -927,6 +927,11 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
 	}
+	// Export never carries login tokens; a bundle that does is not trusted
+	// to replace the ones here.
+	if isCredentialFile(asset.LogicalPath) {
+		return "", fmt.Errorf("%s: a login token file; sign in on this machine instead", asset.LogicalPath)
+	}
 	if asset.LogicalRoot == setupAssetRootProviderHome {
 		// One normalized path for the check and the write.
 		rel, err := homeAssetWritable(asset.LogicalPath)

@@ -635,3 +635,43 @@ func TestPluginInventoryStripsURLCredentials(t *testing.T) {
 		t.Errorf("source not kept without its credentials: %+v", inv)
 	}
 }
+
+func TestWithoutURLCredentials(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"owner/repo", "owner/repo"},
+		{"/home/me/market", "/home/me/market"},
+		{"https://github.com/o/r.git", "https://github.com/o/r.git"},
+		{"https://x-access-token:tok@github.com/o/r.git", "https://github.com/o/r.git"},
+		{"https://github.com/o/r.git?token=tok#frag", "https://github.com/o/r.git"},
+		{"ssh://git@host/o/r", "ssh://host/o/r"},
+		{"git@github.com:o/r.git", "github.com:o/r.git"},
+		{"user:tok@host:path", ""},
+		{"https:tok@host", ""},
+		{"file://tok@host/x", ""},
+		{"https:///nohost", ""},
+		{"tok@host", ""},
+		{"", ""},
+	} {
+		if got := withoutURLCredentials(c.in); got != c.want {
+			t.Errorf("withoutURLCredentials(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Login token files are never written from a bundle, under any tool root: a
+// bundle carrying someone else's token would sign this machine in as them.
+func TestApplyNeverWritesCredentialFiles(t *testing.T) {
+	home := t.TempDir()
+	assets := []SetupAsset{
+		{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: ".credentials.json", ContentPresent: true, Content: []byte("{}")},
+		{LogicalRoot: setupAssetRootProviderCodex, LogicalPath: "Auth.json", ContentPresent: true, Content: []byte("{}")},
+		{LogicalRoot: setupAssetRootProviderGemini, LogicalPath: "oauth_creds.json", ContentPresent: true, Content: []byte("{}")},
+	}
+	applied, _, err := applyProviderAssetsToSystem(home, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != 0 {
+		t.Errorf("applied = %d credential files, want 0", applied)
+	}
+}

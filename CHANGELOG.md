@@ -48,7 +48,9 @@
 - Referenced files that are not prose (scripts, config) are redacted without
   `--include-secrets`.
 - The plugin inventory drops the user and password from a marketplace URL,
-  so `https://token@host/repo` does not carry the token.
+  so `https://token@host/repo` does not carry the token. Only http, https,
+  ssh and git URLs with a host are kept, without query or fragment;
+  `user@host:path` keeps `host:path`; any other source with an `@` is dropped.
 - Plugin install commands are printed only for IDs and sources that cannot
   carry shell syntax. Anything else is printed quoted, as a comment.
 
@@ -59,7 +61,8 @@
   carried. They travel with the repository. Before, `.claude/settings.json`
   was carried.
 - Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
-  `google_accounts.json`) are never collected, even with `--include-secrets`.
+  `google_accounts.json`) are never collected, even with `--include-secrets`,
+  and import never writes one from a bundle.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key
   (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
