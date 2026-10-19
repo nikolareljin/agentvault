@@ -19,6 +19,9 @@ jobs:
     uses: nikolareljin/ci-helpers/.github/workflows/go-release.yml@production
     with:
       bin_name: agentvault
+      # Matches go.mod. The preset defaults to 1.25 with GOTOOLCHAIN=local and does
+      # not read go.mod yet, so without this the build fails on `go >= 1.26.0`.
+      go_version: "1.26"
       build_targets: "linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64"
       ldflags: >-
         -s -w

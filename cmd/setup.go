@@ -677,12 +677,8 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 				continue
 			}
 		}
-		p := filepath.Join(dir, inst.Filename)
-		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-			return fmt.Errorf("creating directory for %s: %w", inst.Filename, err)
-		}
-		if err := os.WriteFile(p, []byte(inst.Content), 0644); err != nil {
-			return fmt.Errorf("writing %s: %w", p, err)
+		if err := writeInstructionFile(dir, inst); err != nil {
+			return err
 		}
 		fmt.Printf("  Pushed %s -> %s\n", inst.Name, inst.Filename)
 		pushed++

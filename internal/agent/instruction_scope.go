@@ -95,6 +95,29 @@ func ValidateInstructionScope(inst InstructionFile) error {
 	if err := ValidateScopePattern(inst.Scope, inst.DirectoryPattern); err != nil {
 		return fmt.Errorf("instruction %q: %w", inst.Name, err)
 	}
+	if err := ValidateInstructionFilename(inst.Filename); err != nil {
+		return fmt.Errorf("instruction %q: %w", inst.Name, err)
+	}
+	return nil
+}
+
+// ValidateInstructionFilename rejects filenames that would be written outside
+// the target directory on push or apply. Empty is allowed (not yet placed).
+func ValidateInstructionFilename(name string) error {
+	if name == "" {
+		return nil
+	}
+	if strings.ContainsRune(name, 0) {
+		return fmt.Errorf("filename must not contain null bytes")
+	}
+	slashed := strings.ReplaceAll(name, "\\", "/")
+	if path.IsAbs(slashed) || filepath.IsAbs(name) || filepath.VolumeName(name) != "" || strings.Contains(slashed, ":") {
+		return fmt.Errorf("filename %q must be relative", name)
+	}
+	cleaned := path.Clean(slashed)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return fmt.Errorf("filename %q escapes the target directory", name)
+	}
 	return nil
 }
 
