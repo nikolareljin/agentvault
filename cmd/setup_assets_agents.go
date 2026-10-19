@@ -666,10 +666,28 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 // carried as its mcpServers only, and a reference to it would carry the rest
 // (the signed-in account, every project's history).
 func homeReferenceRefusal(rel string) string {
-	if strings.ToLower(filepath.ToSlash(filepath.Clean(rel))) == ".claude.json" {
+	folded := strings.ToLower(filepath.ToSlash(filepath.Clean(rel)))
+	if folded == ".claude.json" {
 		return "carried as its MCP servers only"
 	}
+	for _, p := range agentStatePaths {
+		if folded == p || strings.HasPrefix(folded, p+"/") {
+			return "agent memory, history or session state; memory travels only with --include-memory"
+		}
+	}
 	return homeAssetRefusal(rel)
+}
+
+// agentStatePaths are what the tools write while they run: memory, session
+// transcripts, history, caches. A reference such as `~/.claude/projects/`
+// would carry them; memory is opt-in and the rest is never setup.
+var agentStatePaths = []string{
+	".claude/projects", ".claude/todos", ".claude/shell-snapshots", ".claude/statsig",
+	".claude/file-history", ".claude/history.jsonl", ".claude/session-env", ".claude/ide",
+	".claude/debug", ".claude/plugins",
+	".codex/sessions", ".codex/memories", ".codex/history.jsonl", ".codex/log",
+	".gemini/tmp", ".gemini/history",
+	".copilot/session-state", ".copilot/history-session-state", ".copilot/logs",
 }
 
 // isRootedPath is an absolute path on any OS. On Windows "/etc/hosts" has no
@@ -756,7 +774,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				return nil
 			}
 			if d.IsDir() {
-				if p != dir && skipReferenceDir(d.Name()) {
+				if p != dir && (skipReferenceDir(d.Name()) || homeReferenceRefusal(mustRel(homeDir, p)) != "") {
 					return filepath.SkipDir
 				}
 				return nil

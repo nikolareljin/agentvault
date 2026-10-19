@@ -902,3 +902,29 @@ func TestDirSecretsAndHardLinksAreRedacted(t *testing.T) {
 		t.Errorf("agents/ok.md not carried: %+v", a)
 	}
 }
+
+// A reference to an agent's state directory carries neither memory (opt-in)
+// nor session transcripts.
+func TestHomeReferenceNeverCarriesAgentState(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p", "memory", "m.md"), "MEMORY\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p", "s.jsonl"), "TRANSCRIPT\n")
+	mustWriteFile(t, filepath.Join(home, ".codex", "sessions", "a.jsonl"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"),
+		"See `~/.claude/projects/`, `~/.codex/sessions/` and `~/.Claude/projects/p/memory/m.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		for _, bad := range []string{"MEMORY", "TRANSCRIPT", "SESSION"} {
+			if strings.Contains(string(a.Content), bad) {
+				t.Errorf("%s %s carried agent state", a.LogicalRoot, a.LogicalPath)
+			}
+		}
+	}
+	if !declinedHas(assets.Declined, "~/.claude/projects/", DeclinedByPolicy) {
+		t.Errorf("state directory reference not declined: %v", assets.Declined)
+	}
+}
