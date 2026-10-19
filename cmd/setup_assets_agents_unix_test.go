@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // A pipe or an unreadable file in a directory a note names is left behind;
@@ -68,5 +69,35 @@ func TestToolDirOddEntriesDoNotAbortExport(t *testing.T) {
 	}
 	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "agents/ok.md"); a == nil || !a.ContentPresent {
 		t.Errorf("agents/ok.md not carried: %+v", a)
+	}
+}
+
+// A pipe swapped in after the checks does not block the export.
+func TestPipeSwappedInAfterCheckDoesNotBlock(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "notes.md")
+	mustWriteFile(t, p, "plain\n")
+	afterAssetStat = func(string) {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(p, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { afterAssetStat = nil })
+	done := make(chan SetupAsset, 1)
+	go func() {
+		a, _, _ := loadSetupAsset(p, setupAssetKindProviderFile, setupAssetOriginProviderHome,
+			setupAssetRootProviderHome, "notes.md", "", false, true, false)
+		done <- a
+	}()
+	select {
+	case a := <-done:
+		if a.ContentPresent {
+			t.Errorf("pipe read as content: %+v", a)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("blocked on a pipe swapped in after the checks")
 	}
 }

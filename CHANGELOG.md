@@ -78,6 +78,9 @@
 - A pipe, socket or a name import would refuse (`backup~1.md`, `aux.md`)
   inside a carried tool directory is skipped with a warning instead of
   ending the export.
+- An asset is read through the descriptor that was checked, to at most its
+  cap: a file swapped, grown past the cap or replaced by a pipe after its
+  checks is not exported, and the read does not block.
 - Vault and bundle files carry their key-derivation parameters in a versioned
   header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
   Before, t=1 was fixed in the code. The header is authenticated with the

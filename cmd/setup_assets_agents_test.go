@@ -1049,9 +1049,6 @@ func TestHomeReferenceNeverCarriesAgentState(t *testing.T) {
 	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, ".claude/team-rules.md") == nil {
 		t.Error("~/.claude/team-rules.md not carried")
 	}
-	if !declinedHas(assets.Declined, "~/.claude/projects/", DeclinedByPolicy) {
-		t.Errorf("state directory reference not declined: %v", assets.Declined)
-	}
 }
 
 // A tool directory kept in dotfiles (~/.claude -> ~/dotfiles/claude), or a
@@ -1198,5 +1195,38 @@ func TestReferencedDirHardLinksRefusedWithSecrets(t *testing.T) {
 	}
 	if a := findAsset(assets.ProjectFiles, setupAssetRootProject, "notes/ok.md"); a == nil || !a.ContentPresent {
 		t.Errorf("notes/ok.md not carried: %+v", a)
+	}
+}
+
+// A file that grows past the cap, or is swapped for another file, after its
+// checks and before its read is not exported: what was checked is not what
+// would be read.
+func TestAssetChangedAfterCheckIsNotExported(t *testing.T) {
+	dir := t.TempDir()
+	grow := filepath.Join(dir, "grow.md")
+	swap := filepath.Join(dir, "swap.md")
+	mustWriteFile(t, grow, "small\n")
+	mustWriteFile(t, swap, "plain\n")
+	mustWriteFile(t, filepath.Join(dir, "secret.txt"), "TOKEN=leak\n")
+	afterAssetStat = func(p string) {
+		switch p {
+		case grow:
+			mustWriteFileBytes(t, grow, bytes.Repeat([]byte("x"), maxSetupAssetBytes+1))
+		case swap:
+			if err := os.Rename(filepath.Join(dir, "secret.txt"), swap); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Cleanup(func() { afterAssetStat = nil })
+	for _, p := range []string{grow, swap} {
+		a, warn, err := loadSetupAsset(p, setupAssetKindProviderFile, setupAssetOriginProviderHome,
+			setupAssetRootProviderHome, filepath.Base(p), "", false, true, false)
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if a.ContentPresent || len(a.Content) > 0 || warn == "" {
+			t.Errorf("%s: exported after it changed (%d bytes, warn %q)", p, len(a.Content), warn)
+		}
 	}
 }

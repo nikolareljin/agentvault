@@ -335,9 +335,12 @@ func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []Decl
 	if !info.Mode().IsRegular() {
 		return nil, nil, fmt.Sprintf("skipping %s: not a regular file", path), nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, changed, err := readStattedFile(path, info, maxSetupAssetBytes)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	if changed != "" {
+		return nil, nil, fmt.Sprintf("skipping %s: %s", path, changed), nil
 	}
 	data, n, err := stripCopilotLoginState(raw)
 	if err != nil {
@@ -452,9 +455,14 @@ func collectClaudeUserMCPServers(homeDir string, includeSecrets bool) (*SetupAss
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Sprintf("skipping %s: not a regular file", path), nil
 	}
-	raw, err := os.ReadFile(path)
+	// ~/.claude.json grows with project history; the cap is for a file
+	// swapped or grown while read, not for its normal size.
+	raw, changed, err := readStattedFile(path, info, 64<<20)
 	if err != nil {
 		return nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	if changed != "" {
+		return nil, fmt.Sprintf("skipping %s: %s", path, changed), nil
 	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -953,8 +961,12 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		}
 		// Read from disk, not from the asset: without --include-secrets the
 		// settings file is redacted, and the scripts it runs are not secrets.
-		content, err := os.ReadFile(settings.SourcePath)
-		if err != nil {
+		info, err := os.Lstat(settings.SourcePath)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		content, changed, err := readStattedFile(settings.SourcePath, info, maxSetupAssetBytes)
+		if err != nil || changed != "" {
 			continue
 		}
 		by := "~/" + filepath.ToSlash(mustRel(homeDir, settings.SourcePath))

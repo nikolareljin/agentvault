@@ -664,9 +664,18 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		asset.Sensitive = true
 	}
 
-	data, err := os.ReadFile(path)
+	if afterAssetStat != nil {
+		afterAssetStat(path)
+	}
+	data, changed, err := readStattedFile(path, info, maxSetupAssetBytes)
 	if err != nil {
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
+	}
+	if changed != "" {
+		// Swapped or grown since the checks above: what those checks judged
+		// is not what would be read.
+		asset.Redacted = true
+		return asset, fmt.Sprintf("asset %q %s; not exported", path, changed), nil
 	}
 	asset.SizeBytes = int64(len(data))
 	if hardLinked && !includeSecrets {
@@ -681,6 +690,37 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	asset.ContentPresent = true
 	asset.Content = data
 	return asset, "", nil
+}
+
+// afterAssetStat is a test seam: it runs between the checks on a file and
+// the read of it.
+var afterAssetStat func(path string)
+
+// readStattedFile reads path through one open descriptor, and only when that
+// descriptor is still the regular file info described, read to at most max
+// bytes. changed says why not, when the file was swapped or grew past max
+// after info was taken. The open does not block on a pipe swapped in.
+func readStattedFile(path string, info os.FileInfo, max int64) ([]byte, string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|openNonBlock, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	got, err := f.Stat()
+	if err != nil {
+		return nil, "", err
+	}
+	if !got.Mode().IsRegular() || !os.SameFile(info, got) {
+		return nil, "changed after it was checked", nil
+	}
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Sprintf("grew past %d bytes while read", max), nil
+	}
+	return data, "", nil
 }
 
 func hashSetupAssetContent(data []byte) string {
