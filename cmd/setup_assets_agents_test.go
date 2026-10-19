@@ -291,7 +291,7 @@ func TestPluginInventoryAndInstallCommands(t *testing.T) {
 	for _, want := range []string{
 		"claude plugin marketplace add anthropics/claude-plugins-official",
 		"claude plugin install superpowers@official",
-		"# mine is a local directory",
+		`# "mine" is a local directory`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output lacks %q:\n%s", want, got)
@@ -336,5 +336,90 @@ func TestCollectSetupAssets_NeverFollowsIntoSecretFiles(t *testing.T) {
 	}
 	if !declinedHas(assets.Declined, ".env", DeclinedByPolicy) {
 		t.Errorf(".env refusal not recorded: %v", assets.Declined)
+	}
+}
+
+// A bundle from someone else must not be able to plant shell startup files,
+// SSH keys or other home-root dotfiles through the home root.
+func TestApplyRefusesHomeStartupAndSecretPaths(t *testing.T) {
+	home := t.TempDir()
+	var assets []SetupAsset
+	for _, p := range []string{".bashrc", ".zshrc", ".ssh/authorized_keys", ".netrc", ".config/autostart/x.desktop",
+		"Library/LaunchAgents/x.plist", ".hidden-at-root"} {
+		assets = append(assets, SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: p,
+			ContentPresent: true, Content: []byte("payload")})
+	}
+	assets = append(assets, SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: "bin/guard.sh",
+		ContentPresent: true, Content: []byte("#!/bin/sh\n")})
+	applied, warnings, err := applyProviderAssetsToSystem(home, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != 1 {
+		t.Errorf("applied = %d, want 1 (bin/guard.sh only); warnings: %v", applied, warnings)
+	}
+	for _, a := range assets[:len(assets)-1] {
+		if _, err := os.Stat(filepath.Join(home, a.LogicalPath)); !os.IsNotExist(err) {
+			t.Errorf("%s was written", a.LogicalPath)
+		}
+	}
+}
+
+// A reference named like a note that is a symlink to a credential file is
+// refused by its resolved path.
+func TestHomeReferenceRefusesSymlinkToSecret(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".netrc"), "machine x password y\n")
+	if err := os.Symlink(filepath.Join(home, ".netrc"), filepath.Join(home, "notes.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/notes.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		if bytes.Contains(a.Content, []byte("password y")) {
+			t.Fatalf("credential carried through a symlink as %s", a.LogicalPath)
+		}
+	}
+}
+
+// Without --include-secrets a referenced script is redacted; referenced
+// prose is carried.
+func TestHomeReferencedNonProseIsSensitive(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "Run `~/bin/deploy.sh`, read `~/docs/howto.md`.\n")
+	mustWriteFile(t, filepath.Join(home, "bin", "deploy.sh"), "TOKEN=abc ./deploy\n")
+	mustWriteFile(t, filepath.Join(home, "docs", "howto.md"), "how\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderHome, "bin/deploy.sh"); a == nil || !a.Redacted {
+		t.Errorf("bin/deploy.sh not redacted: %+v", a)
+	}
+	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderHome, "docs/howto.md"); a == nil || !a.ContentPresent {
+		t.Errorf("docs/howto.md not carried: %+v", a)
+	}
+}
+
+// Values from a bundle printed as shell commands must not carry shell syntax.
+func TestPluginInstallCommandsRefuseShellSyntax(t *testing.T) {
+	var out bytes.Buffer
+	printPluginInstallCommands(&out, &PluginInventory{
+		Marketplaces: []PluginMarketplace{{Name: "m", Source: "x/y; rm -rf ~", Kind: "github"}},
+		Plugins:      []InstalledPlugin{{ID: "p@m$(curl evil)"}, {ID: "ok@m"}},
+	})
+	for _, line := range strings.Split(out.String(), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "claude ") && strings.ContainsAny(trimmed, ";$()`|&") {
+			t.Errorf("unsafe command printed: %s", line)
+		}
+	}
+	if !strings.Contains(out.String(), "claude plugin install ok@m") {
+		t.Errorf("valid plugin not printed:\n%s", out.String())
 	}
 }

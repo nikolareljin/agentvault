@@ -63,6 +63,37 @@ func isCredentialFile(path string) bool {
 	return credentialFileNames[filepath.Base(path)]
 }
 
+// homeStartupPaths run code at login or shell start, or grant access. The home
+// root is otherwise an open write target, so a bundle from someone else could
+// plant one of these; they are never written from a bundle, and never
+// collected into one.
+var homeStartupPaths = []string{
+	".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile",
+	".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout",
+	".config/fish", ".config/autostart", ".config/systemd", ".config/environment.d",
+	"Library/LaunchAgents", ".local/share/applications", ".xprofile", ".xinitrc",
+	".pam_environment", ".gitconfig", ".config/git",
+}
+
+// homeAssetRefusal returns why a home-relative path may not be carried or
+// written, or "". Only .claude.json may sit at the home root: every other
+// dotfile there is shell or login state.
+func homeAssetRefusal(rel string) string {
+	slashed := filepath.ToSlash(filepath.Clean(rel))
+	if reason := agent.SecretBearingReason(slashed); reason != "" {
+		return reason
+	}
+	for _, p := range homeStartupPaths {
+		if slashed == p || strings.HasPrefix(slashed, p+"/") {
+			return "a login or shell startup path; never written from a bundle"
+		}
+	}
+	if !strings.Contains(slashed, "/") && strings.HasPrefix(slashed, ".") && slashed != ".claude.json" {
+		return "a dotfile at the home root; never written from a bundle"
+	}
+	return ""
+}
+
 type providerFileSpec struct {
 	root      string
 	rel       string // relative to the root's directory
@@ -362,7 +393,7 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	if !isUnder(filepath.Clean(homeDir), abs) && !isUnder(realHome, abs) {
 		return homeRefResult{reason: "outside the home directory"}
 	}
-	if reason := agent.SecretBearingReason(mustRel(homeDir, abs)); reason != "" {
+	if reason := homeAssetRefusal(mustRel(homeDir, abs)); reason != "" {
 		return homeRefResult{reason: reason}
 	}
 	real, err := filepath.EvalSymlinks(abs)
@@ -371,6 +402,10 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	}
 	if !isUnder(realHome, real) {
 		return homeRefResult{reason: "resolves outside the home directory"}
+	}
+	// Again on the resolved path: a symlink named notes.md can point at .netrc.
+	if reason := homeAssetRefusal(mustRel(realHome, real)); reason != "" {
+		return homeRefResult{reason: reason}
 	}
 	info, err := os.Stat(real)
 	if err != nil {
@@ -429,8 +464,11 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		if err != nil {
 			return nil
 		}
+		// Prose is carried as is. Anything else a reference reaches (a script,
+		// a config file) can hold a secret, so it is redacted without
+		// --include-secrets, like every other settings file.
 		asset, warn, err := loadSetupAsset(abs, setupAssetKindProviderFile, setupAssetOriginProviderHome,
-			setupAssetRootProviderHome, filepath.ToSlash(rel), "", false, includeSecrets, true)
+			setupAssetRootProviderHome, filepath.ToSlash(rel), "", !isProseFile(abs), includeSecrets, true)
 		if err != nil {
 			return err
 		}
@@ -459,7 +497,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				}
 				return nil
 			}
-			if d.Type()&os.ModeSymlink != 0 || agent.SecretBearingReason(mustRel(homeDir, p)) != "" {
+			if d.Type()&os.ModeSymlink != 0 || homeAssetRefusal(mustRel(homeDir, p)) != "" {
 				return nil
 			}
 			if n >= maxDirReferenceFiles {
@@ -541,6 +579,15 @@ func mustRel(base, p string) string {
 func skipReferenceDir(name string) bool {
 	switch name {
 	case ".git", "node_modules", "vendor", "dist", "build", "target", ".venv", "__pycache__":
+		return true
+	}
+	return false
+}
+
+// isProseFile is whether a file is documentation rather than code or config.
+func isProseFile(p string) bool {
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".md", ".mdc", ".markdown", ".txt", ".rst":
 		return true
 	}
 	return false

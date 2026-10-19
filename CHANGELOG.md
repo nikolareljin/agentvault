@@ -32,6 +32,14 @@
   `.npmrc`, `.git-credentials`, SSH keys, and anything under `.ssh`,
   `.gnupg`, `.aws`, `.kube`, `.docker` or `.azure`. Before, an instruction
   file that said "copy `.env.example` to `.env`" pulled `.env` into the vault.
+  The check also runs on a reference's resolved path, so a symlink named
+  `notes.md` that points at `.netrc` is refused.
+- Import never writes shell or login startup files, or any home-root dotfile
+  other than `~/.claude.json`, from a bundle.
+- Referenced files that are not prose (scripts, config) are redacted without
+  `--include-secrets`.
+- Plugin install commands are printed only for IDs and sources that cannot
+  carry shell syntax. Anything else is printed quoted, as a comment.
 
 ### Changed
 - A project's own settings files (`.claude/settings.json`, `.mcp.json`,

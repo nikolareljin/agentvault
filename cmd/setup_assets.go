@@ -910,6 +910,11 @@ func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) 
 	if !ok {
 		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
 	}
+	if asset.LogicalRoot == setupAssetRootProviderHome {
+		if reason := homeAssetRefusal(asset.LogicalPath); reason != "" {
+			return "", fmt.Errorf("%s: %s", asset.LogicalPath, reason)
+		}
+	}
 	return safeJoinUnder(filepath.Join(homeDir, dir), asset.LogicalPath)
 }
 

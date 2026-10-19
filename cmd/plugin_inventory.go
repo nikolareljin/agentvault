@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 )
 
@@ -113,15 +114,28 @@ func printPluginInstallCommands(out io.Writer, inv *PluginInventory) {
 	fmt.Fprintf(out, "  Plugins in bundle: %d marketplace(s), %d plugin(s). To install them:\n",
 		len(inv.Marketplaces), len(inv.Plugins))
 	for _, m := range inv.Marketplaces {
-		if m.Kind == "directory" {
-			fmt.Fprintf(out, "    # %s is a local directory on the exporting machine: %s\n", m.Name, m.Source)
-			continue
-		}
-		if m.Source != "" {
+		switch {
+		case m.Kind == "directory":
+			fmt.Fprintf(out, "    # %q is a local directory on the exporting machine: %q\n", m.Name, m.Source)
+		case safeMarketplaceSource.MatchString(m.Source):
 			fmt.Fprintf(out, "    claude plugin marketplace add %s\n", m.Source)
+		case m.Source != "":
+			fmt.Fprintf(out, "    # skipped marketplace %q: source %q is not owner/repo or an https URL\n", m.Name, m.Source)
 		}
 	}
 	for _, p := range inv.Plugins {
-		fmt.Fprintf(out, "    claude plugin install %s\n", p.ID)
+		if safePluginID.MatchString(p.ID) {
+			fmt.Fprintf(out, "    claude plugin install %s\n", p.ID)
+			continue
+		}
+		fmt.Fprintf(out, "    # skipped plugin %q: not name@marketplace\n", p.ID)
 	}
 }
+
+// The commands are printed for a person to paste into a shell, and the values
+// come from a bundle. Only shapes that cannot carry shell syntax are printed
+// as commands; anything else is printed quoted, as a comment.
+var (
+	safePluginID          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	safeMarketplaceSource = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*|https://[A-Za-z0-9][A-Za-z0-9.-]*(/[A-Za-z0-9._~/-]*)?)$`)
+)
