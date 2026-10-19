@@ -214,3 +214,22 @@ func TestRestoreRefusesTopLevelEnvWithChangedNeighbour(t *testing.T) {
 		t.Errorf("key restored next to a changed base URL: %s", out)
 	}
 }
+
+// A secret in an argument that names it only in its text falls back to
+// whole-file redaction.
+func TestRedactFallsBackOnSecretInArgumentText(t *testing.T) {
+	for _, d := range []string{
+		`{"mcpServers":{"x":{"args":["-H","X-API-Key: abcdef123"]}}}`,
+		`{"mcpServers":{"x":{"args":["--pat","p"]}}}`,
+		`{"mcpServers":{"x":{"args":["--github-token","p"]}}}`,
+		`{"mcpServers":{"x":{"command":"tool --token abc"}}}`,
+		`{"mcpServers":{"x":{"command":"tool --api-key=abc"}}}`,
+	} {
+		if _, _, ok := redactJSONSecrets([]byte(d)); ok {
+			t.Errorf("%s: secret left in place", d)
+		}
+	}
+	if _, _, ok := redactJSONSecrets([]byte(`{"hooks":{"x":[{"command":"guard.sh --mode strict"}]},"description":"Note: keep it"}`)); !ok {
+		t.Error("plain settings fell back to whole-file redaction")
+	}
+}

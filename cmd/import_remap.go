@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,16 +92,28 @@ const pathPunct = "._-"
 
 // remapText rewrites every occurrence of each From that starts and ends at a
 // segment boundary, in one pass, so a rewritten path is never rewritten
-// again by a later rule. A From with backslashes (a Windows path) also
-// matches its JSON-escaped spelling. It returns the new text and the number
-// of rewrites.
+// again by a later rule. A Windows From matches without regard to case and
+// also in its JSON-escaped spelling. When From and To use different
+// separators, the rest of each rewritten path is converted too, so
+// C:\Users\a\bin\x becomes /home/b/bin/x, not /home/b\bin\x. In a JSON
+// document a backslash in To is written escaped. It returns the new text and
+// the number of rewrites.
 func remapText(text string, remaps []pathRemap) (string, int) {
-	type rule struct{ from, to string }
+	type rule struct {
+		from, to  string
+		esc, fold bool
+		fromWin   bool
+		toWin     bool
+	}
+	isJSON := json.Valid([]byte(text))
 	var rules []rule
 	for _, r := range remaps {
-		rules = append(rules, rule{r.From, r.To})
-		if strings.Contains(r.From, `\`) {
-			rules = append(rules, rule{strings.ReplaceAll(r.From, `\`, `\\`), strings.ReplaceAll(r.To, `\`, `\\`)})
+		fromWin, toWin := windowsStylePath(r.From), windowsStylePath(r.To)
+		if fromWin {
+			rules = append(rules, rule{r.From, r.To, false, true, true, toWin})
+			rules = append(rules, rule{strings.ReplaceAll(r.From, `\`, `\\`), r.To, true, true, true, toWin})
+		} else {
+			rules = append(rules, rule{r.From, r.To, isJSON, false, false, toWin})
 		}
 	}
 	sort.SliceStable(rules, func(i, j int) bool { return len(rules[i].from) > len(rules[j].from) })
@@ -111,11 +124,21 @@ func remapText(text string, remaps []pathRemap) (string, int) {
 		if i == 0 || !isPathByte(text[i-1], true) {
 			for _, r := range rules {
 				end := i + len(r.from)
-				if r.from == "" || !strings.HasPrefix(text[i:], r.from) || (end < len(text) && isPathByte(text[end], false)) {
+				if r.from == "" || end > len(text) || (end < len(text) && isPathByte(text[end], false)) {
 					continue
 				}
-				b.WriteString(r.to)
+				if seg := text[i:end]; seg != r.from && !(r.fold && strings.EqualFold(seg, r.from)) {
+					continue
+				}
+				to := r.to
+				if r.esc {
+					to = strings.ReplaceAll(to, `\`, `\\`)
+				}
+				b.WriteString(to)
 				i = end
+				if r.fromWin != r.toWin {
+					i = convertPathTail(&b, text, i, r.fromWin, r.esc)
+				}
 				total++
 				matched = true
 				break
@@ -127,6 +150,49 @@ func remapText(text string, remaps []pathRemap) (string, int) {
 		}
 	}
 	return b.String(), total
+}
+
+// windowsStylePath is a path with a drive letter or a backslash.
+func windowsStylePath(p string) bool {
+	return strings.Contains(p, `\`) || (len(p) >= 2 && p[1] == ':')
+}
+
+// convertPathTail copies the rest of a rewritten path from text[i:] into b
+// with its separators switched to the other style, and returns where the path
+// ends: whitespace, a quote, or a delimiter. In esc text (JSON) a Windows
+// separator is \\ and any other backslash is an escape that ends the path.
+func convertPathTail(b *strings.Builder, text string, i int, fromWin, esc bool) int {
+	for i < len(text) {
+		c := text[i]
+		if strings.IndexByte(" \t\r\n\"'`,;:)]}<>|", c) >= 0 {
+			return i
+		}
+		switch {
+		case fromWin && c == '\\' && esc:
+			if i+1 >= len(text) || text[i+1] != '\\' {
+				return i
+			}
+			b.WriteByte('/')
+			i += 2
+		case fromWin && c == '\\':
+			b.WriteByte('/')
+			i++
+		case !fromWin && c == '/':
+			if esc {
+				b.WriteString(`\\`)
+			} else {
+				b.WriteByte('\\')
+			}
+			i++
+		case !fromWin && c == '\\':
+			// An escape (\n) or a literal backslash: not part of the path.
+			return i
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return i
 }
 
 // isPathByte is whether c continues a path segment. Before a match a
@@ -164,7 +230,7 @@ func remapLogicalPath(asset SetupAsset, remaps []pathRemap) string {
 
 // foreignHomePath finds a home-directory path that no rewrite covered.
 // A Windows path may sit in JSON with its backslashes doubled.
-var foreignHomePath = regexp.MustCompile(`(/home/[` + pathChar + `]+|/Users/[` + pathChar + `]+|[A-Za-z]:\\{1,2}Users\\{1,2}[` + pathChar + `]+)`)
+var foreignHomePath = regexp.MustCompile(`(/home/[` + pathChar + `]+|/Users/[` + pathChar + `]+|(?i:[A-Za-z]:\\{1,2}Users\\{1,2})[` + pathChar + `]+)`)
 
 // remapAssets applies the rewrites to every asset with text content, and
 // reports what changed and what still names another machine's home.
@@ -187,7 +253,7 @@ func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]
 		}
 		if a.ContentPresent && isRemappableText(a.Content) {
 			for _, m := range uniqueStrings(foreignHomePath.FindAllString(string(a.Content), -1)) {
-				if targetHome != "" && (m == targetHome || strings.HasPrefix(targetHome, m+"/") || strings.HasPrefix(targetHome, m+`\`)) {
+				if isTargetHome(m, targetHome) {
 					continue
 				}
 				report = append(report, fmt.Sprintf("warning: %q still names %s; pass --map %s=<path here>", describeSetupAsset(a), m, m))
@@ -196,6 +262,19 @@ func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]
 		out[i] = a
 	}
 	return out, report
+}
+
+// isTargetHome is whether m, a home path found in a file, is this machine's
+// home or a prefix of it. A Windows path may be JSON-escaped and in any case.
+func isTargetHome(m, targetHome string) bool {
+	if targetHome == "" {
+		return false
+	}
+	if windowsStylePath(m) {
+		m = strings.ToLower(strings.ReplaceAll(m, `\\`, `\`))
+		targetHome = strings.ToLower(targetHome)
+	}
+	return m == targetHome || strings.HasPrefix(targetHome, m+"/") || strings.HasPrefix(targetHome, m+`\`)
 }
 
 // isRemappableText is UTF-8 without NUL bytes: a binary file is not rewritten.

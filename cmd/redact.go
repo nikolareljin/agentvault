@@ -234,8 +234,26 @@ var (
 	// token prefix.
 	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|[?&](token|key|api_key|apikey|secret|password|sig|signature|access_token)=|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\bbearer\s+[A-Za-z0-9._~+/=-]{8,}|\bbasic\s+[A-Za-z0-9+/=]{8,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
 	// A flag whose next argument is a secret.
-	secretFlag = regexp.MustCompile(`(?i)^--?(token|api[-_]?key|password|passwd|secret|auth|bearer|access[-_]?key|client[-_]?secret)(=.+)?$`)
+	secretFlag = regexp.MustCompile(`(?i)^--?(` + secretFlagNames + `)(=.+)?$`)
+	// The same flag with its value inside one string: a command line.
+	secretFlagInline = regexp.MustCompile(`(?i)(^|\s)--?(` + secretFlagNames + `)(=|\s+)[^-\s]`)
+	// An HTTP header passed as an argument: "Authorization: Bearer x".
+	headerArg = regexp.MustCompile(`^\s*([A-Za-z0-9_-]+)\s*:\s*\S`)
 )
+
+const secretFlagNames = `token|[a-z]+[-_]token|api[-_]?key|key|pat|pass|password|passwd|secret|auth|bearer|access[-_]?key|private[-_]?key|client[-_]?secret|credentials?|cookie`
+
+// secretString is a string value that carries a secret in its text.
+func secretString(s string) bool {
+	if s == "" {
+		return false
+	}
+	if secretValueShapes.MatchString(s) || secretFlagInline.MatchString(s) {
+		return true
+	}
+	m := headerArg.FindStringSubmatch(s)
+	return m != nil && isSecretKey(m[1])
+}
 
 // containsSecretShape reports a value that looks like a secret anywhere in
 // doc that the key-based pass left in place.
@@ -266,12 +284,12 @@ func containsSecretShape(v any) bool {
 					}
 				}
 			}
-			if secretValueShapes.MatchString(s) {
+			if secretString(s) {
 				return true
 			}
 		}
 	case string:
-		return t != "" && secretValueShapes.MatchString(t)
+		return secretString(t)
 	}
 	return false
 }

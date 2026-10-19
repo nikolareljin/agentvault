@@ -8,7 +8,9 @@
   `--project-root`, and each `--map OLD=NEW` is applied first (OLD must be
   an absolute path). This covers
   file content (hook commands, MCP server paths, notes) and Claude's
-  per-project memory directory names. `--dry-run` prints every rewrite.
+  per-project memory directory names. Windows paths match in any case, and
+  a path moved between Windows and POSIX gets the new separators to its end.
+  `--dry-run` prints every rewrite.
 - `import --apply-projects --project-root DIR` writes the bundle's project
   instructions into DIR. Git internals, CI, hook directories, repository
   settings, credential files and other non-prose files are not written.
@@ -20,8 +22,8 @@
   value is restored only into an unchanged definition (for settings.json's
   own `env`, the rest of `env` must match), so a bundle that
   points an MCP server elsewhere does not receive the local token. A file
-  with secret-shaped values under neutral keys (`--token x` in `args`, URL
-  credentials, known token prefixes) is redacted whole.
+  with secret-shaped values under neutral keys (`--token x` in `args` or a command,
+  `X-API-Key: x` header arguments, URL credentials, known token prefixes) is redacted whole.
 - The execute bit travels for a tool's own `hooks/` scripts, so a hook still
   runs after import.
 - Import leaves out Claude permissions that let any program run without

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -268,5 +269,53 @@ func TestBuildPathRemapsRefusesRootsAndRelativePaths(t *testing.T) {
 	}
 	if len(remaps) != 0 {
 		t.Errorf("bundle roots used: %v", remaps)
+	}
+}
+
+// A path moved between Windows and POSIX gets the separators of its new home
+// all the way to its end, and stays valid JSON.
+func TestRemapTextConvertsSeparatorsAcrossStyles(t *testing.T) {
+	w2p := []pathRemap{{From: `C:\Users\alex`, To: "/home/b"}}
+	got, n := remapText(`{"a":"C:\\Users\\alex\\bin\\x.exe --flag","b":"c:\\users\\ALEX\\y\n"}`, w2p)
+	want := `{"a":"/home/b/bin/x.exe --flag","b":"/home/b/y\n"}`
+	if got != want || n != 2 {
+		t.Errorf("got  %s (%d)\nwant %s", got, n, want)
+	}
+	got, _ = remapText(`run C:\Users\alex\bin\x now`, w2p)
+	if got != `run /home/b/bin/x now` {
+		t.Errorf("plain text: %s", got)
+	}
+	p2w := []pathRemap{{From: "/home/alex", To: `C:\Users\b`}}
+	got, _ = remapText(`{"a":"/home/alex/bin/x","b":"/home/alex"}`, p2w)
+	want = `{"a":"C:\\Users\\b\\bin\\x","b":"C:\\Users\\b"}`
+	if got != want || !json.Valid([]byte(got)) {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	got, _ = remapText("cmd: /home/alex/bin/x:/usr/bin", p2w)
+	if got != `cmd: C:\Users\b\bin\x:/usr/bin` {
+		t.Errorf("plain text: %s", got)
+	}
+}
+
+// A Windows home is found whatever its case.
+func TestRemapWarnsAboutLowerCaseWindowsHome(t *testing.T) {
+	_, report := remapAssets([]SetupAsset{{
+		LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json",
+		ContentPresent: true, Content: []byte(`{"x":"c:\\users\\bob\\x"}`),
+	}}, nil, "/home/b")
+	if !strings.Contains(strings.Join(report, "\n"), "bob") {
+		t.Errorf("no warning: %v", report)
+	}
+}
+
+// This machine's own Windows home is not foreign in its JSON spelling or
+// another case.
+func TestRemapNoWarningForOwnWindowsHome(t *testing.T) {
+	_, report := remapAssets([]SetupAsset{{
+		LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json",
+		ContentPresent: true, Content: []byte(`{"x":"C:\\Users\\me\\x","y":"c:\\users\\ME\\y"}`),
+	}}, nil, `C:\Users\me`)
+	if len(report) != 0 {
+		t.Errorf("warned about own home: %v", report)
 	}
 }
