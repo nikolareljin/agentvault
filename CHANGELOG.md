@@ -26,6 +26,10 @@
   regular file inside the directory and at most 256 KiB.
 
 ### Fixed
+- `import --apply-provider-configs` and `setup apply` work when the home or
+  target directory sits under a symlink, as `/var` and `/tmp` do on macOS.
+  Symlinks are still refused below the home or target directory. Before,
+  every component from `/` was checked.
 - `serve --host ::1` builds a valid listen address (`[::1]:8080`).
 - `routing-model download` no longer panics when the downloaded file cannot
   be stat-ed, writes the partial file at 0600, and gives up after 60s

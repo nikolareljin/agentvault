@@ -1163,7 +1163,7 @@ func ensureNoSymlinkBelow(root string, p string) error {
 			return err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("path contains a symlink: %q", current)
+			return fmt.Errorf("destination directory contains a symlink: %q", current)
 		}
 	}
 	return nil
