@@ -288,9 +288,9 @@ func newPortableBundle(now time.Time) PortableBundle {
 	}
 }
 
-// minNewBundlePasswordLen applies to bundles written now. Reading accepts
-// whatever an older bundle was written with.
-const minNewBundlePasswordLen = 12
+// minNewBundlePasswordLen applies to bundles and vaults written now. Reading
+// accepts whatever an older file was written with.
+const minNewBundlePasswordLen = crypto.MinNewPasswordLen
 
 // encryptBundlePayload encrypts plaintext with a password-derived key, in the
 // same format 2 layout as the vault file.
@@ -306,7 +306,7 @@ func encryptBundlePayload(plaintext []byte, password string) ([]byte, error) {
 func decryptBundlePayload(data []byte, password string) ([]byte, error) {
 	plaintext, _, err := crypto.OpenWithPassword(data, password)
 	if err != nil {
-		if strings.Contains(err.Error(), "out-of-range") || strings.Contains(err.Error(), "truncated") || strings.Contains(err.Error(), "too short") {
+		if errors.Is(err, crypto.ErrHeader) {
 			return nil, fmt.Errorf("bundle: %w", err)
 		}
 		return nil, errors.New("wrong password or corrupted bundle")

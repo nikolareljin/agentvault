@@ -306,6 +306,9 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if len(password) < minNewBundlePasswordLen {
+			return fmt.Errorf("password must be at least %d characters", minNewBundlePasswordLen)
+		}
 		confirm, err := readPassword("Confirm password: ")
 		if err != nil {
 			return err
@@ -455,7 +458,7 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 		}
 		plaintext, err := decryptBundlePayload(data, password)
 		if err != nil {
-			return fmt.Errorf("decryption failed (wrong password?)")
+			return err
 		}
 		if err := json.Unmarshal(plaintext, &bundle); err != nil {
 			return fmt.Errorf("decoding bundle: %w", err)

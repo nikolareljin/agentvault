@@ -3,6 +3,7 @@ package vault
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1428,11 +1429,34 @@ func TestLegacyVaultUpgradesOnNextWrite(t *testing.T) {
 	if !bytes.HasPrefix(upgraded, []byte("AVK2")) {
 		t.Fatal("save did not write format 2")
 	}
+	if backup, err := os.ReadFile(path + LegacyBackupSuffix); err != nil || !bytes.Equal(backup, original) {
+		t.Fatalf("format 1 backup missing or changed: %v", err)
+	}
+	if err := v.Add(agent.Agent{Name: "third", Provider: agent.ProviderCodex}); err != nil {
+		t.Fatal(err)
+	}
+	if backup, _ := os.ReadFile(path + LegacyBackupSuffix); !bytes.Equal(backup, original) {
+		t.Fatal("a later save overwrote the format 1 backup")
+	}
 	again := New(path)
 	if err := again.Unlock("old-pass"); err != nil {
 		t.Fatalf("upgraded vault did not open: %v", err)
 	}
-	if len(again.List()) != 2 {
+	if len(again.List()) != 3 {
 		t.Errorf("agents = %v", again.List())
+	}
+}
+
+// A header with out-of-range parameters is reported as such, not as a wrong
+// password.
+func TestUnlockReportsBadHeader(t *testing.T) {
+	path := tempVaultPath(t)
+	h := crypto.Header{Params: crypto.KDFParams{Time: 3, MemoryKiB: 1 << 30, Threads: 4}, Salt: make([]byte, crypto.SaltLen)}
+	if err := os.WriteFile(path, append(h.Bytes(), make([]byte, 64)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := New(path).Unlock("whatever-password")
+	if !errors.Is(err, crypto.ErrHeader) {
+		t.Fatalf("err = %v, want ErrHeader", err)
 	}
 }

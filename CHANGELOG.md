@@ -5,10 +5,12 @@
 ### Security
 - Vault and bundle files carry their key-derivation parameters in a versioned
   header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
-  Before, t=1 was fixed in the code. Files from earlier releases still open;
-  a vault is rewritten in the new format on its next save, and unlocking alone
-  changes nothing. A header with out-of-range parameters is refused before
-  Argon2 runs. Earlier releases cannot open the new format.
+  Before, t=1 was fixed in the code. The header is authenticated with the
+  ciphertext. Files from earlier releases still open; a vault is rewritten in
+  the new format on its next save, and unlocking alone changes nothing. The
+  first such save keeps the old file as `<vault>.v1.bak`. A header asking for
+  more than t=8, 256 MiB or 16 lanes is refused before Argon2 runs.
+  Compatibility: earlier releases cannot open AVK2 vaults or bundles.
 - New vault and bundle passwords need 12 characters (was 8). Existing ones
   keep working.
 

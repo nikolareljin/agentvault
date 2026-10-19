@@ -514,7 +514,7 @@ make build-bitnet   # Build binary with embedded inference → ./agentvault-bitn
 ## Security
 
 - **Encryption**: AES-256-GCM with random nonces
-- **Key Derivation**: Argon2id (t=3, 64 MiB, 4 lanes; RFC 9106), parameters stored in a versioned file header. Files from earlier releases still open and are upgraded on the next save. New vault and bundle passwords need 12 characters.
+- **Key Derivation**: Argon2id (t=3, 64 MiB, 4 lanes; RFC 9106), parameters stored in a versioned file header. Files from earlier releases still open and are upgraded on the next save (the old vault is kept as `<vault>.v1.bak`); earlier releases cannot open the new format. New vault and bundle passwords need 12 characters.
 - **Storage**: Vault file is mode 0600
 - **API Keys**: Masked in TUI; included in `agentvault export` bundles by default (which are encrypted by default), excluded with `--include-keys=false`
 

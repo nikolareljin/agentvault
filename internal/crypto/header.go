@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -16,8 +17,11 @@ import (
 //
 //	"AVK2" | time uint32 | memory KiB uint32 | threads uint8 | salt [16]
 //
-// followed by the AES-256-GCM nonce and ciphertext, as before. A file without
-// the magic is format 1 and is read with the legacy parameters.
+// followed by the AES-256-GCM nonce and ciphertext. The header is the GCM
+// additional data, so a changed header fails authentication. A file without
+// the magic is format 1 and is read with the legacy parameters. A format 1
+// salt can start with the magic by chance (1 in 2^32), so a file that fails
+// as format 2 is tried once more as format 1.
 
 const headerMagic = "AVK2"
 
@@ -40,13 +44,22 @@ var (
 )
 
 // Bounds on parameters read from a file. A crafted header must not make the
-// reader allocate gigabytes or spin for minutes before the password check.
+// reader allocate more than 256 MiB or run Argon2 for more than a few
+// seconds before the password check.
 const (
-	maxTime      = 10
+	maxTime      = 8
 	minMemoryKiB = 8 * 1024
-	maxMemoryKiB = 1024 * 1024
+	maxMemoryKiB = 256 * 1024
 	maxThreads   = 16
 )
+
+// MinNewPasswordLen applies to passwords set now (vault init, bundle export).
+// Opening a file accepts whatever password it was written with.
+const MinNewPasswordLen = 12
+
+// ErrHeader marks a malformed or out-of-range file header, as opposed to a
+// wrong password or a corrupted ciphertext.
+var ErrHeader = errors.New("invalid encrypted file header")
 
 // Header is the key-derivation header of an encrypted file.
 type Header struct {
@@ -75,37 +88,68 @@ func (h Header) Bytes() []byte {
 	return append(b, h.Salt...)
 }
 
+func (p KDFParams) inRange() bool {
+	return p.Time >= 1 && p.Time <= maxTime &&
+		p.MemoryKiB >= minMemoryKiB && p.MemoryKiB <= maxMemoryKiB &&
+		p.Threads >= 1 && p.Threads <= maxThreads
+}
+
 // ParseHeader splits data into its header and the nonce+ciphertext after it.
+// It does not resolve the format 1 collision; OpenWithPassword does.
 func ParseHeader(data []byte) (Header, []byte, error) {
 	if bytes.HasPrefix(data, []byte(headerMagic)) {
-		if len(data) < HeaderLen {
-			return Header{}, nil, errors.New("encrypted file is truncated")
-		}
-		off := len(headerMagic)
-		p := KDFParams{
-			Time:      binary.BigEndian.Uint32(data[off:]),
-			MemoryKiB: binary.BigEndian.Uint32(data[off+4:]),
-			Threads:   data[off+8],
-		}
-		if p.Time < 1 || p.Time > maxTime || p.MemoryKiB < minMemoryKiB || p.MemoryKiB > maxMemoryKiB ||
-			p.Threads < 1 || p.Threads > maxThreads {
-			return Header{}, nil, fmt.Errorf("encrypted file has out-of-range key parameters (t=%d m=%dKiB p=%d)", p.Time, p.MemoryKiB, p.Threads)
-		}
-		salt := append([]byte(nil), data[off+9:HeaderLen]...)
-		return Header{Params: p, Salt: salt}, data[HeaderLen:], nil
+		return parseV2(data)
 	}
-	if len(data) < SaltLen {
-		return Header{}, nil, errors.New("encrypted file is too short (corrupted?)")
+	return parseV1(data)
+}
+
+func parseV2(data []byte) (Header, []byte, error) {
+	if len(data) < HeaderLen+NonceLen {
+		return Header{}, nil, fmt.Errorf("%w: file is truncated", ErrHeader)
+	}
+	off := len(headerMagic)
+	p := KDFParams{
+		Time:      binary.BigEndian.Uint32(data[off:]),
+		MemoryKiB: binary.BigEndian.Uint32(data[off+4:]),
+		Threads:   data[off+8],
+	}
+	if !p.inRange() {
+		return Header{}, nil, fmt.Errorf("%w: out-of-range key parameters (t=%d m=%dKiB p=%d)", ErrHeader, p.Time, p.MemoryKiB, p.Threads)
+	}
+	salt := append([]byte(nil), data[off+9:HeaderLen]...)
+	return Header{Params: p, Salt: salt}, data[HeaderLen:], nil
+}
+
+func parseV1(data []byte) (Header, []byte, error) {
+	if len(data) < SaltLen+NonceLen {
+		return Header{}, nil, fmt.Errorf("%w: file is too short", ErrHeader)
 	}
 	return Header{Params: LegacyParams, Salt: append([]byte(nil), data[:SaltLen]...), Legacy: true}, data[SaltLen:], nil
 }
 
 // DeriveKeyFor derives the AES-256 key for h.
 func DeriveKeyFor(password string, h Header) ([]byte, error) {
-	if len(h.Salt) == 0 {
-		return nil, errors.New("salt must not be empty")
+	if len(h.Salt) != SaltLen {
+		return nil, fmt.Errorf("salt must be %d bytes", SaltLen)
+	}
+	if !h.Legacy && !h.Params.inRange() {
+		return nil, fmt.Errorf("%w: out-of-range key parameters", ErrHeader)
 	}
 	return argon2.IDKey([]byte(password), h.Salt, h.Params.Time, h.Params.MemoryKiB, h.Params.Threads, keyLen), nil
+}
+
+// Seal encrypts plaintext with key under h, which must be a format 2 header.
+// The header is authenticated as GCM additional data.
+func Seal(h Header, key, plaintext []byte) ([]byte, error) {
+	if h.Legacy || len(h.Salt) != SaltLen {
+		return nil, errors.New("seal needs a format 2 header")
+	}
+	hb := h.Bytes()
+	ct, err := encryptAAD(plaintext, key, hb)
+	if err != nil {
+		return nil, err
+	}
+	return append(hb, ct...), nil
 }
 
 // SealWithPassword encrypts plaintext under a fresh format 2 header.
@@ -118,26 +162,56 @@ func SealWithPassword(plaintext []byte, password string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	ct, err := Encrypt(plaintext, key)
-	if err != nil {
-		return nil, err
+	defer Zero(key)
+	return Seal(h, key, plaintext)
+}
+
+// Open decrypts a format 1 or format 2 file and returns the plaintext, the
+// header it was read with, and the derived key (the caller owns it).
+func Open(data []byte, password string) ([]byte, Header, []byte, error) {
+	if !bytes.HasPrefix(data, []byte(headerMagic)) {
+		return openWith(data, password, parseV1, nil)
 	}
-	return append(h.Bytes(), ct...), nil
+	pt, h, key, err := openWith(data, password, parseV2, data[:min(len(data), HeaderLen)])
+	if err == nil {
+		return pt, h, key, nil
+	}
+	// A format 1 salt that starts with the magic. Legacy parameters are
+	// fixed, so this costs one bounded Argon2 run.
+	if pt, h, key, err1 := openWith(data, password, parseV1, nil); err1 == nil {
+		return pt, h, key, nil
+	}
+	return nil, Header{}, nil, err
+}
+
+func openWith(data []byte, password string, parse func([]byte) (Header, []byte, error), aad []byte) ([]byte, Header, []byte, error) {
+	h, rest, err := parse(data)
+	if err != nil {
+		return nil, Header{}, nil, err
+	}
+	key, err := DeriveKeyFor(password, h)
+	if err != nil {
+		return nil, Header{}, nil, err
+	}
+	pt, err := decryptAAD(rest, key, aad)
+	if err != nil {
+		Zero(key)
+		return nil, Header{}, nil, err
+	}
+	return pt, h, key, nil
 }
 
 // OpenWithPassword decrypts a format 1 or format 2 file.
 func OpenWithPassword(data []byte, password string) ([]byte, Header, error) {
-	h, rest, err := ParseHeader(data)
-	if err != nil {
-		return nil, Header{}, err
+	pt, h, key, err := Open(data, password)
+	Zero(key)
+	return pt, h, err
+}
+
+// Zero overwrites b. Go may have copied the bytes elsewhere; this only
+// shortens how long this copy lives.
+func Zero(b []byte) {
+	if len(b) > 0 {
+		subtle.XORBytes(b, b, b)
 	}
-	key, err := DeriveKeyFor(password, h)
-	if err != nil {
-		return nil, Header{}, err
-	}
-	plaintext, err := Decrypt(rest, key)
-	if err != nil {
-		return nil, Header{}, err
-	}
-	return plaintext, h, nil
 }

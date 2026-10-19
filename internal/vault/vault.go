@@ -52,6 +52,7 @@ type Vault struct {
 	modelCapabilities []agent.ModelCapabilityEntry
 	key               []byte        // derived key, set after Init or Unlock
 	header            crypto.Header // key-derivation header written ahead of the ciphertext
+	legacyOnDisk      bool          // file on disk is format 1; back it up before the first write
 }
 
 // New creates a Vault instance at the given path.
@@ -102,30 +103,28 @@ func (v *Vault) Unlock(masterPassword string) error {
 	if err != nil {
 		return fmt.Errorf("reading vault: %w", err)
 	}
-	header, ciphertext, err := crypto.ParseHeader(data)
+	plaintext, header, key, err := crypto.Open(data, masterPassword)
 	if err != nil {
-		return fmt.Errorf("vault file: %w", err)
-	}
-	key, err := crypto.DeriveKeyFor(masterPassword, header)
-	if err != nil {
-		return err
-	}
-	plaintext, err := crypto.Decrypt(ciphertext, key)
-	if err != nil {
+		if errors.Is(err, crypto.ErrHeader) {
+			return fmt.Errorf("vault file: %w", err)
+		}
 		return errors.New("wrong password or corrupted vault")
 	}
 	// A format 1 vault is upgraded on its next write: derive the key for a
 	// current header now, while the password is at hand. Nothing is written
 	// by unlocking alone.
-	if header.Legacy {
+	wasLegacy := header.Legacy
+	if wasLegacy {
 		upgraded, err := crypto.NewHeader()
 		if err != nil {
 			return err
 		}
-		if key, err = crypto.DeriveKeyFor(masterPassword, upgraded); err != nil {
+		newKey, err := crypto.DeriveKeyFor(masterPassword, upgraded)
+		if err != nil {
 			return err
 		}
-		header = upgraded
+		crypto.Zero(key)
+		key, header = newKey, upgraded
 	}
 	var vd vaultData
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
@@ -138,6 +137,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 	}
 	v.header = header
 	v.key = key
+	v.legacyOnDisk = wasLegacy
 	v.agents = vd.Agents
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
@@ -853,11 +853,10 @@ func (v *Vault) write() error {
 	if err != nil {
 		return fmt.Errorf("encoding vault: %w", err)
 	}
-	ciphertext, err := crypto.Encrypt(plaintext, v.key)
+	data, err := crypto.Seal(v.header, v.key, plaintext)
 	if err != nil {
 		return err
 	}
-	data := append(v.header.Bytes(), ciphertext...)
 	dir := filepath.Dir(v.path)
 	tmp, err := os.CreateTemp(dir, ".agentvault-*.tmp")
 	if err != nil {
@@ -887,10 +886,44 @@ func (v *Vault) write() error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("closing temp vault file: %w", err)
 	}
+	if v.legacyOnDisk {
+		if err := backupLegacyVault(v.path); err != nil {
+			return err
+		}
+	}
 	if err := replaceFile(tmpPath, v.path); err != nil {
 		return fmt.Errorf("replacing vault file: %w", err)
 	}
 	cleanup = false
+	v.legacyOnDisk = false
+	return nil
+}
+
+// LegacyBackupSuffix names the copy of a format 1 vault kept when it is first
+// rewritten in format 2, so an earlier release can still be pointed at it.
+const LegacyBackupSuffix = ".v1.bak"
+
+// backupLegacyVault copies the format 1 vault at path to path+".v1.bak". An
+// existing backup is kept: it is the older one.
+func backupLegacyVault(path string) error {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("backing up format 1 vault: %w", err)
+	}
+	f, err := os.OpenFile(path+LegacyBackupSuffix, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("backing up format 1 vault: %w", err)
+	}
+	_, werr := f.Write(old)
+	serr := f.Sync()
+	cerr := f.Close()
+	if err := errors.Join(werr, serr, cerr); err != nil {
+		_ = os.Remove(path + LegacyBackupSuffix)
+		return fmt.Errorf("backing up format 1 vault: %w", err)
+	}
 	return nil
 }
 

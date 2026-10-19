@@ -54,6 +54,11 @@ func DeriveKey(password string, salt []byte) ([]byte, error) {
 // Encrypt encrypts plaintext using AES-256-GCM.
 // Returns nonce + ciphertext (nonce is prepended).
 func Encrypt(plaintext, key []byte) ([]byte, error) {
+	return encryptAAD(plaintext, key, nil)
+}
+
+// encryptAAD is Encrypt with additional authenticated data.
+func encryptAAD(plaintext, key, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("creating cipher: %w", err)
@@ -66,13 +71,18 @@ func Encrypt(plaintext, key []byte) ([]byte, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, fmt.Errorf("generating nonce: %w", err)
 	}
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+	ciphertext := gcm.Seal(nonce, nonce, plaintext, aad)
 	return ciphertext, nil
 }
 
 // Decrypt decrypts ciphertext using AES-256-GCM.
 // Expects nonce prepended to the ciphertext (as produced by Encrypt).
 func Decrypt(ciphertext, key []byte) ([]byte, error) {
+	return decryptAAD(ciphertext, key, nil)
+}
+
+// decryptAAD is Decrypt with additional authenticated data.
+func decryptAAD(ciphertext, key, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("creating cipher: %w", err)
@@ -86,7 +96,7 @@ func Decrypt(ciphertext, key []byte) ([]byte, error) {
 		return nil, errors.New("ciphertext too short")
 	}
 	nonce, ct := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ct, nil)
+	plaintext, err := gcm.Open(nil, nonce, ct, aad)
 	if err != nil {
 		return nil, fmt.Errorf("decrypting: %w", err)
 	}
