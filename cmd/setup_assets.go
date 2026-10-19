@@ -211,6 +211,10 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 	var warnings []string
 	var declinedAssets []DeclinedAsset
 	for _, spec := range specs {
+		if warn, skip := symlinkedAsset(spec.path); skip && spec.optional {
+			warnings = append(warnings, warn)
+			continue
+		}
 		asset, warn, err := loadSetupAsset(spec.path, setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root, spec.logicalPath, "", spec.sensitive, includeSecrets, spec.optional)
 		if err != nil {
 			return nil, warnings, declinedAssets, err

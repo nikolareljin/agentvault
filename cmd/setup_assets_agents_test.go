@@ -775,3 +775,39 @@ func TestIncludeMemoryDefaultsOff(t *testing.T) {
 		t.Errorf("--include-memory default = %v, want false", f)
 	}
 }
+
+// Windows drops trailing dots and spaces from every path segment, so
+// ".aws./config" and ".config/fish./config.fish" are .aws/config and
+// .config/fish/config.fish there.
+func TestSecretAndStartupDirsIgnoreTrailingDots(t *testing.T) {
+	for _, p := range []string{".aws./config", ".docker ./config.json", "x/.SSH./config"} {
+		if agent.SecretBearingReason(p) == "" {
+			t.Errorf("%q not flagged", p)
+		}
+	}
+	for _, p := range []string{".config/fish./notes.md", "Library/LaunchAgents./x.txt"} {
+		if homeAssetRefusal(p) == "" {
+			t.Errorf("%q not refused", p)
+		}
+	}
+}
+
+// A dotfiles link at ~/.claude/settings.json or CLAUDE.md is skipped with a
+// warning, like the other optional files; it must not end the export.
+func TestSymlinkedClaudeSettingsDoNotAbortExport(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "settings.json"), "{}\n")
+	mustWriteFile(t, filepath.Join(home, "dotfiles", "CLAUDE.md"), "c\n")
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"settings.json", "CLAUDE.md"} {
+		if err := os.Symlink(filepath.Join(home, "dotfiles", f), filepath.Join(home, ".claude", f)); err != nil {
+			t.Skipf("symlink unsupported: %v", err)
+		}
+	}
+	if _, _, err := collectSetupAssets(setupAssetOptions{}); err != nil {
+		t.Fatalf("export failed on a symlinked ~/.claude file: %v", err)
+	}
+}

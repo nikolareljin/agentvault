@@ -321,7 +321,8 @@ var (
 func SecretBearingReason(rel string) string {
 	slashed := filepath.ToSlash(rel)
 	for _, seg := range strings.Split(slashed, "/") {
-		if secretDirs[strings.ToLower(seg)] {
+		// Windows drops trailing dots and spaces: ".aws." is .aws there.
+		if secretDirs[strings.TrimRight(strings.ToLower(seg), ". ")] {
 			return "under " + seg + ", which holds credentials"
 		}
 	}
