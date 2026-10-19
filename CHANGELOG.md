@@ -14,10 +14,11 @@
   `~/Library/Application Support/Claude/` on macOS and `%APPDATA%\Claude\` on
   Windows. Before, it wrote `~/.config/claude/` everywhere, which Claude
   Desktop on macOS and Windows never reads. It replaces only the `mcpServers`
-  key of an existing file, keeps the other keys, and refuses a file that is
-  not a JSON object.
-- `export --help` names `~/.config/github-copilot`, the directory it reads,
-  not `~/.copilot`.
+  key of an existing file, keeps the other keys and the file mode, writes
+  through a symlink to its target, replaces the file atomically, and refuses
+  a file that is not a JSON object.
+- `export --help`, the README and the CLI reference name
+  `~/.config/github-copilot`, the directory export reads, not `~/.copilot`.
 - `instructions pull` on Windows refuses rooted references such as
   `/etc/passwd`, `C:x` and `a:b` with the reason "rooted or
   drive-qualified path on Windows". Before, they were looked up under the

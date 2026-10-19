@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -43,6 +44,64 @@ func TestMergeMCPServersRefusesNonObject(t *testing.T) {
 	}
 	if _, err := mergeMCPServersIntoFile(path, []byte(`{"mcpServers":{}}`)); err == nil {
 		t.Fatal("overwrote a non-JSON file")
+	}
+}
+
+// json.Unmarshal of null yields a nil map and no error; writing into it panics.
+func TestMergeMCPServersRefusesNull(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte(`null`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mergeMCPServersIntoFile(path, []byte(`{"mcpServers":{}}`)); err == nil {
+		t.Fatal("accepted a null document")
+	}
+}
+
+func TestWriteFileAtomicKeepsModeAndSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes and symlinks")
+	}
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.json")
+	if err := os.WriteFile(real, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(real, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.json")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomicKeepMode(link, []byte(`{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink replaced by a file: %v", err)
+	}
+	got, err := os.ReadFile(real)
+	if err != nil || string(got) != `{"a":1}` {
+		t.Fatalf("target = %q, %v", got, err)
+	}
+	if fi, _ := os.Stat(real); fi.Mode().Perm() != 0o640 {
+		t.Fatalf("mode = %v, want 0640", fi.Mode().Perm())
+	}
+}
+
+func TestWriteFileAtomicCreatesDirAndPrivateFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a", "b", "c.json")
+	if err := writeFileAtomicKeepMode(path, []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+			t.Fatalf("mode = %v, want 0600", fi.Mode().Perm())
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	if len(entries) != 1 {
+		t.Fatalf("temp file left behind: %v", entries)
 	}
 }
 

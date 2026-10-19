@@ -592,11 +592,8 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(outputFile), 0700); err != nil {
-		return fmt.Errorf("creating directory: %w", err)
-	}
-	if err := os.WriteFile(outputFile, data, 0600); err != nil {
-		return fmt.Errorf("writing %s: %w", outputFile, err)
+	if err := writeFileAtomicKeepMode(outputFile, data); err != nil {
+		return err
 	}
 
 	fmt.Printf("Generated MCP config: %s\n", outputFile)
@@ -622,7 +619,11 @@ func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
 		return generated, nil
 	}
 	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(existing, &doc); err != nil {
+	if err := json.Unmarshal(existing, &doc); err != nil || doc == nil {
+		// A literal null decodes to a nil map with no error.
+		if err == nil {
+			err = errors.New("top-level value is null")
+		}
 		return nil, fmt.Errorf("%s is not a JSON object; not overwriting it (pass another output file): %w", path, err)
 	}
 	var gen map[string]json.RawMessage
@@ -631,6 +632,51 @@ func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
 	}
 	doc["mcpServers"] = gen["mcpServers"]
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// writeFileAtomicKeepMode replaces path through a temp file and a rename, so
+// a crash never leaves Claude Desktop a half-written config. A symlinked path
+// is written through to its target, and an existing file keeps its mode.
+func writeFileAtomicKeepMode(path string, data []byte) error {
+	target := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		target = resolved
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("resolving %s: %w", path, err)
+	}
+	mode := os.FileMode(0600)
+	if info, err := os.Stat(target); err == nil {
+		mode = info.Mode().Perm()
+	}
+	dir := filepath.Dir(target)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("creating directory: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".claude_desktop_config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
 }
 
 func runGenerateAll(cmd *cobra.Command, args []string) error {

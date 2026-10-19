@@ -482,6 +482,13 @@ Flags:
 - `--agent <name>`
 
 ### `agentvault generate mcp [output-file]`
+Default output is Claude Desktop's config for the OS:
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS),
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows),
+`~/.config/claude/claude_desktop_config.json` (Linux). `-` prints to stdout.
+An existing file keeps every key except `mcpServers`, and its mode; a file
+that is not a JSON object is left alone and the command fails.
+
 Flags:
 - `--agent <name>`
 - `--shared-only` (default: `false`)
@@ -568,7 +575,7 @@ Flags:
 - `--include-secrets` (default: `true`): Include secret-bearing provider and asset file content.
 - `--include-sessions` (default: `true`)
 - `--include-templates` (default: `true`)
-- `--include-provider-files` (default: `true`): `~/.claude`, `~/.codex`, `~/.copilot`.
+- `--include-provider-files` (default: `true`): `~/.claude`, `~/.codex`, `~/.config/github-copilot`.
 - `--include-skills` (default: `true`)
 - `--include-status` (default: `false`): A quota reading is a snapshot, not a setting.
 - `--detect` (default: `true`)
