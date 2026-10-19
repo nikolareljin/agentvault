@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -284,13 +285,25 @@ func stripLoginKeys(v any) (any, int) {
 	return v, n
 }
 
+// decodeJSONObject decodes a JSON object keeping numbers as written: a
+// float64 round trip would change an ID such as 12345678901234567890.
+func decodeJSONObject(raw []byte) (map[string]any, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc map[string]any
+	if err := dec.Decode(&doc); err != nil || doc == nil {
+		return nil, fmt.Errorf("not a JSON object")
+	}
+	return doc, nil
+}
+
 // stripCopilotLoginState returns config.json without its login keys and how
 // many were removed. Content that is not a JSON object is an error: it is
 // never carried or written raw.
 func stripCopilotLoginState(raw []byte) ([]byte, int, error) {
-	var doc map[string]any
-	if err := json.Unmarshal(raw, &doc); err != nil || doc == nil {
-		return nil, 0, fmt.Errorf("not a JSON object")
+	doc, err := decodeJSONObject(raw)
+	if err != nil {
+		return nil, 0, err
 	}
 	_, n := stripLoginKeys(doc)
 	out, err := json.MarshalIndent(doc, "", "  ")
@@ -352,8 +365,12 @@ func keepLocalCopilotLogin(dest string, incoming []byte) []byte {
 	if err != nil {
 		return incoming
 	}
-	var local, doc map[string]any
-	if json.Unmarshal(existing, &local) != nil || json.Unmarshal(incoming, &doc) != nil || doc == nil {
+	local, err := decodeJSONObject(existing)
+	if err != nil {
+		return incoming
+	}
+	doc, err := decodeJSONObject(incoming)
+	if err != nil {
 		return incoming
 	}
 	restoreLoginKeys(local, doc)

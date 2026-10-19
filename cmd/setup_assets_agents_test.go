@@ -819,7 +819,7 @@ func TestSymlinkedClaudeSettingsDoNotAbortExport(t *testing.T) {
 func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 	home := t.TempDir()
 	setTestHomeDir(t, home)
-	cfg := `{"model":"gpt-5","max_tokens":100,"maxOutputTokens":200,"tokenLimit":300,"minOutputTokens":5,"minted_token":"SECRET4","output-token-count":9,"access_tokens":["SECRET3"],"copilot_tokens":{"u":"ghu_SECRET1"},"logged_in_users":[{"login":"u"}],` +
+	cfg := `{"model":"gpt-5","big":12345678901234567890,"max_tokens":100,"maxOutputTokens":200,"tokenLimit":300,"minOutputTokens":5,"minted_token":"SECRET4","output-token-count":9,"access_tokens":["SECRET3"],"copilot_tokens":{"u":"ghu_SECRET1"},"logged_in_users":[{"login":"u"}],` +
 		`"last_logged_in_user":{"login":"u"},"nested":{"oauthToken":"SECRET2","keep":1}}`
 	mustWriteFile(t, filepath.Join(home, ".copilot", "config.json"), cfg)
 	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
@@ -836,7 +836,7 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 			t.Errorf("config.json carries %q: %s", bad, body)
 		}
 	}
-	if !strings.Contains(body, `"model"`) || !strings.Contains(body, `"keep"`) ||
+	if !strings.Contains(body, "12345678901234567890") || !strings.Contains(body, `"model"`) || !strings.Contains(body, `"keep"`) ||
 		!strings.Contains(body, `"max_tokens"`) || !strings.Contains(body, `"maxOutputTokens"`) || !strings.Contains(body, `"tokenLimit"`) ||
 		!strings.Contains(body, `"minOutputTokens"`) || !strings.Contains(body, `"output-token-count"`) {
 		t.Errorf("settings lost: %s", body)
