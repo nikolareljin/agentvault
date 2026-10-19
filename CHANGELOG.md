@@ -10,6 +10,8 @@
   merged by hand.
 - Go 1.26 (toolchain go1.26.9) and `golang.org/x/crypto` v0.56.0. Go 1.25
   is no longer supported upstream.
+- CI runs the tests on macOS (`macos-latest`) on push and pull request, next
+  to Linux and Windows.
 
 ### Security
 - An instruction whose filename escapes the target directory, such as

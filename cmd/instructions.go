@@ -1126,6 +1126,11 @@ func init() {
 // escape dir and symlinked path components, so a crafted bundle entry such
 // as "../../.bashrc" cannot land outside the target.
 func writeInstructionFile(dir string, inst agent.InstructionFile) error {
+	// The same rule as the vault applies on the way in, so a rooted name such
+	// as "/tmp/x" is refused on Windows too, where it has no drive letter.
+	if err := agent.ValidateInstructionFilename(inst.Filename); err != nil {
+		return fmt.Errorf("instruction %q: %w", inst.Name, err)
+	}
 	p, err := safeJoinUnder(dir, inst.Filename)
 	if err != nil {
 		return fmt.Errorf("instruction %q: %w", inst.Name, err)
