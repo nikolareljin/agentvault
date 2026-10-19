@@ -180,3 +180,23 @@ func TestApplyLeavesOutInterpreterAllows(t *testing.T) {
 		t.Error("--keep-interpreter-allows did not keep them")
 	}
 }
+
+// Numbers are settings, not secrets: maxTokens must travel.
+func TestRedactKeepsNumbersUnderSecretLookingKeys(t *testing.T) {
+	out, ptrs, ok := redactJSONSecrets([]byte(`{"maxTokens":4096,"token":"t"}`))
+	if !ok || !bytes.Contains(out, []byte("4096")) || len(ptrs) != 1 {
+		t.Errorf("ok=%v ptrs=%v out=%s", ok, ptrs, out)
+	}
+}
+
+// mcp-remote style: the header travels as an argument.
+func TestRedactFallsBackForAuthorizationInArgs(t *testing.T) {
+	for _, in := range []string{
+		`{"mcpServers":{"x":{"args":["--header","Authorization: Bearer abcdefgh12345"]}}}`,
+		`{"mcpServers":{"x":{"args":["-H","Authorization: Basic dXNlcjpwYXNz"]}}}`,
+	} {
+		if _, _, ok := redactJSONSecrets([]byte(in)); ok {
+			t.Errorf("field-redacted with a credential in args: %s", in)
+		}
+	}
+}

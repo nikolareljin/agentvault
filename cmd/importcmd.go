@@ -452,7 +452,14 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 
 	printPluginInstallCommands(cmd.OutOrStdout(), setup.Plugins)
 	if opts.ApplyProjects {
-		applied, skipped, err := applyStagedProjectAssetsWith(effectiveConfigDir(), opts.ProjectRoot, opts.Overwrite)
+		// The writer refuses symlinks on the way to a file; the root the user
+		// named may sit under one (/tmp on macOS). Paths in files keep the
+		// spelling the user gave.
+		writeRoot := opts.ProjectRoot
+		if resolved, err := filepath.EvalSymlinks(writeRoot); err == nil {
+			writeRoot = resolved
+		}
+		applied, skipped, err := applyStagedProjectAssetsWith(effectiveConfigDir(), writeRoot, opts.Overwrite)
 		if err != nil {
 			return fmt.Errorf("applying project files: %w", err)
 		}

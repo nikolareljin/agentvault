@@ -70,7 +70,9 @@ func redactJSONSecrets(data []byte) (out []byte, pointers []string, ok bool) {
 				t[i] = walk(inner, ptr+"/"+strconv.Itoa(i), under)
 			}
 			return t
-		case string, json.Number:
+		case string:
+			// Only strings: a number under a key such as maxTokens is a
+			// setting, and blanking it would drop it on import.
 			if under {
 				pointers = append(pointers, ptr)
 				return ""
@@ -211,7 +213,7 @@ func pointerDelete(doc map[string]any, p string) {
 var (
 	// Credentials in a URL, a credential query parameter, or a well-known
 	// token prefix.
-	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|[?&](token|key|api_key|apikey|secret|password|sig|signature|access_token)=|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
+	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|[?&](token|key|api_key|apikey|secret|password|sig|signature|access_token)=|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\bbearer\s+[A-Za-z0-9._~+/=-]{8,}|\bbasic\s+[A-Za-z0-9+/=]{8,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
 	// A flag whose next argument is a secret.
 	secretFlag = regexp.MustCompile(`(?i)^--?(token|api[-_]?key|password|passwd|secret|auth|bearer|access[-_]?key|client[-_]?secret)(=.+)?$`)
 )
@@ -351,26 +353,48 @@ func isInterpreterAllow(rule string) bool {
 	if inner == "" || inner == "*" || inner == ":*" {
 		return true
 	}
-	words := strings.Fields(inner)
-	// The command name must be a literal: a glob there (b*sh:*, ?ython)
-	// matches interpreters, and an env assignment (FOO=1 bash) runs one.
-	if strings.ContainsAny(words[0], "*?[]{}$`") || strings.Contains(words[0], "=") {
-		return true
-	}
-	// Every word, not only the first: wrappers such as nice, time or
-	// command run the word after them.
-	for _, w := range words {
-		// "cmd:*" suffix; a drive letter (C:\...) is part of the word.
-		if i := strings.LastIndex(w, ":"); i > 1 {
-			w = w[:i]
-		}
-		base := strings.ToLower(path.Base(strings.ReplaceAll(w, `\`, "/")))
-		base = strings.TrimSuffix(base, ".exe")
-		if interpreters[base] || commandWrappers[base] || strings.HasPrefix(base, "python") {
+	// Claude matches a rule against the whole command line, so a command
+	// after a separator (ls && bash:*) runs too. Each segment's command
+	// position is checked; arguments are not (grep env:* is not env).
+	for _, seg := range shellSegments.Split(inner, -1) {
+		if commandRunsAnything(strings.Fields(seg)) {
 			return true
 		}
 	}
 	return false
+}
+
+var shellSegments = regexp.MustCompile("&&|\\|\\||[;&|()\n`]|\\$\\(")
+
+// commandRunsAnything checks the command word of one segment, and the word
+// after each wrapper (nice -n 5 bash).
+func commandRunsAnything(words []string) bool {
+	afterWrapper := false
+	for _, w := range words {
+		if afterWrapper && (strings.HasPrefix(w, "-") || strings.Trim(w, "0123456789.smhd") == "") {
+			continue
+		}
+		// "cmd:*" suffix; a drive letter (C:\...) is part of the word.
+		if i := strings.LastIndex(w, ":"); i > 1 {
+			w = w[:i]
+		}
+		// The command name must be a literal: a glob there (b*sh:*, ?ython)
+		// matches interpreters, and an env assignment (FOO=1 bash) runs one.
+		if strings.ContainsAny(w, "*?[]{}$`") || strings.Contains(w, "=") {
+			return true
+		}
+		base := strings.ToLower(path.Base(strings.ReplaceAll(w, `\`, "/")))
+		base = strings.TrimSuffix(base, ".exe")
+		if interpreters[base] || strings.HasPrefix(base, "python") {
+			return true
+		}
+		if !commandWrappers[base] {
+			return false
+		}
+		afterWrapper = true
+	}
+	// A wrapper with nothing after it (nice:*) runs whatever follows.
+	return afterWrapper
 }
 
 // commandWrappers run another command given as an argument.

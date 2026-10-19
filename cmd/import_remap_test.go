@@ -208,3 +208,45 @@ func TestRemapReportQuotesPaths(t *testing.T) {
 		}
 	}
 }
+
+// A rule matches only at a segment start, never inside a longer path, and a
+// rewritten path is not rewritten again by a later rule.
+func TestRemapTextStartBoundaryAndSinglePass(t *testing.T) {
+	remaps := []pathRemap{{From: "/home/alex", To: "/Users/alex"}, {From: "/Users/alex", To: "/x"}}
+	got, n := remapText(`"/home/alex/a" "/srv/home/alex/b" "/home/alexis/c" "/home/alex"`, remaps)
+	want := `"/Users/alex/a" "/srv/home/alex/b" "/home/alexis/c" "/Users/alex"`
+	if got != want || n != 2 {
+		t.Errorf("got  %s (%d)\nwant %s", got, n, want)
+	}
+}
+
+// Windows paths in JSON have their backslashes doubled.
+func TestRemapTextMatchesJSONEscapedWindowsPaths(t *testing.T) {
+	remaps := []pathRemap{{From: `C:\Users\alex`, To: `D:\Users\alex`}}
+	got, n := remapText(`{"a":"C:\\Users\\alex\\bin","b":"C:\Users\alex\x","c":"C:\\Users\\alexandra"}`, remaps)
+	want := `{"a":"D:\\Users\\alex\\bin","b":"D:\Users\alex\x","c":"C:\\Users\\alexandra"}`
+	if got != want || n != 2 {
+		t.Errorf("got  %s (%d)\nwant %s", got, n, want)
+	}
+}
+
+// /home/alex is another machine's home even when this one is /home/alexis.
+func TestRemapWarnsAboutPrefixOfTargetHome(t *testing.T) {
+	_, report := remapAssets([]SetupAsset{{
+		LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json",
+		ContentPresent: true, Content: []byte(`{"x":"/home/alex/tool","y":"C:\\Users\\bob\\x"}`),
+	}}, nil, "/home/alexis")
+	joined := strings.Join(report, "\n")
+	if !strings.Contains(joined, `/home/alex;`) || !strings.Contains(joined, `bob`) {
+		t.Errorf("missing warnings: %v", report)
+	}
+}
+
+// Windows reads .git. as .git and a colon as an alternate data stream.
+func TestProjectAssetRefusalWindowsAliases(t *testing.T) {
+	for _, p := range []string{".git./hooks/x.md", ".git::$INDEX_ALLOCATION/x.md", "docs/a.md:evil"} {
+		if projectAssetRefusal(p) == "" {
+			t.Errorf("%s would be written", p)
+		}
+	}
+}

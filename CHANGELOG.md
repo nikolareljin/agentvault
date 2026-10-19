@@ -49,7 +49,8 @@
 
 ### Security
 - Asset paths with control characters are refused, so a path printed during
-  import cannot rewrite the terminal.
+  import cannot rewrite the terminal. `--apply-projects` also refuses
+  segments Windows reads as another name (`.git.`, `name:stream`).
 - Reference following (`instructions pull` and `export`) refuses credential
   files by name: `.env` and `.env.*` (templates such as `.env.example` are
   kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`,

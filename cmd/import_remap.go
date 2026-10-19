@@ -67,18 +67,56 @@ func buildPathRemaps(sourceHome, targetHome, sourceProject, projectRoot string, 
 // not rewrite /home/alexandra.
 const pathChar = `A-Za-z0-9._-`
 
-// remapText rewrites every occurrence of each From that ends at a segment
-// boundary. It returns the new text and the number of rewrites.
+// pathPunct is the punctuation in pathChar.
+const pathPunct = "._-"
+
+// remapText rewrites every occurrence of each From that starts and ends at a
+// segment boundary, in one pass, so a rewritten path is never rewritten
+// again by a later rule. A From with backslashes (a Windows path) also
+// matches its JSON-escaped spelling. It returns the new text and the number
+// of rewrites.
 func remapText(text string, remaps []pathRemap) (string, int) {
-	total := 0
+	type rule struct{ from, to string }
+	var rules []rule
 	for _, r := range remaps {
-		re := regexp.MustCompile(regexp.QuoteMeta(r.From) + `($|[^` + pathChar + `])`)
-		text = re.ReplaceAllStringFunc(text, func(m string) string {
-			total++
-			return r.To + m[len(r.From):]
-		})
+		rules = append(rules, rule{r.From, r.To})
+		if strings.Contains(r.From, `\`) {
+			rules = append(rules, rule{strings.ReplaceAll(r.From, `\`, `\\`), strings.ReplaceAll(r.To, `\`, `\\`)})
+		}
 	}
-	return text, total
+	sort.SliceStable(rules, func(i, j int) bool { return len(rules[i].from) > len(rules[j].from) })
+	var b strings.Builder
+	total := 0
+	for i := 0; i < len(text); {
+		matched := false
+		if i == 0 || !isPathByte(text[i-1], true) {
+			for _, r := range rules {
+				end := i + len(r.from)
+				if r.from == "" || !strings.HasPrefix(text[i:], r.from) || (end < len(text) && isPathByte(text[end], false)) {
+					continue
+				}
+				b.WriteString(r.to)
+				i = end
+				total++
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			b.WriteByte(text[i])
+			i++
+		}
+	}
+	return b.String(), total
+}
+
+// isPathByte is whether c continues a path segment. Before a match a
+// separator also counts: /srv/home/alex is not /home/alex.
+func isPathByte(c byte, before bool) bool {
+	if strings.IndexByte(pathPunct, c) >= 0 || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+		return true
+	}
+	return before && (c == '/' || c == '\\')
 }
 
 // claudeProjectKey is how Claude Code names a project's directory under
@@ -106,7 +144,8 @@ func remapLogicalPath(asset SetupAsset, remaps []pathRemap) string {
 }
 
 // foreignHomePath finds a home-directory path that no rewrite covered.
-var foreignHomePath = regexp.MustCompile(`(/home/[` + pathChar + `]+|/Users/[` + pathChar + `]+|[A-Za-z]:\\Users\\[` + pathChar + `]+)`)
+// A Windows path may sit in JSON with its backslashes doubled.
+var foreignHomePath = regexp.MustCompile(`(/home/[` + pathChar + `]+|/Users/[` + pathChar + `]+|[A-Za-z]:\\{1,2}Users\\{1,2}[` + pathChar + `]+)`)
 
 // remapAssets applies the rewrites to every asset with text content, and
 // reports what changed and what still names another machine's home.
@@ -129,7 +168,7 @@ func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]
 		}
 		if a.ContentPresent && isRemappableText(a.Content) {
 			for _, m := range uniqueStrings(foreignHomePath.FindAllString(string(a.Content), -1)) {
-				if targetHome != "" && (m == targetHome || strings.HasPrefix(targetHome, m)) {
+				if targetHome != "" && (m == targetHome || strings.HasPrefix(targetHome, m+"/") || strings.HasPrefix(targetHome, m+`\`)) {
 					continue
 				}
 				report = append(report, fmt.Sprintf("warning: %q still names %s; pass --map %s=<path here>", describeSetupAsset(a), m, m))

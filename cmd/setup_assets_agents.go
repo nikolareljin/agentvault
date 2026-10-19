@@ -954,6 +954,11 @@ func projectAssetRefusal(rel string) string {
 		if seg != strings.TrimSpace(seg) {
 			return "a path segment with leading or trailing whitespace"
 		}
+		// Windows drops trailing dots (.git. is .git) and reads a colon as
+		// an alternate data stream.
+		if strings.HasSuffix(seg, ".") && seg != "." && seg != ".." || strings.Contains(seg, ":") {
+			return "a path segment Windows would read as another name"
+		}
 		switch strings.ToLower(seg) {
 		case ".git", ".githooks", ".husky":
 			return "runs code or configures git; never written from a bundle"
