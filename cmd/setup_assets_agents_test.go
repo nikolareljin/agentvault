@@ -763,3 +763,15 @@ func TestSecretBearingReasonEnvSuffixAndTrailingDot(t *testing.T) {
 		t.Errorf("docs/env.md flagged: %s", r)
 	}
 }
+
+// Memory is off unless asked: in the export defaults (the wizard's default
+// answer too) and in the flag.
+func TestIncludeMemoryDefaultsOff(t *testing.T) {
+	if defaultExportOptions().IncludeMemory {
+		t.Error("defaultExportOptions includes memory")
+	}
+	f := exportCmd.Flags().Lookup("include-memory")
+	if f == nil || f.DefValue != "false" {
+		t.Errorf("--include-memory default = %v, want false", f)
+	}
+}
