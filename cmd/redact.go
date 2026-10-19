@@ -365,104 +365,51 @@ var interpreters = map[string]bool{
 
 var bashRule = regexp.MustCompile(`^Bash(?:\((.*)\))?$`)
 
-// isInterpreterAllow is a Bash rule that lets any program run without asking:
-// bare Bash, Bash(*), or a rule whose command is an interpreter or launcher,
-// by name or by path (/usr/bin/python3:*).
+// isInterpreterAllow is a Bash rule that may let any program run without
+// asking. It fails closed: a rule is kept only when it is a plain command
+// line (literal words of safe characters, single spaces, an optional
+// trailing ":*" or " *") whose command is not an interpreter, wrapper or
+// shell keyword, with no exec-style flag and no interpreter named in any
+// word. Everything else, bare Bash and Bash(*) included, is a blanket grant.
 func isInterpreterAllow(rule string) bool {
 	m := bashRule.FindStringSubmatch(strings.TrimSpace(rule))
 	if m == nil {
 		return false
 	}
-	inner := strings.TrimSpace(m[1])
-	if inner == "" || inner == "*" || inner == ":*" {
+	inner := m[1]
+	if strings.HasSuffix(inner, ":*") {
+		inner = strings.TrimSuffix(inner, ":*")
+	} else if strings.HasSuffix(inner, " *") {
+		inner = strings.TrimSuffix(inner, " *")
+	}
+	if inner == "" {
 		return true
 	}
-	// Quotes and backslashes can spell a name the checks below do not see
-	// ('bash', b\ash, ba''sh). Fail closed.
-	if strings.ContainsAny(inner, `'"\`) {
-		return true
-	}
-	// Claude matches a rule against the whole command line, so a command
-	// after a separator (ls && bash:*) runs too. Every segment is checked.
-	for _, seg := range shellSegments.Split(inner, -1) {
-		if commandRunsAnything(strings.Fields(seg)) {
-			return true
-		}
-	}
-	return false
-}
-
-var shellSegments = regexp.MustCompile("&&|\\|\\||[;&|()\n`]|\\$\\(")
-
-// shellReserved words sit in command position without being the command
-// (if true; then bash; fi, ! bash).
-var shellReserved = map[string]bool{"if": true, "then": true, "else": true, "elif": true, "do": true,
-	"while": true, "until": true, "!": true, "{": true, "}": true, "time": true, "fi": true, "done": true}
-
-// durationArg is a wrapper's numeric argument (nice -n 5, timeout 10s).
-var durationArg = regexp.MustCompile(`^[0-9.]+[smhd]?$`)
-
-// commandRunsAnything is true when any word of the segment names an
-// interpreter or launcher (false positives are accepted: a dropped rule
-// only means a prompt), when an exec-style flag appears, or when the
-// command word is a glob, an env assignment or a bare wrapper.
-func commandRunsAnything(words []string) bool {
+	words := strings.Split(inner, " ")
 	for _, w := range words {
-		lw := strings.ToLower(w)
-		switch lw {
-		case "-exec", "-execdir", "-c", "--command", "-e", "--eval":
+		if !plainWord.MatchString(w) {
 			return true
 		}
-		if strings.Contains(lw, "pager=") || strings.Contains(lw, "--command=") {
+		switch strings.ToLower(w) {
+		case "-c", "-e", "--eval", "-exec", "-execdir", "--command":
 			return true
 		}
 		base := commandBase(w)
-		if interpreters[base] || strings.HasPrefix(base, "python") {
+		if interpreters[base] || commandWrappers[base] || strings.HasPrefix(base, "python") {
 			return true
 		}
 	}
-	// A prefix wildcard at the end (nice:*, timeout 5:*, nice -n 5 :*) lets
-	// a wrapper run anything after it, whatever its arguments.
-	endsWild := len(words) > 0 && strings.HasSuffix(words[len(words)-1], "*")
-	var trimmed []string
-	for _, w := range words {
-		// Only the ":*" suffix and a lone "*": ba* is still a glob.
-		if w = strings.TrimSuffix(w, ":*"); w != "" && w != "*" {
-			trimmed = append(trimmed, w)
-		}
-	}
-	words = trimmed
-	i := 0
-	for i < len(words) && shellReserved[words[i]] {
-		i++
-	}
-	for i < len(words) {
-		w := words[i]
-		if j := strings.LastIndex(w, ":"); j > 1 {
-			w = w[:j]
-		}
-		// The command name must be a literal: a glob there (b*sh:*, ?ython)
-		// matches interpreters, and an env assignment (FOO=1 bash) runs one.
-		if strings.ContainsAny(w, "*?[]{}$`") || strings.Contains(w, "=") {
-			return true
-		}
-		if !commandWrappers[commandBase(w)] {
-			return false
-		}
-		if endsWild {
-			return true
-		}
-		i++
-		for i < len(words) && (strings.HasPrefix(words[i], "-") || durationArg.MatchString(words[i])) {
-			i++
-		}
-		if i == len(words) {
-			// A wrapper with nothing after it (nice:*) runs whatever follows.
-			return true
-		}
-	}
-	return false
+	return shellKeywords[strings.ToLower(words[0])]
 }
+
+// plainWord is a literal argument: no shell metacharacter, quote, glob,
+// backslash or env assignment.
+var plainWord = regexp.MustCompile(`^[A-Za-z0-9._/@%+,-]+$`)
+
+// shellKeywords cannot be the command of a plain rule.
+var shellKeywords = map[string]bool{"if": true, "then": true, "else": true, "elif": true, "do": true,
+	"while": true, "until": true, "time": true, "fi": true, "done": true, "case": true, "for": true,
+	"select": true, "function": true, "coproc": true}
 
 // commandBase is a word's program name: no "cmd:*" suffix (a drive letter,
 // C:\..., stays), no directory, no .exe, lower case.

@@ -637,7 +637,7 @@ Flags:
 - `--apply-projects` (default: `false`): Write the bundle's project files into `--project-root`.
 - `--project-root <dir>`: Where `--apply-projects` writes. The exporting machine's `--project` directory is rewritten to it in every file.
 - `--map OLD=NEW` (repeatable): Rewrite another path prefix from the exporting machine. OLD must be an absolute path.
-- `--keep-interpreter-allows` (default: `false`): Keep Claude permissions such as `Bash(bash:*)`, `Bash(python3:*)` or `Bash(*)`. By default they are left out on import and each one is reported: on the other machine such a rule lets any program run without asking, and nobody there granted it.
+- `--keep-interpreter-allows` (default: `false`): Keep Claude permissions such as `Bash(bash:*)`, `Bash(python3:*)` or `Bash(*)`. By default they are left out on import and each one is reported. A Bash rule is kept only when it is a plain command line: literal words (letters, digits and `._/@%+,-`) separated by single spaces, an optional trailing `:*` or ` *`, and a command that is not an interpreter, wrapper or shell keyword. Any other Bash rule counts as a blanket grant: on the other machine such a rule lets any program run without asking, and nobody there granted it.
 - `--confirm` (default: `false`): Skip the confirmation prompt that guards `mirror`.
 
 Environment:
