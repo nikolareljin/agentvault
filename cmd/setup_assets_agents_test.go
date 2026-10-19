@@ -811,3 +811,60 @@ func TestSymlinkedClaudeSettingsDoNotAbortExport(t *testing.T) {
 		t.Fatalf("export failed on a symlinked ~/.claude file: %v", err)
 	}
 }
+
+// The Copilot CLI can keep login tokens in ~/.copilot/config.json. They never
+// travel, even with --include-secrets; the rest of the file does, and the
+// export says what was removed. Import strips them from an older bundle too.
+func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	cfg := `{"model":"gpt-5","copilot_tokens":{"u":"ghu_SECRET1"},"logged_in_users":[{"login":"u"}],` +
+		`"last_logged_in_user":{"login":"u"},"nested":{"oauthToken":"SECRET2","keep":1}}`
+	mustWriteFile(t, filepath.Join(home, ".copilot", "config.json"), cfg)
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilotCLI, "config.json")
+	if a == nil || !a.ContentPresent {
+		t.Fatalf("config.json not carried: %+v", a)
+	}
+	body := string(a.Content)
+	for _, bad := range []string{"SECRET", "copilot_tokens", "logged_in_users", "last_logged_in_user"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("config.json carries %q: %s", bad, body)
+		}
+	}
+	if !strings.Contains(body, `"model"`) || !strings.Contains(body, `"keep"`) {
+		t.Errorf("settings lost: %s", body)
+	}
+	if !declinedHas(assets.Declined, "~/.copilot/config.json", DeclinedByPolicy) {
+		t.Errorf("removed tokens not reported: %v", assets.Declined)
+	}
+
+	// Unparseable: skipped, never carried raw.
+	mustWriteFile(t, filepath.Join(home, ".copilot", "config.json"), `{"copilot_tokens":"ghu_X"`)
+	assets, _, err = collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilotCLI, "config.json"); a != nil {
+		t.Errorf("unparseable config.json carried: %s", a.Content)
+	}
+
+	// Import from a bundle that still holds them.
+	dst := t.TempDir()
+	mustWriteFile(t, filepath.Join(dst, ".copilot", "config.json"), `{"copilot_tokens":{"me":"LOCAL"}}`)
+	in := SetupAsset{Kind: setupAssetKindProviderFile, LogicalRoot: setupAssetRootProviderCopilotCLI,
+		LogicalPath: "config.json", Content: []byte(cfg), ContentPresent: true}
+	if _, _, err := applyProviderAssetsToSystem(dst, []SetupAsset{in}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dst, ".copilot", "config.json"))
+	if strings.Contains(string(got), "SECRET") || strings.Contains(string(got), "logged_in_users") {
+		t.Errorf("import wrote login tokens: %s", got)
+	}
+	if !strings.Contains(string(got), "LOCAL") || !strings.Contains(string(got), `"model"`) {
+		t.Errorf("import lost this machine's sign-in or the settings: %s", got)
+	}
+}

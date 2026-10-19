@@ -71,6 +71,11 @@
   and import never writes one from a bundle, under any spelling
   (`x/../auth.json`, `auth.json/.`, `Auth.json.`). Import takes provider
   paths only in clean form.
+- `~/.copilot/config.json` travels without its login keys (`copilot_tokens`,
+  `logged_in_users`, `last_logged_in_user`, any key named like a token),
+  even with `--include-secrets`. The export lists it as carried in part and
+  skips it when it is not JSON. Import strips the same keys from a bundle and
+  keeps this machine's sign-in.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key
   (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each

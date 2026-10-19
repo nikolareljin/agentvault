@@ -100,10 +100,11 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
-	extraAssets, extraWarnings, err := collectExtraProviderAssets(homeDir, opts.IncludeSecrets)
+	extraAssets, extraWarnings, extraDeclined, err := collectExtraProviderAssets(homeDir, opts.IncludeSecrets)
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
+	providerDeclined = append(providerDeclined, extraDeclined...)
 	warnings = append(warnings, extraWarnings...)
 	if opts.IncludeMemory {
 		memoryAssets, memoryWarnings, err := collectMemoryAssets(homeDir, opts.IncludeSecrets)
@@ -901,6 +902,15 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		}
 		content := asset.Content
 		perm := os.FileMode(0600)
+		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(asset.LogicalPath, "config.json") {
+			// A bundle is not trusted to replace this machine's sign-in.
+			stripped, _, err := stripCopilotLoginState(content)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				continue
+			}
+			content = keepLocalCopilotLogin(dest, stripped)
+		}
 		mergeKeys := asset.MergeKeys
 		if asset.LogicalRoot == setupAssetRootProviderHome {
 			// Never executable from the home root, and the keys merged into

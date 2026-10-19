@@ -169,9 +169,10 @@ func extraProviderSpecs() []providerFileSpec {
 	}
 }
 
-func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAsset, []string, error) {
+func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAsset, []string, []DeclinedAsset, error) {
 	var assets []SetupAsset
 	var warnings []string
+	var declined []DeclinedAsset
 	for _, spec := range extraProviderSpecs() {
 		base := filepath.Join(homeDir, providerRootDirs[spec.root])
 		if spec.dir {
@@ -179,7 +180,7 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 				setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root,
 				filepath.ToSlash(spec.rel), "", spec.sensitive, includeSecrets)
 			if err != nil {
-				return nil, warnings, err
+				return nil, warnings, declined, err
 			}
 			assets = append(assets, found...)
 			warnings = append(warnings, quietMissingRoots(warns)...)
@@ -189,11 +190,25 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 			warnings = append(warnings, warn)
 			continue
 		}
+		if spec.root == setupAssetRootProviderCopilotCLI && spec.rel == "config.json" {
+			asset, d, warn, err := collectCopilotConfig(filepath.Join(base, spec.rel), includeSecrets)
+			if err != nil {
+				return nil, warnings, declined, err
+			}
+			if warn != "" {
+				warnings = append(warnings, warn)
+			}
+			declined = append(declined, d...)
+			if asset != nil {
+				assets = append(assets, *asset)
+			}
+			continue
+		}
 		asset, _, err := loadSetupAsset(filepath.Join(base, spec.rel),
 			setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root,
 			filepath.ToSlash(spec.rel), "", spec.sensitive, includeSecrets, true)
 		if err != nil {
-			return nil, warnings, err
+			return nil, warnings, declined, err
 		}
 		if !asset.Missing {
 			assets = append(assets, asset)
@@ -202,7 +217,7 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 
 	userMCP, warn, err := collectClaudeUserMCPServers(homeDir, includeSecrets)
 	if err != nil {
-		return nil, warnings, err
+		return nil, warnings, declined, err
 	}
 	if warn != "" {
 		warnings = append(warnings, warn)
@@ -210,7 +225,135 @@ func collectExtraProviderAssets(homeDir string, includeSecrets bool) ([]SetupAss
 	if userMCP != nil {
 		assets = append(assets, *userMCP)
 	}
-	return assets, warnings, nil
+	return assets, warnings, declined, nil
+}
+
+// copilotLoginKeys are the keys of ~/.copilot/config.json that hold the
+// signed-in account and, without a keychain, its tokens. Any key that looks
+// like a token is removed too, at any depth.
+var copilotLoginKeys = map[string]bool{
+	"copilot_tokens": true, "logged_in_users": true, "last_logged_in_user": true,
+}
+
+func isLoginKey(k string) bool {
+	if copilotLoginKeys[strings.ToLower(k)] {
+		return true
+	}
+	l := strings.ToLower(k)
+	for _, w := range []string{"token", "secret", "password", "credential", "oauth"} {
+		if strings.Contains(l, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func stripLoginKeys(v any) (any, int) {
+	n := 0
+	switch t := v.(type) {
+	case map[string]any:
+		for k, inner := range t {
+			if isLoginKey(k) {
+				delete(t, k)
+				n++
+				continue
+			}
+			var m int
+			t[k], m = stripLoginKeys(inner)
+			n += m
+		}
+	case []any:
+		for i := range t {
+			var m int
+			t[i], m = stripLoginKeys(t[i])
+			n += m
+		}
+	}
+	return v, n
+}
+
+// stripCopilotLoginState returns config.json without its login keys and how
+// many were removed. Content that is not a JSON object is an error: it is
+// never carried or written raw.
+func stripCopilotLoginState(raw []byte) ([]byte, int, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil || doc == nil {
+		return nil, 0, fmt.Errorf("not a JSON object")
+	}
+	_, n := stripLoginKeys(doc)
+	out, err := json.MarshalIndent(doc, "", "  ")
+	return out, n, err
+}
+
+// collectCopilotConfig carries ~/.copilot/config.json without its login
+// state, even with --include-secrets: a copied token is a session someone
+// else can use.
+func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []DeclinedAsset, string, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil, nil, "", nil
+	}
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	shown := "~/.copilot/config.json"
+	if !info.Mode().IsRegular() {
+		return nil, nil, fmt.Sprintf("skipping %s: not a regular file", path), nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	data, n, err := stripCopilotLoginState(raw)
+	if err != nil {
+		return nil, []DeclinedAsset{{Path: shown, Category: DeclinedByPolicy,
+			Reason: "not a JSON object; may hold login tokens, so not carried"}}, "", nil
+	}
+	var declined []DeclinedAsset
+	if n > 0 {
+		declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedByPolicy,
+			Reason: fmt.Sprintf("carried in part: %d login key(s) removed; sign in on the other machine", n)})
+	}
+	asset := SetupAsset{
+		Kind:        setupAssetKindProviderFile,
+		Origin:      setupAssetOriginProviderHome,
+		LogicalRoot: setupAssetRootProviderCopilotCLI,
+		LogicalPath: "config.json",
+		SourcePath:  path,
+		Sensitive:   true,
+		SizeBytes:   int64(len(data)),
+	}
+	if !includeSecrets {
+		asset.Redacted = true
+		return &asset, declined, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
+	}
+	asset.Content = data
+	asset.ContentPresent = true
+	asset.SHA256 = hashSetupAssetContent(data)
+	return &asset, declined, "", nil
+}
+
+// keepLocalCopilotLogin puts this machine's own login keys from the config.json
+// at dest back into incoming, so applying a bundle does not sign anyone out.
+func keepLocalCopilotLogin(dest string, incoming []byte) []byte {
+	existing, err := os.ReadFile(dest)
+	if err != nil {
+		return incoming
+	}
+	var local, doc map[string]json.RawMessage
+	if json.Unmarshal(existing, &local) != nil || json.Unmarshal(incoming, &doc) != nil || doc == nil {
+		return incoming
+	}
+	for k, v := range local {
+		if isLoginKey(k) {
+			doc[k] = v
+		}
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return incoming
+	}
+	return out
 }
 
 // symlinkedAsset reports a symlink where a single optional file is expected.
