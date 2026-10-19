@@ -351,18 +351,33 @@ func isInterpreterAllow(rule string) bool {
 	if inner == "" || inner == "*" || inner == ":*" {
 		return true
 	}
-	// "cmd:*" or "cmd args"; a drive letter (C:\...) is part of cmd.
-	cmd := strings.Fields(inner)[0]
-	if i := strings.LastIndex(cmd, ":"); i > 1 {
-		cmd = cmd[:i]
-	}
-	base := strings.ToLower(path.Base(strings.ReplaceAll(cmd, `\`, "/")))
-	base = strings.TrimSuffix(base, ".exe")
-	if interpreters[base] {
+	words := strings.Fields(inner)
+	// The command name must be a literal: a glob there (b*sh:*, ?ython)
+	// matches interpreters, and an env assignment (FOO=1 bash) runs one.
+	if strings.ContainsAny(words[0], "*?[]{}$`") || strings.Contains(words[0], "=") {
 		return true
 	}
-	// python, python3, python3.12
-	return strings.HasPrefix(base, "python")
+	// Every word, not only the first: wrappers such as nice, time or
+	// command run the word after them.
+	for _, w := range words {
+		// "cmd:*" suffix; a drive letter (C:\...) is part of the word.
+		if i := strings.LastIndex(w, ":"); i > 1 {
+			w = w[:i]
+		}
+		base := strings.ToLower(path.Base(strings.ReplaceAll(w, `\`, "/")))
+		base = strings.TrimSuffix(base, ".exe")
+		if interpreters[base] || commandWrappers[base] || strings.HasPrefix(base, "python") {
+			return true
+		}
+	}
+	return false
+}
+
+// commandWrappers run another command given as an argument.
+var commandWrappers = map[string]bool{
+	"command": true, "nice": true, "time": true, "stdbuf": true, "ionice": true, "setsid": true,
+	"chrt": true, "taskset": true, "watch": true, "flock": true, "unbuffer": true, "script": true,
+	"strace": true, "ltrace": true, "chroot": true, "runuser": true, "su": true, "start": true,
 }
 
 // dropInterpreterAllows removes interpreter-wildcard entries from
