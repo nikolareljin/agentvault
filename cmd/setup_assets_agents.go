@@ -113,6 +113,12 @@ func homeAssetWritable(logicalPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// The path the bundle gives must already be the clean form. Any
+	// difference (" .claude.json", "./x", "a//b") is a second spelling, and
+	// checks made on one spelling must hold for the file written.
+	if rel != logicalPath {
+		return "", fmt.Errorf("%q: not in clean form (%q); refused", logicalPath, rel)
+	}
 	if reason := homeAssetRefusal(rel); reason != "" {
 		return "", fmt.Errorf("%s: %s", rel, reason)
 	}

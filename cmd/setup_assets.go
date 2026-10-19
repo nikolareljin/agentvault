@@ -895,7 +895,7 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			// Never executable from the home root, and the keys merged into
 			// ~/.claude.json are fixed here, not taken from the bundle.
 			mergeKeys = nil
-			if filepath.ToSlash(filepath.Clean(asset.LogicalPath)) == ".claude.json" {
+			if asset.LogicalPath == ".claude.json" {
 				mergeKeys = claudeUserConfigMergeKeys
 			}
 		}

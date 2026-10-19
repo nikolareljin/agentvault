@@ -345,7 +345,7 @@ func TestCollectSetupAssets_NeverFollowsIntoSecretFiles(t *testing.T) {
 func TestApplyHomeRootIsAnAllowlist(t *testing.T) {
 	home := t.TempDir()
 	var assets []SetupAsset
-	refused := []string{".bashrc", ".BASHRC", " .bashrc", ".zshrc", ".ssh/authorized_keys", ".SSH/authorized_keys",
+	refused := []string{".bashrc", ".BASHRC", " .bashrc", " .claude.json", "./.claude.json", "docs//x.md", ".zshrc", ".ssh/authorized_keys", ".SSH/authorized_keys",
 		".netrc", ".config/autostart/x.desktop", "Library/LaunchAgents/x.plist", ".hidden-at-root",
 		"bin/guard.sh", ".local/bin/git", "notes/run.sh"}
 	for _, p := range refused {
