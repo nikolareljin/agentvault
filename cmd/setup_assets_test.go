@@ -85,7 +85,7 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 	mustWriteFile(t, filepath.Join(homeDir, ".claude", "keybindings.json"), `{"up":"k"}`)
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "config.toml"), `model = "gpt"`)
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "rules", "review.md"), "review rules")
-	mustWriteFile(t, filepath.Join(homeDir, ".config", "github-copilot", "hosts.json"), `{"github.com":{"oauth_token":"secret"}}`)
+	mustWriteFile(t, filepath.Join(homeDir, ".config", "github-copilot", "versions.json"), `{"token":"secret"}`)
 
 	assets, _, err := collectSetupAssets(setupAssetOptions{})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 		t.Fatalf("claude settings asset = %#v, want sensitive redacted metadata", settings)
 	}
 
-	copilotHosts := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilot, "hosts.json")
+	copilotHosts := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilot, "versions.json")
 	if copilotHosts == nil {
 		t.Fatalf("provider files missing copilot config")
 	}
@@ -620,7 +620,7 @@ func TestApplyProviderAssetsToSystemRejectsSymlinkProviderDirectory(t *testing.T
 	applied, warnings, err := applyProviderAssetsToSystem(homeDir, []SetupAsset{{
 		Kind:           setupAssetKindProviderFile,
 		LogicalRoot:    setupAssetRootProviderCopilot,
-		LogicalPath:    "hosts.json",
+		LogicalPath:    "versions.json",
 		ContentPresent: true,
 		Content:        []byte(`{"github.com":{"oauth_token":"secret"}}`),
 	}})
@@ -631,7 +631,7 @@ func TestApplyProviderAssetsToSystemRejectsSymlinkProviderDirectory(t *testing.T
 	if applied != 0 || !strings.Contains(joined, "destination directory contains a symlink") {
 		t.Fatalf("applyProviderAssetsToSystem() = (%d, %v), want provider-dir symlink warning", applied, warnings)
 	}
-	if _, err := os.Stat(filepath.Join(outsideDir, "hosts.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(outsideDir, "versions.json")); !os.IsNotExist(err) {
 		t.Fatalf("copilot provider symlink target should remain untouched, got err=%v", err)
 	}
 }

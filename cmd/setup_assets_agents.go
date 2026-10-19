@@ -59,6 +59,10 @@ var credentialFileNames = map[string]bool{
 	"auth.json":            true, // Codex
 	"oauth_creds.json":     true, // Gemini CLI
 	"google_accounts.json": true, // Gemini CLI
+	// GitHub OAuth tokens of the Copilot editor plugins, in
+	// ~/.config/github-copilot.
+	"hosts.json": true,
+	"apps.json":  true,
 }
 
 func isCredentialFile(path string) bool {
@@ -629,7 +633,7 @@ type homeRefResult struct {
 // resolveHomeReference decides one reference named by a file in fromDir. It
 // may point anywhere under home, through ~, $HOME, an absolute path or a
 // relative one, and nowhere else.
-func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
+func resolveHomeReference(homeDir, fromDir, raw string, aliases []agentRootAlias) homeRefResult {
 	clean := strings.TrimPrefix(raw, "./")
 	var abs string
 	if p, ok := expandHomePath(clean, homeDir); ok {
@@ -669,7 +673,7 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	// Spelled under the home path, so a directory walked from it yields paths
 	// relative to home, and one file has one key however it was named.
 	real = filepath.Join(cleanHome, mustRel(realHome, real))
-	if reason := agentAliasRefusal(agentRootAliases(homeDir), real); reason != "" {
+	if reason := agentAliasRefusal(aliases, real); reason != "" {
 		return homeRefResult{reason: reason}
 	}
 	info, err := os.Stat(real)
@@ -751,9 +755,10 @@ type agentRootAlias struct {
 	logical string // the home-relative path it stands for, e.g. ".claude/projects"
 }
 
-// agentRootAliases resolves each tool directory and its direct entries. A
-// reference through the target (~/dotfiles/claude/todos) names the same files
-// as one through the tool directory and gets the same answer.
+// agentRootAliases resolves each tool directory and every link inside it, at
+// any depth. A reference through a target (~/dotfiles/claude/todos, or
+// ~/notes/mem with ~/.claude/projects/p/memory linked there) names the same
+// files as one through the tool directory and gets the same answer.
 func agentRootAliases(homeDir string) []agentRootAlias {
 	cleanHome := filepath.Clean(homeDir)
 	realHome, err := filepath.EvalSymlinks(homeDir)
@@ -770,18 +775,25 @@ func agentRootAliases(homeDir string) []agentRootAlias {
 	var out []agentRootAlias
 	for root := range agentRootAllowed {
 		dir := filepath.Join(cleanHome, root)
-		if real, ok := spell(dir); ok && real != dir {
-			out = append(out, agentRootAlias{real, root})
+		walkFrom, ok := spell(dir)
+		if !ok {
+			continue
 		}
-		// Every entry, not only those typed as symlinks: a Windows junction
-		// is not reported as one.
-		entries, _ := os.ReadDir(dir)
-		for _, e := range entries {
-			entry := filepath.Join(dir, e.Name())
-			if real, ok := spell(entry); ok && real != entry {
-				out = append(out, agentRootAlias{real, root + "/" + e.Name()})
+		if walkFrom != dir {
+			out = append(out, agentRootAlias{walkFrom, root})
+		}
+		// WalkDir does not follow links, so each one is resolved here. Every
+		// entry that is not a plain file or directory is tried: a Windows
+		// junction is not reported as a symlink.
+		_ = filepath.WalkDir(walkFrom, func(p string, d os.DirEntry, err error) error {
+			if err != nil || p == walkFrom || d.Type().IsRegular() || d.IsDir() {
+				return nil
 			}
-		}
+			if real, ok := spell(p); ok && real != p {
+				out = append(out, agentRootAlias{real, root + "/" + filepath.ToSlash(mustRel(walkFrom, p))})
+			}
+			return nil
+		})
 	}
 	return out
 }
@@ -842,6 +854,9 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		depth int
 	}
 	var queue []item
+	// Resolved once: walking the tool directories per reference would cost
+	// a full walk of ~/.claude/projects each time.
+	aliases := agentRootAliases(homeDir)
 	for _, s := range userInstructionSeeds(carried) {
 		queue = append(queue, item{s, 0})
 	}
@@ -884,7 +899,6 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 
 	takeDir := func(dir, by string, depth int) error {
 		n := 0
-		aliases := agentRootAliases(homeDir)
 		refused := func(p string) bool {
 			return homeReferenceRefusal(mustRel(homeDir, p)) != "" || agentAliasRefusal(aliases, p) != ""
 		}
@@ -932,7 +946,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		}
 		by := "~/" + filepath.ToSlash(mustRel(homeDir, settings.SourcePath))
 		for _, p := range settingsCommandPaths(content, homeDir) {
-			r := resolveHomeReference(homeDir, homeDir, p)
+			r := resolveHomeReference(homeDir, homeDir, p, aliases)
 			shown := "~/" + filepath.ToSlash(mustRel(homeDir, p))
 			switch {
 			case r.absent:
@@ -958,7 +972,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		fromDir := filepath.Dir(cur.asset.SourcePath)
 		by := "~/" + filepath.ToSlash(mustRel(homeDir, cur.asset.SourcePath))
 		for _, raw := range agent.FindReferences(string(cur.asset.Content)) {
-			r := resolveHomeReference(homeDir, fromDir, raw)
+			r := resolveHomeReference(homeDir, fromDir, raw, aliases)
 			switch {
 			case r.absent:
 				declined = append(declined, DeclinedAsset{Path: raw, Category: DeclinedAbsent,

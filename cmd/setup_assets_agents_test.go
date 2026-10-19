@@ -890,6 +890,39 @@ func TestCopilotConfigLoginTokensNeverTravel(t *testing.T) {
 	}
 }
 
+// ~/.config/github-copilot/hosts.json and apps.json hold GitHub OAuth tokens:
+// never collected, never written from a bundle, in any spelling.
+func TestCopilotOAuthFilesNeverTravel(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".config", "github-copilot", "hosts.json"), `{"github.com":{"oauth_token":"leak"}}`)
+	mustWriteFile(t, filepath.Join(home, ".config", "github-copilot", "Apps.json"), `{"x":{"oauth_token":"leak"}}`)
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		if strings.Contains(strings.ToLower(a.LogicalPath), "hosts.json") || strings.Contains(strings.ToLower(a.LogicalPath), "apps.json") {
+			t.Errorf("%s collected", a.LogicalPath)
+		}
+	}
+	dst := t.TempDir()
+	var in []SetupAsset
+	for _, p := range []string{"hosts.json", "apps.json", "HOSTS.JSON", "apps.json."} {
+		in = append(in, SetupAsset{Kind: setupAssetKindProviderFile, LogicalRoot: setupAssetRootProviderCopilot,
+			LogicalPath: p, Content: []byte("planted"), ContentPresent: true})
+	}
+	in = append(in, SetupAsset{Kind: setupAssetKindProviderFile, LogicalRoot: setupAssetRootProviderCopilot,
+		LogicalPath: "versions.json", Content: []byte("{}"), ContentPresent: true})
+	applied, _, err := applyProviderAssetsToSystem(dst, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied != 1 {
+		t.Errorf("applied = %d, want 1 (versions.json)", applied)
+	}
+}
+
 // A .env or key file inside a tool's own directory, and any file with a
 // second hard link, is redacted without --include-secrets: its name is no
 // proof of what it holds.
@@ -909,9 +942,17 @@ func TestDirSecretsAndHardLinksAreRedacted(t *testing.T) {
 		t.Skipf("hard links unavailable: %v", err)
 	}
 
-	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project})
+	mustWriteFile(t, filepath.Join(home, "token.txt"), "leak6\n")
+	if err := os.Link(filepath.Join(home, "token.txt"), filepath.Join(home, ".claude", "agents", "hl.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	assets, warnings, err := collectSetupAssets(setupAssetOptions{ProjectDir: project})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "hl.md\" has a second hard link; redacted, use --include-secrets to carry") {
+		t.Errorf("hard link redaction does not say why: %v", warnings)
 	}
 	all := append(append([]SetupAsset{}, assets.ProviderFiles...), assets.ProjectFiles...)
 	for _, a := range all {
@@ -1000,6 +1041,38 @@ func TestHomeReferenceRefusesAgentStateThroughSymlinkTarget(t *testing.T) {
 	}
 	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, "dotfiles/claude/rules/r.md") == nil {
 		t.Error("rules file under the symlink target not carried")
+	}
+}
+
+// A link deep inside a tool directory (~/.claude/projects/p/memory ->
+// ~/notes/mem) and a link elsewhere landing in its state (~/x.md ->
+// ~/.claude/todos/t.md) are both declined.
+func TestHomeReferenceRefusesDeepAgentStateLinks(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, "notes", "mem", "m.md"), "MEMORY\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "todos", "t.md"), "SESSION\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "projects", "p", "keep.txt"), "x\n")
+	if err := os.Symlink(filepath.Join(home, "notes", "mem"), filepath.Join(home, ".claude", "projects", "p", "memory")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(home, ".claude", "todos", "t.md"), filepath.Join(home, "x.md")); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/notes/mem/m.md`, `~/notes/` and `~/x.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		if strings.Contains(string(a.Content), "MEMORY") || strings.Contains(string(a.Content), "SESSION") {
+			t.Errorf("%s %s carried agent state", a.LogicalRoot, a.LogicalPath)
+		}
+	}
+	for _, p := range []string{"~/notes/mem/m.md", "~/x.md"} {
+		if !declinedHas(assets.Declined, p, DeclinedByPolicy) {
+			t.Errorf("%s not declined: %v", p, assets.Declined)
+		}
 	}
 }
 

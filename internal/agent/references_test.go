@@ -253,3 +253,15 @@ func TestResolveReferencesRefusesHardLinks(t *testing.T) {
 		t.Errorf("hard link not refused: %+v", refs)
 	}
 }
+
+// noSysInfo is a FileInfo whose link count cannot be read.
+type noSysInfo struct{ os.FileInfo }
+
+func (noSysInfo) Sys() any { return nil }
+
+// A link count that cannot be read counts as linked: fail closed.
+func TestHardLinkCountFailsClosed(t *testing.T) {
+	if n := HardLinkCount(filepath.Join(t.TempDir(), "missing"), noSysInfo{}); n < 2 {
+		t.Errorf("unreadable link count = %d, want >= 2", n)
+	}
+}

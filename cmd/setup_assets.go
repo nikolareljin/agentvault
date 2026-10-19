@@ -646,7 +646,8 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	}
 	// A hard link has another name that was never checked: notes.md can be
 	// .netrc. Its content is treated as secret.
-	if agent.HardLinkCount(path, info) > 1 {
+	hardLinked := agent.HardLinkCount(path, info) > 1
+	if hardLinked {
 		sensitive = true
 		asset.Sensitive = true
 	}
@@ -656,6 +657,10 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
 	}
 	asset.SizeBytes = int64(len(data))
+	if hardLinked && !includeSecrets {
+		asset.Redacted = true
+		return asset, fmt.Sprintf("asset %q has a second hard link; redacted, use --include-secrets to carry", path), nil
+	}
 	if sensitive && !includeSecrets {
 		asset.Redacted = true
 		return asset, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil

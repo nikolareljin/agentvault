@@ -137,8 +137,14 @@
   `~/.claude/projects/` carried session transcripts, and memory without
   `--include-memory`. The same holds through a symlink: with `~/.claude`
   linked to `~/dotfiles/claude`, a reference to
-  `~/dotfiles/claude/todos/` is declined too. Import does not write those
-  paths from the home root either.
+  `~/dotfiles/claude/todos/` is declined too, and so is a link at any
+  depth (`~/.claude/projects/p/memory` linked to `~/notes/mem`). Import
+  does not write those paths from the home root either.
+- `~/.config/github-copilot/hosts.json` and `apps.json` hold GitHub OAuth
+  tokens. They are login token files like `auth.json`: never collected,
+  and never written from a bundle, in any spelling.
+- A file whose hard link count cannot be read is treated as hard-linked.
+  The export warning for a hard-linked file says why it was redacted.
 
 ### Fixed
 - `generate mcp` writes by default to Claude Desktop's config for the OS:
