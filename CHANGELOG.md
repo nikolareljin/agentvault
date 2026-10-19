@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- `./dev` (and `./dev.ps1` on Windows) is the entry point for install, build,
+  test, lint, format, preflight, doctor, clean and install-bin. The commands
+  live in `scripts/project.sh`, and `make` targets are shims onto them.
+  Without Go, `./dev install` and `./dev test` exit 1 and name the Go version
+  from `go.mod`. Verbs that do not apply, such as `deploy`, exit 3.
+- script-helpers as a submodule at `scripts/script-helpers`, tracking
+  `production`.
+- `tests/machine/install_check.sh`: installs into a scratch `GOBIN` and runs
+  the installed binary.
+
 ### Changed
+- `actions/checkout` and `actions/github-script` are pinned to commit SHAs.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key
   (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
