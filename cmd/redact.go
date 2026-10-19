@@ -361,6 +361,9 @@ var interpreters = map[string]bool{
 	"eval": true, "exec": true, "sudo": true, "doas": true, "xargs": true, "node": true, "deno": true,
 	"bun": true, "npx": true, "perl": true, "ruby": true, "php": true, "lua": true, "osascript": true,
 	"pwsh": true, "powershell": true, "cmd": true, "busybox": true, "nohup": true, "timeout": true,
+	"source": true, "builtin": true, "awk": true, "gawk": true, "mawk": true, "nawk": true, "bunx": true,
+	"uvx": true, "pipx": true, "expect": true, "tclsh": true, "unshare": true, "nsenter": true,
+	"systemd-run": true, "pkexec": true,
 }
 
 var bashRule = regexp.MustCompile(`^Bash(?:\((.*)\))?$`)
@@ -391,7 +394,11 @@ func isInterpreterAllow(rule string) bool {
 			return true
 		}
 		switch strings.ToLower(w) {
-		case "-c", "-e", "--eval", "-exec", "-execdir", "--command":
+		case "-c", "-e", "--eval", "-exec", "-execdir", "-ok", "-okdir", "--command":
+			return true
+		}
+		// ".", "..": a dot word runs a file in the shell (. ./env.sh).
+		if strings.Trim(w, ".") == "" {
 			return true
 		}
 		base := commandBase(w)
@@ -399,8 +406,19 @@ func isInterpreterAllow(rule string) bool {
 			return true
 		}
 	}
-	return shellKeywords[strings.ToLower(words[0])]
+	first := strings.ToLower(words[0])
+	if strings.HasPrefix(first, ".") && !strings.HasPrefix(first, "./") && !strings.HasPrefix(first, "../") {
+		return true
+	}
+	if len(words) > 1 && packageRunners[commandBase(words[0])+" "+strings.ToLower(words[1])] {
+		return true
+	}
+	return shellKeywords[first]
 }
+
+// packageRunners download and run a package: the first two words.
+var packageRunners = map[string]bool{"npm exec": true, "pnpm dlx": true, "pnpm exec": true, "yarn dlx": true,
+	"yarn exec": true, "bun x": true, "pipx run": true, "uv run": true}
 
 // plainWord is a literal argument: no shell metacharacter, quote, glob,
 // backslash or env assignment.

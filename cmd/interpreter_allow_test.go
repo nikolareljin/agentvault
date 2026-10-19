@@ -75,12 +75,18 @@ func TestIsInterpreterAllowSegmentsAndArguments(t *testing.T) {
 		"Bash(timeout 5:*)", "Bash(nice -n 5 :*)", "Bash(nice -n 5 make:*)", "Bash('bash' -c x)", `Bash(b\ash:*)`,
 		`Bash("python3" x)`, "Bash(ba''sh:*)", "Bash(py*)", "Bash(ls; ba*)",
 		"Bash(time:*)", "Bash(! :*)", "Bash(if:*)", "Bash(git  status)", "Bash(ls > /etc/x)", "Bash(FOO=1 make)",
-		"Bash(*:*)", "Bash(ls; *)", "Bash(ls && *:*)"} {
+		"Bash(*:*)", "Bash(ls; *)", "Bash(ls && *:*)",
+		"Bash(. ./env.sh)", "Bash(source:*)", "Bash(builtin:*)", "Bash(awk:*)", "Bash(gawk x)", "Bash(mawk x)",
+		"Bash(npm exec:*)", "Bash(npx:*)", "Bash(pnpm dlx:*)", "Bash(yarn dlx:*)", "Bash(bunx:*)", "Bash(uvx:*)",
+		"Bash(pipx run:*)", "Bash(find . -ok rm)", "Bash(find . -okdir rm)", "Bash(unshare:*)", "Bash(nsenter:*)",
+		"Bash(systemd-run:*)", "Bash(pkexec:*)", "Bash(doas:*)", "Bash(chroot:*)", "Bash(setsid:*)",
+		"Bash(flock:*)", "Bash(watch:*)", "Bash(script:*)", "Bash(expect:*)", "Bash(osascript:*)",
+		"Bash(ls ..)", "Bash(.hidden/run)"} {
 		if !isInterpreterAllow(r) {
 			t.Errorf("%s not flagged", r)
 		}
 	}
-	for _, r := range []string{"Bash(make:*)", "Bash(git status:*)", "Bash(go test ./...)", "Bash(make test)", "Bash(npm run test *)"} {
+	for _, r := range []string{"Bash(make:*)", "Bash(git status:*)", "Bash(go test ./...)", "Bash(make test)", "Bash(npm run test *)", "Bash(./scripts/check.sh)", "Bash(../bin/lint:*)", "Bash(ls ./docs)"} {
 		if isInterpreterAllow(r) {
 			t.Errorf("%s flagged", r)
 		}
