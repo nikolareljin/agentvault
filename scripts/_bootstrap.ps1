@@ -6,7 +6,12 @@
 # Sets $DEV_REPO_ROOT and $env:SCRIPT_HELPERS_DIR, then dot-sources ps/helpers.ps1.
 
 $DEV_SCRIPT_DIR = $PSScriptRoot
-$DEV_REPO_ROOT = (& git -C $DEV_SCRIPT_DIR rev-parse --show-toplevel 2>$null | Out-String).Trim()
+# Guarded like _bootstrap.sh: with no git on PATH, fall back to the parent dir.
+$_devHasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
+$DEV_REPO_ROOT = ''
+if ($_devHasGit) {
+    $DEV_REPO_ROOT = (& git -C $DEV_SCRIPT_DIR rev-parse --show-toplevel 2>$null | Out-String).Trim()
+}
 if (-not $DEV_REPO_ROOT) {
     $DEV_REPO_ROOT = (Resolve-Path (Join-Path $DEV_SCRIPT_DIR '..')).Path
 }
@@ -38,6 +43,7 @@ function Find-ScriptHelpers {
 # leaves the directory present but empty, which is the single most common
 # "nothing works" report in this fleet.
 function Initialize-ScriptHelpers {
+    if (-not $_devHasGit) { return $false }
     foreach ($c in $_devHelperCandidates) {
         if (-not (Test-Path $c -PathType Container)) { continue }
         $rel = $c.Substring($DEV_REPO_ROOT.Length).TrimStart('\','/')
