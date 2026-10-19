@@ -580,7 +580,9 @@ func generateMCPConfig(v *vault.Vault, outputFile string, agentFilter string, sh
 	}
 
 	if outputFile == "" {
-		outputFile = config.ClaudeDesktopConfigPath()
+		if outputFile, err = config.ClaudeDesktopConfigPath(); err != nil {
+			return err
+		}
 	}
 
 	if outputFile == "-" {

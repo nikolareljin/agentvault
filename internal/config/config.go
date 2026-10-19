@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -37,10 +38,15 @@ func TemplatesDir() string {
 }
 
 // ClaudeDesktopConfigPath returns where Claude Desktop reads its MCP config on
-// this OS.
-func ClaudeDesktopConfigPath() string {
+// this OS. It fails rather than return a relative path, which would put the
+// file in the working directory when HOME (or USERPROFILE and APPDATA) is unset.
+func ClaudeDesktopConfigPath() (string, error) {
 	home, _ := os.UserHomeDir()
-	return claudeDesktopConfigPathFor(runtime.GOOS, home, os.Getenv("APPDATA"))
+	p := claudeDesktopConfigPathFor(runtime.GOOS, home, os.Getenv("APPDATA"))
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("cannot locate Claude Desktop config (got %q): set HOME or pass an output file", p)
+	}
+	return p, nil
 }
 
 // claudeDesktopConfigPathFor is ClaudeDesktopConfigPath with its inputs

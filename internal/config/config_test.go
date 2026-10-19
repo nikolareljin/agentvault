@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -31,6 +32,21 @@ func TestVaultPath(t *testing.T) {
 	want := filepath.Join("/tmp/xdg-test", "agentvault", "vault.enc")
 	if path != want {
 		t.Errorf("VaultPath() = %q, want %q", path, want)
+	}
+}
+
+// With HOME unset the path would be relative and land in the working directory.
+func TestClaudeDesktopConfigPathRefusesRelative(t *testing.T) {
+	if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
+		t.Skip("home comes from HOME only on unix")
+	}
+	t.Setenv("HOME", "")
+	if p, err := ClaudeDesktopConfigPath(); err == nil {
+		t.Fatalf("got %q, want an error", p)
+	}
+	t.Setenv("HOME", filepath.FromSlash("/h"))
+	if p, err := ClaudeDesktopConfigPath(); err != nil || !filepath.IsAbs(p) {
+		t.Fatalf("got %q, %v", p, err)
 	}
 }
 
