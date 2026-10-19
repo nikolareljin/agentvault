@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -54,7 +55,7 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 	for name, m := range markets {
 		src := m.Source.Repo
 		if src == "" {
-			src = m.Source.URL
+			src = withoutURLCredentials(m.Source.URL)
 		}
 		if src == "" {
 			src = m.Source.Path
@@ -85,6 +86,22 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 		return nil, nil
 	}
 	return inv, nil
+}
+
+// withoutURLCredentials drops the user and password from a URL. A private
+// marketplace added as https://token@host/repo would otherwise carry the
+// token into the bundle.
+func withoutURLCredentials(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Unparsed, it may still hold a token; carry nothing.
+		return ""
+	}
+	if u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }
 
 // readJSONIfPresent decodes path into v. A missing file leaves v empty; a file

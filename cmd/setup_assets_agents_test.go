@@ -617,3 +617,21 @@ func TestHomeReferenceProseSymlinkToConfigIsSensitive(t *testing.T) {
 		}
 	}
 }
+
+// A marketplace added from a URL with a token in it must not carry the token.
+func TestPluginInventoryStripsURLCredentials(t *testing.T) {
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", "plugins", "known_marketplaces.json"),
+		`{"team":{"source":{"source":"git","url":"https://x-access-token:ghp_s3cret@github.com/o/r.git"}}}`)
+	inv, err := collectClaudePluginInventory(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(inv)
+	if bytes.Contains(data, []byte("s3cret")) || bytes.Contains(data, []byte("x-access-token")) {
+		t.Fatalf("credential carried in plugin inventory: %s", data)
+	}
+	if inv == nil || len(inv.Marketplaces) != 1 || inv.Marketplaces[0].Source != "https://github.com/o/r.git" {
+		t.Errorf("source not kept without its credentials: %+v", inv)
+	}
+}

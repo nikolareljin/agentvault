@@ -47,6 +47,8 @@
   credential paths and home-root dotfiles are refused in any letter case.
 - Referenced files that are not prose (scripts, config) are redacted without
   `--include-secrets`.
+- The plugin inventory drops the user and password from a marketplace URL,
+  so `https://token@host/repo` does not carry the token.
 - Plugin install commands are printed only for IDs and sources that cannot
   carry shell syntax. Anything else is printed quoted, as a comment.
 
