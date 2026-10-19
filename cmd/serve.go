@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -111,7 +112,7 @@ Example:
 		}
 		mux := newServeMux(v, vaultPath, apiKey)
 
-		addr := fmt.Sprintf("%s:%d", host, port)
+		addr := net.JoinHostPort(host, strconv.Itoa(port))
 		log.Printf("AgentVault API listening on %s (vault: %s, auth: %v)", addr, vaultPath, apiKey != "")
 		server := &http.Server{
 			Addr:              addr,
@@ -128,6 +129,9 @@ Example:
 		return server.ListenAndServe()
 	},
 }
+
+// maxRequestBodyBytes caps JSON request bodies; a prompt is text, not an upload.
+const maxRequestBodyBytes = 1 << 20
 
 func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 	mux := http.NewServeMux()
@@ -270,7 +274,7 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 		}
 
 		var req routeRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 			return
 		}
@@ -376,7 +380,7 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 		}
 
 		var req promptRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 			return
 		}

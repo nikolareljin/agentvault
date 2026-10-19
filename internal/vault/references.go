@@ -2,8 +2,10 @@ package vault
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -56,7 +58,7 @@ func (v *Vault) PullReferenceClosure(dir string) (ClosureResult, error) {
 			}
 			visited[ref.Rel] = true
 
-			data, err := os.ReadFile(filepath.Join(dir, ref.Rel))
+			data, err := readReferencedFile(dir, ref.Rel)
 			if err != nil {
 				// It was classified as a present regular file a moment ago, so
 				// this is a race or a permission problem, not prose naming a
@@ -93,4 +95,50 @@ func dedupeReferences(in []agent.Reference) []agent.Reference {
 		out = append(out, r)
 	}
 	return out
+}
+
+// readReferencedFile re-checks, on the opened file, what classification
+// checked on the path: a regular file, inside dir, under the size ceiling.
+// A symlink swapped in between the two would otherwise be read.
+func readReferencedFile(dir, rel string) ([]byte, error) {
+	full := filepath.Join(dir, filepath.FromSlash(rel))
+	f, err := os.Open(full)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is no longer a regular file", rel)
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	realFile, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return nil, err
+	}
+	inside, err := filepath.Rel(realDir, realFile)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("%s now resolves outside %s", rel, dir)
+	}
+	resolved, err := os.Stat(realFile)
+	if err != nil {
+		return nil, err
+	}
+	if !os.SameFile(opened, resolved) {
+		return nil, fmt.Errorf("%s changed while it was being read", rel)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, agent.MaxReferenceBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > agent.MaxReferenceBytes {
+		return nil, fmt.Errorf("%s grew past the %d byte ceiling", rel, agent.MaxReferenceBytes)
+	}
+	return data, nil
 }
