@@ -115,7 +115,7 @@ func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]
 	out := make([]SetupAsset, len(assets))
 	for i, a := range assets {
 		if newPath := remapLogicalPath(a, remaps); newPath != a.LogicalPath {
-			report = append(report, fmt.Sprintf("renamed %s -> %s", a.LogicalPath, newPath))
+			report = append(report, fmt.Sprintf("renamed %q -> %q", a.LogicalPath, newPath))
 			a.LogicalPath = newPath
 		}
 		if a.ContentPresent && isRemappableText(a.Content) && len(remaps) > 0 {
@@ -124,7 +124,7 @@ func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]
 				a.Content = []byte(text)
 				a.SizeBytes = int64(len(a.Content))
 				a.SHA256 = hashSetupAssetContent(a.Content)
-				report = append(report, fmt.Sprintf("rewrote %d path(s) in %s", n, describeSetupAsset(a)))
+				report = append(report, fmt.Sprintf("rewrote %d path(s) in %q", n, describeSetupAsset(a)))
 			}
 		}
 		if a.ContentPresent && isRemappableText(a.Content) {
@@ -132,7 +132,7 @@ func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]
 				if targetHome != "" && (m == targetHome || strings.HasPrefix(targetHome, m)) {
 					continue
 				}
-				report = append(report, fmt.Sprintf("warning: %s still names %s; pass --map %s=<path here>", describeSetupAsset(a), m, m))
+				report = append(report, fmt.Sprintf("warning: %q still names %s; pass --map %s=<path here>", describeSetupAsset(a), m, m))
 			}
 		}
 		out[i] = a

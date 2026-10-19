@@ -15,7 +15,11 @@
 - JSON settings exported without `--include-secrets` travel with only their
   secret values blanked (keys with token, secret, password, key and the
   like, and everything under `env` and `headers`). Import fills each blanked
-  value from the file already on the machine, or leaves it out.
+  value from the file already on the machine, or leaves it out. A
+  value is restored only into an unchanged definition, so a bundle that
+  points an MCP server elsewhere does not receive the local token. A file
+  with secret-shaped values under neutral keys (`--token x` in `args`, URL
+  credentials, known token prefixes) is redacted whole.
 - The execute bit travels for a tool's own `hooks/` scripts, so a hook still
   runs after import.
 - `export` carries the user-level setup of Gemini CLI (`~/.gemini`), the

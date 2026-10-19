@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,12 @@ func redactJSONSecrets(data []byte) (out []byte, pointers []string, ok bool) {
 		}
 	}
 	walk(doc, "", false)
+	// A secret can sit under a key that says nothing: an args list holding
+	// "--token", "x", or a URL with credentials in it. Field-level redaction
+	// cannot place those, so such a file falls back to whole-file redaction.
+	if containsSecretShape(doc) {
+		return nil, nil, false
+	}
 	sort.Strings(pointers)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -110,7 +117,7 @@ func restoreRedactedFields(incoming []byte, pointers []string, existing []byte) 
 	sorted := append([]string(nil), pointers...)
 	sort.Sort(sort.Reverse(sort.StringSlice(sorted)))
 	for _, p := range sorted {
-		if v, ok := pointerGet(have, p); ok {
+		if v, ok := pointerGet(have, p); ok && restorable(doc, have, p, pointers) {
 			pointerSet(doc, p, v)
 			restored++
 			continue
@@ -196,4 +203,124 @@ func pointerDelete(doc map[string]any, p string) {
 	if m, ok := parent.(map[string]any); ok {
 		delete(m, last)
 	}
+}
+
+var (
+	// Credentials in a URL, a credential query parameter, or a well-known
+	// token prefix.
+	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|[?&](token|key|api_key|apikey|secret|password|sig|signature|access_token)=|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
+	// A flag whose next argument is a secret.
+	secretFlag = regexp.MustCompile(`(?i)^--?(token|api[-_]?key|password|passwd|secret|auth|bearer|access[-_]?key|client[-_]?secret)(=.+)?$`)
+)
+
+// containsSecretShape reports a value that looks like a secret anywhere in
+// doc that the key-based pass left in place.
+func containsSecretShape(v any) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		for _, inner := range t {
+			if containsSecretShape(inner) {
+				return true
+			}
+		}
+	case []any:
+		for i, inner := range t {
+			s, ok := inner.(string)
+			if !ok {
+				if containsSecretShape(inner) {
+					return true
+				}
+				continue
+			}
+			if m := secretFlag.FindStringSubmatch(s); m != nil {
+				if m[2] != "" && m[2] != "=" {
+					return true
+				}
+				if i+1 < len(t) {
+					if next, ok := t[i+1].(string); ok && next != "" {
+						return true
+					}
+				}
+			}
+			if secretValueShapes.MatchString(s) {
+				return true
+			}
+		}
+	case string:
+		return t != "" && secretValueShapes.MatchString(t)
+	}
+	return false
+}
+
+// restorable decides whether this machine's secret at p may go back into the
+// incoming document. The pointer must name a blanked secret ("" in incoming,
+// under a secret key, env or headers), and the object holding it must be the
+// same object on both sides apart from its secrets: a bundle that keeps an
+// MCP server's name but points its URL elsewhere must not receive the local
+// token for it.
+func restorable(doc, have map[string]any, p string, pointers []string) bool {
+	if v, ok := pointerGet(doc, p); !ok || v != "" {
+		return false
+	}
+	parts := splitPointer(p)
+	secretPath := false
+	for _, part := range parts {
+		if isSecretKey(part) || secretContainers[strings.ToLower(part)] {
+			secretPath = true
+		}
+	}
+	if !secretPath {
+		return false
+	}
+	// The nearest object that is not itself a secret container: for
+	// /mcpServers/x/headers/Authorization that is /mcpServers/x.
+	cut := len(parts) - 1
+	for cut > 0 && (isSecretKey(parts[cut-1]) || secretContainers[strings.ToLower(parts[cut-1])]) {
+		cut--
+	}
+	if cut == 0 {
+		// A top-level secret (settings.json's own env) belongs to the tool
+		// that reads the file, on both machines.
+		return true
+	}
+	escaped := make([]string, cut)
+	for i, part := range parts[:cut] {
+		escaped[i] = escapePointer(part)
+	}
+	owner := "/" + strings.Join(escaped, "/")
+	in, _ := pointerGetAny(doc, owner)
+	ex, _ := pointerGetAny(have, owner)
+	return sameApartFromSecrets(in, ex, owner, pointers)
+}
+
+func pointerGetAny(doc map[string]any, p string) (any, bool) {
+	if p == "" {
+		return doc, true
+	}
+	return pointerGet(doc, p)
+}
+
+// sameApartFromSecrets compares two values with every redacted pointer under
+// prefix ignored.
+func sameApartFromSecrets(a, b any, prefix string, pointers []string) bool {
+	strip := func(v any) any {
+		data, _ := json.Marshal(v)
+		var cp any
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		_ = dec.Decode(&cp)
+		m, ok := cp.(map[string]any)
+		if !ok {
+			return cp
+		}
+		for _, p := range pointers {
+			if strings.HasPrefix(p, prefix+"/") {
+				pointerDelete(m, strings.TrimPrefix(p, prefix))
+			}
+		}
+		return m
+	}
+	ja, _ := json.Marshal(strip(a))
+	jb, _ := json.Marshal(strip(b))
+	return bytes.Equal(ja, jb)
 }

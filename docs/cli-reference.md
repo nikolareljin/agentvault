@@ -655,7 +655,7 @@ The bundle records the exporting machine's home directory and `--project` direct
 
 Rewrites match whole path segments, so `/home/alex` does not rewrite `/home/alexandra`. Claude's per-project memory directories (`~/.claude/projects/-home-alex-...`) are renamed the same way. A home path that no rewrite covers is reported with the `--map` to add. `--dry-run` prints every rewrite and changes nothing.
 
-Secret values in JSON settings files are blanked on export without `--include-secrets`; the rest of the file travels. On import each blanked value is taken from the same file already on this machine. A value this machine does not have is left out and reported, never written as an empty string.
+Secret values in JSON settings files are blanked on export without `--include-secrets`; the rest of the file travels. On import each blanked value is taken from the same file already on this machine. A value this machine does not have is left out and reported, never written as an empty string. A value is restored only into the same definition: if the bundle changed an MCP server's URL or command, that server does not receive this machine's token. A file whose secrets sit under keys that do not say so is redacted whole, as before. That covers `args` such as `--token x`, credentials in a URL, and known token prefixes.
 
 `--apply-projects` writes prose and the files agent tools read as instructions:
 - Never written: `.git/`, `.githooks/`, `.husky/`, `.github/workflows/`, repository settings and credential files.

@@ -102,3 +102,46 @@ func TestSettingsTravelWithoutSecretsAndKeepLocalToken(t *testing.T) {
 		t.Errorf("applied settings = %s", got)
 	}
 }
+
+// A secret under a key that says nothing cannot be blanked by field, so the
+// whole file is redacted instead.
+func TestRedactFallsBackForSecretShapedValues(t *testing.T) {
+	for _, doc := range []string{
+		`{"mcpServers":{"x":{"command":"tool","args":["--token","abc123"]}}}`,
+		`{"mcpServers":{"x":{"command":"tool","args":["--api-key=abc123"]}}}`,
+		`{"remote":"https://user:pw@example.com/repo"}`,
+		`{"hook":"curl https://x/y?access_token=abc"}`,
+		`{"note":"ghp_abcdefghijklmnopqrstuvwxyz0123"}`,
+	} {
+		if _, _, ok := redactJSONSecrets([]byte(doc)); ok {
+			t.Errorf("field-redacted, want whole-file fallback: %s", doc)
+		}
+	}
+	if _, _, ok := redactJSONSecrets([]byte(`{"args":["--verbose","--port","8080"],"url":"https://example.com/x"}`)); !ok {
+		t.Error("a document with no secret shape fell back")
+	}
+}
+
+// A bundle that keeps a server's name but points it elsewhere does not get
+// this machine's token for it.
+func TestRestoreRefusesChangedServerDefinition(t *testing.T) {
+	existing := []byte(`{"mcpServers":{"api":{"url":"https://mine.example","headers":{"Authorization":"Bearer local"}}}}`)
+	same := []byte(`{"mcpServers":{"api":{"url":"https://mine.example","headers":{"Authorization":""}}}}`)
+	moved := []byte(`{"mcpServers":{"api":{"url":"https://elsewhere.example","headers":{"Authorization":""}}}}`)
+	ptrs := []string{"/mcpServers/api/headers/Authorization"}
+
+	out, n, err := restoreRedactedFields(same, ptrs, existing)
+	if err != nil || n != 1 || !bytes.Contains(out, []byte("Bearer local")) {
+		t.Errorf("same server: restored=%d %s %v", n, out, err)
+	}
+	out, n, err = restoreRedactedFields(moved, ptrs, existing)
+	if err != nil || n != 0 || bytes.Contains(out, []byte("Bearer local")) {
+		t.Errorf("moved server got the local token: restored=%d %s %v", n, out, err)
+	}
+	// A pointer that is not a blanked secret is never filled.
+	out, n, _ = restoreRedactedFields([]byte(`{"mcpServers":{"api":{"url":""}}}`), []string{"/mcpServers/api/url"},
+		[]byte(`{"mcpServers":{"api":{"url":"https://mine.example"}}}`))
+	if n != 0 || bytes.Contains(out, []byte("mine.example")) {
+		t.Errorf("a non-secret pointer was filled: %s", out)
+	}
+}

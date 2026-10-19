@@ -196,3 +196,15 @@ func TestSanitizeAssetPathRefusesControlCharacters(t *testing.T) {
 		}
 	}
 }
+
+func TestRemapReportQuotesPaths(t *testing.T) {
+	_, report := remapAssets([]SetupAsset{{
+		LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "projects/-home-a-x/memory/m\x1b[2J.md",
+		ContentPresent: true, Content: []byte("/home/a/x"),
+	}}, []pathRemap{{From: "/home/a", To: "/Users/a"}}, "/Users/a")
+	for _, line := range report {
+		if strings.ContainsRune(line, 0x1b) {
+			t.Errorf("raw escape in report: %q", line)
+		}
+	}
+}
