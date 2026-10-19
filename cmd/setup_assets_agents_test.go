@@ -528,3 +528,92 @@ func TestSecretBearingDirsIgnoreCase(t *testing.T) {
 		t.Error("Auth.JSON not treated as a credential file")
 	}
 }
+
+// A project symlink named like prose that points at .env is refused by the
+// resolved name, as on the home side.
+func TestProjectReferenceRefusesSymlinkToSecret(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(project, ".env"), "API_TOKEN=s3cret\n")
+	if err := os.Symlink(".env", filepath.Join(project, "notes.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "See `notes.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project, IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProjectFiles {
+		if bytes.Contains(a.Content, []byte("s3cret")) {
+			t.Fatalf(".env carried through a symlink as %s", a.LogicalPath)
+		}
+	}
+}
+
+// A .local. file stays behind unless named with --include-local, also when an
+// instruction file names it, at project and at user scope.
+func TestReferencedLocalFilesAreDeclined(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "Read `notes.local.md`.\n")
+	mustWriteFile(t, filepath.Join(project, "notes.local.md"), "project local\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "Read `~/me.local.md`.\n")
+	mustWriteFile(t, filepath.Join(home, "me.local.md"), "home local\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findAsset(assets.ProjectFiles, setupAssetRootProject, "notes.local.md") != nil {
+		t.Error("project notes.local.md carried without --include-local")
+	}
+	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, "me.local.md") != nil {
+		t.Error("~/me.local.md carried without --include-local")
+	}
+	if !declinedHas(assets.Declined, "notes.local.md", DeclinedByPolicy) || !declinedHas(assets.Declined, "me.local.md", DeclinedByPolicy) {
+		t.Errorf("referenced .local. files not reported as declined: %v", assets.Declined)
+	}
+}
+
+// A project file an instruction names that is not prose (a script, a config
+// file) is redacted without --include-secrets, as at user scope.
+func TestProjectReferencedNonProseIsSensitive(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "Run `scripts/deploy.sh`, read `docs/howto.md`.\n")
+	mustWriteFile(t, filepath.Join(project, "scripts", "deploy.sh"), "TOKEN=abc ./deploy\n")
+	mustWriteFile(t, filepath.Join(project, "docs", "howto.md"), "how\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := findAsset(assets.ProjectFiles, setupAssetRootProject, "scripts/deploy.sh"); a == nil || !a.Redacted {
+		t.Errorf("scripts/deploy.sh not redacted: %+v", a)
+	}
+	if a := findAsset(assets.ProjectFiles, setupAssetRootProject, "docs/howto.md"); a == nil || !a.ContentPresent {
+		t.Errorf("docs/howto.md not carried: %+v", a)
+	}
+}
+
+// A prose-named symlink to a config file is judged by its target too: it is
+// redacted without --include-secrets.
+func TestHomeReferenceProseSymlinkToConfigIsSensitive(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".config", "x", "settings.json"), `{"token":"s3cret"}`)
+	if err := os.Symlink(filepath.Join(home, ".config", "x", "settings.json"), filepath.Join(home, "notes.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/notes.md`.\n")
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range assets.ProviderFiles {
+		if bytes.Contains(a.Content, []byte("s3cret")) {
+			t.Fatalf("config carried unredacted through a prose-named symlink as %s", a.LogicalPath)
+		}
+	}
+}

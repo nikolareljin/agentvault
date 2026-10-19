@@ -36,6 +36,10 @@
   `notes.md` that points at `.netrc` is refused. Directory names (`.SSH`)
   and token file names (`Auth.json`) match in any letter case. A reference
   to `~/.claude.json` is declined: that file travels as `mcpServers` only.
+- A referenced file is judged by its name and by its symlink target, at user
+  and at project scope. A `.local.` file named by an instruction file stays
+  behind unless named with `--include-local`. Project files named by
+  instructions that are not prose are redacted without `--include-secrets`.
 - Outside the tools' own directories, import writes back only prose files
   (0600, never executable) and the `mcpServers` key of `~/.claude.json`. The
   merged keys are fixed in code, not read from the bundle. Referenced scripts

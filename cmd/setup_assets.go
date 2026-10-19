@@ -122,6 +122,9 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
+	referenced, localWarnings, localDeclined = declineLocalFiles(referenced, optedLocalFiles(opts.IncludeLocalFiles))
+	warnings = append(warnings, localWarnings...)
+	providerDeclined = append(providerDeclined, localDeclined...)
 	providerAssets = append(providerAssets, referenced...)
 	providerDeclined = append(providerDeclined, referencedDeclined...)
 	warnings = append(warnings, referencedWarnings...)
@@ -478,6 +481,10 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	if err != nil {
 		return nil, nil, warnings, projectDeclined, err
 	}
+	// A named .local. file follows the same rule as everywhere else.
+	closure, localWarnings, localDeclined := declineLocalFiles(closure, optedLocalFiles(includeLocal))
+	warnings = append(warnings, localWarnings...)
+	projectDeclined = append(projectDeclined, localDeclined...)
 	projectFiles = append(projectFiles, closure...)
 	projectDeclined = append(projectDeclined, closureDeclined...)
 	warnings = append(warnings, closureWarnings...)

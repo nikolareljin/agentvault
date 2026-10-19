@@ -283,6 +283,11 @@ func classifyReference(root, baseRel, raw string) Reference {
 		ref.Status, ref.Reason = ReferenceRefused, "cannot be expressed relative to the directory"
 		return ref
 	}
+	// Again on the resolved name: a symlink called notes.md can point at .env.
+	if reason := SecretBearingReason(rel); reason != "" {
+		ref.Status, ref.Reason = ReferenceRefused, reason
+		return ref
+	}
 	ref.Rel = filepath.ToSlash(rel)
 	ref.Status = ReferenceTaken
 	return ref

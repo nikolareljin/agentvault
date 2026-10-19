@@ -535,9 +535,10 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		}
 		// Prose is carried as is. Anything else a reference reaches (a script,
 		// a config file) can hold a secret, so it is redacted without
-		// --include-secrets, like every other settings file.
+		// --include-secrets, like every other settings file. Both the name and
+		// the target count: notes.md can be a symlink to a JSON config.
 		asset, warn, err := loadSetupAsset(real, setupAssetKindProviderFile, setupAssetOriginProviderHome,
-			setupAssetRootProviderHome, filepath.ToSlash(rel), "", !isProseFile(abs), includeSecrets, true)
+			setupAssetRootProviderHome, filepath.ToSlash(rel), "", !isProseFile(abs) || !isProseFile(real), includeSecrets, true)
 		if err != nil {
 			return err
 		}
@@ -803,9 +804,11 @@ func collectProjectReferenceClosure(projectDir string, seeds []SetupAsset, inclu
 		if isProjectRepoScopeSetting(rel) {
 			return nil
 		}
+		// Not prose (a script, a config file): redacted without
+		// --include-secrets, as at user scope.
 		asset, warn, err := loadSetupAsset(filepath.Join(projectDir, filepath.FromSlash(rel)),
 			setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject,
-			rel, rel, false, includeSecrets, true)
+			rel, rel, !isProseFile(rel), includeSecrets, true)
 		if err != nil {
 			return err
 		}
