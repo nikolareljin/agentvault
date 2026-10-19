@@ -1507,7 +1507,7 @@ func TestLegacyBackupKeepsExistingFile(t *testing.T) {
 	if err := os.WriteFile(path+LegacyBackupSuffix, stale, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := backupLegacyVault(path); err != nil {
+	if err := backupLegacyVault(path, original[:4]); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(path + LegacyBackupSuffix); !bytes.Equal(got, stale) {
@@ -1527,10 +1527,48 @@ func TestLegacyBackupKeepsExistingFile(t *testing.T) {
 	if err := os.WriteFile(path+LegacyBackupSuffix, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := backupLegacyVault(path); err != nil {
+	if err := backupLegacyVault(path, original[:4]); err != nil {
 		t.Fatal(err)
 	}
 	if matches, _ := filepath.Glob(path + ".v1.*.bak"); len(matches) != 0 {
 		t.Fatalf("left a duplicate backup: %v", matches)
+	}
+}
+
+// Without hard links the backup is still written under the documented name,
+// and no unique copy is left behind.
+func TestLegacyBackupWithoutHardLinks(t *testing.T) {
+	path := tempVaultPath(t)
+	original := []byte("format 1 bytes")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkFile = func(string, string) error { return errors.New("links not supported") }
+	t.Cleanup(func() { linkFile = os.Link })
+	if err := backupLegacyVault(path, original[:4]); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(path + LegacyBackupSuffix); err != nil || !bytes.Equal(got, original) {
+		t.Fatalf("backup = %q, %v", got, err)
+	}
+	if matches, _ := filepath.Glob(path + ".v1.*.bak"); len(matches) != 0 {
+		t.Fatalf("left a unique copy: %v", matches)
+	}
+}
+
+// A file another process has already rewritten is not backed up as format 1.
+func TestLegacyBackupSkipsReplacedFile(t *testing.T) {
+	path := tempVaultPath(t)
+	if err := os.WriteFile(path, []byte("AVK2 written by another process"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := backupLegacyVault(path, []byte("old-salt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + LegacyBackupSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backed up a file that is not the format 1 vault: %v", err)
+	}
+	if matches, _ := filepath.Glob(path + ".v1.*.bak"); len(matches) != 0 {
+		t.Fatalf("left a copy: %v", matches)
 	}
 }

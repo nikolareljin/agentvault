@@ -53,6 +53,7 @@ type Vault struct {
 	key               []byte        // derived key, set after Init or Unlock
 	header            crypto.Header // key-derivation header written ahead of the ciphertext
 	legacyOnDisk      bool          // file on disk is format 1; back it up before the first write
+	legacySalt        []byte        // salt of that format 1 file, to recognise it at backup time
 }
 
 // New creates a Vault instance at the given path.
@@ -114,16 +115,18 @@ func (v *Vault) Unlock(masterPassword string) error {
 	// current header now, while the password is at hand. Nothing is written
 	// by unlocking alone.
 	wasLegacy := header.Legacy
+	legacySalt := header.Salt
 	if wasLegacy {
 		upgraded, err := crypto.NewHeader()
 		if err != nil {
+			crypto.Zero(key)
 			return err
 		}
 		newKey, err := crypto.DeriveKeyFor(masterPassword, upgraded)
+		crypto.Zero(key)
 		if err != nil {
 			return err
 		}
-		crypto.Zero(key)
 		key, header = newKey, upgraded
 	}
 	var vd vaultData
@@ -131,6 +134,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 		// try legacy format (plain agent array) for backward compat
 		var agents []agent.Agent
 		if legacyDecodeErr := json.Unmarshal(plaintext, &agents); legacyDecodeErr != nil {
+			crypto.Zero(key)
 			return fmt.Errorf("decoding vault data: %w", legacyDecodeErr)
 		}
 		vd = vaultData{Agents: agents}
@@ -138,6 +142,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.header = header
 	v.key = key
 	v.legacyOnDisk = wasLegacy
+	v.legacySalt = legacySalt
 	v.agents = vd.Agents
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
@@ -887,7 +892,7 @@ func (v *Vault) write() error {
 		return fmt.Errorf("closing temp vault file: %w", err)
 	}
 	if v.legacyOnDisk {
-		if err := backupLegacyVault(v.path); err != nil {
+		if err := backupLegacyVault(v.path, v.legacySalt); err != nil {
 			return err
 		}
 	}
@@ -905,36 +910,63 @@ const LegacyBackupSuffix = ".v1.bak"
 
 // backupLegacyVault copies the format 1 vault at path to path+".v1.bak". The
 // copy is written and synced under a unique name first, then hard-linked into
-// place, so a crash never leaves a partial file at the backup name. An
-// existing backup is never overwritten: if it holds other bytes (an older
-// vault at the same path), this copy stays under its unique name.
-func backupLegacyVault(path string) error {
+// place, so a crash never leaves a partial file at the backup name. Where hard
+// links are not supported (FAT, some network shares) the backup name is
+// created exclusively and written, and the unique copy is removed only after
+// that succeeds. An existing backup is never overwritten: if it holds other
+// bytes (an older vault at the same path), this copy stays under its unique
+// name. If the file no longer starts with salt, another process has already
+// replaced it, and there is no format 1 file left to back up.
+func backupLegacyVault(path string, salt []byte) error {
 	old, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("backing up format 1 vault: %w", err)
+	}
+	if len(salt) == 0 || !bytes.HasPrefix(old, salt) {
+		return nil
 	}
 	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".v1.*.bak")
 	if err != nil {
 		return fmt.Errorf("backing up format 1 vault: %w", err)
 	}
 	tmp := f.Name()
-	_, werr := f.Write(old)
-	serr := f.Sync()
-	cerr := f.Close()
-	if err := errors.Join(werr, serr, cerr); err != nil {
+	if err := writeSynced(f, old); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("backing up format 1 vault: %w", err)
 	}
 	final := path + LegacyBackupSuffix
-	if err := os.Link(tmp, final); err != nil {
-		if existing, rerr := os.ReadFile(final); rerr != nil || !bytes.Equal(existing, old) {
-			// No link support, or the name holds another file: keep the
-			// complete copy under its unique name.
+	if err := linkFile(tmp, final); err != nil {
+		existing, rerr := os.ReadFile(final)
+		switch {
+		case rerr == nil && bytes.Equal(existing, old):
+		case rerr == nil || !errors.Is(rerr, os.ErrNotExist):
+			// The name holds another file: keep the copy under its unique name.
 			return nil
+		default:
+			// No hard links here: write the backup name directly.
+			bf, cerr := os.OpenFile(final, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if cerr != nil {
+				return nil
+			}
+			if werr := writeSynced(bf, old); werr != nil {
+				_ = os.Remove(final)
+				return nil
+			}
 		}
 	}
 	_ = os.Remove(tmp)
 	return nil
+}
+
+// linkFile is os.Link; tests replace it to act as a file system without
+// hard links.
+var linkFile = os.Link
+
+func writeSynced(f *os.File, data []byte) error {
+	_, werr := f.Write(data)
+	serr := f.Sync()
+	cerr := f.Close()
+	return errors.Join(werr, serr, cerr)
 }
 
 func replaceFile(source, target string) error {
