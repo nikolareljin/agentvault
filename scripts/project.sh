@@ -114,6 +114,7 @@ project_lint() {
 }
 
 project_format() {
+  av_require_go
   gofmt -w .
 }
 
