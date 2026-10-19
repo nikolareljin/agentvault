@@ -74,6 +74,7 @@ func init() {
 	importCmd.Flags().StringArray("map", nil, "rewrite a path prefix from the exporting machine, OLD=NEW (repeatable); the home directory is rewritten without it")
 	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root")
 	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects")
+	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
 	importCmd.Flags().Bool("plain", false, "deprecated: the export format is detected automatically")
 	_ = importCmd.Flags().MarkDeprecated("plain", "the export format is detected automatically")
 }
@@ -362,6 +363,7 @@ func importAssetOptionsFromFlags(cmd *cobra.Command, applyConfigs bool) (importA
 	opts.ApplyProjects, _ = cmd.Flags().GetBool("apply-projects")
 	opts.ProjectRoot = mustString(cmd, "project-root")
 	opts.Maps, _ = cmd.Flags().GetStringArray("map")
+	keepInterpreterAllows, _ = cmd.Flags().GetBool("keep-interpreter-allows")
 	if opts.ApplyProjects && strings.TrimSpace(opts.ProjectRoot) == "" {
 		return opts, errors.New("--apply-projects needs --project-root: the directory to write project files into")
 	}

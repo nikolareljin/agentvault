@@ -927,6 +927,9 @@ func applyStagedProjectAssetsWith(configDir string, targetDir string, overwrite 
 	return applied, skipped, nil
 }
 
+// keepInterpreterAllows is set by import --keep-interpreter-allows.
+var keepInterpreterAllows bool
+
 func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []string, error) {
 	applied := 0
 	var warnings []string
@@ -981,6 +984,14 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			content = filled
 			if left := len(asset.RedactedFields) - restored; left > 0 {
 				warnings = append(warnings, fmt.Sprintf("provider asset %s: %d secret value(s) were not in the bundle and are not on this machine; set them by hand", describeSetupAsset(asset), left))
+			}
+		}
+		if asset.LogicalRoot == setupAssetRootProviderClaude && !keepInterpreterAllows &&
+			(asset.LogicalPath == "settings.json" || asset.LogicalPath == "settings.local.json") {
+			var dropped []string
+			content, dropped = dropInterpreterAllows(content)
+			for _, d := range dropped {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: left out permission %q, which lets any program run without asking; add it back on this machine if you want it", describeSetupAsset(asset), d))
 			}
 		}
 		if len(mergeKeys) > 0 {

@@ -22,6 +22,9 @@
   credentials, known token prefixes) is redacted whole.
 - The execute bit travels for a tool's own `hooks/` scripts, so a hook still
   runs after import.
+- Import leaves out Claude permissions that let any program run without
+  asking (`Bash(bash:*)`, `Bash(python3:*)`, `Bash(*)` and the like) and
+  names each one. `--keep-interpreter-allows` keeps them.
 - `export` carries the user-level setup of Gemini CLI (`~/.gemini`), the
   GitHub Copilot CLI (`~/.copilot`), Cursor and Windsurf MCP configs, Claude's
   user MCP servers from `~/.claude.json` (only `mcpServers`; import merges

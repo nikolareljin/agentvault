@@ -145,3 +145,38 @@ func TestRestoreRefusesChangedServerDefinition(t *testing.T) {
 		t.Errorf("a non-secret pointer was filled: %s", out)
 	}
 }
+
+// An interpreter wildcard copied to another machine is a blanket grant there
+// that nobody on that machine made. It is left out unless asked for.
+func TestApplyLeavesOutInterpreterAllows(t *testing.T) {
+	home := t.TempDir()
+	settings := []byte(`{"permissions":{"allow":["Bash(bash:*)","Bash(python3:*)","Bash(*)","Bash(git status:*)","Read(~/docs/**)"]}}`)
+	asset := SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json", ContentPresent: true, Content: settings}
+	_, warnings, err := applyProviderAssetsToSystem(home, []SetupAsset{asset})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	for _, gone := range []string{"Bash(bash:*)", "Bash(python3:*)", "Bash(*)"} {
+		if bytes.Contains(got, []byte(gone)) {
+			t.Errorf("%s kept: %s", gone, got)
+		}
+	}
+	for _, kept := range []string{"Bash(git status:*)", "Read(~/docs/**)"} {
+		if !bytes.Contains(got, []byte(kept)) {
+			t.Errorf("%s dropped: %s", kept, got)
+		}
+	}
+	if len(warnings) != 3 {
+		t.Errorf("warnings = %v, want one per dropped rule", warnings)
+	}
+
+	keepInterpreterAllows = true
+	t.Cleanup(func() { keepInterpreterAllows = false })
+	if _, _, err := applyProviderAssetsToSystem(home, []SetupAsset{asset}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); !bytes.Contains(got, []byte("Bash(bash:*)")) {
+		t.Error("--keep-interpreter-allows did not keep them")
+	}
+}

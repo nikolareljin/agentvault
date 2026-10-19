@@ -324,3 +324,50 @@ func sameApartFromSecrets(a, b any, prefix string, pointers []string) bool {
 	jb, _ := json.Marshal(strip(b))
 	return bytes.Equal(ja, jb)
 }
+
+// interpreterAllow matches a Claude Code permission that lets any program
+// run through an interpreter or shell without asking: Bash(bash:*),
+// Bash(python3:*), Bash(*). One line in an allow list, copied to another
+// machine, is a blanket grant there that nobody on that machine made.
+var interpreterAllow = regexp.MustCompile(`^Bash\((\*|(bash|sh|zsh|fish|dash|ksh|env|eval|exec|sudo|xargs|python[0-9.]*|node|deno|bun|perl|ruby|php|lua|osascript|pwsh|powershell)(:\*| \*)?)\)$`)
+
+// dropInterpreterAllows removes interpreter-wildcard entries from
+// permissions.allow in a Claude settings document and returns what it
+// removed. A document that is not JSON is returned unchanged.
+func dropInterpreterAllows(data []byte) ([]byte, []string) {
+	var doc map[string]any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil {
+		return data, nil
+	}
+	perms, ok := doc["permissions"].(map[string]any)
+	if !ok {
+		return data, nil
+	}
+	allow, ok := perms["allow"].([]any)
+	if !ok {
+		return data, nil
+	}
+	var kept []any
+	var dropped []string
+	for _, e := range allow {
+		if s, ok := e.(string); ok && interpreterAllow.MatchString(strings.TrimSpace(s)) {
+			dropped = append(dropped, s)
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if len(dropped) == 0 {
+		return data, nil
+	}
+	if kept == nil {
+		kept = []any{}
+	}
+	perms["allow"] = kept
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return data, nil
+	}
+	return out, dropped
+}
