@@ -47,7 +47,8 @@
   Windows. Before, it wrote `~/.config/claude/` everywhere, which Claude
   Desktop on macOS and Windows never reads. It replaces only the `mcpServers`
   key of an existing file, keeps the other keys in their order with their
-  values as written, and the file mode; a UTF-8 BOM is accepted. It writes
+  values as written, the file mode and, outside Windows, its owner; a UTF-8
+  BOM is accepted. It writes
   through a symlink to its target, replaces the file atomically (fsync of
   the file and, outside Windows, its directory), writes a device or FIFO
   such as `/dev/stdout` in place, and refuses a file that is not a JSON

@@ -742,8 +742,9 @@ func writeFileAtomicKeepMode(path string, data []byte) error {
 		}
 	}
 	mode := os.FileMode(0600)
-	if info, err := os.Stat(target); err == nil {
-		mode = info.Mode().Perm()
+	existing, statErr := os.Stat(target)
+	if statErr == nil {
+		mode = existing.Mode().Perm()
 	}
 	dir := filepath.Dir(target)
 	if err := refuseDanglingDirLink(dir); err != nil {
@@ -765,6 +766,12 @@ func writeFileAtomicKeepMode(path string, data []byte) error {
 	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	if statErr == nil {
+		if err := keepOwner(tmp, existing); err != nil {
+			_ = tmp.Close()
+			return fmt.Errorf("writing %s: %w", path, err)
+		}
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()

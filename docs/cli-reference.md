@@ -486,8 +486,9 @@ Default output is Claude Desktop's config for the OS:
 `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS),
 `%APPDATA%\Claude\claude_desktop_config.json` (Windows),
 `~/.config/claude/claude_desktop_config.json` (Linux). `-` prints to stdout.
-An existing file keeps every key except `mcpServers`, in order, and its mode; a file
+An existing file keeps every key except `mcpServers`, in order, its mode and (outside Windows) its owner; a file
 that is not a JSON object is left alone and the command fails.
+The file is replaced by a rename, so a hard link to it keeps the old content.
 
 Flags:
 - `--agent <name>`
