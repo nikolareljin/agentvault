@@ -51,16 +51,35 @@ func buildPathRemaps(sourceHome, targetHome, sourceProject, projectRoot string, 
 		if !ok || from == "" || to == "" {
 			return nil, fmt.Errorf("--map %q: want OLD=NEW", m)
 		}
-		out = append(out, pathRemap{From: strings.TrimRight(from, `/\`), To: strings.TrimRight(to, `/\`)})
+		from, to = strings.TrimRight(from, `/\`), strings.TrimRight(to, `/\`)
+		// A relative OLD (src=lib) would rewrite that word in any prose.
+		if !remappableRoot(from) {
+			return nil, fmt.Errorf("--map %q: OLD must be an absolute path below the filesystem root", m)
+		}
+		out = append(out, pathRemap{From: from, To: to})
 	}
-	if sourceProject != "" && projectRoot != "" && sourceProject != projectRoot {
+	// The source paths come from the bundle: one that names / or a relative
+	// path would rewrite text that is not this user's paths.
+	if remappableRoot(sourceProject) && projectRoot != "" && sourceProject != projectRoot {
 		out = append(out, pathRemap{From: sourceProject, To: projectRoot})
 	}
-	if sourceHome != "" && targetHome != "" && sourceHome != targetHome {
+	if remappableRoot(sourceHome) && targetHome != "" && sourceHome != targetHome {
 		out = append(out, pathRemap{From: sourceHome, To: targetHome})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return len(out[i].From) > len(out[j].From) })
 	return out, nil
+}
+
+// remappableRoot is an absolute path, POSIX or Windows, that is not a
+// filesystem root by itself.
+func remappableRoot(p string) bool {
+	switch {
+	case len(p) > 1 && p[0] == '/' && strings.Trim(p, "/") != "":
+		return true
+	case len(p) > 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') && strings.Trim(p[3:], `/\`) != "":
+		return true
+	}
+	return false
 }
 
 // pathChar is what may continue a path segment. A match on /home/alex must

@@ -250,3 +250,23 @@ func TestProjectAssetRefusalWindowsAliases(t *testing.T) {
 		}
 	}
 }
+
+// OLD must be an absolute path, and a bundle's own home or project of "/"
+// or a relative path is not used: either would rewrite ordinary text.
+func TestBuildPathRemapsRefusesRootsAndRelativePaths(t *testing.T) {
+	for _, m := range []string{"src=lib", "/=/x", `C:\=D:\`, "~/a=/b"} {
+		if _, err := buildPathRemaps("", "", "", "", []string{m}); err == nil {
+			t.Errorf("--map %s accepted", m)
+		}
+	}
+	if _, err := buildPathRemaps("", "", "", "", []string{`C:\Users\a=/home/a`}); err != nil {
+		t.Errorf("Windows OLD refused: %v", err)
+	}
+	remaps, err := buildPathRemaps("/", "/home/alex", "app", "/srv/app", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(remaps) != 0 {
+		t.Errorf("bundle roots used: %v", remaps)
+	}
+}
