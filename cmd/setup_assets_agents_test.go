@@ -459,3 +459,18 @@ func TestPluginInstallCommandsRefuseShellSyntax(t *testing.T) {
 		t.Errorf("valid plugin not printed:\n%s", out.String())
 	}
 }
+
+// Rooted on every OS, including the Windows forms filepath.IsAbs rejects
+// there: no drive, or a drive with no separator.
+func TestIsRootedPath(t *testing.T) {
+	for _, p := range []string{"/etc/hosts", `\Windows\x`, "C:x", `c:\x`, "D:/x", "a:b"} {
+		if !isRootedPath(p) {
+			t.Errorf("%q not rooted", p)
+		}
+	}
+	for _, p := range []string{"docs/a.md", "./x", "~/x", "notes:2026.md"} {
+		if isRootedPath(p) {
+			t.Errorf("%q rooted", p)
+		}
+	}
+}

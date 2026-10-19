@@ -423,7 +423,7 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 	var abs string
 	if p, ok := expandHomePath(clean, homeDir); ok {
 		abs = p
-	} else if filepath.IsAbs(clean) || strings.HasPrefix(clean, "~") {
+	} else if isRootedPath(clean) || strings.HasPrefix(clean, "~") {
 		return homeRefResult{reason: "outside the home directory"}
 	} else {
 		abs = filepath.Join(fromDir, filepath.FromSlash(clean))
@@ -463,6 +463,16 @@ func resolveHomeReference(homeDir, fromDir, raw string) homeRefResult {
 		return homeRefResult{reason: fmt.Sprintf("%d bytes, over the %d byte ceiling", info.Size(), agent.MaxReferenceBytes)}
 	}
 	return homeRefResult{abs: abs}
+}
+
+// isRootedPath is an absolute path on any OS. On Windows "/etc/hosts" has no
+// drive and filepath.IsAbs says no, but it names the root of the current
+// drive, not a path relative to the file that wrote it.
+func isRootedPath(p string) bool {
+	if filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		return true
+	}
+	return len(p) >= 2 && p[1] == ':' && ((p[0]|0x20) >= 'a' && (p[0]|0x20) <= 'z')
 }
 
 func isUnder(root, p string) bool {
