@@ -638,7 +638,7 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		Sensitive:           sensitive,
 	}
 
-	info, statErr := os.Lstat(path)
+	info, statErr := lstatPinned(path)
 	if statErr != nil {
 		if os.IsNotExist(statErr) && optional {
 			asset.Missing = true
@@ -690,6 +690,17 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	asset.ContentPresent = true
 	asset.Content = data
 	return asset, "", nil
+}
+
+// lstatPinned is os.Lstat with the file's identity read now. On Windows
+// os.SameFile looks a FileInfo's identity up by path on first use, so a
+// file swapped after Lstat would compare equal to its replacement.
+func lstatPinned(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err == nil {
+		_ = os.SameFile(info, info)
+	}
+	return info, err
 }
 
 // afterAssetStat is a test seam: it runs between the checks on a file and

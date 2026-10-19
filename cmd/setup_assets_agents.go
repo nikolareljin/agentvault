@@ -324,7 +324,7 @@ func stripCopilotLoginState(raw []byte) ([]byte, int, error) {
 // state, even with --include-secrets: a copied token is a session someone
 // else can use.
 func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []DeclinedAsset, string, error) {
-	info, err := os.Lstat(path)
+	info, err := lstatPinned(path)
 	if os.IsNotExist(err) {
 		return nil, nil, "", nil
 	}
@@ -445,7 +445,7 @@ var claudeUserConfigMergeKeys = []string{"mcpServers"}
 // ~/.claude.json, and nothing else from that file.
 func collectClaudeUserMCPServers(homeDir string, includeSecrets bool) (*SetupAsset, string, error) {
 	path := filepath.Join(homeDir, ".claude.json")
-	info, err := os.Lstat(path)
+	info, err := lstatPinned(path)
 	if os.IsNotExist(err) {
 		return nil, "", nil
 	}
@@ -961,7 +961,7 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		}
 		// Read from disk, not from the asset: without --include-secrets the
 		// settings file is redacted, and the scripts it runs are not secrets.
-		info, err := os.Lstat(settings.SourcePath)
+		info, err := lstatPinned(settings.SourcePath)
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
