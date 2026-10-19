@@ -209,6 +209,9 @@ func TestWriteFileAtomicRefusesDanglingDirLink(t *testing.T) {
 }
 
 func TestSyncDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directories cannot be synced on Windows; the caller skips it there")
+	}
 	if err := syncDir(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
