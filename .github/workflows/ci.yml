@@ -45,3 +45,10 @@ jobs:
     uses: nikolareljin/ci-helpers/.github/workflows/go.yml@production
     with:
       runner: windows-latest
+
+  # macOS leg: release.yml ships darwin/amd64 and darwin/arm64 binaries and
+  # Homebrew installs them, so the tests run there too.
+  go-macos:
+    uses: nikolareljin/ci-helpers/.github/workflows/go.yml@production
+    with:
+      runner: macos-latest

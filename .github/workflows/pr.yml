@@ -45,3 +45,11 @@ jobs:
       runner: windows-latest
       check_release_tag: false
       release_branch: ${{ github.head_ref }}
+
+  # darwin binaries ship through Homebrew; test them on macOS before merge.
+  gate-macos:
+    uses: nikolareljin/ci-helpers/.github/workflows/go-pr-gate.yml@production
+    with:
+      runner: macos-latest
+      check_release_tag: false
+      release_branch: ${{ github.head_ref }}
