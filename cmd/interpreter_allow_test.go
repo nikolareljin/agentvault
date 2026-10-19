@@ -81,12 +81,13 @@ func TestIsInterpreterAllowSegmentsAndArguments(t *testing.T) {
 		"Bash(pipx run:*)", "Bash(find . -ok rm)", "Bash(find . -okdir rm)", "Bash(unshare:*)", "Bash(nsenter:*)",
 		"Bash(systemd-run:*)", "Bash(pkexec:*)", "Bash(doas:*)", "Bash(chroot:*)", "Bash(setsid:*)",
 		"Bash(flock:*)", "Bash(watch:*)", "Bash(script:*)", "Bash(expect:*)", "Bash(osascript:*)",
-		"Bash(ls ..)", "Bash(.hidden/run)"} {
+		"Bash(.. x)", "Bash(.hidden/run)"} {
 		if !isInterpreterAllow(r) {
 			t.Errorf("%s not flagged", r)
 		}
 	}
-	for _, r := range []string{"Bash(make:*)", "Bash(git status:*)", "Bash(go test ./...)", "Bash(make test)", "Bash(npm run test *)", "Bash(./scripts/check.sh)", "Bash(../bin/lint:*)", "Bash(ls ./docs)"} {
+	for _, r := range []string{"Bash(make:*)", "Bash(git status:*)", "Bash(go test ./...)", "Bash(make test)", "Bash(npm run test *)", "Bash(./scripts/check.sh)", "Bash(../bin/lint:*)", "Bash(ls ./docs)",
+		"Bash(find . -name x)", "Bash(ls ..)", "Bash(git add .)"} {
 		if isInterpreterAllow(r) {
 			t.Errorf("%s flagged", r)
 		}

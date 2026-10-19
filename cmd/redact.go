@@ -397,16 +397,14 @@ func isInterpreterAllow(rule string) bool {
 		case "-c", "-e", "--eval", "-exec", "-execdir", "-ok", "-okdir", "--command":
 			return true
 		}
-		// ".", "..": a dot word runs a file in the shell (. ./env.sh).
-		if strings.Trim(w, ".") == "" {
-			return true
-		}
 		base := commandBase(w)
 		if interpreters[base] || commandWrappers[base] || strings.HasPrefix(base, "python") {
 			return true
 		}
 	}
 	first := strings.ToLower(words[0])
+	// At command position "." and ".." run a file in the shell
+	// (. ./env.sh); as arguments (find ., git add .) they are paths.
 	if strings.HasPrefix(first, ".") && !strings.HasPrefix(first, "./") && !strings.HasPrefix(first, "../") {
 		return true
 	}
