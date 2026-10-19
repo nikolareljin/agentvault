@@ -137,7 +137,7 @@ func remapText(text string, remaps []pathRemap) (string, int) {
 				b.WriteString(to)
 				i = end
 				if r.fromWin != r.toWin {
-					i = convertPathTail(&b, text, i, r.fromWin, r.esc)
+					i = convertPathTail(&b, text, i, r.fromWin, r.esc, isJSON)
 				}
 				total++
 				matched = true
@@ -159,12 +159,18 @@ func windowsStylePath(p string) bool {
 
 // convertPathTail copies the rest of a rewritten path from text[i:] into b
 // with its separators switched to the other style, and returns where the path
-// ends: whitespace, a quote, or a delimiter. In esc text (JSON) a Windows
-// separator is \\ and any other backslash is an escape that ends the path.
-func convertPathTail(b *strings.Builder, text string, i int, fromWin, esc bool) int {
+// ends. In a JSON document the path is a string, so it ends at the closing
+// quote and may hold spaces; in plain text it ends at whitespace, a quote or
+// a delimiter. In esc text a Windows separator is \\ and any other
+// backslash is an escape that ends the path.
+func convertPathTail(b *strings.Builder, text string, i int, fromWin, esc, inJSON bool) int {
 	for i < len(text) {
 		c := text[i]
-		if strings.IndexByte(" \t\r\n\"'`,;:)]}<>|", c) >= 0 {
+		if inJSON {
+			if c == '"' {
+				return i
+			}
+		} else if strings.IndexByte(" \t\r\n\"'`,;:)]}<>|", c) >= 0 {
 			return i
 		}
 		switch {

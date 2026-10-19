@@ -319,3 +319,15 @@ func TestRemapNoWarningForOwnWindowsHome(t *testing.T) {
 		t.Errorf("warned about own home: %v", report)
 	}
 }
+
+// Inside a JSON string the path runs to the closing quote, spaces included.
+func TestRemapTextConvertsJSONPathWithSpaces(t *testing.T) {
+	got, _ := remapText(`{"a":"C:\\Users\\a\\My Docs\\x","b":"q"}`, []pathRemap{{From: `C:\Users\a`, To: "/home/b"}})
+	if want := `{"a":"/home/b/My Docs/x","b":"q"}`; got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+	got, _ = remapText(`{"a":"/home/a/My Docs/x"}`, []pathRemap{{From: "/home/a", To: `C:\Users\b`}})
+	if want := `{"a":"C:\\Users\\b\\My Docs\\x"}`; got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
