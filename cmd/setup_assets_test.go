@@ -1246,3 +1246,18 @@ func TestSanitizeAssetRelativePathRefusesShortNames(t *testing.T) {
 		t.Errorf("notes~draft.md: %v", err)
 	}
 }
+
+// Windows opens aux.md, CON and COM1.txt as devices, not files: import
+// refuses them on every platform.
+func TestSanitizeAssetRelativePathRefusesDeviceNames(t *testing.T) {
+	for _, p := range []string{"CON", "nul", "aux.md", ".claude/COM1.txt", "lpt9", "Con .txt", "PRN.", "agents/conout$", "COM\u00b9.md"} {
+		if _, err := sanitizeAssetRelativePath(p); err == nil {
+			t.Errorf("%s: accepted", p)
+		}
+	}
+	for _, p := range []string{"console.md", "auxiliary.md", "com10.txt", "com.md", "agents/null.md"} {
+		if _, err := sanitizeAssetRelativePath(p); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+}

@@ -1042,11 +1042,37 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 		if windowsShortName.MatchString(seg) {
 			return "", fmt.Errorf("Windows short name (~N) is not allowed: %q", path)
 		}
+		if isWindowsDeviceName(seg) {
+			return "", fmt.Errorf("Windows device name is not allowed: %q", path)
+		}
 	}
 	return filepath.ToSlash(cleaned), nil
 }
 
 var windowsShortName = regexp.MustCompile(`~[0-9]`)
+
+// isWindowsDeviceName is whether Windows opens seg as a device rather than a
+// file: CON, NUL, AUX, PRN, COM1-9 and LPT1-9, with any extension, any case
+// and trailing dots or spaces (aux.md, Con .txt). Writing COM1 can block.
+func isWindowsDeviceName(seg string) bool {
+	stem := strings.ToLower(seg)
+	if i := strings.IndexByte(stem, '.'); i >= 0 {
+		stem = stem[:i]
+	}
+	stem = strings.TrimRight(stem, " ")
+	switch stem {
+	case "con", "prn", "aux", "nul", "conin$", "conout$":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
+		return stem[3] >= '0' && stem[3] <= '9'
+	}
+	r := []rune(stem)
+	if len(r) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
+		return r[3] == '\u00b9' || r[3] == '\u00b2' || r[3] == '\u00b3'
+	}
+	return false
+}
 
 func replaceRegularFile(tmpPath string, destPath string) error {
 	err := renameFile(tmpPath, destPath)

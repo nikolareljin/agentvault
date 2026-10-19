@@ -1164,3 +1164,39 @@ func TestHomeReferenceDepthCycleAndDirCaps(t *testing.T) {
 		t.Errorf("directory cap not reported: %v", assets.Declined)
 	}
 }
+
+// A hard link inside a directory a note names is refused even with
+// --include-secrets, as a hard link named directly is: notes/hl.md can be
+// .env under another name.
+func TestReferencedDirHardLinksRefusedWithSecrets(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(project, ".env"), "leak1\n")
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "See `notes/`.\n")
+	mustWriteFile(t, filepath.Join(project, "notes", "ok.md"), "fine\n")
+	if err := os.Link(filepath.Join(project, ".env"), filepath.Join(project, "notes", "hl.md")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(home, ".netrc"), "leak2\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/kb/`.\n")
+	mustWriteFile(t, filepath.Join(home, "kb", "ok.md"), "fine\n")
+	if err := os.Link(filepath.Join(home, ".netrc"), filepath.Join(home, "kb", "hl.md")); err != nil {
+		t.Fatal(err)
+	}
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project, IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range append(append([]SetupAsset{}, assets.ProviderFiles...), assets.ProjectFiles...) {
+		if strings.Contains(string(a.Content), "leak") {
+			t.Errorf("%s %s carried a hard-linked secret", a.LogicalRoot, a.LogicalPath)
+		}
+	}
+	if !declinedHas(assets.Declined, "notes/hl.md", DeclinedByPolicy) || !declinedHas(assets.Declined, "~/kb/hl.md", DeclinedByPolicy) {
+		t.Errorf("hard links not reported as declined: %v", assets.Declined)
+	}
+	if a := findAsset(assets.ProjectFiles, setupAssetRootProject, "notes/ok.md"); a == nil || !a.ContentPresent {
+		t.Errorf("notes/ok.md not carried: %+v", a)
+	}
+}
