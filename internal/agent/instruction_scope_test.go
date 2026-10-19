@@ -248,3 +248,26 @@ func TestCheckInstructionConflicts_emptyScopeTreatedAsGlobal(t *testing.T) {
 		t.Errorf("expected 1 conflict (empty scope = global), got %d", len(conflicts))
 	}
 }
+
+func TestValidateInstructionFilename(t *testing.T) {
+	ok := []string{"", "AGENTS.md", ".github/copilot-instructions.md", "docs/a/../b.md"}
+	for _, name := range ok {
+		if err := ValidateInstructionFilename(name); err != nil {
+			t.Errorf("%q: unexpected error %v", name, err)
+		}
+	}
+	bad := []string{"..", "../x", "../../.bashrc", "docs/../../x", "/etc/passwd",
+		`..\..\x`, `C:\x`, "C:x", "a\x00b", "."}
+	for _, name := range bad {
+		if err := ValidateInstructionFilename(name); err == nil {
+			t.Errorf("%q: accepted, want error", name)
+		}
+	}
+}
+
+func TestValidateInstructionScopeRejectsEscapingFilename(t *testing.T) {
+	err := ValidateInstructionScope(InstructionFile{Name: "x", Filename: "../../.bashrc"})
+	if err == nil {
+		t.Fatal("escaping filename accepted")
+	}
+}

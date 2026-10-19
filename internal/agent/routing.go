@@ -320,7 +320,8 @@ func BuildCodexExecArgs(model, outputPath, cwd, prompt string) []string {
 	if strings.TrimSpace(cwd) != "" && !IsGitWorktree(cwd) {
 		args = append(args, "--skip-git-repo-check")
 	}
-	args = append(args, prompt)
+	// "--" ends option parsing: a prompt such as "--help" stays a prompt.
+	args = append(args, "--", prompt)
 	return args
 }
 
@@ -335,7 +336,8 @@ func BuildCodexStreamArgs(model, cwd, prompt string) []string {
 	if strings.TrimSpace(cwd) != "" && !IsGitWorktree(cwd) {
 		args = append(args, "--skip-git-repo-check")
 	}
-	args = append(args, prompt)
+	// "--" ends option parsing: a prompt such as "--help" stays a prompt.
+	args = append(args, "--", prompt)
 	return args
 }
 
@@ -347,7 +349,8 @@ func BuildClaudeExecArgs(model, prompt string) []string {
 	if strings.TrimSpace(model) != "" {
 		args = append(args, "--model", strings.TrimSpace(model))
 	}
-	args = append(args, prompt)
+	// "--" ends option parsing: a prompt such as "--help" stays a prompt.
+	args = append(args, "--", prompt)
 	return args
 }
 
@@ -355,7 +358,7 @@ func BuildClaudeExecArgs(model, prompt string) []string {
 // used by AgentVault. auto_edit enables editing tools without dropping into a
 // read-only planning/chat-only flow.
 func BuildGeminiExecArgs(model, prompt string) []string {
-	args := []string{"--prompt", prompt, "--output-format", "json", "--approval-mode", "auto_edit"}
+	args := []string{"--prompt=" + prompt, "--output-format", "json", "--approval-mode", "auto_edit"}
 	if strings.TrimSpace(model) != "" {
 		args = append(args, "--model", strings.TrimSpace(model))
 	}
@@ -369,14 +372,15 @@ func BuildClaudeStreamArgs(model, prompt string) []string {
 	if strings.TrimSpace(model) != "" {
 		args = append(args, "--model", strings.TrimSpace(model))
 	}
-	args = append(args, prompt)
+	// "--" ends option parsing: a prompt such as "--help" stays a prompt.
+	args = append(args, "--", prompt)
 	return args
 }
 
 // BuildGeminiStreamArgs returns the Gemini invocation for live streaming agentic execution.
 // Omits --output-format json so output flows progressively to the terminal.
 func BuildGeminiStreamArgs(model, prompt string) []string {
-	args := []string{"--prompt", prompt, "--approval-mode", "auto_edit"}
+	args := []string{"--prompt=" + prompt, "--approval-mode", "auto_edit"}
 	if strings.TrimSpace(model) != "" {
 		args = append(args, "--model", strings.TrimSpace(model))
 	}
