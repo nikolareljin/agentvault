@@ -621,13 +621,8 @@ Examples:
 			if specificName != "" && inst.Name != specificName {
 				continue
 			}
-			p := filepath.Join(dir, inst.Filename)
-			// ensure parent directories exist (for paths like .github/copilot-instructions.md)
-			if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-				return fmt.Errorf("creating directory for %s: %w", inst.Filename, err)
-			}
-			if err := os.WriteFile(p, []byte(inst.Content), 0644); err != nil {
-				return fmt.Errorf("writing %s: %w", p, err)
+			if err := writeInstructionFile(dir, inst); err != nil {
+				return err
 			}
 			fmt.Printf("  Pushed %q -> %s (%d bytes)\n", inst.Name, inst.Filename, len(inst.Content))
 			pushed++
@@ -668,8 +663,12 @@ Examples:
 
 		diffs := 0
 		for _, inst := range instructions {
-			p := filepath.Join(dir, inst.Filename)
-			diskData, err := os.ReadFile(p)
+			diskData, err := readInstructionOnDisk(dir, inst)
+			if errors.Is(err, errUnsafeInstructionFilename) {
+				fmt.Printf("  %-12s  %s  (refused: %v)\n", inst.Name, inst.Filename, err)
+				diffs++
+				continue
+			}
 			if err != nil {
 				fmt.Printf("  %-12s  %s  (not on disk)\n", inst.Name, inst.Filename)
 				diffs++
@@ -1125,4 +1124,78 @@ func init() {
 
 	instScanCmd.Flags().String("scope", "", "target scope: global, directory, or local (only used with a name argument)")
 	instScanCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
+}
+
+// writeInstructionFile writes inst under dir. It refuses filenames that
+// escape dir and symlinked path components, so a crafted bundle entry such
+// as "../../.bashrc" cannot land outside the target.
+func writeInstructionFile(dir string, inst agent.InstructionFile) error {
+	// The same rule as the vault applies on the way in, so a rooted name such
+	// as "/tmp/x" is refused on Windows too, where it has no drive letter.
+	if err := agent.ValidateInstructionFilename(inst.Filename); err != nil {
+		return fmt.Errorf("instruction %q: %w", inst.Name, err)
+	}
+	p, err := safeJoinUnder(dir, inst.Filename)
+	if err != nil {
+		return fmt.Errorf("instruction %q: %w", inst.Name, err)
+	}
+	if err := ensureNoSymlinkBelow(dir, p); err != nil {
+		return fmt.Errorf("instruction %q: %w", inst.Name, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+		return fmt.Errorf("creating directory for %s: %w", inst.Filename, err)
+	}
+	if err := os.WriteFile(p, []byte(inst.Content), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", p, err)
+	}
+	return nil
+}
+
+var errUnsafeInstructionFilename = errors.New("unsafe instruction filename")
+
+// readInstructionOnDisk reads inst's file under dir. A vault written before
+// filenames were validated can hold an escaping name; it is refused, not read.
+func readInstructionOnDisk(dir string, inst agent.InstructionFile) ([]byte, error) {
+	if err := agent.ValidateInstructionFilename(inst.Filename); err != nil {
+		return nil, fmt.Errorf("%w: %v", errUnsafeInstructionFilename, err)
+	}
+	if strings.TrimSpace(inst.Filename) == "" {
+		// Not placed yet: nothing on disk to compare, not an unsafe name.
+		return nil, os.ErrNotExist
+	}
+	p, err := safeJoinUnder(dir, inst.Filename)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errUnsafeInstructionFilename, err)
+	}
+	return os.ReadFile(p)
+}
+
+// ensureNoSymlinkBelow rejects symlinks in the components of p below root.
+// root itself and its ancestors are trusted: the caller chose them.
+func ensureNoSymlinkBelow(root string, p string) error {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(p))
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("destination %q is outside %q", p, root)
+	}
+	current := filepath.Clean(root)
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("destination directory contains a symlink: %q", current)
+		}
+	}
+	return nil
 }

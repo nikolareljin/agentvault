@@ -17,6 +17,9 @@ jobs:
       # G204/G304/G301/G306/G117 are high-noise for this CLI/TUI repository
       # where many file paths and executable names are user-provided by design.
       gosec_args: "-exclude=G104,G204,G304,G301,G306,G117 ./..."
+      # Matches go.mod. The preset defaults to 1.25 with GOTOOLCHAIN=local and does
+      # not read go.mod yet, so without this the build fails on `go >= 1.26.0`.
+      go_version: "1.26"
 
   gitleaks:
     runs-on: ubuntu-latest

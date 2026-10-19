@@ -35,6 +35,9 @@ jobs:
       # Keeping this disabled avoids a missing local-action path in ci-helpers pr-gate.
       check_release_tag: false
       release_branch: ${{ github.head_ref }}
+      # Matches go.mod. The preset defaults to 1.25 with GOTOOLCHAIN=local and does
+      # not read go.mod yet, so without this the build fails on `go >= 1.26.0`.
+      go_version: "1.26"
 
   # release.yml ships windows/amd64 binaries, so the tests run there too. Same
   # preset and defaults; only the runner differs. The engine's concurrency
@@ -43,5 +46,15 @@ jobs:
     uses: nikolareljin/ci-helpers/.github/workflows/go-pr-gate.yml@production
     with:
       runner: windows-latest
+      go_version: "1.26"
+      check_release_tag: false
+      release_branch: ${{ github.head_ref }}
+
+  # darwin binaries ship through Homebrew; test them on macOS before merge.
+  gate-macos:
+    uses: nikolareljin/ci-helpers/.github/workflows/go-pr-gate.yml@production
+    with:
+      runner: macos-latest
+      go_version: "1.26"
       check_release_tag: false
       release_branch: ${{ github.head_ref }}
