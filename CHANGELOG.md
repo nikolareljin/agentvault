@@ -7,8 +7,9 @@
   servers only this machine has stay, new servers are picked from a list,
   changed ones are asked about with the masked difference, and
   `--mcp-servers a,b|all|none` decides without a terminal. Picking a server
-  is consent for its command only; its code-loading or routing env
-  variables (`NODE_OPTIONS`, `*_URL` and the like) need a separate yes. Without a pick nothing new is added and
+  is consent for its command and args only; `envFile`, `cwd`, helper
+  commands and code-loading or routing env variables need a separate yes.
+  A server whose command, args or URL look like a secret is not offered. Without a pick nothing new is added and
   changed servers stay as they are. Covers `~/.claude.json`, JSON settings
   (`mcpServers`, `servers`) and Codex `config.toml`, whose tables are edited
   in place. Import prints what it added, replaced, kept and left out per

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,20 +28,26 @@ type mcpChooser interface {
 	// replaceChanged is whether the bundle's definition of a server both
 	// sides have, and that differs, replaces this machine's.
 	replaceChanged(name string, local, bundle any) (bool, error)
+	// refuse is whether a server may not be offered at all.
+	refuse(name string, bundle any) bool
 }
 
 // mcpMergeReport says what happened to each server that was not the same on
 // both sides.
 type mcpMergeReport struct {
 	Added, Replaced, KeptLocal, LeftOut []string
-	// EnvLeftOut are "server.VAR" variables of taken servers left out.
+	// EnvLeftOut are "server.VAR" variables, and "server.key" fields such
+	// as envFile or headersHelper, of taken servers left out.
 	EnvLeftOut []string
+	// Refused are servers not offered: their command, args or URL hold a
+	// secret-shaped value that would be hidden in the question.
+	Refused []string
 	// Ask lists the servers a dry run would ask about.
 	Ask []string
 }
 
 func (r mcpMergeReport) empty() bool {
-	return len(r.Added)+len(r.Replaced)+len(r.KeptLocal)+len(r.LeftOut)+len(r.Ask)+len(r.EnvLeftOut) == 0
+	return len(r.Added)+len(r.Replaced)+len(r.KeptLocal)+len(r.LeftOut)+len(r.Ask)+len(r.EnvLeftOut)+len(r.Refused) == 0
 }
 
 // changed is whether the merge takes anything from the bundle.
@@ -74,12 +81,22 @@ func mergeMCPServers(local, bundle map[string]any, ch mcpChooser) (map[string]an
 		bv := bundle[name]
 		lv, ok := local[name]
 		if !ok {
+			if ch.refuse(name, bv) {
+				rep.LeftOut = append(rep.LeftOut, name)
+				rep.Refused = append(rep.Refused, name)
+				continue
+			}
 			fresh = append(fresh, name)
 			continue
 		}
 		bm, bIsMap := bv.(map[string]any)
 		lm, lIsMap := lv.(map[string]any)
 		if (bIsMap && lIsMap && sameServerApartFromBlanks(bm, lm)) || jsonEqual(bv, lv) {
+			continue
+		}
+		if ch.refuse(name, bv) {
+			rep.KeptLocal = append(rep.KeptLocal, name)
+			rep.Refused = append(rep.Refused, name)
 			continue
 		}
 		replace, err := ch.replaceChanged(name, lv, bv)
@@ -149,6 +166,58 @@ type ctxChooser struct {
 	c    *importApplyContext
 	file string
 	ask  []string
+}
+
+func (ch *ctxChooser) refuse(_ string, bundle any) bool {
+	return !ch.c.KeepBundleCommands && secretShapedExec(bundle)
+}
+
+// mcpExecFields are server fields shown verbatim when asking: what runs and
+// where it connects.
+var mcpExecFields = map[string]bool{"command": true, "args": true, "cmd": true, "url": true, "httpUrl": true}
+
+// secretShapedExec is whether a server's command, args or URL hold a value
+// that looks like a secret. Masking it would hide what runs; showing it
+// would print a secret. Either way it is not offered.
+func secretShapedExec(v any) bool {
+	m, _ := v.(map[string]any)
+	for k := range mcpExecFields {
+		if anySecretString(m[k]) {
+			return true
+		}
+	}
+	return false
+}
+
+func anySecretString(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return secretString(t)
+	case []any:
+		for _, x := range t {
+			if anySecretString(x) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, x := range t {
+			if anySecretString(x) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// gatedServerField is a server field a pick does not consent to: one that
+// runs a program (any command field but the server's own command and args)
+// or chooses its files and directory.
+func gatedServerField(k string) bool {
+	if mcpExecFields[k] {
+		return false
+	}
+	l := strings.ToLower(k)
+	return l == "envfile" || l == "cwd" || commandField(k)
 }
 
 func (ch *ctxChooser) pickNew(names []string, bundle map[string]any) (map[string]bool, error) {
@@ -262,11 +331,11 @@ func pickMCPServers(out io.Writer, in interface{ ReadString(byte) (string, error
 	}
 }
 
-// describeMCPServer names a server and every field that decides what it
-// runs or reaches: type, command, all args, url, env variable names and
-// header names, each on its own line and never clipped. Values under secret
-// keys are masked. Every part comes from the bundle, so all of it is made
-// printable.
+// describeMCPServer names a server and prints every field of it. What runs
+// and where it connects (command, args, url, httpUrl, envFile, cwd, other
+// command fields, and gated env values) is shown verbatim; only header
+// values, env values that are not gated and secret-named fields are masked.
+// Every part comes from the bundle, so all of it is made printable.
 func describeMCPServer(name string, v any) string {
 	m, _ := v.(map[string]any)
 	typ, _ := m["type"].(string)
@@ -277,39 +346,59 @@ func describeMCPServer(name string, v any) string {
 		}
 	}
 	lines := []string{fmt.Sprintf("%s (%s)", printable(name), printable(typ))}
-	masked, _ := maskSecrets(m, false).(map[string]any)
-	field := func(label string, val any) {
-		if val == nil {
-			return
+	show := func(val any) string {
+		if t, ok := val.(string); ok {
+			return printable(strconv.Quote(t))
 		}
-		text, ok := val.(string)
-		if !ok {
-			b, _ := json.Marshal(val)
-			text = string(b)
-		}
-		lines = append(lines, "      "+label+": "+printable(text))
+		var b bytes.Buffer
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(val)
+		return printable(strings.TrimSuffix(b.String(), "\n"))
 	}
-	field("command", masked["command"])
-	field("args", masked["args"])
-	field("url", masked["url"])
-	field("httpUrl", masked["httpUrl"])
-	for _, k := range []string{"env", "headers"} {
-		if mm, ok := m[k].(map[string]any); ok && len(mm) > 0 {
-			names := sortedKeys(mm)
-			for i := range names {
-				names[i] = printable(names[i])
+	for _, k := range sortedKeys(m) {
+		if k == "type" {
+			continue
+		}
+		label := "      " + printable(k) + ": "
+		switch {
+		case mcpExecFields[k] || gatedServerField(k):
+			lines = append(lines, label+show(m[k]))
+		case strings.EqualFold(k, "env"):
+			env, ok := m[k].(map[string]any)
+			if !ok {
+				lines = append(lines, label+show(m[k]))
+				continue
 			}
-			lines = append(lines, "      "+k+" names: "+strings.Join(names, ", "))
+			var parts []string
+			for _, e := range sortedKeys(env) {
+				val := env[e]
+				if !gatedEnv(e) {
+					val = maskSecrets(map[string]any{e: val}, true).(map[string]any)[e]
+				} else if anySecretString(val) {
+					// Never shown, so never taken with a pick.
+					val = "<secret-shaped, left out>"
+				}
+				parts = append(parts, printable(e)+"="+show(val))
+			}
+			lines = append(lines, label+strings.Join(parts, " "))
+		case strings.EqualFold(k, "headers"):
+			lines = append(lines, label+show(maskSecrets(m[k], true)))
+		default:
+			lines = append(lines, label+show(maskSecrets(map[string]any{k: m[k]}, false).(map[string]any)[k]))
 		}
 	}
 	return strings.Join(lines, "\n")
 }
 
-// gateConsentedEnv keeps the code-loading and request-routing variables
-// (gatedEnv) of the servers taken from the bundle out, unless this machine
-// already has the same value, the user approves them in a separate question
-// on a terminal, or --keep-bundle-commands is given. It returns
-// "server.VAR" for each variable left out.
+// gateConsentedEnv keeps out of the servers taken from the bundle what a
+// pick does not consent to: code-loading and request-routing env variables
+// (gatedEnv), and fields such as envFile, cwd or headersHelper
+// (gatedServerField). Each is kept only when this machine has the same
+// value, the user approves it in a separate question on a terminal, or
+// --keep-bundle-commands is given. A secret-shaped value is never shown and
+// so never asked about: it is left out. It returns "server.NAME" for each
+// left out.
 func (c *importApplyContext) gateConsentedEnv(file string, merged, local map[string]any, taken []string) ([]string, error) {
 	if c.KeepBundleCommands {
 		return nil, nil
@@ -320,61 +409,97 @@ func (c *importApplyContext) gateConsentedEnv(file string, merged, local map[str
 		if !ok {
 			continue
 		}
-		env, ok := srv["env"].(map[string]any)
-		if !ok {
-			continue
-		}
 		lsrv, _ := local[name].(map[string]any)
+		env, _ := srv["env"].(map[string]any)
 		lenv, _ := lsrv["env"].(map[string]any)
-		var gated []string
+		type item struct {
+			key   string // field name, or env variable name
+			isEnv bool
+			val   any
+		}
+		var gated []item
+		for _, k := range sortedKeys(srv) {
+			if gatedServerField(k) {
+				if lv, ok := lsrv[k]; !ok || !jsonEqual(lv, srv[k]) {
+					gated = append(gated, item{k, false, srv[k]})
+				}
+			}
+		}
 		for _, k := range sortedKeys(env) {
-			if !gatedEnv(k) {
-				continue
+			if gatedEnv(k) {
+				if lv, ok := lenv[k]; !ok || !jsonEqual(lv, env[k]) {
+					gated = append(gated, item{k, true, env[k]})
+				}
 			}
-			if lv, ok := lenv[k]; ok && jsonEqual(lv, env[k]) {
-				continue
-			}
-			gated = append(gated, k)
 		}
 		if len(gated) == 0 {
 			continue
 		}
-		approve := false
-		if c.Interactive && c.In != nil && !c.DryRun {
-			fmt.Fprintf(c.Out, "%s: MCP server %s sets variables that load code or send requests elsewhere:\n", printable(file), strconv.Quote(name))
-			for _, k := range gated {
-				shown := maskSecrets(map[string]any{k: env[k]}, false).(map[string]any)[k]
-				fmt.Fprintf(c.Out, "  %s=%s\n", printable(k), printable(fmt.Sprint(shown)))
+		var ask, refuse []item
+		for _, it := range gated {
+			if anySecretString(it.val) {
+				refuse = append(refuse, it)
+			} else {
+				ask = append(ask, it)
 			}
-			yes, err := askBool(c.Out, c.In, "keep these variables", false)
+		}
+		approve := false
+		if len(ask) > 0 && c.Interactive && c.In != nil && !c.DryRun {
+			fmt.Fprintf(c.Out, "%s: MCP server %s sets what loads code, runs programs or sends requests elsewhere:\n", printable(file), strconv.Quote(name))
+			for _, it := range ask {
+				label := it.key
+				if it.isEnv {
+					label = "env " + it.key
+				}
+				text, ok := it.val.(string)
+				if ok {
+					text = strconv.Quote(text)
+				} else {
+					b, _ := json.Marshal(it.val)
+					text = string(b)
+				}
+				fmt.Fprintf(c.Out, "  %s = %s\n", printable(label), printable(text))
+			}
+			yes, err := askBool(c.Out, c.In, "keep these", false)
 			if err != nil {
 				return nil, err
 			}
 			approve = yes
 		}
-		if approve {
+		out := refuse
+		if !approve {
+			out = append(out, ask...)
+		}
+		if len(out) == 0 {
 			continue
 		}
-		// Copy: the map may be the bundle's own.
-		ne := map[string]any{}
-		for k, v := range env {
-			ne[k] = v
-		}
+		// Copy: the maps may be the bundle's own.
 		ns := map[string]any{}
 		for k, v := range srv {
 			ns[k] = v
 		}
-		for _, k := range gated {
-			if lv, ok := lenv[k]; ok {
-				ne[k] = lv
-			} else {
-				delete(ne, k)
-			}
-			dropped = append(dropped, name+"."+k)
+		ne := map[string]any{}
+		for k, v := range env {
+			ne[k] = v
 		}
-		ns["env"] = ne
+		for _, it := range out {
+			src, dst := lsrv, ns
+			if it.isEnv {
+				src, dst = lenv, ne
+			}
+			if lv, ok := src[it.key]; ok {
+				dst[it.key] = lv
+			} else {
+				delete(dst, it.key)
+			}
+			dropped = append(dropped, name+"."+it.key)
+		}
+		if env != nil {
+			ns["env"] = ne
+		}
 		merged[name] = ns
 	}
+	sort.Strings(dropped)
 	return dropped, nil
 }
 
@@ -422,6 +547,7 @@ func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte
 		rep.Replaced = append(rep.Replaced, r.Replaced...)
 		rep.KeptLocal = append(rep.KeptLocal, r.KeptLocal...)
 		rep.LeftOut = append(rep.LeftOut, r.LeftOut...)
+		rep.Refused = append(rep.Refused, r.Refused...)
 		rep.Ask = append(rep.Ask, r.Ask...)
 	}
 	if !touched {
@@ -471,6 +597,7 @@ func formatMCPReport(file string, rep mcpMergeReport, dry bool) string {
 		add("would keep local", rep.KeptLocal)
 		add("would leave out", rep.LeftOut)
 		add("would leave out variables", rep.EnvLeftOut)
+		add("would not offer, a secret-shaped value in command, args or URL (review the bundle)", rep.Refused)
 		add("would ask about", rep.Ask)
 	} else {
 		add("added", rep.Added)
@@ -478,6 +605,7 @@ func formatMCPReport(file string, rep mcpMergeReport, dry bool) string {
 		add("kept local", rep.KeptLocal)
 		add("left out", rep.LeftOut)
 		add("left out variables", rep.EnvLeftOut)
+		add("not offered, a secret-shaped value in command, args or URL (review the bundle)", rep.Refused)
 	}
 	return printable(file) + ": " + strings.Join(parts, "; ")
 }
