@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -697,5 +698,90 @@ func TestExportLeavesOutWorkDirMappings(t *testing.T) {
 	got := captureBundleLocations(nil, v, SetupBundle{}, setupCollectOptions{})
 	if got == nil || len(got.Projects) != 1 || got.WorkDirMaps != nil {
 		t.Errorf("bundle locations %+v", got)
+	}
+}
+
+// A real bundle with two profiles that both name a work dir missing here:
+// the import goes on, the summary lists it once and counts 1, and nothing
+// is asked (no terminal). The once-per-import memory for questions on a
+// terminal is TestMissingWorkDirAskedOncePerImport.
+func TestImportTwoProfilesListMissingWorkDirOnce(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("paths in this test are POSIX")
+	}
+	base := t.TempDir()
+	srcHome := filepath.Join(base, "home", "alex")
+	dstHome := filepath.Join(base, "Users", "alex")
+	srcProject := filepath.Join(srcHome, "Projects", "app")
+	mustMkdirAll(t, srcProject)
+	mustMkdirAll(t, dstHome)
+	gitOrSkip(t, srcProject, "init", "-q")
+	gitOrSkip(t, srcProject, "remote", "add", "origin", "git@github.com:acme/app.git")
+
+	setTestHomeDir(t, srcHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(srcHome, ".config"))
+	t.Setenv(ConfigDirsEnv, "")
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	t.Setenv(ExportPasswordEnv, e2eBundlePassword)
+	t.Setenv(ImportPasswordEnv, e2eBundlePassword)
+	srcCfg := filepath.Join(srcHome, ".config", config.AppName)
+	seedProfileVault(t, srcCfg, nil, nil)
+	useConfigDir(t, srcCfg)
+	encPath := filepath.Join(base, "one"+DefaultExportExtension)
+	var out bytes.Buffer
+	exportCmd.SetOut(&out)
+	exportCmd.SetErr(&out)
+	t.Cleanup(func() { exportCmd.SetOut(nil); exportCmd.SetErr(nil) })
+	withFlags(t, exportCmd, map[string]string{"yes": "true", "include-secrets": "false", "detect": "false", "project": srcProject})
+	if err := runExport(exportCmd, []string{encPath}); err != nil {
+		t.Fatalf("export: %v\n%s", err, out.String())
+	}
+	raw, err := os.ReadFile(encPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := decryptBundlePayload(raw, e2eBundlePassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundle PortableBundle
+	if err := json.Unmarshal(payload, &bundle); err != nil || len(bundle.Profiles) != 1 || bundle.Profiles[0].Setup.Locations == nil {
+		t.Fatalf("bundle: %v %+v", err, bundle.Profiles)
+	}
+	second := bundle.Profiles[0]
+	second.Name = "second"
+	bundle.Profiles = append(bundle.Profiles, second)
+	plain, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundlePath := filepath.Join(base, "two.json")
+	mustWriteFile(t, bundlePath, string(plain))
+
+	setTestHomeDir(t, dstHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dstHome, ".config"))
+	dstCfg := filepath.Join(dstHome, ".config", config.AppName)
+	seedProfileVault(t, dstCfg, nil, nil)
+	useConfigDir(t, dstCfg)
+	var in bytes.Buffer
+	importCmd.SetOut(&in)
+	importCmd.SetErr(&in)
+	t.Cleanup(func() { importCmd.SetOut(nil); importCmd.SetErr(nil) })
+	withFlags(t, importCmd, map[string]string{"profile": "all"})
+	err = runImport(importCmd, []string{bundlePath})
+	if err == nil || !strings.HasPrefix(err.Error(), "1 work dir(s)") {
+		t.Fatalf("err = %v\n%s", err, in.String())
+	}
+	if !strings.Contains(in.String(), "Not imported (1):") {
+		t.Errorf("summary count:\n%s", in.String())
+	}
+	if n := strings.Count(in.String(), "pass --workdir-map '"+filepath.Join(srcHome, "Projects")+"="); n != 1 {
+		t.Errorf("work dir listed %d times:\n%s", n, in.String())
+	}
+	if strings.Contains(in.String(), "was not found here") {
+		t.Errorf("asked without a terminal:\n%s", in.String())
+	}
+	if strings.Count(in.String(), "Profile \"") != 2 {
+		t.Errorf("both profiles not imported:\n%s", in.String())
 	}
 }
