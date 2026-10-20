@@ -26,6 +26,8 @@ func runWithTempHome(m *testing.M) int {
 		"USERPROFILE":     "",
 		"XDG_CONFIG_HOME": ".config",
 		"XDG_DATA_HOME":   filepath.Join(".local", "share"),
+		"XDG_CACHE_HOME":  ".cache",
+		"XDG_STATE_HOME":  filepath.Join(".local", "state"),
 		"APPDATA":         filepath.Join("AppData", "Roaming"),
 		"LOCALAPPDATA":    filepath.Join("AppData", "Local"),
 	} {

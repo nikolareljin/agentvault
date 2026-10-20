@@ -439,15 +439,30 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 		put(doc, k, lv, lok)
 		dropped = append(dropped, k)
 	}
-	// Folder trust lets a tool act in a directory without asking.
-	if sec, ok := doc["security"].(map[string]any); ok {
-		if bv, bok := sec["folderTrust"]; bok {
-			lsec, _ := have["security"].(map[string]any)
-			lv, lok := lsec["folderTrust"]
-			if !lok || !jsonEqual(bv, lv) {
-				put(sec, "folderTrust", lv, lok)
-				dropped = append(dropped, "security.folderTrust")
+	// Folder trust lets a tool act in a directory without asking. The
+	// bundle may not change it, including by leaving it out, by replacing
+	// security with a non-object, or through the legacy top-level keys.
+	for _, k := range []string{"folderTrust", "folderTrustFeature"} {
+		bv, bok := doc[k]
+		lv, lok := have[k]
+		if bok != lok || (bok && !jsonEqual(bv, lv)) {
+			put(doc, k, lv, lok)
+			dropped = append(dropped, k)
+		}
+	}
+	{
+		bsec, bIsMap := doc["security"].(map[string]any)
+		bv, bok := bsec["folderTrust"]
+		lsec, _ := have["security"].(map[string]any)
+		lv, lok := lsec["folderTrust"]
+		// A non-object security with nothing local to keep holds no trust.
+		if (bok != lok || (bok && !jsonEqual(bv, lv))) && (bIsMap || lok) {
+			if !bIsMap {
+				bsec = map[string]any{}
+				doc["security"] = bsec
 			}
+			put(bsec, "folderTrust", lv, lok)
+			dropped = append(dropped, "security.folderTrust")
 		}
 	}
 	var walk func(b, l any, path string)

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,5 +225,40 @@ func TestImportKeepsLocalFolderTrust(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(warnings, "\n"), "security.folderTrust") {
 		t.Errorf("not reported: %v", warnings)
+	}
+}
+
+// The bundle may not turn folder trust off by leaving it out, replacing
+// security with a non-object, or using the legacy top-level keys.
+func TestImportFolderTrustCannotBeDroppedOrAliased(t *testing.T) {
+	local := `{"security":{"folderTrust":{"enabled":true},"x":1},"folderTrust":true,"folderTrustFeature":true,"theme":"a"}`
+	for name, bundle := range map[string]string{
+		"omitted":       `{"security":{"x":1},"theme":"b"}`,
+		"security gone": `{"theme":"b"}`,
+		"non-map":       `{"security":"off","theme":"b"}`,
+		"legacy":        `{"security":{"folderTrust":{"enabled":true},"x":1},"folderTrust":false,"folderTrustFeature":false,"theme":"b"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			settings := filepath.Join(home, ".gemini", "settings.json")
+			mustWriteFile(t, settings, local)
+			assets := []SetupAsset{{LogicalRoot: setupAssetRootProviderGemini, LogicalPath: "settings.json", ContentPresent: true, Content: []byte(bundle)}}
+			_, warnings, err := applyProviderAssetsWith(home, assets, fixedCtx(""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			if err := json.Unmarshal([]byte(readString(t, settings)), &doc); err != nil {
+				t.Fatal(err)
+			}
+			sec, _ := doc["security"].(map[string]any)
+			ft, _ := sec["folderTrust"].(map[string]any)
+			if ft["enabled"] != true || doc["folderTrust"] != true || doc["folderTrustFeature"] != true || doc["theme"] != "b" {
+				t.Errorf("folder trust lost: %v", doc)
+			}
+			if !strings.Contains(strings.Join(warnings, "\n"), "folderTrust") {
+				t.Errorf("not reported: %v", warnings)
+			}
+		})
 	}
 }
