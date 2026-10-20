@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- Import merges MCP servers one by one (https://github.com/nikolareljin/agentvault/issues/72):
+  servers only this machine has stay, new servers are picked from a list,
+  changed ones are asked about with the masked difference, and
+  `--mcp-servers a,b|all|none` decides without a terminal. Picking a server
+  is consent for its command only. Without a pick nothing new is added and
+  changed servers stay as they are. Covers `~/.claude.json`, JSON settings
+  (`mcpServers`, `servers`) and Codex `config.toml`, whose tables are edited
+  in place. Import prints what it added, replaced, kept and left out per
+  file. `generate mcp` keeps servers only the target file has.
 - Bundles and the vault record projects by work dir and git identity, so
   import finds a project wherever it is checked out here. SSH and HTTPS
   remotes of one repository are one identity; owner and repo case is

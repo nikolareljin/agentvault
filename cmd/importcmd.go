@@ -49,6 +49,12 @@ kept: import asks on a terminal, and --on-conflict backup-replace|keep decides
 without asking. Commands the bundle adds or changes (hooks, statusLine, MCP
 servers) are left out unless --keep-bundle-commands is given.
 
+MCP servers are merged one by one: servers only this machine has stay. On a
+terminal, import lists the bundle's new servers to pick from and asks about
+each changed one; --mcp-servers a,b|all|none decides without asking. A picked
+server's command is taken. Without a terminal or the flag, nothing new is
+added and changed servers keep this machine's definition.
+
 Use --strategy mirror to make several machines converge on one configuration.
 Mirror deletes data, so it asks for confirmation unless --confirm is given.
 
@@ -88,6 +94,7 @@ func init() {
 	importCmd.Flags().Bool("no-match", false, "do not look for the bundle's projects on this machine; rewrite paths only by --map and the home directory")
 	importCmd.Flags().Bool("accept-matches", false, "apply computed project matches without asking (for non-interactive imports)")
 	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine and MCP server commands that the bundle adds or changes; left out by default")
+	importCmd.Flags().String("mcp-servers", "", "MCP servers to take from the bundle, new or changed: a comma-separated list of names, all, or none (default: ask on a terminal, else none)")
 	importCmd.Flags().String("on-conflict", "", "when a local file differs from the bundle: backup-replace or keep (default: ask on a terminal, else backup-replace; --strategy merge means keep)")
 	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
 	importCmd.Flags().Bool("plain", false, "deprecated: the export format is detected automatically")
@@ -440,6 +447,13 @@ type importAssetOptions struct {
 func importAssetOptionsFromFlags(cmd *cobra.Command, applyConfigs bool) (importAssetOptions, error) {
 	opts := importAssetOptions{ApplyConfigs: applyConfigs, Apply: newImportApplyContext()}
 	opts.Apply.KeepBundleCommands, _ = cmd.Flags().GetBool("keep-bundle-commands")
+	if cmd.Flags().Changed("mcp-servers") {
+		sel, err := parseMCPSelection(mustString(cmd, "mcp-servers"))
+		if err != nil {
+			return opts, err
+		}
+		opts.Apply.MCPServers = sel
+	}
 	if v := mustString(cmd, "on-conflict"); v != "" {
 		policy, err := parseConflictPolicy(v)
 		if err != nil {
@@ -538,6 +552,9 @@ func previewProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsse
 	}
 	for _, line := range lines {
 		fmt.Fprintf(out, "  would: %s\n", printable(line))
+	}
+	for _, line := range dry.MCPReport {
+		fmt.Fprintf(out, "  MCP servers: %s\n", line)
 	}
 }
 
@@ -675,6 +692,10 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 	for _, warn := range warnings {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 	}
+	for _, line := range ctx.MCPReport {
+		fmt.Fprintf(cmd.OutOrStdout(), "  MCP servers: %s\n", line)
+	}
+	ctx.MCPReport = nil
 	return nil
 }
 

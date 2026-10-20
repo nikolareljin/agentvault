@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -621,8 +622,9 @@ func writeMCPConfigFile(outputFile string, data []byte) error {
 	return writeFileAtomicKeepMode(outputFile, merged)
 }
 
-// mergeMCPServersIntoFile replaces only the mcpServers key of an existing
-// config file and keeps every other key. The default output is Claude
+// mergeMCPServersIntoFile merges the generated servers into the mcpServers
+// key of an existing config file and keeps every other key: a server only
+// the file has stays, a generated one wins. The default output is Claude
 // Desktop's own config, which holds the app's other settings too.
 func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
 	existing, err := os.ReadFile(path)
@@ -672,7 +674,7 @@ func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
 		}
 		key, _ := tok.(string)
 		if key == "mcpServers" {
-			value = gen["mcpServers"]
+			value = mergeServerObjects(value, gen["mcpServers"])
 		}
 		dup := false
 		for i := range members {
@@ -709,6 +711,74 @@ func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
 	}
 	buf.WriteString("\n}")
 	return buf.Bytes(), nil
+}
+
+// mergeServerObjects is the file's server object with the generated servers
+// set in it, in the file's order, new ones after. A file value that is not
+// an object is replaced.
+func mergeServerObjects(existing, generated json.RawMessage) json.RawMessage {
+	var gen map[string]json.RawMessage
+	if err := json.Unmarshal(generated, &gen); err != nil || gen == nil {
+		return generated
+	}
+	dec := json.NewDecoder(bytes.NewReader(existing))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return generated
+	}
+	var buf bytes.Buffer
+	buf.WriteString("{")
+	seen := map[string]bool{}
+	n := 0
+	write := func(key string, v json.RawMessage) {
+		if n > 0 {
+			buf.WriteString(",")
+		}
+		n++
+		// Encode, not Marshal: Marshal turns < > & into \u003c and so on.
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+		_ = enc.Encode(key)
+		buf.Truncate(buf.Len() - 1)
+		buf.WriteString(":")
+		buf.Write(v)
+	}
+	var order []string
+	vals := map[string]json.RawMessage{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return generated
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return generated
+		}
+		key, _ := tok.(string)
+		if _, dup := vals[key]; !dup {
+			order = append(order, key)
+		}
+		vals[key] = v
+	}
+	for _, key := range order {
+		v := vals[key]
+		if g, ok := gen[key]; ok {
+			v = g
+		}
+		seen[key] = true
+		write(key, v)
+	}
+	keys := make([]string, 0, len(gen))
+	for k := range gen {
+		if !seen[k] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		write(k, gen[k])
+	}
+	buf.WriteString("}")
+	return buf.Bytes()
 }
 
 // writeFileAtomicKeepMode replaces path through a temp file and a rename, so

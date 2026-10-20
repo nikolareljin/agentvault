@@ -490,7 +490,7 @@ Default output is Claude Desktop's config for the OS:
 `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS),
 `%APPDATA%\Claude\claude_desktop_config.json` (Windows),
 `~/.config/claude/claude_desktop_config.json` (Linux). `-` prints to stdout.
-An existing file keeps every key except `mcpServers`, in order, its mode and (outside Windows) its owner; a file
+An existing file keeps every key, in order, its mode and (outside Windows) its owner. In `mcpServers`, a generated server replaces the one of the same name and a server only the file has stays; a file
 that is not a JSON object is left alone and the command fails.
 The file is replaced by a rename, so a hard link to it keeps the old content.
 
@@ -663,7 +663,7 @@ Flags:
 - `--keep-interpreter-allows` (default: `false`): Keep Claude permissions such as `Bash(bash:*)`, `Bash(python3:*)` or `Bash(*)`. By default they are left out on import and each one is reported. A Bash rule is kept only when it is a plain command line: literal words (letters, digits and `._/@%+,-`) separated by single spaces, an optional trailing `:*` or ` *`, and a command that is not an interpreter, wrapper or shell keyword. Any other Bash rule counts as a blanket grant: on the other machine such a rule lets any program run without asking, and nobody there granted it.
 - `--keep-bundle-commands` (default: `false`): Keep the commands the bundle adds or changes. By default import keeps this machine's value, and names each one left out, for:
   - each `hooks` event, `statusLine`, `fileSuggestion`, credential helpers (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`), `enabledPlugins` and `extraKnownMarketplaces`;
-  - each MCP server (`mcpServers`, `servers`), of any type, that is new or differs in anything but its blanked secrets;
+  - each MCP server (`mcpServers`, `servers`, Codex `mcp_servers`), of any type, that is new or differs in anything but its blanked secrets, unless it was picked (see `--mcp-servers`). With this flag every server is taken, apart from changed ones under `--on-conflict keep`;
   - code-loading variables in an `env` map (`NODE_OPTIONS`, `LD_PRELOAD`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH` and the like), and variables that send requests elsewhere (any name containing `_URL`, `ENDPOINT` or `PROXY`, or ending in `_HOST`, such as `ANTHROPIC_BASE_URL` or `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`; provider switches `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_FOUNDRY_RESOURCE`; CA bundle settings such as `NODE_EXTRA_CA_CERTS`);
   - folder trust: Copilot `trusted_folders`, Gemini `security.folderTrust`, and Gemini `trustedFolders.json` (kept whole);
   - a JSON settings file that does not parse as a plain JSON object (comments, trailing data) and differs: it is not applied. When this machine's copy is the one that does not parse, it is kept as it is;
@@ -671,7 +671,14 @@ Flags:
   - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
   - trusted projects from the Codex provider config that are new or changed.
 
-  A Codex `config.toml` is compared after parsing: if its `mcp_servers`, `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, or it does not parse, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
+  A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
+- `--mcp-servers <a,b|all|none>`: Which MCP servers to take from the bundle, without asking. MCP servers in `mcpServers` and `servers` of JSON settings (Claude `~/.claude.json` and `settings.json`, Gemini, Copilot, Cursor, Windsurf) and in Codex `config.toml` are merged one by one:
+  - only on this machine: kept;
+  - the same on both sides, apart from secrets the bundle blanked: this machine's definition stays;
+  - changed: kept unless named here (or `all`). On a terminal import shows the masked difference and asks `[b]ackup + replace / [k]eep` (`ba`, `ka` for all remaining servers); the default and end of input keep this machine's server. A replaced server can get this machine's secret back after a yes;
+  - only in the bundle: left out unless named here. On a terminal import lists them with type and command or URL; a row number selects or clears one, `a` selects all, an empty line accepts, `q` aborts the import. None is selected at first.
+
+  A picked or replaced server's command is taken; every other server stays out, as without the flag. Without the flag or a terminal nothing new is added and changed servers keep this machine's definition. A file whose only difference is the servers settled here is not asked about again; it is backed up and written. Import prints one `MCP servers:` line per file (`added`, `replaced`, `kept local`, `left out`); `--dry-run` asks nothing and prints the plan (`would ask about` for questions it would ask). Codex tables are edited in place: comments and other lines stay, a new server is appended, and a server name with a quote, backslash, bracket or control character is refused.
 - `--on-conflict <backup-replace|keep>`: What to do with a provider file, Claude project memory file or `--apply-projects` file that already exists and differs. Without it, import asks on a terminal and backs up and replaces otherwise; `--strategy merge` given explicitly means `keep`, `replace` and `mirror` mean `backup-replace`.
 - `--confirm` (default: `false`): Skip the confirmation prompt that guards `mirror`.
 

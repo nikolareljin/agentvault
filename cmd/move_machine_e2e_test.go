@@ -44,7 +44,8 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	// is the same on both once remapped.
 	w(filepath.Join(srcHome, ".claude.json"), `{"oauthAccount":{"email":"a@x"},"mcpServers":{"fs":{"command":"`+srcHome+`/bin/fs-mcp"},`+
 		`"api":{"type":"http","url":"https://new.example/mcp","headers":{"Authorization":"src-api-tok"}},`+
-		`"`+srcHome+`/srv":{"type":"http","url":"https://srv.example/mcp","headers":{"Authorization":"src-srv-tok"}}}}`)
+		`"`+srcHome+`/srv":{"type":"http","url":"https://srv.example/mcp","headers":{"Authorization":"src-srv-tok"}},`+
+		`"new1":{"command":"new1-mcp"},"new2":{"command":"new2-mcp"},"shared":{"command":"shared-from-a"}}}`)
 	w(filepath.Join(srcHome, ".claude", ".credentials.json"), `{"token":"login"}`)
 	w(filepath.Join(srcHome, ".gemini", "GEMINI.md"), "gemini rules\n")
 	w(filepath.Join(srcHome, ".codex", "AGENTS.md"), "codex rules\n")
@@ -92,7 +93,8 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	// --- machine B ---
 	w(filepath.Join(dstHome, ".claude.json"), `{"oauthAccount":{"email":"b@x"},"mcpServers":{`+
 		`"api":{"type":"http","url":"https://old.example/mcp","headers":{"Authorization":"dst-api-tok"}},`+
-		`"`+dstHome+`/srv":{"type":"http","url":"https://srv.example/mcp","headers":{"Authorization":"dst-srv-tok"}}}}`)
+		`"`+dstHome+`/srv":{"type":"http","url":"https://srv.example/mcp","headers":{"Authorization":"dst-srv-tok"}},`+
+		`"local1":{"command":"local1-mcp"},"shared":{"command":"shared-on-b"}}}`)
 	const dstSettings = `{"env":{"ANTHROPIC_API_KEY":"dst-key"},"localOnly":"kept"}`
 	w(filepath.Join(dstHome, ".claude", "settings.json"), dstSettings)
 	w(filepath.Join(dstProject, "AGENTS.md"), "machine B's own instructions\n")
@@ -108,7 +110,7 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	t.Cleanup(func() { importCmd.SetOut(nil); importCmd.SetErr(nil) })
 	withFlags(t, importCmd, map[string]string{
 		"apply-provider-configs": "true", "apply-projects": "true", "project-root": dstProject,
-		"keep-bundle-commands": "true",
+		"keep-bundle-commands": "true", "mcp-servers": "fs,api,new1",
 	})
 	if err := runImport(importCmd, []string{bundlePath}); err != nil {
 		t.Fatalf("import: %v\n%s", err, in.String())
@@ -164,6 +166,21 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	}
 	if !strings.Contains(claudeJSON, "b@x") || !strings.Contains(claudeJSON, dstHome+"/bin/fs-mcp") {
 		t.Errorf(".claude.json = %s", claudeJSON)
+	}
+	// MCP servers one by one: machine B's own server stays, the picked new
+	// one arrives, the unpicked one and the changed shared one do not.
+	for _, want := range []string{"local1-mcp", "new1-mcp", "shared-on-b"} {
+		if !strings.Contains(claudeJSON, want) {
+			t.Errorf("%s missing from .claude.json: %s", want, claudeJSON)
+		}
+	}
+	for _, bad := range []string{"new2-mcp", "shared-from-a"} {
+		if strings.Contains(claudeJSON, bad) {
+			t.Errorf("%s taken without a pick: %s", bad, claudeJSON)
+		}
+	}
+	if !strings.Contains(in.String(), `MCP servers: `+filepath.Join(dstHome, ".claude.json")+`: added "fs", "new1"; replaced "api"; kept local "shared"; left out "new2"`) {
+		t.Errorf("MCP report missing:\n%s", in.String())
 	}
 	if !strings.Contains(read(filepath.Join(dstHome, "notes", "team.md")), dstProject) {
 		t.Errorf("referenced note not remapped to the new project root")
