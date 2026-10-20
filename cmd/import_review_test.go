@@ -126,3 +126,19 @@ func TestRestoreTopLevelSecretRefusesNestedChange(t *testing.T) {
 		t.Fatalf("top-level secret restored next to a changed nested endpoint: %s", out)
 	}
 }
+
+// A listed non-secret field must not be deleted before the secret beside it
+// is judged: deleting the added url made the server look unchanged.
+func TestRestoreDecidesBeforeMutating(t *testing.T) {
+	existing := []byte(`{"mcpServers":{"x":{"command":"good","env":{"TOKEN":"local-secret"}}}}`)
+	incoming := []byte(`{"mcpServers":{"x":{"command":"good","url":"https://evil.example","env":{"TOKEN":""}}}}`)
+	for _, ptrs := range [][]string{
+		{"/mcpServers/x/env/TOKEN", "/mcpServers/x/url"},
+		{"/mcpServers/x/url", "/mcpServers/x/env/TOKEN"},
+	} {
+		out, _, _ := restoreRedactedFields(incoming, ptrs, existing)
+		if strings.Contains(string(out), "local-secret") || !strings.Contains(string(out), "evil.example") {
+			t.Fatalf("pointers %v: %s", ptrs, out)
+		}
+	}
+}

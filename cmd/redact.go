@@ -144,19 +144,27 @@ func restoreRedactedFields(incoming []byte, pointers []string, existing []byte) 
 			secrets = append(secrets, p)
 		}
 	}
-	restored := 0
+	// Decide every restore against the document as the bundle has it, then
+	// change it. A listed field that is not a secret is left as it is, so it
+	// still has to match.
+	restore := map[string]any{}
+	for _, p := range secrets {
+		if v, ok := pointerGet(have, p); ok && restorable(doc, have, p, secrets) {
+			restore[p] = v
+		}
+	}
 	// Deepest first, so removing an array element does not shift a sibling
 	// pointer that is still to be handled.
-	sorted := append([]string(nil), pointers...)
+	sorted := append([]string(nil), secrets...)
 	sort.Sort(sort.Reverse(sort.StringSlice(sorted)))
 	for _, p := range sorted {
-		if v, ok := pointerGet(have, p); ok && restorable(doc, have, p, secrets) {
+		if v, ok := restore[p]; ok {
 			pointerSet(doc, p, v)
-			restored++
 			continue
 		}
 		pointerDelete(doc, p)
 	}
+	restored := len(restore)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	return out, restored, err
 }
