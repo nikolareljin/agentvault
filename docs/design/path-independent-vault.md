@@ -130,8 +130,10 @@ projects anywhere under the candidate roots.
    however many profiles name the same work dir, and the summary lists each
    path once; its `--workdir-map` line puts the bundle path in single
   quotes (literal in POSIX shells and PowerShell) with the placeholder
-  outside. Only paths of ASCII letters, digits, space and `/\._:+,@=-`
-  get a ready command; any other path is printed with a plain instruction.
+  outside. Only paths of ASCII letters, digits, space and `/\._:+,@-`
+  get a ready command, and a Windows path only without a space (cmd.exe
+  ignores single quotes); any other path is printed with a plain
+  instruction.
 2. Candidates for a project: git checkouts found by a bounded scan (depth 3,
    skip `node_modules`, `vendor`, hidden dirs, never follow symlinks) of the
    matched work dirs and of home. When every bundle project has a remote,

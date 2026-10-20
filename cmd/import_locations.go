@@ -105,16 +105,18 @@ func (r *locationResult) addNewMap(from, to string) {
 // ! included), and the placeholder outside them: '/a b'=<path here>. A
 // path outside hintSafePath gets no ready command.
 func flagHint(flag, from string) string {
-	if !hintSafePath.MatchString(from) {
+	// cmd.exe ignores single quotes, so a Windows path with a space would
+	// split there.
+	if !hintSafePath.MatchString(from) || windowsStylePath(from) && strings.Contains(from, " ") {
 		return "map " + printable(from) + " with " + flag + " (no ready command: the path holds characters a shell may interpret)"
 	}
 	return flag + " '" + from + "'=<path here>"
 }
 
 // hintSafePath is what flagHint quotes: ASCII letters, digits, space and
-// / \ . _ : + , @ = -. Anything else (cmd.exe & | ^ < > ( ) ! " %, quotes
+// / \ . _ : + , @ -. "=" is out: OLD=NEW splits at the first one. Anything else (cmd.exe & | ^ < > ( ) ! " %, quotes
 // of any kind, non-ASCII) gets no ready command.
-var hintSafePath = regexp.MustCompile(`^[A-Za-z0-9 /\\._:+,@=-]+$`)
+var hintSafePath = regexp.MustCompile(`^[A-Za-z0-9 /\\._:+,@-]+$`)
 
 // shellQuote makes s one shell word.
 func shellQuote(s string) string {

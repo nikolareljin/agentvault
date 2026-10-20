@@ -792,17 +792,17 @@ func TestImportTwoProfilesListMissingWorkDirOnce(t *testing.T) {
 
 func TestFlagHintQuoting(t *testing.T) {
 	for from, want := range map[string]string{
-		"/old/Projects":        "--workdir-map '/old/Projects'=<path here>",
-		"/old/My Projects":     "--workdir-map '/old/My Projects'=<path here>",
-		`C:\Users\a\My Dir`:    `--workdir-map 'C:\Users\a\My Dir'=<path here>`,
-		"/a/b-c_d.e+f,g@h=i:j": "--workdir-map '/a/b-c_d.e+f,g@h=i:j'=<path here>",
+		"/old/Projects":      "--workdir-map '/old/Projects'=<path here>",
+		"/old/My Projects":   "--workdir-map '/old/My Projects'=<path here>",
+		`C:\Users\a\src`:     `--workdir-map 'C:\Users\a\src'=<path here>`,
+		"/a/b-c_d.e+f,g@h:j": "--workdir-map '/a/b-c_d.e+f,g@h:j'=<path here>",
 	} {
 		if got := flagHint("--workdir-map", from); got != want {
 			t.Errorf("flagHint(%q) = %s, want %s", from, got, want)
 		}
 	}
 	for _, from := range []string{
-		"/old/it's", `C:\%USERPROFILE%\x`, `C:\a$(touch x)\b`, `C:\a"b`, "/a/`id`",
+		"/old/it's", `C:\%USERPROFILE%\x`, "/old/a=b", `C:\Users\a\My Dir`, `a\b c`, `C:\a$(touch x)\b`, `C:\a"b`, "/a/`id`",
 		"/a&b", "/a^b", "/a(b)", "/a|b", "/a<b>", "/a!b", "/a\u2018b\u2019", "/caf\u00e9",
 	} {
 		got := flagHint("--workdir-map", from)
