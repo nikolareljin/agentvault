@@ -1,0 +1,315 @@
+package gitid
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestNormalizeRemote(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string // "" means not a network remote
+	}{
+		{"git@github.com:Owner/Repo.git", "github.com/Owner/Repo"},
+		{"github.com:owner/repo", "github.com/owner/repo"},
+		{"https://github.com/owner/repo.git", "github.com/owner/repo"},
+		{"https://github.com/owner/repo", "github.com/owner/repo"},
+		{"https://github.com/owner/repo/", "github.com/owner/repo"},
+		{"https://github.com/owner/repo.git/", "github.com/owner/repo"},
+		{"https://x-access-token:ghp_secret@github.com/owner/repo.git", "github.com/owner/repo"},
+		{"https://oauth2:glpat-secret" + "@gitlab.com/g/r.git", "gitlab.com/g/r"},
+		{"https://user@GitHub.COM/owner/repo", "github.com/owner/repo"},
+		{"git@GITHUB.com:owner/repo.git", "github.com/owner/repo"},
+		{"ssh://git@github.com/owner/repo.git", "github.com/owner/repo"},
+		{"ssh://git@github.com:22/owner/repo.git", "github.com/owner/repo"},
+		{"git+ssh://git@github.com/owner/repo", "github.com/owner/repo"},
+		{"https://github.com:443/owner/repo", "github.com/owner/repo"},
+		{"http://git.example.com:80/owner/repo", "git.example.com/owner/repo"},
+		{"git://git.example.com:9418/owner/repo", "git.example.com/owner/repo"},
+		{"https://git.example.com:8443/owner/repo.git", "git.example.com:8443/owner/repo"},
+		{"ssh://git@bitbucket.example.com:7999/proj/repo.git", "bitbucket.example.com:7999/proj/repo"},
+		{"git@gitlab.com:group/sub/deeper/repo.git", "gitlab.com/group/sub/deeper/repo"},
+		{"https://gitlab.com/group/sub/repo", "gitlab.com/group/sub/repo"},
+		{"git@bitbucket.org:team/repo.git", "bitbucket.org/team/repo"},
+		{"https://user" + "@bitbucket.org/team/repo.git", "bitbucket.org/team/repo"},
+		{"git.example.com:/srv/git/repo.git", "git.example.com/srv/git/repo"},
+		{"ssh://[::1]:2222/owner/repo", "[::1]:2222/owner/repo"},
+		{"https://github.com/owner/repo.git?x=1#frag", "github.com/owner/repo"},
+		{"  git@github.com:owner/repo.git\n", "github.com/owner/repo"},
+		{"https://github.com//owner//repo", "github.com/owner/repo"},
+		// Not network remotes.
+		{"", ""},
+		{"file:///srv/git/repo.git", ""},
+		{"/srv/git/repo.git", ""},
+		{"../repo.git", ""},
+		{"./repo", ""},
+		{`C:\repos\x.git`, ""},
+		{"C:/repos/x.git", ""},
+		{"ftp://example.com/owner/repo", ""},
+		{"https://github.com/repo", ""},
+		{"https://github.com/", ""},
+		{"git@github.com:repo.git", ""},
+		{"https://github.com/owner/../repo", ""},
+		{"https:///owner/repo", ""},
+	}
+	for _, c := range cases {
+		got, ok := NormalizeRemote(c.in)
+		if ok != (c.want != "") || got != c.want {
+			t.Errorf("NormalizeRemote(%q) = %q, %v; want %q", c.in, got, ok, c.want)
+		}
+		if strings.Contains(got, "secret") || strings.Contains(got, "@") {
+			t.Errorf("NormalizeRemote(%q) kept credentials: %q", c.in, got)
+		}
+	}
+}
+
+func TestParseRemotesAndPick(t *testing.T) {
+	cases := []struct {
+		name, config, wantName, wantURL string
+	}{
+		{"origin first", `[remote "upstream"]
+	url = git@github.com:up/repo.git
+[remote "origin"]
+	url = git@github.com:me/repo.git
+`, "origin", "github.com/me/repo"},
+		{"upstream when origin is local", `[remote "origin"]
+	url = /srv/mirror/repo.git
+[remote "upstream"]
+	url = https://github.com/up/repo
+`, "upstream", "github.com/up/repo"},
+		{"other remotes by name", `[remote "zeta"]
+	url = https://github.com/z/repo
+[remote "alpha"]
+	url = https://github.com/a/repo
+`, "alpha", "github.com/a/repo"},
+		{"case-insensitive section and key, quoted value", `[REMOTE "origin"]
+	URL = "https://github.com/q/repo.git"
+`, "origin", "github.com/q/repo"},
+		{"first url wins, comments skipped", `# comment
+[remote "origin"]
+	; note
+	url = https://github.com/first/repo # trailing
+	url = https://github.com/second/repo
+`, "origin", "github.com/first/repo"},
+		{"remote name is case-sensitive", `[remote "Origin"]
+	url = https://github.com/cap/repo
+[remote "b"]
+	url = https://github.com/b/repo
+`, "Origin", "github.com/cap/repo"},
+		{"no remotes", "[core]\n\tbare = false\n", "", ""},
+		{"only local", `[remote "origin"]
+	url = file:///srv/repo
+`, "", ""},
+	}
+	for _, c := range cases {
+		n, u := pickRemote(parseRemotes([]byte(c.config)))
+		if n != c.wantName || u != c.wantURL {
+			t.Errorf("%s: got %q %q, want %q %q", c.name, n, u, c.wantName, c.wantURL)
+		}
+	}
+}
+
+// git runs the real git binary with no global or system config, so the test
+// never reads or writes the user's.
+func git(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	full := append([]string{"-c", "user.name=t", "-c", "user.email=t@example.com",
+		"-c", "init.defaultBranch=main", "-c", "protocol.file.allow=always", "-c", "commit.gpgsign=false"}, args...)
+	cmd := exec.Command("git", full...)
+	cmd.Dir = dir
+	cmd.Env = append(cleanEnv(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func needGit(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+}
+
+func newRepo(t *testing.T, remote string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	if remote != "" {
+		git(t, dir, "remote", "add", "origin", remote)
+	}
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "root")
+	root := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "second")
+	return dir, root
+}
+
+func TestIdentifyRepoAndSubdir(t *testing.T) {
+	needGit(t)
+	dir, root := newRepo(t, "git@github.com:Owner/Repo.git")
+	sub := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{dir, sub} {
+		r, err := Identify(context.Background(), d, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Remote != "github.com/Owner/Repo" || r.RemoteName != "origin" {
+			t.Errorf("%s: remote %q %q", d, r.RemoteName, r.Remote)
+		}
+		if len(r.RootCommits) != 1 || r.RootCommits[0] != root {
+			t.Errorf("%s: roots %v, want [%s]", d, r.RootCommits, root)
+		}
+		if r.Root != dir {
+			t.Errorf("%s: root %q, want %q", d, r.Root, dir)
+		}
+	}
+}
+
+func TestIdentifyNoCommitsDoesNotRunGit(t *testing.T) {
+	needGit(t)
+	dir := t.TempDir()
+	git(t, dir, "init", "-q")
+	called := false
+	r, err := Identify(context.Background(), dir, func(context.Context, string, ...string) ([]byte, error) {
+		called = true
+		return nil, errors.New("must not run")
+	})
+	if err != nil || called || len(r.RootCommits) != 0 || r.Remote != "" {
+		t.Fatalf("got %+v, %v, called=%v", r, err, called)
+	}
+}
+
+func TestIdentifyLocalOnlyRepoHasRootButNoRemote(t *testing.T) {
+	needGit(t)
+	dir, root := newRepo(t, "/srv/git/x.git")
+	r, err := Identify(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Remote != "" || len(r.RootCommits) != 1 || r.RootCommits[0] != root {
+		t.Fatalf("got %+v", r)
+	}
+}
+
+func TestIdentifyWorktree(t *testing.T) {
+	needGit(t)
+	dir, root := newRepo(t, "https://tok"+"@gitlab.com/g/sub/r.git")
+	wt := filepath.Join(t.TempDir(), "wt")
+	git(t, dir, "worktree", "add", "-q", "-b", "side", wt)
+	r, err := Identify(context.Background(), wt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Root != wt || r.Remote != "gitlab.com/g/sub/r" || len(r.RootCommits) != 1 || r.RootCommits[0] != root {
+		t.Fatalf("got %+v", r)
+	}
+	if r.CommonDir != filepath.Join(dir, ".git") || r.GitDir == r.CommonDir {
+		t.Fatalf("gitdir %q commondir %q", r.GitDir, r.CommonDir)
+	}
+}
+
+func TestIdentifySubmodule(t *testing.T) {
+	needGit(t)
+	lib, libRoot := newRepo(t, "git@github.com:o/lib.git")
+	super, _ := newRepo(t, "git@github.com:o/super.git")
+	git(t, super, "submodule", "add", "-q", lib, "vendor/lib")
+	// The submodule's own origin is the local path it was cloned from; give
+	// it a network one the way a real clone would have.
+	git(t, filepath.Join(super, "vendor", "lib"), "remote", "set-url", "origin", "git@github.com:o/lib.git")
+	r, err := Identify(context.Background(), filepath.Join(super, "vendor", "lib"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Remote != "github.com/o/lib" || len(r.RootCommits) != 1 || r.RootCommits[0] != libRoot {
+		t.Fatalf("got %+v", r)
+	}
+	if !strings.Contains(r.GitDir, filepath.Join(".git", "modules")) {
+		t.Fatalf("gitdir %q", r.GitDir)
+	}
+}
+
+func TestIdentifyMultipleRoots(t *testing.T) {
+	needGit(t)
+	dir, root1 := newRepo(t, "")
+	git(t, dir, "checkout", "-q", "--orphan", "other")
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "other root")
+	root2 := git(t, dir, "rev-parse", "HEAD")
+	git(t, dir, "merge", "-q", "--allow-unrelated-histories", "-m", "join", "main")
+	r, err := Identify(context.Background(), dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{root1, root2}
+	if want[0] > want[1] {
+		want[0], want[1] = want[1], want[0]
+	}
+	if len(r.RootCommits) != 2 || r.RootCommits[0] != want[0] || r.RootCommits[1] != want[1] {
+		t.Fatalf("roots %v, want %v", r.RootCommits, want)
+	}
+}
+
+func TestIdentifyPackedRefAndDetachedHead(t *testing.T) {
+	needGit(t)
+	dir, root := newRepo(t, "")
+	git(t, dir, "pack-refs", "--all")
+	if _, err := os.Stat(filepath.Join(dir, ".git", "refs", "heads", "main")); err == nil {
+		t.Fatal("ref still loose after pack-refs")
+	}
+	r, err := Identify(context.Background(), dir, nil)
+	if err != nil || len(r.RootCommits) != 1 || r.RootCommits[0] != root {
+		t.Fatalf("packed: %+v %v", r, err)
+	}
+	git(t, dir, "checkout", "-q", "--detach")
+	r, err = Identify(context.Background(), dir, nil)
+	if err != nil || len(r.RootCommits) != 1 || r.RootCommits[0] != root {
+		t.Fatalf("detached: %+v %v", r, err)
+	}
+}
+
+func TestIdentifyNotRepo(t *testing.T) {
+	_, err := Identify(context.Background(), t.TempDir(), nil)
+	if !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("got %v, want ErrNotRepo", err)
+	}
+}
+
+func TestIdentifyBadGitFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("garbage\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Identify(context.Background(), dir, nil); err == nil {
+		t.Fatal("want error for a .git file without gitdir:")
+	}
+}
+
+func TestIdentifyRejectsBadRunnerOutput(t *testing.T) {
+	needGit(t)
+	dir, _ := newRepo(t, "")
+	_, err := Identify(context.Background(), dir, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("not-a-hash\n"), nil
+	})
+	if err == nil {
+		t.Fatal("want error for non-hash output")
+	}
+}
+
+func TestIdentifyRunnerErrorPropagates(t *testing.T) {
+	needGit(t)
+	dir, _ := newRepo(t, "")
+	_, err := Identify(context.Background(), dir, func(context.Context, string, ...string) ([]byte, error) {
+		return nil, errors.New("boom")
+	})
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("got %v", err)
+	}
+}
