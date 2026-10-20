@@ -111,19 +111,8 @@ func LoadClaudeConfig() (*ClaudeConfig, error) {
 	return config, nil
 }
 
-// SaveClaudeConfig writes Claude configuration to ~/.claude/
-func SaveClaudeConfig(config *ClaudeConfig) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0700); err != nil {
-		return err
-	}
-
-	// Build settings.json
+// ClaudeSettingsJSON is the settings.json SaveClaudeConfig writes for config.
+func ClaudeSettingsJSON(config *ClaudeConfig) ([]byte, error) {
 	settings := make(map[string]any)
 	for k, v := range config.CustomSettings {
 		settings[k] = v
@@ -140,8 +129,22 @@ func SaveClaudeConfig(config *ClaudeConfig) error {
 	if len(config.MCPServers) > 0 {
 		settings["mcpServers"] = config.MCPServers
 	}
+	return json.MarshalIndent(settings, "", "  ")
+}
 
-	data, err := json.MarshalIndent(settings, "", "  ")
+// SaveClaudeConfig writes Claude configuration to ~/.claude/
+func SaveClaudeConfig(config *ClaudeConfig) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0700); err != nil {
+		return err
+	}
+
+	data, err := ClaudeSettingsJSON(config)
 	if err != nil {
 		return err
 	}
@@ -234,7 +237,48 @@ func LoadCodexConfig() (*CodexConfig, error) {
 }
 
 // SaveCodexConfig writes Codex configuration to ~/.codex/
+// CodexConfigTOML is existing with its [projects.*] sections replaced by
+// projects (path -> trust level), as SaveCodexConfig writes it.
+func CodexConfigTOML(existing string, projects map[string]string) string {
+	var sb strings.Builder
+	sb.WriteString(stripCodexProjectSections(existing))
+	if sb.Len() > 0 && !strings.HasSuffix(sb.String(), "\n") {
+		sb.WriteString("\n")
+	}
+	paths := make([]string, 0, len(projects))
+	for path := range projects {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		sb.WriteString(fmt.Sprintf("[projects.%q]\n", path))
+		sb.WriteString(fmt.Sprintf("trust_level = %q\n\n", projects[path]))
+	}
+	return sb.String()
+}
+
+// ValidRuleName is a rule name that is one plain file name: letters,
+// digits, '.', '_' and '-', not starting with '.', at most 128 bytes. Rule
+// names come from bundles; anything else could leave the rules directory.
+func ValidRuleName(name string) bool {
+	if name == "" || len(name) > 128 || name[0] == '.' {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 func SaveCodexConfig(config *CodexConfig) error {
+	// Check every rule name before anything is written.
+	for name := range config.Rules {
+		if !ValidRuleName(name) {
+			return fmt.Errorf("codex rule name %q is not a plain file name", name)
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -254,22 +298,7 @@ func SaveCodexConfig(config *CodexConfig) error {
 		return err
 	}
 
-	var sb strings.Builder
-	sb.WriteString(stripCodexProjectSections(existingConfig))
-	if sb.Len() > 0 && !strings.HasSuffix(sb.String(), "\n") {
-		sb.WriteString("\n")
-	}
-	paths := make([]string, 0, len(config.TrustedProjects))
-	for path := range config.TrustedProjects {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		level := config.TrustedProjects[path]
-		sb.WriteString(fmt.Sprintf("[projects.%q]\n", path))
-		sb.WriteString(fmt.Sprintf("trust_level = %q\n\n", level))
-	}
-	if err := os.WriteFile(configPath, []byte(sb.String()), 0600); err != nil {
+	if err := os.WriteFile(configPath, []byte(CodexConfigTOML(existingConfig, config.TrustedProjects)), 0600); err != nil {
 		return err
 	}
 

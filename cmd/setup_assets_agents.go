@@ -3,7 +3,9 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -362,8 +364,15 @@ func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []Decl
 		SizeBytes:   int64(len(data)),
 	}
 	if !includeSecrets {
-		asset.Redacted = true
-		return &asset, declined, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
+		// Login keys are gone; other secret values are blanked, not the file.
+		out, pointers, ok := redactJSONSecrets(data)
+		if !ok {
+			asset.Redacted = true
+			return &asset, declined, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
+		}
+		data = out
+		asset.RedactedFields = pointers
+		asset.SizeBytes = int64(len(data))
 	}
 	asset.Content = data
 	asset.ContentPresent = true
@@ -374,7 +383,7 @@ func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []Decl
 // keepLocalCopilotLogin puts this machine's own login keys from the config.json
 // at dest back into incoming, so applying a bundle does not sign anyone out.
 func keepLocalCopilotLogin(dest string, incoming []byte) []byte {
-	existing, err := os.ReadFile(dest)
+	existing, err := readExistingFile(dest)
 	if err != nil {
 		return incoming
 	}
@@ -493,8 +502,14 @@ func collectClaudeUserMCPServers(homeDir string, includeSecrets bool) (*SetupAss
 		MergeKeys: claudeUserConfigMergeKeys,
 	}
 	if !includeSecrets {
-		asset.Redacted = true
-		return &asset, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
+		out, pointers, ok := redactJSONSecrets(data)
+		if !ok {
+			asset.Redacted = true
+			return &asset, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
+		}
+		data = out
+		asset.RedactedFields = pointers
+		asset.SizeBytes = int64(len(data))
 	}
 	asset.Content = data
 	asset.ContentPresent = true
@@ -1360,7 +1375,7 @@ func dedupeAssetsByLogicalPath(in []SetupAsset) []SetupAsset {
 // only: the rest of incoming is never written. A file that is not a JSON
 // object is refused rather than overwritten.
 func mergeJSONKeysIntoFile(path string, incoming []byte, keys []string) ([]byte, error) {
-	existing, err := os.ReadFile(path)
+	existing, err := readExistingFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -1380,4 +1395,86 @@ func mergeJSONKeysIntoFile(path string, incoming []byte, keys []string) ([]byte,
 		}
 	}
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// projectAssetRefusal returns why a staged project file is not written into a
+// project, or "". Written: prose anywhere, and the files and directories
+// agent tools read instructions from. Never written: anything that runs code
+// or configures the repository (.git, CI workflows, git hook directories,
+// repository settings), credential files, and other non-prose files, which
+// stay staged for review.
+func projectAssetRefusal(rel string) string {
+	// The stage outlives one import: refuse what import refuses (device
+	// names, short names) here too, so one such file is skipped, not fatal.
+	if _, err := sanitizeAssetRelativePath(rel); err != nil {
+		return err.Error()
+	}
+	slashed := filepath.ToSlash(filepath.Clean(rel))
+	folded := strings.ToLower(slashed)
+	for _, seg := range strings.Split(slashed, "/") {
+		if seg != strings.TrimSpace(seg) {
+			return "a path segment with leading or trailing whitespace"
+		}
+		// Windows drops trailing dots (.git. is .git) and reads a colon as
+		// an alternate data stream.
+		if strings.HasSuffix(seg, ".") && seg != "." && seg != ".." || strings.Contains(seg, ":") {
+			return "a path segment Windows would read as another name"
+		}
+		switch strings.ToLower(seg) {
+		case ".git", ".githooks", ".husky":
+			return "runs code or configures git; never written from a bundle"
+		}
+	}
+	if strings.HasPrefix(folded, ".github/workflows/") || strings.HasPrefix(folded, ".github/actions/") {
+		return "a CI definition; never written from a bundle"
+	}
+	if isProjectRepoScopeSetting(slashed) || (strings.HasPrefix(folded, ".claude/") && strings.HasSuffix(folded, "/settings.json")) {
+		return "repository-scope settings; never written from a bundle"
+	}
+	if reason := agent.SecretBearingReason(folded); reason != "" {
+		return reason
+	}
+	if isProseFile(slashed) || isProjectInstructionPath(slashed) {
+		return ""
+	}
+	return "not prose; left staged for review"
+}
+
+// plainTextRuleFiles are instruction files with no extension that hold rule
+// text and nothing a tool executes.
+var plainTextRuleFiles = map[string]bool{".cursorrules": true, ".windsurfrules": true, ".clinerules": true}
+
+// isProjectInstructionPath is a non-prose file agent tools read as
+// instructions.
+//
+// Prose is already allowed by the caller. This adds only what is text a
+// tool reads and never runs: the extensionless rule files, and Gemini's
+// TOML commands. A script under skills/ or a config such as
+// .aider.conf.yml (its lint-cmd runs) stays staged.
+func isProjectInstructionPath(slashed string) bool {
+	if plainTextRuleFiles[slashed] {
+		return true
+	}
+	if strings.HasPrefix(slashed, ".clinerules/") && !strings.Contains(path.Base(slashed), ".") {
+		return true
+	}
+	return strings.HasPrefix(slashed, ".gemini/commands/") && strings.EqualFold(path.Ext(slashed), ".toml")
+}
+
+// sameFileContent reports whether dest exists and, if so, whether it holds
+// the same bytes as src.
+func sameFileContent(src, dest string) (same bool, exists bool) {
+	d, err := readExistingFile(dest)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, false
+	}
+	if err != nil {
+		// Unreadable or over the cap: it exists, so merge must keep it.
+		return false, true
+	}
+	s, err := os.ReadFile(src)
+	if err != nil {
+		return false, true
+	}
+	return bytes.Equal(s, d), true
 }

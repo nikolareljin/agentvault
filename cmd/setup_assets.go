@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
@@ -58,6 +60,35 @@ type SetupAsset struct {
 	// carries. Import merges them into the existing file instead of replacing
 	// it, because the rest of that file is the other machine's own state.
 	MergeKeys []string `json:"merge_keys,omitempty"`
+	// Mode is the source file's permission bits. Import keeps the execute
+	// bit, so a hook script still runs on the other machine.
+	Mode uint32 `json:"mode,omitempty"`
+	// RedactedFields are the JSON Pointers of secret values blanked in
+	// Content. Import fills them from the file already on the machine, or
+	// leaves them out. The rest of the file travels.
+	RedactedFields []string `json:"redacted_fields,omitempty"`
+}
+
+// execAllowed is whether an asset may keep its execute bit on import. The bit
+// comes from the bundle, so it is honoured only where an agent tool runs
+// scripts it was configured to: a tool's own hooks directory. Everything
+// else is written without it, whatever the bundle says.
+func execAllowed(asset SetupAsset) bool {
+	if asset.LogicalRoot == setupAssetRootProviderHome || asset.LogicalRoot == setupAssetRootProject {
+		return false
+	}
+	if _, ok := providerRootDirs[asset.LogicalRoot]; !ok {
+		return false
+	}
+	return strings.HasPrefix(filepath.ToSlash(filepath.Clean(asset.LogicalPath)), "hooks/")
+}
+
+// assetPerm is base, plus owner execute when the source file was executable.
+func assetPerm(asset SetupAsset, base os.FileMode) os.FileMode {
+	if os.FileMode(asset.Mode)&0o111 != 0 {
+		return base | 0o100 | (base&0o044)>>2
+	}
+	return base
 }
 
 type setupAssetCollection struct {
@@ -540,6 +571,9 @@ func collectSkillAssets(homeDir string, projectDir string, includeSecrets bool) 
 	return assets, warnings, nil
 }
 
+// importBackupName matches the names writeExclusiveBackup creates.
+var importBackupName = regexp.MustCompile(`\.bak-[0-9]{8}-[0-9]{6}(-[0-9]+)?$`)
+
 func collectDirFiles(root string, kind string, origin string, logicalRoot string, logicalPrefix string, projectPrefix string, sensitive bool, includeSecrets bool) ([]SetupAsset, []string, error) {
 	info, err := os.Lstat(root)
 	if err != nil {
@@ -575,6 +609,12 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		}
 		if isCredentialFile(path) {
 			warnings = append(warnings, fmt.Sprintf("skipping credential file %q; sign in on the other machine instead", path))
+			return nil
+		}
+		// A backup import made of a replaced file is this machine's old
+		// copy, secrets and all; it never travels.
+		if importBackupName.MatchString(d.Name()) {
+			warnings = append(warnings, fmt.Sprintf("skipping import backup %q", path))
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)
@@ -615,6 +655,19 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 	return assets, warnings, nil
 }
 
+// assetPathTail is the end of path that names the asset within its root,
+// plus the root directory itself (.aws, .docker). Directories above the root
+// are the user's home or a temp dir, and are not checked: on Windows they
+// can be short names (C:\Users\RUNNER~1), which would redact every file.
+func assetPathTail(path, logicalPath string) string {
+	segs := strings.Split(filepath.ToSlash(path), "/")
+	n := len(strings.Split(filepath.ToSlash(logicalPath), "/")) + 1
+	if n < len(segs) {
+		segs = segs[len(segs)-n:]
+	}
+	return strings.Join(segs, "/")
+}
+
 func loadSetupAsset(path string, kind string, origin string, logicalRoot string, logicalPath string, projectRelativePath string, sensitive bool, includeSecrets bool, optional bool) (SetupAsset, string, error) {
 	safeLogicalPath, err := sanitizeAssetRelativePath(logicalPath)
 	if err != nil {
@@ -647,6 +700,7 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		return SetupAsset{}, "", fmt.Errorf("reading asset metadata %q: %w", path, statErr)
 	}
 	asset.SizeBytes = info.Size()
+	asset.Mode = uint32(info.Mode().Perm())
 	if info.Mode()&os.ModeSymlink != 0 {
 		return SetupAsset{}, "", fmt.Errorf("asset %q must not be a symlink", path)
 	}
@@ -681,6 +735,22 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	if hardLinked && !includeSecrets {
 		asset.Redacted = true
 		return asset, fmt.Sprintf("asset %q has a second hard link; redacted, use --include-secrets to carry", path), nil
+	}
+	// A credential by name or location (.aws/, .docker/config.json) is
+	// redacted whole: its secret may sit under a key no pattern names.
+	if sensitive && !includeSecrets && strings.EqualFold(filepath.Ext(path), ".json") &&
+		agent.SecretBearingReason(safeLogicalPath) == "" && agent.SecretBearingReason(assetPathTail(path, safeLogicalPath)) == "" {
+		if out, pointers, ok := redactJSONSecrets(data); ok {
+			asset.Content = out
+			asset.ContentPresent = true
+			asset.RedactedFields = pointers
+			asset.SizeBytes = int64(len(out))
+			asset.SHA256 = hashSetupAssetContent(out)
+			if len(pointers) == 0 {
+				return asset, "", nil
+			}
+			return asset, fmt.Sprintf("blanked %d secret value(s) in %q (use --include-secrets to carry them)", len(pointers), path), nil
+		}
 	}
 	if sensitive && !includeSecrets {
 		asset.Redacted = true
@@ -732,6 +802,26 @@ func readStattedFile(path string, info os.FileInfo, max int64) ([]byte, string, 
 		return nil, fmt.Sprintf("grew past %d bytes while read", max), nil
 	}
 	return data, "", nil
+}
+
+// readExistingFile reads a file already on this machine that import merges
+// with. Anything but a regular file is an error, so a pipe never blocks it.
+func readExistingFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	data, reason, err := readStattedFile(path, info, maxSetupAssetBytes)
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		return nil, fmt.Errorf("%s %s", path, reason)
+	}
+	return data, nil
 }
 
 func hashSetupAssetContent(data []byte) string {
@@ -825,6 +915,15 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 		if err := os.WriteFile(stagePath, asset.Content, 0600); err != nil {
 			return staged, warnings, fmt.Errorf("writing staged asset %q: %w", stagePath, err)
 		}
+		// WriteFile leaves an existing file's mode alone, and the umask can
+		// narrow a new one; set it so applying from the stage keeps it.
+		stagePerm := os.FileMode(0600)
+		if execAllowed(asset) {
+			stagePerm = assetPerm(asset, stagePerm)
+		}
+		if err := os.Chmod(stagePath, stagePerm); err != nil {
+			return staged, warnings, fmt.Errorf("setting mode of staged asset %q: %w", stagePath, err)
+		}
 		staged++
 	}
 	return staged, warnings, nil
@@ -891,17 +990,32 @@ func stagedAssetPath(stageRoot string, asset SetupAsset) (string, error) {
 	}
 }
 
+// applyStagedProjectAssets writes the staged project files into targetDir,
+// through projectAssetWritable. With overwrite false an existing file that
+// differs is kept and reported.
 func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
+	applied, _, err := applyStagedProjectAssetsWith(configDir, targetDir, true)
+	return applied, err
+}
+
+func applyStagedProjectAssetsWith(configDir string, targetDir string, overwrite bool) (int, []string, error) {
+	return applyStagedProjectAssetsCtx(configDir, targetDir, overwrite, nil)
+}
+
+// applyStagedProjectAssetsCtx is applyStagedProjectAssetsWith with conflicts
+// settled through ctx, which backs up each file it replaces. With a nil ctx,
+// overwrite decides and nothing is backed up.
+func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite bool, ctx *importApplyContext) (int, []string, error) {
 	projectRoot := filepath.Join(configDir, setupImportedAssetsDirName, "project")
 	info, err := os.Stat(projectRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return 0, nil, nil
 		}
-		return 0, fmt.Errorf("reading staged project assets: %w", err)
+		return 0, nil, fmt.Errorf("reading staged project assets: %w", err)
 	}
 	if !info.IsDir() {
-		return 0, nil
+		return 0, nil, nil
 	}
 
 	relPaths := make([]string, 0)
@@ -923,28 +1037,73 @@ func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("applying staged project assets: %w", err)
+		return 0, nil, fmt.Errorf("applying staged project assets: %w", err)
 	}
 
 	applied := 0
+	var skipped []string
 	for _, rel := range relPaths {
+		if reason := projectAssetRefusal(rel); reason != "" {
+			skipped = append(skipped, fmt.Sprintf("%s: %s", rel, reason))
+			continue
+		}
 		srcPath, err := safeJoinUnder(projectRoot, rel)
 		if err != nil {
-			return applied, fmt.Errorf("resolving staged asset path: %w", err)
+			return applied, skipped, fmt.Errorf("resolving staged asset path: %w", err)
 		}
 		destPath, err := safeJoinUnder(targetDir, rel)
 		if err != nil {
-			return applied, fmt.Errorf("resolving target asset path: %w", err)
+			return applied, skipped, fmt.Errorf("resolving target asset path: %w", err)
+		}
+		if info, err := os.Lstat(destPath); err == nil && !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			skipped = append(skipped, fmt.Sprintf("%s: exists and is not a regular file; kept", rel))
+			continue
+		}
+		if same, exists := sameFileContent(srcPath, destPath); exists && !same {
+			if ctx == nil && !overwrite {
+				skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept (use --strategy replace to overwrite)", rel))
+				continue
+			}
+			if ctx != nil {
+				replace, err := ctx.decide(destPath)
+				if err != nil {
+					return applied, skipped, err
+				}
+				if !replace {
+					skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept (use --on-conflict backup-replace to replace it)", rel))
+					continue
+				}
+				if _, err := ctx.backup(destPath); err != nil {
+					skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept: %v", rel, err))
+					continue
+				}
+			}
 		}
 		if err := copyRegularFile(srcPath, targetDir, destPath, 0644); err != nil {
-			return applied, fmt.Errorf("copying staged project asset %q: %w", rel, err)
+			return applied, skipped, fmt.Errorf("copying staged project asset %q: %w", rel, err)
 		}
 		applied++
 	}
-	return applied, nil
+	return applied, skipped, nil
 }
 
+// keepInterpreterAllows is set by import --keep-interpreter-allows.
+var keepInterpreterAllows bool
+
+// keepBundleCommands is set by import --keep-bundle-commands.
+var keepBundleCommands bool
+
 func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []string, error) {
+	ctx := newImportApplyContext()
+	ctx.KeepBundleCommands = keepBundleCommands
+	return applyProviderAssetsWith(homeDir, assets, ctx)
+}
+
+// applyProviderAssetsWith writes provider files into homeDir. Against the
+// file already there it keeps out commands the bundle adds or changes,
+// restores secrets, keeps local-only keys of a JSON file, and settles a
+// conflict through ctx, backing up what it replaces.
+func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApplyContext) (int, []string, error) {
 	applied := 0
 	var warnings []string
 	for _, asset := range assets {
@@ -966,12 +1125,19 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
-			return applied, warnings, fmt.Errorf("creating provider asset directory: %w", err)
+		if !ctx.DryRun {
+			if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+				return applied, warnings, fmt.Errorf("creating provider asset directory: %w", err)
+			}
 		}
 		if info, err := os.Lstat(dest); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: destination path is a symlink", describeSetupAsset(asset)))
+				continue
+			}
+			// A pipe there would block the reads below that merge with it.
+			if !info.Mode().IsRegular() {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: destination is not a regular file", describeSetupAsset(asset)))
 				continue
 			}
 		} else if !os.IsNotExist(err) {
@@ -979,7 +1145,8 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		}
 		content := asset.Content
 		perm := os.FileMode(0600)
-		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.json") {
+		copilotConfig := asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.json")
+		if copilotConfig {
 			// Trailing dots and spaces too: Windows writes "config.json." to config.json.
 			// A bundle is not trusted to replace this machine's sign-in.
 			stripped, _, err := stripCopilotLoginState(content)
@@ -987,7 +1154,7 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 				continue
 			}
-			content = keepLocalCopilotLogin(dest, stripped)
+			content = stripped
 		}
 		mergeKeys := asset.MergeKeys
 		if asset.LogicalRoot == setupAssetRootProviderHome {
@@ -998,13 +1165,135 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				mergeKeys = claudeUserConfigMergeKeys
 			}
 		}
+		original, _ := ctx.original(dest)
+		current, _ := readExistingFile(dest)
+		desc := describeSetupAsset(asset)
+		if !ctx.KeepBundleCommands && scriptAsset(asset) && !bytes.Equal(original, content) {
+			// A kept hook command would run whatever script is here.
+			warnings = append(warnings, fmt.Sprintf("provider asset %s: left out script, which the bundle adds or changes; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+			continue
+		}
+		if !ctx.KeepBundleCommands && asset.LogicalRoot == setupAssetRootProviderGemini &&
+			strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "trustedFolders.json") && !sameFileBytes(original, content) {
+			// Trust lets Gemini act in a folder without asking.
+			warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, the bundle adds or changes trusted folders; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+			continue
+		}
+		if !ctx.KeepBundleCommands {
+			if asset.LogicalRoot == setupAssetRootProviderCodex && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.toml") {
+				if codexCommandsChanged(content, original) {
+					warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, it adds or changes mcp_servers, notify, model_providers or another command, or does not parse; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+					continue
+				}
+			} else {
+				if jsonSettingsAsset(asset) && !bytes.Equal(original, content) {
+					if _, ok := decodeSettingsObject(content); !ok {
+						// Comments or trailing data: it cannot be checked key
+						// by key, and the tool may still read it (Gemini
+						// strips comments).
+						warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, it does not parse as a plain JSON object, so its commands cannot be checked; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+						continue
+					}
+					// This machine's file with comments: its servers and keys
+					// cannot be compared or kept, so they would be lost.
+					if _, ok := decodeSettingsObject(original); !ok && len(bytes.TrimSpace(original)) > 0 {
+						warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, this machine's %s does not parse as a plain JSON object (comments?), so it cannot be merged; kept it", desc, dest))
+						continue
+					}
+				}
+				var dropped []string
+				content, dropped = dropBundleCommands(content, original)
+				for _, d := range dropped {
+					warnings = append(warnings, fmt.Sprintf("provider asset %s: left out command %s, which the bundle adds or changes; kept this machine's value (use --keep-bundle-commands to take it)", desc, d))
+				}
+			}
+		}
+		var removed, secrets []string
+		declined := 0
+		if len(asset.RedactedFields) > 0 {
+			res, err := restoreRedactedFieldsWith(content, asset.RedactedFields, original, ctx.restoreAsker(dest))
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", desc, err))
+				continue
+			}
+			secretCount := countSecretPointers(content, asset.RedactedFields)
+			content = res.Content
+			removed = res.Removed
+			secrets = res.Secrets
+			declined = res.Declined
+			if left := secretCount - res.Restored - res.Declined; left > 0 {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: %d secret value(s) were not in the bundle and are not on this machine; set them by hand", desc, left))
+			}
+		}
+		if copilotConfig {
+			// After the restore: a redacted pointer naming a login key must
+			// not remove this machine's sign-in.
+			content = keepLocalCopilotLogin(dest, content)
+		}
+		// Trailing dots and spaces too: Windows writes "settings.json." to settings.json.
+		claudeName := strings.TrimRight(asset.LogicalPath, ". ")
+		claudeSettings := asset.LogicalRoot == setupAssetRootProviderClaude &&
+			(strings.EqualFold(claudeName, "settings.json") || strings.EqualFold(claudeName, "settings.local.json"))
+		if claudeSettings && !keepInterpreterAllows {
+			var dropped []string
+			content, dropped = dropInterpreterAllows(content)
+			for _, d := range dropped {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: left out permission %q, which lets any program run without asking; add it back on this machine if you want it", desc, d))
+			}
+		}
 		if len(mergeKeys) > 0 {
 			merged, err := mergeJSONKeysIntoFile(dest, content, mergeKeys)
 			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", desc, err))
 				continue
 			}
 			content = merged
+		} else if len(current) > 0 {
+			// The local file's own keys stay; the bundle's overwrite.
+			merged, n, ok := unionWithLocal(content, current, secrets, removed, ctx.restoreAsker(dest))
+			if ok {
+				content = merged
+				declined += n
+			}
+		}
+		if claudeSettings {
+			ctx.Broad = append(ctx.Broad, broadAllows(content)...)
+		}
+		_, statErr := os.Lstat(dest)
+		exists := statErr == nil
+		if ctx.DryRun {
+			switch {
+			case !exists:
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: would write %s", desc, dest))
+			case sameFileBytes(current, content):
+			default:
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: %s", desc, ctx.preview(dest)))
+			}
+			continue
+		}
+		if exists && !sameFileBytes(current, content) {
+			replace, err := ctx.decide(dest)
+			if err != nil {
+				return applied, warnings, err
+			}
+			if !replace {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: kept this machine's %s, which differs from the bundle", desc, dest))
+				continue
+			}
+			if _, err := ctx.backup(dest); err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: kept this machine's file: %v", desc, err))
+				continue
+			}
+		}
+		if declined > 0 {
+			where := "the file on this machine"
+			if p, ok := ctx.backedUp[dest]; ok {
+				where = p
+			}
+			warnings = append(warnings, fmt.Sprintf("provider asset %s: %d local secret(s) not restored because the definition holding them changed; the old values are in %s", desc, declined, where))
+		}
+		if execAllowed(asset) {
+			perm = assetPerm(asset, perm)
 		}
 		if err := writeRegularFileAtomic(homeDir, dest, content, perm); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
@@ -1012,6 +1301,13 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		applied++
 	}
 	return applied, warnings, nil
+}
+
+// jsonSettingsAsset is a provider file read as JSON settings.
+func jsonSettingsAsset(asset SetupAsset) bool {
+	p := strings.ToLower(strings.TrimRight(asset.LogicalPath, ". "))
+	ext := filepath.Ext(p)
+	return ext == ".json" || ext == ".jsonc"
 }
 
 func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) {
@@ -1084,6 +1380,11 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("empty relative path")
+	}
+	for _, r := range path {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("control character in path %q", path)
+		}
 	}
 	cleaned := filepath.Clean(filepath.FromSlash(path))
 	if filepath.IsAbs(path) || filepath.IsAbs(cleaned) {

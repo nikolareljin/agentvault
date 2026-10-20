@@ -62,11 +62,13 @@ func TestCollectSetupAssets_CarriesEveryToolsUserSetup(t *testing.T) {
 			t.Errorf("%s/%s not carried", c.root, c.path)
 			continue
 		}
-		if a.Redacted != c.redacted {
-			t.Errorf("%s/%s redacted = %v, want %v", c.root, c.path, a.Redacted, c.redacted)
-		}
-		if !c.redacted && !a.ContentPresent {
+		// Sensitive JSON travels with secret values blanked, not whole-file
+		// redacted; it must not carry the planted token "x".
+		if !a.ContentPresent {
 			t.Errorf("%s/%s carried without content", c.root, c.path)
+		}
+		if c.redacted && (bytes.Contains(a.Content, []byte(`"x"`)) || !a.Sensitive) {
+			t.Errorf("%s/%s carried a secret value: %s", c.root, c.path, a.Content)
 		}
 	}
 }
@@ -117,6 +119,9 @@ func TestClaudeUserMCPServersExportAndMerge(t *testing.T) {
 
 	dst := t.TempDir()
 	mustWriteFile(t, filepath.Join(dst, ".claude.json"), `{"oauthAccount":{"email":"other@b"},"mcpServers":{}}`)
+	// gh is new on this machine; its command travels only when asked for.
+	keepBundleCommands = true
+	t.Cleanup(func() { keepBundleCommands = false })
 	applied, warnings, err := applyProviderAssetsToSystem(dst, []SetupAsset{*a})
 	if err != nil || applied != 1 {
 		t.Fatalf("apply = %d, %v, %v", applied, warnings, err)
@@ -137,8 +142,10 @@ func TestClaudeUserMCPServersExportAndMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := findAsset(redacted.ProviderFiles, setupAssetRootProviderHome, ".claude.json"); r == nil || !r.Redacted || r.ContentPresent {
-		t.Errorf("without --include-secrets the MCP servers must be redacted: %+v", r)
+	// Without --include-secrets the servers travel; secret values in them do not.
+	if r := findAsset(redacted.ProviderFiles, setupAssetRootProviderHome, ".claude.json"); r == nil || !r.ContentPresent ||
+		!bytes.Contains(r.Content, []byte("gh-mcp")) {
+		t.Errorf("without --include-secrets the MCP servers must still travel: %+v", r)
 	}
 }
 
@@ -1159,6 +1166,41 @@ func TestHomeReferenceDepthCycleAndDirCaps(t *testing.T) {
 	}
 	if !declinedHas(assets.Declined, "~/big", DeclinedByPolicy) {
 		t.Errorf("directory cap not reported: %v", assets.Declined)
+	}
+}
+
+// Copilot's config.json travels without --include-secrets: login keys are
+// stripped and other secret values blanked.
+func TestCollectCopilotConfigFieldRedacted(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(p, []byte(`{"copilot_tokens":{"a":"t"},"model":"x","proxy":{"apiKey":"pw"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a, _, _, err := collectCopilotConfig(p, false)
+	if err != nil || a == nil || !a.ContentPresent || a.Redacted {
+		t.Fatalf("not carried: %+v %v", a, err)
+	}
+	if bytes.Contains(a.Content, []byte(`"t"`)) || bytes.Contains(a.Content, []byte("pw")) || !bytes.Contains(a.Content, []byte(`"model"`)) {
+		t.Errorf("content = %s", a.Content)
+	}
+	if len(a.RedactedFields) != 1 || a.RedactedFields[0] != "/proxy/apiKey" {
+		t.Errorf("redacted fields = %v", a.RedactedFields)
+	}
+}
+
+// A redacted pointer that names a login key must not sign this machine out.
+func TestCopilotRedactedPointerKeepsLocalLogin(t *testing.T) {
+	dst := t.TempDir()
+	mustWriteFile(t, filepath.Join(dst, ".copilot", "config.json"), `{"copilot_tokens":{"me":"LOCAL"},"model":"a"}`)
+	_, _, err := applyProviderAssetsToSystem(dst, []SetupAsset{{LogicalRoot: setupAssetRootProviderCopilotCLI,
+		LogicalPath: "config.json", ContentPresent: true, Content: []byte(`{"model":"b"}`),
+		RedactedFields: []string{"/copilot_tokens"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dst, ".copilot", "config.json"))
+	if !strings.Contains(string(b), "LOCAL") {
+		t.Fatalf("local sign-in removed: %s", b)
 	}
 }
 
