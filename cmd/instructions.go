@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/fsname"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -1143,10 +1144,7 @@ func writeInstructionFile(dir string, inst agent.InstructionFile) error {
 	if err := ensureNoSymlinkBelow(dir, p); err != nil {
 		return fmt.Errorf("instruction %q: %w", inst.Name, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
-		return fmt.Errorf("creating directory for %s: %w", inst.Filename, err)
-	}
-	if err := os.WriteFile(p, []byte(inst.Content), 0644); err != nil {
+	if err := fsname.WriteFile(dir, p, []byte(inst.Content), 0755, 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", p, err)
 	}
 	return nil

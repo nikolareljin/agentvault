@@ -316,7 +316,6 @@ var (
 	secretDirs = map[string]bool{
 		".ssh": true, ".gnupg": true, ".aws": true, ".kube": true, ".docker": true, ".azure": true,
 	}
-	shortName = regexp.MustCompile(`~[0-9]`)
 	// .env variants that are templates by name, not secrets.
 	envTemplates = map[string]bool{
 		".env.example": true, ".env.sample": true, ".env.template": true, ".env.dist": true,
@@ -333,11 +332,6 @@ func SecretBearingReason(rel string) string {
 		// the first colon there.
 		if c := strings.IndexByte(seg, ':'); c >= 0 {
 			segs[i] = seg[:c]
-		}
-		// A Windows short name (ENV~1, CREDEN~1.JSO) is another name for a
-		// file whose long name cannot be checked from here.
-		if shortName.MatchString(seg) {
-			return "a Windows short name; its long name cannot be checked"
 		}
 	}
 	slashed = strings.Join(segs, "/")

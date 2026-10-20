@@ -64,20 +64,26 @@
   `config.json.`, which Windows writes to `config.json`.
 
 ### Security
-- Windows short names (`SETTIN~1.JSO`) and alternate data streams
-  (`.env::$DATA`) name another file there. Import refuses any bundle path
-  segment with `~N`, and the reference closure refuses both forms, so no
-  name check is judged against the wrong name.
-- Import refuses Windows device names (`CON`, `NUL`, `aux.md`, `COM1.txt`)
-  in any path segment: Windows opens them as devices, and writing one can
-  block.
+- Alternate data streams (`.env::$DATA`) name another file on Windows.
+  Import and the reference closure refuse them on every OS.
+- On Windows, every import write checks the name of the file it opened
+  (`GetFinalPathNameByHandle`) and refuses one that differs from the name
+  asked for: an 8.3 short name (`SETTIN~1.JSO`) aliasing a long-named file
+  or directory, or a trailing dot or space Windows drops. Names with `~N`
+  (`draft~2.md`) are otherwise ordinary names on every OS, and a reference
+  spelled as a short name is judged by its long name.
+- Import on Windows refuses Windows device names (`CON`, `NUL`, `aux.md`,
+  `COM1.txt`) in any path segment: Windows opens them as devices, and
+  writing one can block. Other OSes write them, and export warns that
+  Windows cannot.
+- A Codex rule name with a path separator or colon (`../x`) is refused
+  instead of written outside `~/.codex/rules`.
 - A hard link inside a directory an instruction file names is refused, with
   or without `--include-secrets`, as one named directly is. Pipes, sockets
   and unreadable files there are listed as declined instead of ending the
   export.
-- A pipe, socket or a name import would refuse (`backup~1.md`, `aux.md`)
-  inside a carried tool directory is skipped with a warning instead of
-  ending the export.
+- A pipe, socket or a name import would refuse inside a carried tool
+  directory is skipped with a warning instead of ending the export.
 - An asset is read through the descriptor that was checked, to at most its
   cap: a file swapped, grown past the cap or replaced by a pipe after its
   checks is not exported, and the read does not block.

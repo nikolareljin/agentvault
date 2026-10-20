@@ -204,13 +204,13 @@ func TestFindReferencesAtImports(t *testing.T) {
 func TestSecretBearingReason(t *testing.T) {
 	secret := []string{".env", "app/.env", ".env.production", "certs/server.pem", "deploy.key",
 		".ssh/config", "home/.aws/config", "id_ed25519", ".npmrc", "store.p12", ".git-credentials",
-		".env::$DATA", "docs/.env:x", ".ssh:s/config", "ENV~1", "CREDEN~1.JSO", "dir/ID_RSA~2"}
+		".env::$DATA", "docs/.env:x", ".ssh:s/config"}
 	for _, p := range secret {
 		if SecretBearingReason(p) == "" {
 			t.Errorf("%s: not flagged", p)
 		}
 	}
-	plain := []string{".env.example", "docs/env.md", "README.md", "keys.md", "scripts/check.sh", "config/app.toml", "notes~draft.md"}
+	plain := []string{".env.example", "docs/env.md", "README.md", "keys.md", "scripts/check.sh", "config/app.toml", "notes~draft.md", "draft~2.md", "ENV~1"}
 	for _, p := range plain {
 		if r := SecretBearingReason(p); r != "" {
 			t.Errorf("%s: flagged as %q", p, r)

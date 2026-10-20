@@ -8,12 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/fsname"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 )
 
@@ -158,6 +158,9 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	sortSetupAssets(assets.ProjectFiles)
 	sortSetupAssets(assets.InstructionOverrides)
 	sortSetupAssets(assets.SkillAssets)
+	if runtime.GOOS != "windows" {
+		warnings = append(warnings, windowsNameWarnings(assets)...)
+	}
 	return assets, warnings, nil
 }
 
@@ -819,10 +822,7 @@ func stageImportedAssets(configDir string, assets []SetupAsset) (int, []string, 
 		if stagePath == "" {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(stagePath), 0700); err != nil {
-			return staged, warnings, fmt.Errorf("creating staged asset directory: %w", err)
-		}
-		if err := os.WriteFile(stagePath, asset.Content, 0600); err != nil {
+		if err := fsname.WriteFile(stageRoot, stagePath, asset.Content, 0700, 0600); err != nil {
 			return staged, warnings, fmt.Errorf("writing staged asset %q: %w", stagePath, err)
 		}
 		staged++
@@ -966,6 +966,10 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 			continue
 		}
+		if err := fsname.CheckBeforeWrite(homeDir, dest); err != nil {
+			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 			return applied, warnings, fmt.Errorf("creating provider asset directory: %w", err)
 		}
@@ -1081,6 +1085,14 @@ func safeJoinUnder(root string, rel string) (string, error) {
 }
 
 func sanitizeAssetRelativePath(path string) (string, error) {
+	return sanitizeAssetRelativePathFor(runtime.GOOS, path)
+}
+
+// sanitizeAssetRelativePathFor applies the rules of goos. Device names are
+// refused on Windows only, where opening aux.md opens a device. A short name
+// (~N) is a plain name elsewhere; on Windows the writer checks the name it
+// actually opened (see fsname.Check).
+func sanitizeAssetRelativePathFor(goos string, path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("empty relative path")
@@ -1098,42 +1110,39 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 	if strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal is not allowed: %q", path)
 	}
-	// Windows resolves a short name such as SETTIN~1.JSO to the long file,
-	// so a name check on the bundle path would judge the wrong name.
-	for _, seg := range strings.Split(filepath.ToSlash(cleaned), "/") {
-		if windowsShortName.MatchString(seg) {
-			return "", fmt.Errorf("Windows short name (~N) is not allowed: %q", path)
-		}
-		if isWindowsDeviceName(seg) {
-			return "", fmt.Errorf("Windows device name is not allowed: %q", path)
-		}
+	if goos == "windows" && hasWindowsDeviceName(cleaned) {
+		return "", fmt.Errorf("Windows device name is not allowed: %q", path)
 	}
 	return filepath.ToSlash(cleaned), nil
 }
 
-var windowsShortName = regexp.MustCompile(`~[0-9]`)
-
-// isWindowsDeviceName is whether Windows opens seg as a device rather than a
-// file: CON, NUL, AUX, PRN, COM1-9 and LPT1-9, with any extension, any case
-// and trailing dots or spaces (aux.md, Con .txt). Writing COM1 can block.
-func isWindowsDeviceName(seg string) bool {
-	stem := strings.ToLower(seg)
-	if i := strings.IndexByte(stem, '.'); i >= 0 {
-		stem = stem[:i]
-	}
-	stem = strings.TrimRight(stem, " ")
-	switch stem {
-	case "con", "prn", "aux", "nul", "conin$", "conout$":
-		return true
-	}
-	if len(stem) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
-		return stem[3] >= '0' && stem[3] <= '9'
-	}
-	r := []rune(stem)
-	if len(r) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
-		return r[3] == '\u00b9' || r[3] == '\u00b2' || r[3] == '\u00b3'
+// hasWindowsDeviceName is whether any segment of rel is a Windows device name.
+func hasWindowsDeviceName(rel string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if fsname.IsWindowsDeviceName(seg) {
+			return true
+		}
 	}
 	return false
+}
+
+// windowsNameWarnings names each carried path that Windows cannot write
+// (aux.md opens a device there). Export keeps them; import on Windows
+// refuses them.
+func windowsNameWarnings(c setupAssetCollection) []string {
+	var out []string
+	for _, list := range [][]SetupAsset{c.ProviderFiles, c.ProjectFiles, c.InstructionOverrides, c.SkillAssets} {
+		for _, a := range list {
+			p := a.ProjectRelativePath
+			if p == "" {
+				p = a.LogicalPath
+			}
+			if hasWindowsDeviceName(p) {
+				out = append(out, fmt.Sprintf("%s: a Windows device name; import on Windows will refuse it", describeSetupAsset(a)))
+			}
+		}
+	}
+	return out
 }
 
 func replaceRegularFile(tmpPath string, destPath string) error {
@@ -1171,6 +1180,9 @@ func writeRegularFileAtomic(root string, destPath string, content []byte, perm o
 	if err := ensureNoSymlinkBelow(root, destDir); err != nil {
 		return err
 	}
+	if err := fsname.CheckBeforeWrite(root, destPath); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
@@ -1206,7 +1218,7 @@ func writeRegularFileAtomic(root string, destPath string, content []byte, perm o
 		return err
 	}
 	tmpPath = ""
-	return nil
+	return fsname.CheckAfterWrite(root, destPath)
 }
 
 func copyRegularFile(srcPath string, root string, destPath string, perm os.FileMode) error {
@@ -1226,6 +1238,9 @@ func copyRegularFile(srcPath string, root string, destPath string, perm os.FileM
 
 	destDir := filepath.Dir(destPath)
 	if err := ensureNoSymlinkBelow(root, destDir); err != nil {
+		return err
+	}
+	if err := fsname.CheckBeforeWrite(root, destPath); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -1263,5 +1278,5 @@ func copyRegularFile(srcPath string, root string, destPath string, perm os.FileM
 		return err
 	}
 	tmpPath = ""
-	return nil
+	return fsname.CheckAfterWrite(root, destPath)
 }

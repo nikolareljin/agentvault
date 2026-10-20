@@ -15,9 +15,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/nikolareljin/agentvault/internal/fsname"
 )
 
 // ProviderConfig holds provider-specific configuration that can be synced
@@ -301,8 +304,14 @@ func SaveCodexConfig(config *CodexConfig) error {
 	}
 	sort.Strings(ruleNames)
 	for _, name := range ruleNames {
+		// A rule name comes from the vault, which a bundle fills: "../x"
+		// would land outside rulesDir.
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\:`) ||
+			(runtime.GOOS == "windows" && fsname.IsWindowsDeviceName(name)) {
+			return fmt.Errorf("codex rule name %q is not a plain file name", name)
+		}
 		rulePath := filepath.Join(rulesDir, name+".md")
-		if err := os.WriteFile(rulePath, []byte(config.Rules[name]), 0600); err != nil {
+		if err := fsname.WriteFile(rulesDir, rulePath, []byte(config.Rules[name]), 0700, 0600); err != nil {
 			return err
 		}
 	}
