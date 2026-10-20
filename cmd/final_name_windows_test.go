@@ -190,7 +190,7 @@ func TestCheckAfterWriteKeepsAliasedFile(t *testing.T) {
 	mustWriteFile(t, long, "orig")
 	alias := filepath.Join(root, shortBase(t, long))
 	err := fsname.CheckAfterWrite(root, alias)
-	if err == nil {
+	if err == nil || !strings.Contains(err.Error(), "another name") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := os.Stat(long); err != nil {

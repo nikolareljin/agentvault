@@ -1494,7 +1494,9 @@ func finalRename(tmpPath, destPath string, existed bool) error {
 	if beforeFinalRename != nil {
 		beforeFinalRename(destPath)
 	}
-	_ = existed
+	if runtime.GOOS == "windows" && !existed {
+		return fsname.RenameNoReplace(tmpPath, destPath)
+	}
 	return replaceRegularFile(tmpPath, destPath)
 }
 

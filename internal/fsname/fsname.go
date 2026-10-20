@@ -1,6 +1,7 @@
 package fsname
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,12 +29,12 @@ func CheckBeforeWrite(root, p string) error {
 	}
 }
 
-// CheckAfterWrite runs Check on the file just written and removes it when
-// Windows stored it under another name.
+// CheckAfterWrite runs Check on the file just written. It never removes
+// anything: when the name opened another file, that file is the user's
+// long-named one, and removing it would lose it too.
 func CheckAfterWrite(root, p string) error {
 	if err := Check(root, p); err != nil {
-		_ = os.Remove(p)
-		return err
+		return fmt.Errorf("wrote %q, but Windows stored it under another name: %w", p, err)
 	}
 	return nil
 }
@@ -46,7 +47,23 @@ func WriteFile(root, p string, data []byte, dirPerm, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(p), dirPerm); err != nil {
 		return err
 	}
-	if err := os.WriteFile(p, data, perm); err != nil {
+	flag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	if runtime.GOOS == "windows" {
+		// Absent at the check: create only, so an alias that appears
+		// meanwhile fails the open instead of being overwritten.
+		if _, err := os.Lstat(p); os.IsNotExist(err) {
+			flag = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+		}
+	}
+	f, err := os.OpenFile(p, flag, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
 		return err
 	}
 	return CheckAfterWrite(root, p)
