@@ -83,7 +83,8 @@ func TestPickMCPServersPrompt(t *testing.T) {
 		{"2\n\n", []string{"b\x1b[2J"}, nil},
 		{"1\n3\n1\n\n", []string{"c"}, nil},
 		{"a\n\n", []string{"a", "b\x1b[2J", "c"}, nil},
-		{"9\nx\n2\n", []string{"b\x1b[2J"}, nil}, // bad rows, then EOF accepts
+		{"9\nx\n2\n\n", []string{"b\x1b[2J"}, nil}, // bad rows are asked again
+		{"1\n2\n", nil, nil},                       // end of input before accepting: nothing
 		{"1\nq\n", nil, errMCPAborted},
 	} {
 		var out bytes.Buffer

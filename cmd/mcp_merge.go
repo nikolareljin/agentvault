@@ -219,7 +219,8 @@ func (c *importApplyContext) askReplaceServer(file, name string, local, bundle a
 
 // pickMCPServers shows the bundle-only servers as a numbered list. None is
 // selected at first; a row number toggles it, a selects all, an empty line
-// accepts, q aborts. End of input accepts the selection so far.
+// accepts, q aborts. End of input picks nothing: only an accepted list is
+// consent.
 func pickMCPServers(out io.Writer, in interface{ ReadString(byte) (string, error) }, file string, names []string, bundle map[string]any) (map[string]bool, error) {
 	picked := map[string]bool{}
 	for {
@@ -235,7 +236,7 @@ func pickMCPServers(out io.Writer, in interface{ ReadString(byte) (string, error
 		line, err := in.ReadString('\n')
 		if err != nil && line == "" {
 			fmt.Fprintln(out)
-			return picked, nil
+			return map[string]bool{}, nil
 		}
 		line = strings.ToLower(strings.TrimSpace(line))
 		switch line {
