@@ -111,19 +111,8 @@ func LoadClaudeConfig() (*ClaudeConfig, error) {
 	return config, nil
 }
 
-// SaveClaudeConfig writes Claude configuration to ~/.claude/
-func SaveClaudeConfig(config *ClaudeConfig) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0700); err != nil {
-		return err
-	}
-
-	// Build settings.json
+// ClaudeSettingsJSON is the settings.json SaveClaudeConfig writes for config.
+func ClaudeSettingsJSON(config *ClaudeConfig) ([]byte, error) {
 	settings := make(map[string]any)
 	for k, v := range config.CustomSettings {
 		settings[k] = v
@@ -140,8 +129,22 @@ func SaveClaudeConfig(config *ClaudeConfig) error {
 	if len(config.MCPServers) > 0 {
 		settings["mcpServers"] = config.MCPServers
 	}
+	return json.MarshalIndent(settings, "", "  ")
+}
 
-	data, err := json.MarshalIndent(settings, "", "  ")
+// SaveClaudeConfig writes Claude configuration to ~/.claude/
+func SaveClaudeConfig(config *ClaudeConfig) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeDir, 0700); err != nil {
+		return err
+	}
+
+	data, err := ClaudeSettingsJSON(config)
 	if err != nil {
 		return err
 	}

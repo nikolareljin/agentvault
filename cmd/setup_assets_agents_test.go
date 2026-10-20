@@ -119,6 +119,9 @@ func TestClaudeUserMCPServersExportAndMerge(t *testing.T) {
 
 	dst := t.TempDir()
 	mustWriteFile(t, filepath.Join(dst, ".claude.json"), `{"oauthAccount":{"email":"other@b"},"mcpServers":{}}`)
+	// gh is new on this machine; its command travels only when asked for.
+	keepBundleCommands = true
+	t.Cleanup(func() { keepBundleCommands = false })
 	applied, warnings, err := applyProviderAssetsToSystem(dst, []SetupAsset{*a})
 	if err != nil || applied != 1 {
 		t.Fatalf("apply = %d, %v, %v", applied, warnings, err)

@@ -94,6 +94,9 @@ func TestSettingsTravelWithoutSecretsAndKeepLocalToken(t *testing.T) {
 
 	dst := t.TempDir()
 	mustWriteFile(t, filepath.Join(dst, ".claude", "settings.json"), `{"env":{"ANTHROPIC_API_KEY":"dst-key"}}`)
+	// The hook is new on this machine; it travels only when asked for.
+	keepBundleCommands = true
+	t.Cleanup(func() { keepBundleCommands = false })
 	if _, warnings, err := applyProviderAssetsToSystem(dst, []SetupAsset{*a}); err != nil {
 		t.Fatal(err, warnings)
 	}

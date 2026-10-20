@@ -40,7 +40,11 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	if err := os.Chmod(filepath.Join(srcHome, ".claude", "hooks", "notify.sh"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	w(filepath.Join(srcHome, ".claude.json"), `{"oauthAccount":{"email":"a@x"},"mcpServers":{"fs":{"command":"`+srcHome+`/bin/fs-mcp"}}}`)
+	// api moves to another URL on machine B; the server keyed by a home path
+	// is the same on both once remapped.
+	w(filepath.Join(srcHome, ".claude.json"), `{"oauthAccount":{"email":"a@x"},"mcpServers":{"fs":{"command":"`+srcHome+`/bin/fs-mcp"},`+
+		`"api":{"type":"http","url":"https://new.example/mcp","headers":{"Authorization":"src-api-tok"}},`+
+		`"`+srcHome+`/srv":{"type":"http","url":"https://srv.example/mcp","headers":{"Authorization":"src-srv-tok"}}}}`)
 	w(filepath.Join(srcHome, ".claude", ".credentials.json"), `{"token":"login"}`)
 	w(filepath.Join(srcHome, ".gemini", "GEMINI.md"), "gemini rules\n")
 	w(filepath.Join(srcHome, ".codex", "AGENTS.md"), "codex rules\n")
@@ -79,15 +83,19 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"src-key", "s3cret", `"login"`} {
+	for _, secret := range []string{"src-key", "s3cret", `"login"`, "src-api-tok", "src-srv-tok"} {
 		if bytes.Contains(payload, []byte(secret)) {
 			t.Errorf("bundle carries secret %s", secret)
 		}
 	}
 
 	// --- machine B ---
-	w(filepath.Join(dstHome, ".claude.json"), `{"oauthAccount":{"email":"b@x"}}`)
-	w(filepath.Join(dstHome, ".claude", "settings.json"), `{"env":{"ANTHROPIC_API_KEY":"dst-key"}}`)
+	w(filepath.Join(dstHome, ".claude.json"), `{"oauthAccount":{"email":"b@x"},"mcpServers":{`+
+		`"api":{"type":"http","url":"https://old.example/mcp","headers":{"Authorization":"dst-api-tok"}},`+
+		`"`+dstHome+`/srv":{"type":"http","url":"https://srv.example/mcp","headers":{"Authorization":"dst-srv-tok"}}}}`)
+	const dstSettings = `{"env":{"ANTHROPIC_API_KEY":"dst-key"},"localOnly":"kept"}`
+	w(filepath.Join(dstHome, ".claude", "settings.json"), dstSettings)
+	w(filepath.Join(dstProject, "AGENTS.md"), "machine B's own instructions\n")
 	setTestHomeDir(t, dstHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dstHome, ".config"))
 	dstCfg := filepath.Join(dstHome, ".config", config.AppName)
@@ -100,6 +108,7 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	t.Cleanup(func() { importCmd.SetOut(nil); importCmd.SetErr(nil) })
 	withFlags(t, importCmd, map[string]string{
 		"apply-provider-configs": "true", "apply-projects": "true", "project-root": dstProject,
+		"keep-bundle-commands": "true",
 	})
 	if err := runImport(importCmd, []string{bundlePath}); err != nil {
 		t.Fatalf("import: %v\n%s", err, in.String())
@@ -128,7 +137,31 @@ func TestMoveToAnotherMachine(t *testing.T) {
 	if !strings.Contains(in.String(), "path=hooks/notify.sh") {
 		t.Errorf("import did not report the hook script it left behind:\n%s", in.String())
 	}
+	// Union: a key only this machine had stays. The file it replaced is
+	// backed up under a timestamped name and listed.
+	if !strings.Contains(settings, `"localOnly": "kept"`) {
+		t.Errorf("local-only key lost: %s", settings)
+	}
+	backups, _ := filepath.Glob(filepath.Join(dstHome, ".claude", "settings.json.bak-*"))
+	if len(backups) != 1 || read(backups[0]) != dstSettings || !strings.Contains(in.String(), backups[0]) {
+		t.Errorf("settings backup = %v\n%s", backups, in.String())
+	}
 	claudeJSON := read(filepath.Join(dstHome, ".claude.json"))
+	// Not interactive: the token of a server whose URL changed stays behind;
+	// the token of a server under a remapped key comes back.
+	if strings.Contains(claudeJSON, "dst-api-tok") || !strings.Contains(claudeJSON, "https://new.example/mcp") {
+		t.Errorf("changed server got this machine's token without a yes: %s", claudeJSON)
+	}
+	if !strings.Contains(claudeJSON, `"Authorization": "dst-srv-tok"`) {
+		t.Errorf("secret under remapped key not restored: %s", claudeJSON)
+	}
+	// Conflict, not interactive: back up and replace.
+	if agents := read(filepath.Join(dstProject, "AGENTS.md")); strings.Contains(agents, "machine B") {
+		t.Errorf("conflicting AGENTS.md kept: %s", agents)
+	}
+	if b, _ := filepath.Glob(filepath.Join(dstProject, "AGENTS.md.bak-*")); len(b) != 1 || read(b[0]) != "machine B's own instructions\n" {
+		t.Errorf("AGENTS.md backup = %v", b)
+	}
 	if !strings.Contains(claudeJSON, "b@x") || !strings.Contains(claudeJSON, dstHome+"/bin/fs-mcp") {
 		t.Errorf(".claude.json = %s", claudeJSON)
 	}

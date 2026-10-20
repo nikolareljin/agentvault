@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -54,19 +55,30 @@ func TestApplyRefusesUncleanProviderPath(t *testing.T) {
 	}
 }
 
-// SaveClaudeConfig writes settings.json from the provider config; the same
-// filter applies there.
-func TestFilterClaudeCustomSettings(t *testing.T) {
-	c := &agent.ClaudeConfig{CustomSettings: map[string]any{
-		"permissions": map[string]any{"allow": []any{"Bash(bash:*)", "Bash(git log:*)"}},
-	}}
-	dropped := filterClaudeCustomSettings(c)
-	if len(dropped) != 1 {
-		t.Fatalf("dropped = %v", dropped)
+// The Claude provider config is applied as settings.json through the same
+// checks as the bundle's file: interpreter allows and new MCP commands are
+// left out, and this machine's own keys stay.
+func TestClaudeProviderConfigGoesThroughAssetChecks(t *testing.T) {
+	home := t.TempDir()
+	settings := filepath.Join(home, ".claude", "settings.json")
+	mustWriteFile(t, settings, `{"localOnly":true}`)
+	c := &agent.ClaudeConfig{
+		CustomSettings: map[string]any{"permissions": map[string]any{"allow": []any{"Bash(bash:*)", "Bash(git log:*)"}}},
+		MCPServers:     map[string]any{"x": map[string]any{"command": "evil"}},
 	}
-	allow := c.CustomSettings["permissions"].(map[string]any)["allow"].([]any)
-	if len(allow) != 1 || allow[0] != "Bash(git log:*)" {
-		t.Errorf("allow = %v", allow)
+	if _, _, err := applyProviderAssetsWith(home, claudeConfigAssets(c), newImportApplyContext()); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(settings)
+	for _, gone := range []string{"Bash(bash:*)", "evil"} {
+		if strings.Contains(string(got), gone) {
+			t.Errorf("%s applied: %s", gone, got)
+		}
+	}
+	for _, kept := range []string{"Bash(git log:*)", "localOnly"} {
+		if !strings.Contains(string(got), kept) {
+			t.Errorf("%s lost: %s", kept, got)
+		}
 	}
 }
 

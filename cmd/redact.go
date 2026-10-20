@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/nikolareljin/agentvault/internal/agent"
 )
 
 // A settings file that can hold a token used to be redacted whole without
@@ -119,13 +117,36 @@ func redactJSONSecrets(data []byte) (out []byte, pointers []string, ok bool) {
 // restoreRedactedFields fills each redacted pointer in incoming from the same
 // pointer in existing, the file already on this machine. A pointer existing
 // does not have is removed, so a tool never reads an empty string as its
-// token.
+// token. A secret whose definition changed is not restored.
 func restoreRedactedFields(incoming []byte, pointers []string, existing []byte) ([]byte, int, error) {
+	res, err := restoreRedactedFieldsWith(incoming, pointers, existing, nil)
+	return res.Content, res.Restored, err
+}
+
+// restoreResult is what restoreRedactedFieldsWith did.
+type restoreResult struct {
+	Content  []byte
+	Restored int
+	// Declined counts local secrets not restored because the definition
+	// that holds them changed and ask did not say yes.
+	Declined int
+	// Removed are the secret pointers left out of Content.
+	Removed []string
+	// Secrets are the listed pointers that named a blanked secret; any
+	// other listed pointer is part of the definition.
+	Secrets []string
+}
+
+// restoreRedactedFieldsWith is restoreRedactedFields with a question for a
+// secret whose definition changed: ask gets the owner pointer ("" for the
+// file itself) and the local and bundle definitions, and a yes restores it.
+// Every answer is collected before the document changes.
+func restoreRedactedFieldsWith(incoming []byte, pointers []string, existing []byte, ask func(owner string, local, bundle any) bool) (restoreResult, error) {
 	var doc map[string]any
 	dec := json.NewDecoder(bytes.NewReader(incoming))
 	dec.UseNumber()
 	if err := dec.Decode(&doc); err != nil {
-		return nil, 0, fmt.Errorf("bundle content is not a JSON object: %w", err)
+		return restoreResult{}, fmt.Errorf("bundle content is not a JSON object: %w", err)
 	}
 	var have map[string]any
 	if len(bytes.TrimSpace(existing)) > 0 {
@@ -139,13 +160,36 @@ func restoreRedactedFields(incoming []byte, pointers []string, existing []byte) 
 	// blanked value under a secret key counts as a secret; any other listed
 	// field is part of the definition and must match.
 	secrets := secretPointers(doc, pointers)
+	res := restoreResult{Secrets: secrets}
 	// Decide every restore against the document as the bundle has it, then
 	// change it. A listed field that is not a secret is left as it is, so it
 	// still has to match.
 	restore := map[string]any{}
+	answers := map[string]bool{}
 	for _, p := range secrets {
-		if v, ok := pointerGet(have, p); ok && restorable(doc, have, p, secrets) {
+		v, ok := pointerGet(have, p)
+		if !ok {
+			continue
+		}
+		same, owner := restorable(doc, have, p, secrets)
+		if same {
 			restore[p] = v
+			continue
+		}
+		if owner == nil {
+			continue
+		}
+		yes, asked := answers[*owner]
+		if !asked {
+			in, _ := pointerGetAny(doc, *owner)
+			ex, _ := pointerGetAny(have, *owner)
+			yes = ask != nil && ask(*owner, ex, in)
+			answers[*owner] = yes
+		}
+		if yes {
+			restore[p] = v
+		} else {
+			res.Declined++
 		}
 	}
 	// Deepest first, so removing an array element does not shift a sibling
@@ -158,10 +202,12 @@ func restoreRedactedFields(incoming []byte, pointers []string, existing []byte) 
 			continue
 		}
 		pointerDelete(doc, p)
+		res.Removed = append(res.Removed, p)
 	}
-	restored := len(restore)
+	res.Restored = len(restore)
 	out, err := json.MarshalIndent(doc, "", "  ")
-	return out, restored, err
+	res.Content = out
+	return res, err
 }
 
 // secretPointers are the listed pointers that name a blanked value under a
@@ -361,17 +407,18 @@ func containsSecretShape(v any) bool {
 }
 
 // restorable decides whether this machine's secret at p may go back into the
-// incoming document. The pointer must name a blanked secret ("" in incoming,
-// under a secret key, env or headers), and the object holding it must be the
-// same object on both sides apart from its secrets: a bundle that keeps an
-// MCP server's name but points its URL elsewhere must not receive the local
-// token for it.
-func restorable(doc, have map[string]any, p string, pointers []string) bool {
+// incoming document without asking. The pointer must name a blanked secret
+// ("" in incoming, under a secret key, env or headers), and the object
+// holding it must be the same object on both sides apart from its secrets: a
+// bundle that keeps an MCP server's name but points its URL elsewhere must
+// not receive the local token for it without a yes. owner is that object's
+// pointer ("" for the whole file), or nil when p is not a secret at all.
+func restorable(doc, have map[string]any, p string, pointers []string) (bool, *string) {
 	if v, ok := pointerGet(doc, p); !ok || v != "" {
-		return false
+		return false, nil
 	}
 	if !secretPointer(p) {
-		return false
+		return false, nil
 	}
 	parts := splitPointer(p)
 	// The nearest object that is not itself a secret container: for
@@ -383,9 +430,10 @@ func restorable(doc, have map[string]any, p string, pointers []string) bool {
 	if cut == 0 {
 		if len(parts) == 1 {
 			// A top-level secret (apiKeyHelper) belongs to the tool that
-			// reads the file, on both machines, as long as the rest of the
-			// file is the same: any field may say where the secret is sent.
-			return sameApartFromSecrets(doc, have, "", pointers)
+			// reads the file, on both machines: any field may say where the
+			// secret is sent, so the definition is the whole file.
+			owner := ""
+			return sameApartFromSecrets(doc, have, "", pointers), &owner
 		}
 		// settings.json's own env: the rest of env must match too, or a
 		// bundle that sets ANTHROPIC_BASE_URL elsewhere receives the key.
@@ -398,7 +446,7 @@ func restorable(doc, have map[string]any, p string, pointers []string) bool {
 	owner := "/" + strings.Join(escaped, "/")
 	in, _ := pointerGetAny(doc, owner)
 	ex, _ := pointerGetAny(have, owner)
-	return sameApartFromSecrets(in, ex, owner, pointers)
+	return sameApartFromSecrets(in, ex, owner, pointers), &owner
 }
 
 func pointerGetAny(doc map[string]any, p string) (any, bool) {
@@ -577,26 +625,4 @@ func dropInterpreterAllows(data []byte) ([]byte, []string) {
 		return data, nil
 	}
 	return out, dropped
-}
-
-// filterClaudeCustomSettings applies dropInterpreterAllows to the settings
-// SaveClaudeConfig builds from a provider config.
-func filterClaudeCustomSettings(c *agent.ClaudeConfig) []string {
-	if c == nil || c.CustomSettings == nil {
-		return nil
-	}
-	data, err := json.Marshal(c.CustomSettings)
-	if err != nil {
-		return nil
-	}
-	out, dropped := dropInterpreterAllows(data)
-	if len(dropped) == 0 {
-		return nil
-	}
-	var filtered map[string]any
-	if err := json.Unmarshal(out, &filtered); err != nil {
-		return nil
-	}
-	c.CustomSettings = filtered
-	return dropped
 }

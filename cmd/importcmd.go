@@ -39,6 +39,11 @@ Conflict handling is chosen with --strategy:
             ends up matching the bundle exactly. Mirrors one profile at a time,
             since mirroring several into one vault would leave only the last.
 
+A local file that differs from the bundle's is backed up and replaced, or
+kept: import asks on a terminal, and --on-conflict backup-replace|keep decides
+without asking. Commands the bundle adds or changes (hooks, statusLine, MCP
+servers) are left out unless --keep-bundle-commands is given.
+
 Use --strategy mirror to make several machines converge on one configuration.
 Mirror deletes data, so it asks for confirmation unless --confirm is given.
 
@@ -74,6 +79,8 @@ func init() {
 	importCmd.Flags().StringArray("map", nil, "rewrite a path prefix from the exporting machine, OLD=NEW (repeatable); the home directory is rewritten without it")
 	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root")
 	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects")
+	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine and MCP server commands that the bundle adds or changes; left out by default")
+	importCmd.Flags().String("on-conflict", "", "when a local file differs from the bundle: backup-replace or keep (default: ask on a terminal, else backup-replace; --strategy merge means keep)")
 	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
 	importCmd.Flags().Bool("plain", false, "deprecated: the export format is detected automatically")
 	_ = importCmd.Flags().MarkDeprecated("plain", "the export format is detected automatically")
@@ -94,6 +101,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	assetOpts.Overwrite = strategy != strategyMerge
+	assetOpts.Apply.OnConflict = resolveConflictPolicy(assetOpts.Apply.OnConflict, cmd.Flags().Changed("strategy"), strategy)
 
 	inPath := ""
 	if len(args) == 1 {
@@ -138,11 +146,16 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	interactive := term.IsTerminal(stdinFD())
+	stdin := bufio.NewReader(os.Stdin)
 	if strategy.deletesLocalOnly() && !dryRun {
-		if err := confirmDestructiveImport(confirmFlag, interactive, os.Stdin, cmd.ErrOrStderr(), selected); err != nil {
+		if err := confirmDestructiveImport(confirmFlag, interactive, stdin, cmd.ErrOrStderr(), selected); err != nil {
 			return err
 		}
 	}
+	assetOpts.Apply.Interactive = interactive
+	assetOpts.Apply.In = stdin
+	assetOpts.Apply.Out = cmd.ErrOrStderr()
+	assetOpts.Apply.BundleTime = bundle.CreatedAt
 
 	v, err := openVault()
 	if err != nil {
@@ -183,6 +196,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	printBroadAllowWarning(cmd.ErrOrStderr(), assetOpts.Apply.Broad)
+	if len(assetOpts.Apply.Backups) > 0 {
+		fmt.Fprintln(out, "\nBackups of replaced files:")
+		for _, b := range assetOpts.Apply.Backups {
+			fmt.Fprintf(out, "  %s\n", b)
+		}
+	}
 	fmt.Fprintf(out, "\nSummary: %d added, %d updated, %d skipped, %d removed\n",
 		total.Added, total.Updated, total.Skipped, total.Removed)
 	if dryRun {
@@ -334,7 +354,10 @@ func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w
 	fmt.Fprintf(w, "model capability entries. The shared system prompt and router config are\n")
 	fmt.Fprintf(w, "cleared too when the bundle does not carry them.\n")
 	fmt.Fprint(w, "Type 'mirror' to continue: ")
-	reader := bufio.NewReader(in)
+	reader, ok := in.(*bufio.Reader)
+	if !ok {
+		reader = bufio.NewReader(in)
+	}
 	line, err := reader.ReadString('\n')
 	if err != nil && line == "" {
 		return fmt.Errorf("reading confirmation: %w", err)
@@ -356,10 +379,20 @@ type importAssetOptions struct {
 	// Overwrite existing project files that differ. Follows --strategy:
 	// merge keeps what is there; replace and mirror overwrite.
 	Overwrite bool
+	// Apply settles conflicts and records backups for the whole run.
+	Apply *importApplyContext
 }
 
 func importAssetOptionsFromFlags(cmd *cobra.Command, applyConfigs bool) (importAssetOptions, error) {
-	opts := importAssetOptions{ApplyConfigs: applyConfigs}
+	opts := importAssetOptions{ApplyConfigs: applyConfigs, Apply: newImportApplyContext()}
+	opts.Apply.KeepBundleCommands, _ = cmd.Flags().GetBool("keep-bundle-commands")
+	if v := mustString(cmd, "on-conflict"); v != "" {
+		policy, err := parseConflictPolicy(v)
+		if err != nil {
+			return opts, err
+		}
+		opts.Apply.OnConflict = policy
+	}
 	opts.ApplyProjects, _ = cmd.Flags().GetBool("apply-projects")
 	opts.ProjectRoot = mustString(cmd, "project-root")
 	opts.Maps, _ = cmd.Flags().GetStringArray("map")
@@ -473,7 +506,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		if resolved, err := filepath.EvalSymlinks(writeRoot); err == nil {
 			writeRoot = resolved
 		}
-		applied, skipped, err := applyStagedProjectAssetsWith(effectiveConfigDir(), writeRoot, opts.Overwrite)
+		applied, skipped, err := applyStagedProjectAssetsCtx(effectiveConfigDir(), writeRoot, opts.Overwrite, opts.applyContext())
 		if err != nil {
 			return fmt.Errorf("applying project files: %w", err)
 		}
@@ -486,19 +519,17 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		return nil
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "  Applying provider configs and assets to system...")
-	if setup.ProviderConfigs.Claude != nil {
-		// Same rule as the settings.json asset: SaveClaudeConfig writes that
-		// file too, from CustomSettings.
-		if !keepInterpreterAllows {
-			for _, d := range filterClaudeCustomSettings(setup.ProviderConfigs.Claude) {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: left out Claude permission %q from provider config; add it back on this machine if you want it\n", d)
+	ctx := opts.applyContext()
+	// The Claude provider config becomes settings.json and keybindings.json,
+	// applied like the bundle's own files: commands and interpreter allows
+	// checked, secrets kept, local keys kept, the old file backed up.
+	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
+	if setup.ProviderConfigs.Codex != nil {
+		if home, err := os.UserHomeDir(); err == nil {
+			if _, err := ctx.backup(filepath.Join(home, ".codex", "config.toml")); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", err)
 			}
 		}
-		if err := agent.SaveClaudeConfig(setup.ProviderConfigs.Claude); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not apply Claude config: %v\n", err)
-		}
-	}
-	if setup.ProviderConfigs.Codex != nil {
 		if err := agent.SaveCodexConfig(setup.ProviderConfigs.Codex); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not apply Codex config: %v\n", err)
 		}
@@ -508,7 +539,8 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not resolve home directory: %v\n", err)
 		return nil
 	}
-	applied, warnings, err := applyProviderAssetsToSystem(homeDir, append(setup.ProviderFiles, providerSkillAssets(setup.SkillAssets)...))
+	providerAssets := append(append(configAssets, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...)
+	applied, warnings, err := applyProviderAssetsWith(homeDir, providerAssets, ctx)
 	if err != nil {
 		return fmt.Errorf("applying provider assets: %w", err)
 	}
@@ -610,4 +642,45 @@ func printInstallGuide(cmd *cobra.Command, profiles []PortableProfile) {
 		}
 		return
 	}
+}
+
+// applyContext is the run's context, or a fresh one when the options were
+// built without flags.
+func (o *importAssetOptions) applyContext() *importApplyContext {
+	if o.Apply == nil {
+		o.Apply = newImportApplyContext()
+	}
+	return o.Apply
+}
+
+// resolveConflictPolicy: --on-conflict wins; otherwise an explicit --strategy
+// answers the question (merge keeps what is here, replace and mirror take the
+// bundle's file); otherwise import asks, or backs up and replaces when it
+// cannot ask.
+func resolveConflictPolicy(flag conflictPolicy, strategyGiven bool, strategy importStrategy) conflictPolicy {
+	if flag != conflictAsk || !strategyGiven {
+		return flag
+	}
+	if strategy == strategyMerge {
+		return conflictKeep
+	}
+	return conflictBackupReplace
+}
+
+// claudeConfigAssets are the files SaveClaudeConfig would write for c, as
+// assets, so they go through the same checks as the bundle's own files.
+func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
+	if c == nil {
+		return nil
+	}
+	var out []SetupAsset
+	if data, err := agent.ClaudeSettingsJSON(c); err == nil {
+		out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json", ContentPresent: true, Content: data})
+	}
+	if len(c.Keybindings) > 0 {
+		if data, err := json.MarshalIndent(c.Keybindings, "", "  "); err == nil {
+			out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "keybindings.json", ContentPresent: true, Content: data})
+		}
+	}
+	return out
 }

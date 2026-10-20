@@ -989,6 +989,13 @@ func applyStagedProjectAssets(configDir string, targetDir string) (int, error) {
 }
 
 func applyStagedProjectAssetsWith(configDir string, targetDir string, overwrite bool) (int, []string, error) {
+	return applyStagedProjectAssetsCtx(configDir, targetDir, overwrite, nil)
+}
+
+// applyStagedProjectAssetsCtx is applyStagedProjectAssetsWith with conflicts
+// settled through ctx, which backs up each file it replaces. With a nil ctx,
+// overwrite decides and nothing is backed up.
+func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite bool, ctx *importApplyContext) (int, []string, error) {
 	projectRoot := filepath.Join(configDir, setupImportedAssetsDirName, "project")
 	info, err := os.Stat(projectRoot)
 	if err != nil {
@@ -1042,10 +1049,24 @@ func applyStagedProjectAssetsWith(configDir string, targetDir string, overwrite 
 			skipped = append(skipped, fmt.Sprintf("%s: exists and is not a regular file; kept", rel))
 			continue
 		}
-		if !overwrite {
-			if same, exists := sameFileContent(srcPath, destPath); exists && !same {
+		if same, exists := sameFileContent(srcPath, destPath); exists && !same {
+			if ctx == nil && !overwrite {
 				skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept (use --strategy replace to overwrite)", rel))
 				continue
+			}
+			if ctx != nil {
+				replace, err := ctx.decide(destPath)
+				if err != nil {
+					return applied, skipped, err
+				}
+				if !replace {
+					skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept (use --on-conflict backup-replace to replace it)", rel))
+					continue
+				}
+				if _, err := ctx.backup(destPath); err != nil {
+					skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept: %v", rel, err))
+					continue
+				}
 			}
 		}
 		if err := copyRegularFile(srcPath, targetDir, destPath, 0644); err != nil {
@@ -1059,7 +1080,20 @@ func applyStagedProjectAssetsWith(configDir string, targetDir string, overwrite 
 // keepInterpreterAllows is set by import --keep-interpreter-allows.
 var keepInterpreterAllows bool
 
+// keepBundleCommands is set by import --keep-bundle-commands.
+var keepBundleCommands bool
+
 func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []string, error) {
+	ctx := newImportApplyContext()
+	ctx.KeepBundleCommands = keepBundleCommands
+	return applyProviderAssetsWith(homeDir, assets, ctx)
+}
+
+// applyProviderAssetsWith writes provider files into homeDir. Against the
+// file already there it keeps out commands the bundle adds or changes,
+// restores secrets, keeps local-only keys of a JSON file, and settles a
+// conflict through ctx, backing up what it replaces.
+func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApplyContext) (int, []string, error) {
 	applied := 0
 	var warnings []string
 	for _, asset := range assets {
@@ -1119,17 +1153,38 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				mergeKeys = claudeUserConfigMergeKeys
 			}
 		}
+		original, _ := ctx.original(dest)
+		current, _ := readExistingFile(dest)
+		desc := describeSetupAsset(asset)
+		if !ctx.KeepBundleCommands {
+			if asset.LogicalRoot == setupAssetRootProviderCodex && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.toml") {
+				if codexCommandsChanged(content, original) {
+					warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, it adds or changes mcp_servers or notify commands; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+					continue
+				}
+			} else {
+				var dropped []string
+				content, dropped = dropBundleCommands(content, original)
+				for _, d := range dropped {
+					warnings = append(warnings, fmt.Sprintf("provider asset %s: left out command %s, which the bundle adds or changes; kept this machine's value (use --keep-bundle-commands to take it)", desc, d))
+				}
+			}
+		}
+		var removed, secrets []string
+		declined := 0
 		if len(asset.RedactedFields) > 0 {
-			existing, _ := readExistingFile(dest)
-			filled, restored, err := restoreRedactedFields(content, asset.RedactedFields, existing)
+			res, err := restoreRedactedFieldsWith(content, asset.RedactedFields, original, ctx.restoreAsker(dest))
 			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", desc, err))
 				continue
 			}
 			secretCount := countSecretPointers(content, asset.RedactedFields)
-			content = filled
-			if left := secretCount - restored; left > 0 {
-				warnings = append(warnings, fmt.Sprintf("provider asset %s: %d secret value(s) were not in the bundle and are not on this machine; set them by hand", describeSetupAsset(asset), left))
+			content = res.Content
+			removed = res.Removed
+			secrets = res.Secrets
+			declined = res.Declined
+			if left := secretCount - res.Restored - res.Declined; left > 0 {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: %d secret value(s) were not in the bundle and are not on this machine; set them by hand", desc, left))
 			}
 		}
 		if copilotConfig {
@@ -1139,21 +1194,53 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		}
 		// Trailing dots and spaces too: Windows writes "settings.json." to settings.json.
 		claudeName := strings.TrimRight(asset.LogicalPath, ". ")
-		if asset.LogicalRoot == setupAssetRootProviderClaude && !keepInterpreterAllows &&
-			(strings.EqualFold(claudeName, "settings.json") || strings.EqualFold(claudeName, "settings.local.json")) {
+		claudeSettings := asset.LogicalRoot == setupAssetRootProviderClaude &&
+			(strings.EqualFold(claudeName, "settings.json") || strings.EqualFold(claudeName, "settings.local.json"))
+		if claudeSettings && !keepInterpreterAllows {
 			var dropped []string
 			content, dropped = dropInterpreterAllows(content)
 			for _, d := range dropped {
-				warnings = append(warnings, fmt.Sprintf("provider asset %s: left out permission %q, which lets any program run without asking; add it back on this machine if you want it", describeSetupAsset(asset), d))
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: left out permission %q, which lets any program run without asking; add it back on this machine if you want it", desc, d))
 			}
 		}
 		if len(mergeKeys) > 0 {
 			merged, err := mergeJSONKeysIntoFile(dest, content, mergeKeys)
 			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", desc, err))
 				continue
 			}
 			content = merged
+		} else if len(current) > 0 {
+			// The local file's own keys stay; the bundle's overwrite.
+			merged, n, ok := unionWithLocal(content, current, secrets, removed, ctx.restoreAsker(dest))
+			if ok {
+				content = merged
+				declined += n
+			}
+		}
+		if claudeSettings {
+			ctx.Broad = append(ctx.Broad, broadAllows(content)...)
+		}
+		if _, err := os.Lstat(dest); err == nil && !sameFileBytes(current, content) {
+			replace, err := ctx.decide(dest)
+			if err != nil {
+				return applied, warnings, err
+			}
+			if !replace {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: kept this machine's %s, which differs from the bundle", desc, dest))
+				continue
+			}
+			if _, err := ctx.backup(dest); err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: kept this machine's file: %v", desc, err))
+				continue
+			}
+		}
+		if declined > 0 {
+			where := "the file on this machine"
+			if p, ok := ctx.backedUp[dest]; ok {
+				where = p
+			}
+			warnings = append(warnings, fmt.Sprintf("provider asset %s: %d local secret(s) not restored because the definition holding them changed; the old values are in %s", desc, declined, where))
 		}
 		if execAllowed(asset) {
 			perm = assetPerm(asset, perm)

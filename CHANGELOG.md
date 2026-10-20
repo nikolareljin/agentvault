@@ -17,15 +17,16 @@
 - `import --apply-projects --project-root DIR` writes the bundle's project
   instructions into DIR. Git internals, CI, hook directories, repository
   settings, credential files and other non-prose files are not written.
-  `--strategy merge` keeps an existing file that differs.
 - JSON settings exported without `--include-secrets` travel with only their
   secret values blanked (keys with token, secret, password, key and the
   like, and everything under `env` and `headers`). Import fills each blanked
   value from the file already on the machine, or leaves it out. A
-  value is restored only into an unchanged definition (for settings.json's
-  own `env`, the rest of `env` must match; for a top-level key, the rest
-  of the file must match), so a bundle that
-  points an MCP server elsewhere does not receive the local token. A file
+  value is restored without asking only into an unchanged definition (for
+  settings.json's own `env`, the rest of `env`; for a top-level key, the
+  rest of the file). For a changed one import shows the old and new fields
+  and asks `restore local secret into changed server? [y/N]`; without a
+  terminal it does not restore it. A secret under a key that `--map` or the
+  home rewrite renamed is restored too. A file
   with secret-shaped values under neutral keys (`--token x` in `args` or a command,
   `X-API-Key: x` header arguments, URL credentials, known token prefixes) is
   redacted whole, and so is a credential file by name or location
@@ -39,6 +40,22 @@
   shell metacharacters, quotes or globs, and a command that is not an
   interpreter, wrapper (`nice`, `timeout`) or shell keyword.
   `--keep-interpreter-allows` keeps them all.
+- Import leaves out `hooks` events, `statusLine`, credential helpers and MCP
+  servers whose command or args the bundle adds or changes, keeps this
+  machine's value and names each one. A Codex `config.toml` with changed
+  `mcp_servers` or `notify` sections is not applied.
+  `--keep-bundle-commands` keeps them.
+- Import keeps broad allow rules such as `Bash(find:*)`, `Bash(git:*)` and
+  `Bash(make:*)`, and prints one WARNING block naming each and why it can
+  run other programs.
+- An existing provider file, Claude project memory file or `--apply-projects`
+  file that differs is backed up to `<file>.bak-YYYYMMDD-HHMMSS` and
+  replaced, or kept: import asks on a terminal (with an apply-to-all
+  answer), and `--on-conflict backup-replace|keep` decides without asking.
+  `--strategy merge` given explicitly means keep. Backups never overwrite a
+  file and are listed at the end. A JSON provider file keeps the keys only
+  this machine has. The Claude provider config goes through the same checks
+  instead of replacing `settings.json` and `keybindings.json` whole.
 - `./dev` (and `./dev.ps1` on Windows) is the entry point for install, build,
   test, lint, format, preflight, doctor, clean and install-bin. The commands
   live in `scripts/project.sh`, and `make` targets are shims onto them.

@@ -315,6 +315,9 @@ func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]
 				report = append(report, fmt.Sprintf("rewrote %d path(s) in %q", n, describeSetupAsset(a)))
 			}
 		}
+		if len(a.RedactedFields) > 0 && len(remaps) > 0 {
+			a.RedactedFields = remapPointers(a.RedactedFields, remaps)
+		}
 		if a.ContentPresent && isRemappableText(a.Content) {
 			for _, m := range foreignHomePaths(string(a.Content)) {
 				if isTargetHome(m, targetHome) {
@@ -379,4 +382,32 @@ func remapProviderConfigs(c agent.ProviderConfig, remaps []pathRemap) (agent.Pro
 		return c, 0, err
 	}
 	return out, n, nil
+}
+
+// remapPointers rewrites the keys in JSON Pointers the way remapText
+// rewrites them in the document, so a secret under a key named by a path
+// (an MCP server keyed by its project directory) is still found. Each
+// segment is rewritten in its JSON spelling, as it appears in the file.
+func remapPointers(pointers []string, remaps []pathRemap) []string {
+	out := make([]string, len(pointers))
+	for i, p := range pointers {
+		if p == "" {
+			continue
+		}
+		parts := splitPointer(p)
+		for j, part := range parts {
+			enc, err := json.Marshal(part)
+			if err != nil {
+				continue
+			}
+			text, n := remapText(string(enc), remaps)
+			var dec string
+			if n > 0 && json.Unmarshal([]byte(text), &dec) == nil {
+				part = dec
+			}
+			parts[j] = escapePointer(part)
+		}
+		out[i] = "/" + strings.Join(parts, "/")
+	}
+	return out
 }
