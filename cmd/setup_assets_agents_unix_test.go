@@ -5,6 +5,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -50,8 +51,9 @@ func TestReferencedDirPipesAndUnreadableFilesDoNotAbort(t *testing.T) {
 	}
 }
 
-// A pipe, or a name import would refuse (backup~1.md, aux.md), inside a
-// carried tool directory is skipped with a warning; the export goes on.
+// A pipe inside a carried tool directory is skipped with a warning; the
+// export goes on. backup~1.md and aux.md are carried, aux.md with a warning
+// that Windows cannot write it.
 func TestToolDirOddEntriesDoNotAbortExport(t *testing.T) {
 	home := t.TempDir()
 	setTestHomeDir(t, home)
@@ -63,12 +65,23 @@ func TestToolDirOddEntriesDoNotAbortExport(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(agents, "p.md"), 0o600); err != nil {
 		t.Skipf("mkfifo: %v", err)
 	}
-	assets, _, err := collectSetupAssets(setupAssetOptions{IncludeMemory: true})
+	assets, warnings, err := collectSetupAssets(setupAssetOptions{IncludeMemory: true})
 	if err != nil {
 		t.Fatalf("export aborted: %v", err)
 	}
-	if a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "agents/ok.md"); a == nil || !a.ContentPresent {
-		t.Errorf("agents/ok.md not carried: %+v", a)
+	for _, name := range []string{"agents/ok.md", "agents/backup~1.md", "agents/aux.md"} {
+		if a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, name); a == nil || !a.ContentPresent {
+			t.Errorf("%s not carried: %+v", name, a)
+		}
+	}
+	warned := false
+	for _, w := range warnings {
+		if strings.Contains(w, "agents/aux.md") && strings.Contains(w, "Windows device name") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("no Windows warning for aux.md in %q", warnings)
 	}
 }
 

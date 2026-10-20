@@ -1253,31 +1253,60 @@ func TestCollectSetupAssets_SecretBearingJSONRedactedWhole(t *testing.T) {
 	}
 }
 
-// Windows opens SETTIN~1.JSO as settings.json: a short name would dodge
-// every check by name, so import refuses it.
-func TestSanitizeAssetRelativePathRefusesShortNames(t *testing.T) {
-	for _, p := range []string{"SETTIN~1.JSO", ".claude/.CREDE~1.JSO", "CREDEN~1.JSO", "PROGRA~1/x.md"} {
-		if _, err := sanitizeAssetRelativePath(p); err == nil {
-			t.Errorf("%s: accepted", p)
+// A ~N name is a plain name on every OS. On Windows the writer refuses one
+// that opens another file (see TestWriterRefusesShortNameAlias).
+func TestSanitizeAssetRelativePathAllowsTildeDigit(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, p := range []string{"draft~2.md", "SETTIN~1.JSO", "PROGRA~1/x.md", "notes~draft.md"} {
+			if _, err := sanitizeAssetRelativePathFor(goos, p); err != nil {
+				t.Errorf("%s %s: %v", goos, p, err)
+			}
 		}
-	}
-	if _, err := sanitizeAssetRelativePath("notes~draft.md"); err != nil {
-		t.Errorf("notes~draft.md: %v", err)
 	}
 }
 
-// Windows opens aux.md, CON and COM1.txt as devices, not files: import
-// refuses them on every platform.
-func TestSanitizeAssetRelativePathRefusesDeviceNames(t *testing.T) {
-	for _, p := range []string{"CON", "nul", "aux.md", ".claude/COM1.txt", "lpt9", "Con .txt", "PRN.", "agents/conout$", "COM\u00b9.md"} {
-		if _, err := sanitizeAssetRelativePath(p); err == nil {
-			t.Errorf("%s: accepted", p)
+// Windows opens aux.md, CON and COM1.txt as devices, so only Windows import
+// refuses them. Elsewhere they are ordinary files.
+func TestSanitizeAssetRelativePathDeviceNamesPerOS(t *testing.T) {
+	devices := []string{"CON", "nul", "aux.md", ".claude/COM1.txt", "lpt9", "Con .txt", "PRN.", "agents/conout$", "COM\u00b9.md"}
+	for _, p := range devices {
+		if _, err := sanitizeAssetRelativePathFor("windows", p); err == nil {
+			t.Errorf("windows %s: accepted", p)
+		}
+		for _, goos := range []string{"linux", "darwin"} {
+			if _, err := sanitizeAssetRelativePathFor(goos, p); err != nil {
+				t.Errorf("%s %s: %v", goos, p, err)
+			}
 		}
 	}
-	for _, p := range []string{"console.md", "auxiliary.md", "com10.txt", "com.md", "agents/null.md"} {
-		if _, err := sanitizeAssetRelativePath(p); err != nil {
-			t.Errorf("%s: %v", p, err)
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, p := range []string{"console.md", "auxiliary.md", "com10.txt", "com.md", "agents/null.md"} {
+			if _, err := sanitizeAssetRelativePathFor(goos, p); err != nil {
+				t.Errorf("%s %s: %v", goos, p, err)
+			}
 		}
+	}
+}
+
+// A stream suffix names another file on Windows; it is refused everywhere.
+func TestSanitizeAssetRelativePathRefusesStreamsEverywhere(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		for _, p := range []string{".env::$DATA", "notes.md:x", "a/b:c/d.md"} {
+			if _, err := sanitizeAssetRelativePathFor(goos, p); err == nil {
+				t.Errorf("%s %s: accepted", goos, p)
+			}
+		}
+	}
+}
+
+func TestWindowsNameWarnings(t *testing.T) {
+	c := setupAssetCollection{
+		ProviderFiles: []SetupAsset{{LogicalRoot: "claude", LogicalPath: "agents/aux.md"}, {LogicalRoot: "claude", LogicalPath: "agents/draft~2.md"}},
+		ProjectFiles:  []SetupAsset{{LogicalRoot: "project", LogicalPath: "x", ProjectRelativePath: "docs/CON/a.md"}},
+	}
+	got := windowsNameWarnings(c)
+	if len(got) != 2 || !strings.Contains(got[0], "aux.md") || !strings.Contains(got[1], "CON") {
+		t.Errorf("warnings = %q", got)
 	}
 }
 

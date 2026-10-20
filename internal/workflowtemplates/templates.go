@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/nikolareljin/agentvault/internal/config"
+	"github.com/nikolareljin/agentvault/internal/fsname"
 )
 
 const (
@@ -29,14 +31,15 @@ const (
 // listed, shown, exported and imported like a built-in; agentvault ships none.
 var customFilenamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}\.(txt|md)$`)
 
-// reservedStem reports a Windows device name (con.txt opens the console there).
+// reservedStem reports a Windows device name (con.txt opens the console
+// there), on Windows only: elsewhere con.txt is an ordinary file, and export
+// warns that Windows cannot write it.
 func reservedStem(filename string) bool {
-	stem := strings.TrimSuffix(strings.TrimSuffix(filename, ".txt"), ".md")
-	switch stem {
-	case "con", "prn", "aux", "nul":
-		return true
-	}
-	return len(stem) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) && stem[3] >= '0' && stem[3] <= '9'
+	return reservedStemFor(runtime.GOOS, filename)
+}
+
+func reservedStemFor(goos, filename string) bool {
+	return goos == "windows" && fsname.IsWindowsDeviceName(filename)
 }
 
 // customKey returns the key for a custom template file, or false when the name
@@ -406,6 +409,13 @@ func ExportBundle(configDir string) (Bundle, []string, error) {
 		assets = merged
 	}
 	sort.Slice(assets, func(i, j int) bool { return assets[i].Filename < assets[j].Filename })
+	if runtime.GOOS != "windows" {
+		for _, a := range assets {
+			if fsname.IsWindowsDeviceName(a.Filename) {
+				warnings = append(warnings, fmt.Sprintf("template %q: a Windows device name; import on Windows stores it under another name or skips it", a.Filename))
+			}
+		}
+	}
 	return Bundle{
 		SchemaVersion: DefaultSchemaVersion,
 		ExportedAt:    time.Now().UTC(),

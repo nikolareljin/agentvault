@@ -1405,7 +1405,7 @@ func mergeJSONKeysIntoFile(path string, incoming []byte, keys []string) ([]byte,
 // stay staged for review.
 func projectAssetRefusal(rel string) string {
 	// The stage outlives one import: refuse what import refuses (device
-	// names, short names) here too, so one such file is skipped, not fatal.
+	// names on Windows) here too, so one such file is skipped, not fatal.
 	if _, err := sanitizeAssetRelativePath(rel); err != nil {
 		return err.Error()
 	}

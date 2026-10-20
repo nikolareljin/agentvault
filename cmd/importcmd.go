@@ -15,6 +15,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/fsname"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -505,6 +506,9 @@ func previewProjectAssets(files []SetupAsset, root string, ctx *importApplyConte
 			continue
 		}
 		dest, err := safeJoinUnder(root, rel)
+		if err == nil {
+			err = fsname.CheckBeforeWrite(root, dest)
+		}
 		if err != nil {
 			out = append(out, fmt.Sprintf("%s: not written: %v", rel, err))
 			continue

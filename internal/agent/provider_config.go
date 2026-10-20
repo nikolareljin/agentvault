@@ -15,9 +15,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/nikolareljin/agentvault/internal/fsname"
 )
 
 // ProviderConfig holds provider-specific configuration that can be synced
@@ -258,14 +261,14 @@ func CodexConfigTOML(existing string, projects map[string]string) string {
 }
 
 // ValidRuleName is a rule name that is one plain file name: letters,
-// digits, '.', '_' and '-', not starting with '.', at most 128 bytes. Rule
+// digits, '.', '_', '-' and '~', not starting with '.', at most 128 bytes. Rule
 // names come from bundles; anything else could leave the rules directory.
 func ValidRuleName(name string) bool {
 	if name == "" || len(name) > 128 || name[0] == '.' {
 		return false
 	}
 	for _, r := range name {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-') {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-' || r == '~') {
 			return false
 		}
 	}
@@ -273,9 +276,10 @@ func ValidRuleName(name string) bool {
 }
 
 func SaveCodexConfig(config *CodexConfig) error {
-	// Check every rule name before anything is written.
+	// A rule name comes from the vault, which a bundle fills. Checked before
+	// anything is written or removed.
 	for name := range config.Rules {
-		if !ValidRuleName(name) {
+		if !ValidRuleName(name) || (runtime.GOOS == "windows" && fsname.IsWindowsDeviceName(name)) {
 			return fmt.Errorf("codex rule name %q is not a plain file name", name)
 		}
 	}
@@ -331,7 +335,7 @@ func SaveCodexConfig(config *CodexConfig) error {
 	sort.Strings(ruleNames)
 	for _, name := range ruleNames {
 		rulePath := filepath.Join(rulesDir, name+".md")
-		if err := os.WriteFile(rulePath, []byte(config.Rules[name]), 0600); err != nil {
+		if err := fsname.WriteFile(rulesDir, rulePath, []byte(config.Rules[name]), 0700, 0600); err != nil {
 			return err
 		}
 	}

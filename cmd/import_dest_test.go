@@ -8,10 +8,9 @@ import (
 	"testing"
 )
 
-// The stage outlives one import, so it may hold names an earlier version
-// staged. --apply-projects refuses the names import refuses: aux.md and
-// NOTES~1.MD name another file or a device on Windows.
-func TestApplyProjectsRefusesNamesImportRefuses(t *testing.T) {
+// aux.md and NOTES~1.MD are ordinary names off Windows, so --apply-projects
+// writes them; Windows import refuses device names and short-name aliases.
+func TestApplyProjectsWritesWindowsOnlyNamesElsewhere(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("cannot create these names on Windows")
 	}
@@ -22,12 +21,12 @@ func TestApplyProjectsRefusesNamesImportRefuses(t *testing.T) {
 		mustWriteFile(t, filepath.Join(stage, n), "x\n")
 	}
 	applied, skipped, err := applyStagedProjectAssetsWith(cfg, project, true)
-	if err != nil || applied != 1 || len(skipped) != 2 {
+	if err != nil || applied != 3 || len(skipped) != 0 {
 		t.Errorf("applied %d, skipped %v, err %v", applied, skipped, err)
 	}
 	for _, n := range []string{"aux.md", "NOTES~1.MD"} {
-		if _, err := os.Lstat(filepath.Join(project, n)); err == nil {
-			t.Errorf("%s written", n)
+		if _, err := os.Lstat(filepath.Join(project, n)); err != nil {
+			t.Errorf("%s not written: %v", n, err)
 		}
 	}
 }
