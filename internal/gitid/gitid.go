@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -60,10 +61,13 @@ var defaultPorts = map[string]string{
 // .git suffix removed and the host lower-cased. The path keeps its case and
 // all its segments, so a GitLab subgroup stays in it. It returns false for a
 // local path, a file:// URL, or anything without a host and an owner/repo
-// path.
+// path. It also refuses forms that could give two repositories one identity
+// or put something other than a host in it: control characters, an encoded
+// or backslash path separator, a non-ASCII host (homoglyphs; IDN must be in
+// punycode) and a host that is not a DNS-style name or an IP address.
 func NormalizeRemote(raw string) (string, bool) {
 	s := strings.TrimSpace(raw)
-	if s == "" {
+	if s == "" || hasControl(s) || strings.Contains(s, `\`) {
 		return "", false
 	}
 	var host, port, path string
@@ -75,6 +79,10 @@ func NormalizeRemote(raw string) (string, bool) {
 		scheme := strings.ToLower(u.Scheme)
 		if _, ok := defaultPorts[scheme]; !ok {
 			return "", false // file://, or a transport we do not know
+		}
+		esc := strings.ToLower(u.EscapedPath())
+		if strings.Contains(esc, "%2f") || strings.Contains(esc, "%5c") || hasControl(u.Path) {
+			return "", false
 		}
 		host, port, path = u.Hostname(), u.Port(), u.Path
 		if port == defaultPorts[scheme] {
@@ -96,11 +104,11 @@ func NormalizeRemote(raw string) (string, bool) {
 		host, path = rest[:colon], rest[colon+1:]
 	}
 	host = strings.ToLower(strings.Trim(host, "[]"))
-	if host == "" || strings.Contains(host, "@") {
+	if !validHost(host) {
 		return "", false
 	}
 	var segs []string
-	for _, seg := range strings.Split(strings.ReplaceAll(path, `\`, "/"), "/") {
+	for _, seg := range strings.Split(path, "/") {
 		switch seg {
 		case "", ".":
 			continue
@@ -131,6 +139,37 @@ func NormalizeRemote(raw string) (string, bool) {
 	return host + "/" + strings.Join(segs, "/"), true
 }
 
+// validHost accepts an IP address or an ASCII DNS-style name (letters,
+// digits, '.', '-', '_') that does not start with '-' or '.'.
+func validHost(h string) bool {
+	if h == "" {
+		return false
+	}
+	if strings.Contains(h, ":") {
+		return net.ParseIP(h) != nil
+	}
+	if h[0] == '-' || h[0] == '.' {
+		return false
+	}
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// hasControl reports C0 and C1 control characters and DEL.
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r >= 0x7f && r <= 0x9f {
+			return true
+		}
+	}
+	return false
+}
+
 // Runner runs git against one repository (its git dir and common dir, both
 // already owner-checked) and returns its stdout. Tests replace it.
 type Runner func(ctx context.Context, gitDir, commonDir string, args ...string) ([]byte, error)
@@ -139,7 +178,26 @@ type Runner func(ctx context.Context, gitDir, commonDir string, args ...string) 
 var ownerCheck = ownedByCurrentUser
 
 // gitTimeout bounds one git call; a hung git must not hang an export.
-const gitTimeout = 5 * time.Second
+// gitWaitDelay bounds the wait for output after git is killed, in case a
+// child of git still holds the pipe. maxGitOutput caps what is read.
+const (
+	gitTimeout   = 5 * time.Second
+	gitWaitDelay = time.Second
+	maxGitOutput = 1 << 20
+)
+
+// cappedBuffer is a bytes.Buffer that refuses a write past max bytes.
+type cappedBuffer struct {
+	bytes.Buffer
+	max int
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > b.max {
+		return 0, fmt.Errorf("git output over %d bytes", b.max)
+	}
+	return b.Buffer.Write(p)
+}
 
 // ExecGit runs the git binary with a timeout, hardened against the
 // repository's own config: no hooks, no fsmonitor, no network (no lazy fetch
@@ -149,16 +207,27 @@ const gitTimeout = 5 * time.Second
 func ExecGit(ctx context.Context, gitDir, commonDir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
+	cmd, out := gitCommand(ctx, gitDir, commonDir, args...)
+	stderr := &cappedBuffer{max: 4096}
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return out.Bytes(), nil
+}
+
+// gitCommand builds the hardened command with stdout capped. git is found on
+// PATH; a git in the current directory or in a relative PATH entry is
+// refused by os/exec (exec.ErrDot, Go 1.19+), so a repository cannot supply
+// its own git.exe.
+func gitCommand(ctx context.Context, gitDir, commonDir string, args ...string) (*exec.Cmd, *cappedBuffer) {
 	full, env := gitInvocation(gitDir, commonDir, args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Env = env
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
-	}
-	return out, nil
+	cmd.WaitDelay = gitWaitDelay
+	out := &cappedBuffer{max: maxGitOutput}
+	cmd.Stdout = out
+	return cmd, out
 }
 
 // gitInvocation is the argument list and environment ExecGit uses.
@@ -219,8 +288,15 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 		}
 	}
 	r := Repo{Root: root, GitDir: gitDir, CommonDir: common}
+	includes := false
 	if b, err := os.ReadFile(filepath.Join(common, "config")); err == nil { // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
 		r.RemoteName, r.Remote = pickRemote(parseRemotes(b))
+		includes = hasInclude(b)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Repo{}, err
+	}
+	if b, err := os.ReadFile(filepath.Join(gitDir, "config.worktree")); err == nil { // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
+		includes = includes || hasInclude(b)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Repo{}, err
 	}
@@ -233,6 +309,11 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 	}
 	if !ownedPaths(root, gitDir, common) {
 		r.RootSkipped = "repository not owned by the current user"
+		return r, nil
+	}
+	if includes {
+		// git would load the included files, which ownedPaths cannot name.
+		r.RootSkipped = "repository config uses include or includeIf"
 		return r, nil
 	}
 	out, err := run(ctx, gitDir, common, "rev-list", "--max-parents=0", "HEAD")
@@ -402,6 +483,23 @@ func parseRemotes(b []byte) map[string]string {
 		}
 	}
 	return out
+}
+
+// hasInclude reports whether a config file has an include or includeIf
+// section, which makes git load files the owner check does not cover.
+func hasInclude(b []byte) bool {
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || line[0] != '[' {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimLeft(line[1:], " \t")), "include") {
+			return true
+		}
+	}
+	// A line too long to scan hides the rest of the file: assume the worst.
+	return sc.Err() != nil
 }
 
 func unquote(v string) string {

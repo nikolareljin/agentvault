@@ -51,17 +51,43 @@ Project { id, work_dir, rel, abs, git_remote, root_commits[], namespace }
   `remote.origin.promisor=false`, env `GIT_NO_LAZY_FETCH=1`,
   `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
   `GIT_TERMINAL_PROMPT=0`, `GIT_COMMON_DIR` set to the checked common dir,
-  other `GIT_*` removed, 5 s timeout. `commondir` is parsed as git does
+  other `GIT_*` removed (so `GIT_DIR`, `GIT_CONFIG_COUNT`/`KEY`/`VALUE`,
+  `GIT_EXEC_PATH` cannot steer it), 5 s timeout, 1 s `WaitDelay` so a child
+  holding the pipe cannot outlive the kill, stdout capped at 1 MiB. git is
+  found on `PATH`; os/exec refuses a git in the current directory or a
+  relative `PATH` entry (`exec.ErrDot`), so a repo cannot ship its own
+  `git.exe`. `commondir` is parsed as git does
   (trailing CR/LF only, relative to the git dir) and all paths are resolved
   through symlinks first. Git runs only when the work tree, git dir, common
   dir, `config` and `config.worktree` are all owned by the current user
   (Unix uid). On Windows the check fails closed: no git, root commits
   empty, `RootSkipped` set; an owner-SID check is future work.
+  A `config` or `config.worktree` with an `include` or `includeIf`
+  section also skips git (`RootSkipped` set): git would load files the
+  owner check cannot name. Ownership is checked after symlinks are
+  resolved; a race that swaps a path between check and exec needs write
+  access to a directory this user owns, which is out of scope.
   Unborn HEAD, or a HEAD ref outside `refs/`, is detected
   from files and skips git. No git binary: project keeps path only.
 - Normalized remotes never hold `@` or `:` in a path segment; scp-like
   `user:token@host:path` drops everything up to the last `@` before the
   first slash.
+- Refused (no remote recorded), because each could give two repos one
+  identity or put a non-host in it: control characters anywhere, a
+  backslash, `%2F`/`%5C` in a URL path (`a%2Fb/c` would equal `a/b/c`), `..`
+  segments, a host that is not an IP or an ASCII name of `[a-z0-9._-]`
+  starting with neither `-` nor `.` (covers `-oProxyCommand=...`, homoglyph
+  and non-punycode IDN hosts), and transport forms `ext::`, `fd::`, `file://`.
+  An IDN host is accepted only in its `xn--` form; the Unicode spelling of
+  the same host is refused rather than unified.
+- The remote reader is a text parser, not git. Known differences, all of
+  which make a match miss (fall back to `abs`), never point elsewhere,
+  because both machines read remotes the same way:
+  - `include`/`includeIf` files are not followed for the remote;
+  - `url.<base>.insteadOf` and `pushurl` are not applied: the identity is
+    the fetch URL as written in the repo config;
+  - legacy `[remote.origin]` headers, escapes in a quoted subsection name,
+    and remotes defined only in `config.worktree` are not read.
 - A project that no longer exists on disk is recorded with `abs` only.
 
 ## Matching on import
@@ -78,17 +104,22 @@ projects anywhere under the candidate roots.
 
 | Signal | Score |
 |---|---|
-| same `git_remote` (case-folded) | 100 |
+| same `git_remote` (exact; host already lower-cased) | 100 |
 | shares a root commit, remote missing on one or both sides | 80 |
 | shares a root commit, remotes differ (fork) | 30 |
 | same `rel` under the matched work dir | +20 |
 | same directory name | +10 |
 
+   Both sides have root commits and share none: not the same repository,
+   score 0 whatever the remote says.
 4. Best score >= 80 and alone at that score: match. Two or more at the top
    score: ambiguous. Below 80: no match; fall back to `abs` and the home
    rewrite, as today.
 5. Ambiguous on a terminal: list candidates, ask. Without a terminal: print
    each ambiguity with a ready `--map OLD=NEW` line and skip that project.
+6. A unique match is still a proposal (see Security): on a terminal it is
+   shown and confirmed once per import; without a terminal it is applied
+   only with `--accept-matches`, otherwise reported like an ambiguity.
 
 ## Flags
 
@@ -96,6 +127,7 @@ projects anywhere under the candidate roots.
 - `--workdir-map OLD=NEW`: map a whole work dir; projects under it match by
   `rel` and identity.
 - `--no-match`: old behaviour, literal paths only.
+- `--accept-matches`: apply unique computed matches without a terminal.
 - `--dry-run`: prints each match with its score and reason.
 
 ## How remap consumes it
@@ -119,8 +151,20 @@ A memory dir key that would collide is still refused and reported.
 - Bundle data only selects among directories found on this machine; it is
   never joined into a write path. `rel` and `home_rel` are rejected if
   absolute or containing `..`.
-- A match target must be under this home, or the user confirms it (terminal)
-  or names it in `--map`/`--workdir-map`.
+- Identities in a bundle are claims, not proof. Remotes are public and root
+  commits of a public repo are too, so a hostile bundle can name the
+  user's own dotfiles or work repo and score 100. A computed match
+  therefore never writes on its own:
+  - on a terminal, the import lists every computed match (bundle path ->
+    local path, score, reason) and the files it would write there, with
+    executable content (hooks, MCP commands, `settings.json`) flagged, and
+    asks once before writing;
+  - without a terminal, computed matches are reported with ready
+    `--map OLD=NEW` lines and skipped unless `--accept-matches` is given;
+  - `--map`/`--workdir-map` targets are the user's own choice and need no
+    confirmation.
+- A match target must also be under this home, or named in
+  `--map`/`--workdir-map`.
 - The scan never follows symlinks out of the scanned root and never runs git
   in a directory it did not find under that root.
 - Remote URLs are stored normalized only, so tokens in `https://tok@host`
@@ -147,3 +191,7 @@ A memory dir key that would collide is still refused and reported.
    export bundles for now?
 5. Windows: add an owner-SID check (x/sys/windows) so local-only repos can
    match by root commit there, or accept remote-only matching on Windows?
+6. Confirmation of unique matches (Matching step 6) changes the earlier
+   decision that only ambiguous matches stop a non-interactive import. Is
+   `--accept-matches` the right opt-in, or should project-file writes
+   (hooks, MCP) be the only part gated?
