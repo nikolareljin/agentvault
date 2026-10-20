@@ -897,9 +897,9 @@ func recordLocations(v *vault.Vault, match locationResult, o *locationOptions) e
 	}
 	for _, m := range match.ConfirmedHidden {
 		if add.ConfirmedHidden == nil {
-			add.ConfirmedHidden = map[string]string{}
+			add.ConfirmedHidden = map[string]locations.HiddenConfirm{}
 		}
-		add.ConfirmedHidden[locations.CleanForeign(m.From)] = m.To
+		add.ConfirmedHidden[locations.CleanForeign(m.From)] = locations.HiddenConfirm{Target: m.To, Projects: m.Projects}
 	}
 	if add.Empty() {
 		return nil

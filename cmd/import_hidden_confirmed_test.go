@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,7 +52,7 @@ func TestHiddenMappingConfirmedOnceNotAskedAgain(t *testing.T) {
 		t.Fatalf("first import: %+v\n%s", res, out)
 	}
 	known := v.Locations()
-	if known.WorkDirMaps["/old/Projects"] != hiddenWD || known.ConfirmedHidden["/old/Projects"] != hiddenWD {
+	if known.WorkDirMaps["/old/Projects"] != hiddenWD || known.ConfirmedHidden["/old/Projects"].Target != hiddenWD {
 		t.Fatalf("y not saved: %+v", known)
 	}
 
@@ -76,7 +77,7 @@ func TestHiddenMappingConfirmedByTypedPathAndFlag(t *testing.T) {
 	mustMkdirAll(t, other)
 	o.Interactive = true
 	importOnce(t, set, &o, v, other+"\n\n")
-	if got := v.Locations().ConfirmedHidden["/old/Projects"]; got != other {
+	if got := v.Locations().ConfirmedHidden["/old/Projects"].Target; got != other {
 		t.Fatalf("typed path not confirmed: %q", got)
 	}
 
@@ -87,14 +88,14 @@ func TestHiddenMappingConfirmedByTypedPathAndFlag(t *testing.T) {
 	if _, out := importOnce(t, set3, &o3, v3, hidden3+"\n\n"); !strings.Contains(out, "was not found here") {
 		t.Fatalf("not asked for the work dir:\n%s", out)
 	}
-	if got := v3.Locations().ConfirmedHidden["/old/Projects"]; got != hidden3 {
+	if got := v3.Locations().ConfirmedHidden["/old/Projects"].Target; got != hidden3 {
 		t.Fatalf("typed work dir not confirmed: %q", got)
 	}
 
 	set2, o2, v2, hiddenWD := hiddenFixture(t)
 	o2.WorkDirMaps = map[string]string{"/old/Projects": hiddenWD}
 	importOnce(t, set2, &o2, v2, "")
-	if got := v2.Locations().ConfirmedHidden["/old/Projects"]; got != hiddenWD {
+	if got := v2.Locations().ConfirmedHidden["/old/Projects"].Target; got != hiddenWD {
 		t.Fatalf("--workdir-map not confirmed: %q", got)
 	}
 }
@@ -126,7 +127,7 @@ func TestBundleConfirmedHiddenIgnored(t *testing.T) {
 	// This machine saved the mapping but never confirmed it.
 	o.Known.WorkDirMaps = map[string]string{"/old/Projects": hiddenWD}
 	set.WorkDirMaps = map[string]string{"/old/Projects": hiddenWD}
-	set.ConfirmedHidden = map[string]string{"/old/Projects": hiddenWD}
+	set.ConfirmedHidden = map[string]locations.HiddenConfirm{"/old/Projects": {Target: hiddenWD, Projects: []string{"remote:github.com/acme/app"}}}
 	o.AcceptMatches = true
 	res, out := importOnce(t, set, &o, v, "")
 	if len(res.Missed) != 1 || !strings.Contains(res.Missed[0].Reason, "hidden") {
@@ -150,7 +151,7 @@ func TestProjectUnderConfirmedHiddenWorkDir(t *testing.T) {
 		return gitid.Repo{}, gitid.ErrNotRepo
 	}
 	o.Known.WorkDirMaps = map[string]string{"/old/Projects": hiddenWD}
-	o.Known.ConfirmedHidden = map[string]string{"/old/Projects": hiddenWD}
+	o.Known.ConfirmedHidden = map[string]locations.HiddenConfirm{"/old/Projects": {Target: hiddenWD, Projects: []string{"remote:github.com/acme/app"}}}
 	o.AcceptMatches = true
 	res, out := importOnce(t, set, &o, v, "")
 	if len(res.Missed) != 0 || len(res.Stored.Projects) != 1 || res.Stored.Projects[0].Abs != app {
@@ -167,7 +168,7 @@ func TestExportDropsConfirmedHidden(t *testing.T) {
 	if err := v.SetLocations(locations.Set{
 		WorkDirs:        []locations.WorkDir{{ID: "w1", Abs: "/here/Projects"}},
 		WorkDirMaps:     map[string]string{"/old/Projects": "/here/.work"},
-		ConfirmedHidden: map[string]string{"/old/Projects": "/here/.work"},
+		ConfirmedHidden: map[string]locations.HiddenConfirm{"/old/Projects": {Target: "/here/.work"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +185,7 @@ func confirmedVault(t *testing.T) (*locations.Set, locationOptions, *vault.Vault
 	set, o, v, hiddenWD := hiddenFixture(t)
 	o.Interactive = true
 	importOnce(t, set, &o, v, "y\n\n")
-	if v.Locations().ConfirmedHidden["/old/Projects"] != hiddenWD {
+	if v.Locations().ConfirmedHidden["/old/Projects"].Target != hiddenWD {
 		t.Fatalf("setup: %+v", v.Locations())
 	}
 	return set, o, v, hiddenWD
@@ -224,7 +225,7 @@ func TestEditedConfirmedHiddenRow(t *testing.T) {
 	if !strings.Contains(out, other+" is inside a hidden folder") {
 		t.Fatalf("new hidden target not asked:\n%s", out)
 	}
-	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != other || k.ConfirmedHidden["/old/Projects"] != other {
+	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != other || k.ConfirmedHidden["/old/Projects"].Target != other {
 		t.Fatalf("edit to hidden target: %+v", k)
 	}
 
@@ -236,7 +237,7 @@ func TestEditedConfirmedHiddenRow(t *testing.T) {
 	if !strings.Contains(out, x+" is inside a hidden folder") || len(res.Missed) != 1 {
 		t.Fatalf("declined hidden edit: %+v\n%s", res, out)
 	}
-	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != hiddenWD || k.ConfirmedHidden["/old/Projects"] != hiddenWD {
+	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != hiddenWD || k.ConfirmedHidden["/old/Projects"].Target != hiddenWD {
 		t.Fatalf("declined edit changed the vault: %+v", k)
 	}
 }
@@ -245,7 +246,75 @@ func TestEditedConfirmedHiddenRow(t *testing.T) {
 func TestSkippedRowKeepsSavedMapping(t *testing.T) {
 	set, o, v, hiddenWD := confirmedVault(t)
 	importOnce(t, set, &o, v, "1\n-\n\n")
-	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != hiddenWD || k.ConfirmedHidden["/old/Projects"] != hiddenWD {
+	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != hiddenWD || k.ConfirmedHidden["/old/Projects"].Target != hiddenWD {
 		t.Fatalf("skip changed the vault: %+v", k)
 	}
+}
+
+// A bundle path is only a name: a later bundle naming the same work dir with
+// a project the user never confirmed there is asked about again, and without
+// a terminal nothing lands in the hidden folder.
+func TestConfirmedHiddenDoesNotCoverOtherProjects(t *testing.T) {
+	set, o, v, hiddenWD := confirmedVault(t)
+	hostile := &locations.Set{
+		WorkDirs: set.WorkDirs,
+		Projects: append(append([]locations.Project(nil), set.Projects...),
+			locations.Project{ID: "p2", WorkDir: "w1", Rel: "evil", Abs: "/old/Projects/evil", GitRemote: "github.com/mallory/evil"}),
+	}
+	o.Interactive, o.AcceptMatches = false, true
+	res, out := importOnce(t, hostile, &o, v, "")
+	if len(res.Missed) == 0 || !strings.Contains(res.Missed[0].Reason, "hidden") {
+		t.Fatalf("hostile bundle used the confirmation: %+v\n%s", res, out)
+	}
+	for _, m := range res.Remaps {
+		if pathWithin(hiddenWD, m.To) {
+			t.Fatalf("remapped into the hidden folder unasked: %+v", m)
+		}
+	}
+	// A project without identity is matched by name only: also asked.
+	noID := &locations.Set{WorkDirs: set.WorkDirs, Projects: []locations.Project{{ID: "p3", WorkDir: "w1", Rel: "app", Abs: "/old/Projects/app"}}}
+	res, out = importOnce(t, noID, &o, v, "")
+	if strings.Contains(out, "(hidden, confirmed)") {
+		t.Fatalf("unidentified project used the confirmation: %+v\n%s", res, out)
+	}
+	for _, m := range res.Remaps {
+		if pathWithin(hiddenWD, m.To) {
+			t.Fatalf("unidentified project remapped into the hidden folder: %+v", m)
+		}
+	}
+
+	// On a terminal it is asked; a yes extends the confirmation.
+	o.Interactive, o.AcceptMatches = true, false
+	if _, out = importOnce(t, hostile, &o, v, "y\n\n"); !strings.Contains(out, "inside a hidden folder") {
+		t.Fatalf("not asked:\n%s", out)
+	}
+	c := v.Locations().ConfirmedHidden["/old/Projects"]
+	if c.Target != hiddenWD || !c.Covers([]string{"remote:github.com/acme/app", "remote:github.com/mallory/evil"}) {
+		t.Fatalf("yes did not extend the confirmation: %+v", c)
+	}
+	if _, out = importOnce(t, hostile, &o, v, "\n"); strings.Contains(out, "inside a hidden folder") {
+		t.Fatalf("asked again after the yes:\n%s", out)
+	}
+}
+
+// A confirmation in the older form (a bare target, no project list) is read
+// and confirms nothing.
+func TestOldConfirmedHiddenFormAsksAgain(t *testing.T) {
+	set, o, v, hiddenWD := hiddenFixture(t)
+	raw := `{"work_dir_maps":{"/old/Projects":` + strconvQuote(hiddenWD) + `},"confirmed_hidden":{"/old/Projects":` + strconvQuote(hiddenWD) + `}}`
+	if err := json.Unmarshal([]byte(raw), &o.Known); err != nil {
+		t.Fatal(err)
+	}
+	if o.Known.ConfirmedHidden["/old/Projects"].Target != hiddenWD {
+		t.Fatalf("old form not read: %+v", o.Known)
+	}
+	o.AcceptMatches = true
+	if res, out := importOnce(t, set, &o, v, ""); len(res.Missed) == 0 {
+		t.Fatalf("old confirmation without a project list was used: %+v\n%s", res, out)
+	}
+}
+
+func strconvQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }

@@ -106,15 +106,36 @@ func (r *locationResult) addNewMap(from, to string) {
 // addConfirmedHidden records that the user confirmed from -> to, a target in
 // a hidden folder, so a later import with the same saved mapping does not
 // ask again.
-func (r *locationResult) addConfirmedHidden(from, to string) {
+// projects are the ProjectKey of each bundle project under the work dir:
+// the confirmation covers those and no others.
+func (r *locationResult) addConfirmedHidden(from, to string, projects []string) {
 	key := locations.CleanForeign(from)
 	for i, m := range r.ConfirmedHidden {
 		if locations.CleanForeign(m.From) == key {
-			r.ConfirmedHidden[i].To = to
+			r.ConfirmedHidden[i] = confirmedHidden{From: from, To: to, Projects: projects}
 			return
 		}
 	}
-	r.ConfirmedHidden = append(r.ConfirmedHidden, pathRemap{From: from, To: to})
+	r.ConfirmedHidden = append(r.ConfirmedHidden, confirmedHidden{From: from, To: to, Projects: projects})
+}
+
+// confirmedHidden is a hidden work dir target the user confirmed, with the
+// projects it covers.
+type confirmedHidden struct {
+	From, To string
+	Projects []string
+}
+
+// workDirKeys is the ProjectKey of each project under the bundle work dir
+// at path from.
+func workDirKeys(set *locations.Set, from string) []string {
+	var out []string
+	for _, w := range set.WorkDirs {
+		if locations.CleanForeign(w.Abs) == locations.CleanForeign(from) {
+			out = append(out, locations.WorkDirProjectKeys(*set, w.ID)...)
+		}
+	}
+	return out
 }
 
 // flagHint is a flag line to paste into a shell: the bundle path in single
@@ -169,7 +190,7 @@ type locationResult struct {
 	// ConfirmedHidden are the NewMaps (or saved mappings) to a hidden folder
 	// the user confirmed here; they are saved so the next import skips the
 	// question.
-	ConfirmedHidden []pathRemap
+	ConfirmedHidden []confirmedHidden
 	// Missed are the work dirs and projects that could not be placed.
 	Missed []missedEntry
 	// SourceSkipped is set when the bundle's --project is among them.
@@ -236,7 +257,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		maps[k] = v
 		res.addNewMap(k, v)
 		if locations.HiddenBelowHome(v, o.Home) {
-			res.addConfirmedHidden(k, v)
+			res.addConfirmedHidden(k, v, workDirKeys(set, k))
 		}
 	}
 	targets, unmatched := locations.ResolveWorkDirs(*set, o.Home, maps)
@@ -247,8 +268,9 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		}
 	}
 	// A saved mapping to a hidden folder that was confirmed here before, for
-	// the same target, is not asked again. Only the vault (o.Known) is read:
-	// a bundle cannot confirm anything.
+	// the same target and for every project the bundle puts under it, is not
+	// asked again. Only the vault (o.Known) is read: a bundle cannot confirm
+	// anything, and a bundle reusing the path with other projects is asked.
 	o.confirmedHidden = map[string]bool{}
 	for _, w := range set.WorkDirs {
 		key := locations.CleanForeign(w.Abs)
@@ -256,7 +278,11 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		if !ok || userChosen[w.ID] {
 			continue
 		}
-		if saved, ok := o.Known.WorkDirMaps[key]; ok && saved == to && o.Known.ConfirmedHidden[key] == to {
+		if saved, ok := o.Known.WorkDirMaps[key]; ok && saved == to {
+			c := o.Known.ConfirmedHidden[key]
+			if c.Target != to || !c.Covers(locations.WorkDirProjectKeys(*set, w.ID)) {
+				continue
+			}
 			o.confirmedHidden[w.ID] = true
 		}
 	}
@@ -280,7 +306,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 				if !remembered {
 					res.addNewMap(w.Abs, got)
 					if locations.HiddenBelowHome(got, o.Home) {
-						res.addConfirmedHidden(w.Abs, got)
+						res.addConfirmedHidden(w.Abs, got, workDirKeys(set, w.Abs))
 					}
 				}
 				targets[w.ID], userChosen[w.ID] = got, true
@@ -328,7 +354,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 				if !remembered {
 					res.addNewMap(w.Abs, to)
 					if locations.HiddenBelowHome(to, o.Home) {
-						res.addConfirmedHidden(w.Abs, to)
+						res.addConfirmedHidden(w.Abs, to, workDirKeys(set, w.Abs))
 					}
 				}
 				sub := only(set, w.ID)
@@ -543,7 +569,7 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 				}
 				to = got
 				if locations.HiddenBelowHome(to, o.Home) {
-					res.addConfirmedHidden(r.From, to)
+					res.addConfirmedHidden(r.From, to, workDirKeys(set, r.From))
 				}
 			}
 			res.addNewMap(r.From, to)
