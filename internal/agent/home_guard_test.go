@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -45,7 +46,7 @@ func TestHomeGuardIsolatesUserHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(filepath.Dir(home)) == "home" || filepath.Base(filepath.Dir(home)) == "Users" {
+	if filepath.Dir(home) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(home), "agentvault-test-home-") {
 		t.Fatalf("tests run against a real home directory: %s", home)
 	}
 }
