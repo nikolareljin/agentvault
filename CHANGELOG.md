@@ -100,6 +100,23 @@
 - Asset paths with control characters are refused, so a path printed during
   import cannot rewrite the terminal. `--apply-projects` also refuses
   segments Windows reads as another name (`.git.`, `name:stream`).
+- Windows short names (`SETTIN~1.JSO`) and alternate data streams
+  (`.env::$DATA`) name another file there. Import refuses any bundle path
+  segment with `~N`, and the reference closure refuses both forms, so no
+  name check is judged against the wrong name.
+- Import refuses Windows device names (`CON`, `NUL`, `aux.md`, `COM1.txt`)
+  in any path segment: Windows opens them as devices, and writing one can
+  block.
+- A hard link inside a directory an instruction file names is refused, with
+  or without `--include-secrets`, as one named directly is. Pipes, sockets
+  and unreadable files there are listed as declined instead of ending the
+  export.
+- A pipe, socket or a name import would refuse (`backup~1.md`, `aux.md`)
+  inside a carried tool directory is skipped with a warning instead of
+  ending the export.
+- An asset is read through the descriptor that was checked, to at most its
+  cap: a file swapped, grown past the cap or replaced by a pipe after its
+  checks is not exported, and the read does not block.
 - Vault and bundle files carry their key-derivation parameters in a versioned
   header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
   Before, t=1 was fixed in the code. The header is authenticated with the

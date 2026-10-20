@@ -163,9 +163,17 @@ func TestPullDoesNotFollowIntoSecretFiles(t *testing.T) {
 	if err := reopened.Unlock(e2eMasterPassword); err != nil {
 		t.Fatal(err)
 	}
+	template := false
 	for _, inst := range reopened.ListInstructions() {
 		if strings.Contains(inst.Content, "s3cret") {
 			t.Fatalf("pull stored the secrets file as %q", inst.Filename)
 		}
+		if filepath.ToSlash(inst.Filename) == ".env.example" {
+			template = true
+		}
+	}
+	// Without this the check above passes on a pull that stored nothing.
+	if !template {
+		t.Errorf(".env.example not stored; stored %d instructions", len(reopened.ListInstructions()))
 	}
 }

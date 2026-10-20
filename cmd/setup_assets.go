@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -597,6 +598,11 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 			warnings = append(warnings, fmt.Sprintf("skipping symlink asset %q under %q", path, root))
 			return nil
 		}
+		if !d.Type().IsRegular() {
+			// A pipe or socket would block or fail the read, and end the export.
+			warnings = append(warnings, fmt.Sprintf("skipping %q under %q: not a regular file", path, root))
+			return nil
+		}
 		if isCredentialFile(path) {
 			warnings = append(warnings, fmt.Sprintf("skipping credential file %q; sign in on the other machine instead", path))
 			return nil
@@ -616,6 +622,12 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		projectRelative := ""
 		if projectPrefix != "" {
 			projectRelative = filepath.ToSlash(filepath.Join(projectPrefix, rel))
+		}
+		// A name import would refuse (NOTES~1.MD, aux.md) is left behind
+		// here with a warning, not an error that ends the export.
+		if _, err := sanitizeAssetRelativePath(logicalPath); err != nil {
+			warnings = append(warnings, fmt.Sprintf("skipping %q under %q: %v", path, root, err))
+			return nil
 		}
 		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, fileSensitive, includeSecrets, false)
 		if err != nil {
@@ -656,7 +668,7 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		Sensitive:           sensitive,
 	}
 
-	info, statErr := os.Lstat(path)
+	info, statErr := lstatPinned(path)
 	if statErr != nil {
 		if os.IsNotExist(statErr) && optional {
 			asset.Missing = true
@@ -683,9 +695,18 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		asset.Sensitive = true
 	}
 
-	data, err := os.ReadFile(path)
+	if afterAssetStat != nil {
+		afterAssetStat(path)
+	}
+	data, changed, err := readStattedFile(path, info, maxSetupAssetBytes)
 	if err != nil {
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
+	}
+	if changed != "" {
+		// Swapped or grown since the checks above: what those checks judged
+		// is not what would be read.
+		asset.Redacted = true
+		return asset, fmt.Sprintf("asset %q %s; not exported", path, changed), nil
 	}
 	asset.SizeBytes = int64(len(data))
 	if hardLinked && !includeSecrets {
@@ -716,6 +737,48 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	asset.ContentPresent = true
 	asset.Content = data
 	return asset, "", nil
+}
+
+// lstatPinned is os.Lstat with the file's identity read now. On Windows
+// os.SameFile looks a FileInfo's identity up by path on first use, so a
+// file swapped after Lstat would compare equal to its replacement.
+func lstatPinned(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err == nil {
+		_ = os.SameFile(info, info)
+	}
+	return info, err
+}
+
+// afterAssetStat is a test seam: it runs between the checks on a file and
+// the read of it.
+var afterAssetStat func(path string)
+
+// readStattedFile reads path through one open descriptor, and only when that
+// descriptor is still the regular file info described, read to at most max
+// bytes. changed says why not, when the file was swapped or grew past max
+// after info was taken. The open does not block on a pipe swapped in.
+func readStattedFile(path string, info os.FileInfo, max int64) ([]byte, string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|openNonBlock, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	got, err := f.Stat()
+	if err != nil {
+		return nil, "", err
+	}
+	if !got.Mode().IsRegular() || !os.SameFile(info, got) {
+		return nil, "changed after it was checked", nil
+	}
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Sprintf("grew past %d bytes while read", max), nil
+	}
+	return data, "", nil
 }
 
 func hashSetupAssetContent(data []byte) string {
@@ -1149,7 +1212,42 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 	if strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal is not allowed: %q", path)
 	}
+	// Windows resolves a short name such as SETTIN~1.JSO to the long file,
+	// so a name check on the bundle path would judge the wrong name.
+	for _, seg := range strings.Split(filepath.ToSlash(cleaned), "/") {
+		if windowsShortName.MatchString(seg) {
+			return "", fmt.Errorf("Windows short name (~N) is not allowed: %q", path)
+		}
+		if isWindowsDeviceName(seg) {
+			return "", fmt.Errorf("Windows device name is not allowed: %q", path)
+		}
+	}
 	return filepath.ToSlash(cleaned), nil
+}
+
+var windowsShortName = regexp.MustCompile(`~[0-9]`)
+
+// isWindowsDeviceName is whether Windows opens seg as a device rather than a
+// file: CON, NUL, AUX, PRN, COM1-9 and LPT1-9, with any extension, any case
+// and trailing dots or spaces (aux.md, Con .txt). Writing COM1 can block.
+func isWindowsDeviceName(seg string) bool {
+	stem := strings.ToLower(seg)
+	if i := strings.IndexByte(stem, '.'); i >= 0 {
+		stem = stem[:i]
+	}
+	stem = strings.TrimRight(stem, " ")
+	switch stem {
+	case "con", "prn", "aux", "nul", "conin$", "conout$":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
+		return stem[3] >= '0' && stem[3] <= '9'
+	}
+	r := []rune(stem)
+	if len(r) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
+		return r[3] == '\u00b9' || r[3] == '\u00b2' || r[3] == '\u00b3'
+	}
+	return false
 }
 
 func replaceRegularFile(tmpPath string, destPath string) error {

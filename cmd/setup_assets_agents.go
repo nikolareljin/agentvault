@@ -324,7 +324,7 @@ func stripCopilotLoginState(raw []byte) ([]byte, int, error) {
 // state, even with --include-secrets: a copied token is a session someone
 // else can use.
 func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []DeclinedAsset, string, error) {
-	info, err := os.Lstat(path)
+	info, err := lstatPinned(path)
 	if os.IsNotExist(err) {
 		return nil, nil, "", nil
 	}
@@ -335,9 +335,12 @@ func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []Decl
 	if !info.Mode().IsRegular() {
 		return nil, nil, fmt.Sprintf("skipping %s: not a regular file", path), nil
 	}
-	raw, err := os.ReadFile(path)
+	raw, changed, err := readStattedFile(path, info, maxSetupAssetBytes)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	if changed != "" {
+		return nil, nil, fmt.Sprintf("skipping %s: %s", path, changed), nil
 	}
 	data, n, err := stripCopilotLoginState(raw)
 	if err != nil {
@@ -449,7 +452,7 @@ var claudeUserConfigMergeKeys = []string{"mcpServers"}
 // ~/.claude.json, and nothing else from that file.
 func collectClaudeUserMCPServers(homeDir string, includeSecrets bool) (*SetupAsset, string, error) {
 	path := filepath.Join(homeDir, ".claude.json")
-	info, err := os.Lstat(path)
+	info, err := lstatPinned(path)
 	if os.IsNotExist(err) {
 		return nil, "", nil
 	}
@@ -459,9 +462,14 @@ func collectClaudeUserMCPServers(homeDir string, includeSecrets bool) (*SetupAss
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Sprintf("skipping %s: not a regular file", path), nil
 	}
-	raw, err := os.ReadFile(path)
+	// ~/.claude.json grows with project history; the cap is for a file
+	// swapped or grown while read, not for its normal size.
+	raw, changed, err := readStattedFile(path, info, 64<<20)
 	if err != nil {
 		return nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	if changed != "" {
+		return nil, fmt.Sprintf("skipping %s: %s", path, changed), nil
 	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -895,10 +903,18 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		// a config file) can hold a secret, so it is redacted without
 		// --include-secrets, like every other settings file. Both the name and
 		// the target count: notes.md can be a symlink to a JSON config.
+		shown := "~/" + filepath.ToSlash(rel)
+		if reason := referencedFileRefusal(real); reason != "" {
+			declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedByPolicy, Reason: reason})
+			return nil
+		}
 		asset, warn, err := loadSetupAsset(real, setupAssetKindProviderFile, setupAssetOriginProviderHome,
 			setupAssetRootProviderHome, filepath.ToSlash(rel), "", !isProseFile(abs) || !isProseFile(real), includeSecrets, true)
 		if err != nil {
-			return err
+			// One unreadable file a note names, or one named aux.md, does not
+			// end the export.
+			declined = append(declined, DeclinedAsset{Path: shown, Category: DeclinedByPolicy, Reason: "named, but not carried: unreadable, or a name import refuses"})
+			return nil
 		}
 		if warn != "" {
 			warnings = append(warnings, warn)
@@ -928,7 +944,9 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 				}
 				return nil
 			}
-			if d.Type()&os.ModeSymlink != 0 || refused(p) {
+			// Links, pipes, sockets and devices are not carried: a pipe would
+			// block the read, and a link names a file that was not checked.
+			if !d.Type().IsRegular() || refused(p) {
 				return nil
 			}
 			if n >= maxDirReferenceFiles {
@@ -956,8 +974,12 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		}
 		// Read from disk, not from the asset: without --include-secrets the
 		// settings file is redacted, and the scripts it runs are not secrets.
-		content, err := os.ReadFile(settings.SourcePath)
-		if err != nil {
+		info, err := lstatPinned(settings.SourcePath)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		content, changed, err := readStattedFile(settings.SourcePath, info, maxSetupAssetBytes)
+		if err != nil || changed != "" {
 			continue
 		}
 		by := "~/" + filepath.ToSlash(mustRel(homeDir, settings.SourcePath))
@@ -1008,6 +1030,21 @@ func collectHomeReferencedFiles(homeDir string, carried []SetupAsset, includeSec
 		}
 	}
 	return assets, dedupeDeclined(declined), warnings, nil
+}
+
+// referencedFileRefusal refuses a referenced file that has a second hard
+// link, with or without --include-secrets: its other name (.env, .netrc) was
+// never checked. Files a tool keeps in its own directory are redacted
+// instead, by loadSetupAsset.
+func referencedFileRefusal(p string) string {
+	info, err := os.Lstat(p)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	if agent.HardLinkCount(p, info) > 1 {
+		return "has another hard link; its other name cannot be checked"
+	}
+	return ""
 }
 
 func mustRel(base, p string) string {
@@ -1195,11 +1232,19 @@ func collectProjectReferenceClosure(projectDir string, seeds []SetupAsset, inclu
 		}
 		// Not prose (a script, a config file): redacted without
 		// --include-secrets, as at user scope.
-		asset, warn, err := loadSetupAsset(filepath.Join(projectDir, filepath.FromSlash(rel)),
+		full := filepath.Join(projectDir, filepath.FromSlash(rel))
+		if reason := referencedFileRefusal(full); reason != "" {
+			declined = append(declined, DeclinedAsset{Path: rel, Category: DeclinedByPolicy, Reason: reason})
+			return nil
+		}
+		asset, warn, err := loadSetupAsset(full,
 			setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject,
 			rel, rel, !isProseFile(rel), includeSecrets, true)
 		if err != nil {
-			return err
+			// One unreadable file a note names, or one named aux.md, does not
+			// end the export.
+			declined = append(declined, DeclinedAsset{Path: rel, Category: DeclinedByPolicy, Reason: "named, but not carried: unreadable, or a name import refuses"})
+			return nil
 		}
 		if warn != "" {
 			warnings = append(warnings, warn)
@@ -1246,7 +1291,7 @@ func collectProjectReferenceClosure(projectDir string, seeds []SetupAsset, inclu
 						}
 						return nil
 					}
-					if d.Type()&os.ModeSymlink != 0 || agent.SecretBearingReason(mustRel(projectDir, p)) != "" {
+					if !d.Type().IsRegular() || agent.SecretBearingReason(mustRel(projectDir, p)) != "" {
 						return nil
 					}
 					if n >= maxDirReferenceFiles {

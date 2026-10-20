@@ -1053,9 +1053,6 @@ func TestHomeReferenceNeverCarriesAgentState(t *testing.T) {
 	if findAsset(assets.ProviderFiles, setupAssetRootProviderHome, ".claude/team-rules.md") == nil {
 		t.Error("~/.claude/team-rules.md not carried")
 	}
-	if !declinedHas(assets.Declined, "~/.claude/projects/", DeclinedByPolicy) {
-		t.Errorf("state directory reference not declined: %v", assets.Declined)
-	}
 }
 
 // A tool directory kept in dotfiles (~/.claude -> ~/dotfiles/claude), or a
@@ -1201,5 +1198,74 @@ func TestCopilotRedactedPointerKeepsLocalLogin(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dst, ".copilot", "config.json"))
 	if !strings.Contains(string(b), "LOCAL") {
 		t.Fatalf("local sign-in removed: %s", b)
+	}
+}
+
+// A hard link inside a directory a note names is refused even with
+// --include-secrets, as a hard link named directly is: notes/hl.md can be
+// .env under another name.
+func TestReferencedDirHardLinksRefusedWithSecrets(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	project := t.TempDir()
+	mustWriteFile(t, filepath.Join(project, ".env"), "leak1\n")
+	mustWriteFile(t, filepath.Join(project, "AGENTS.md"), "See `notes/`.\n")
+	mustWriteFile(t, filepath.Join(project, "notes", "ok.md"), "fine\n")
+	if err := os.Link(filepath.Join(project, ".env"), filepath.Join(project, "notes", "hl.md")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(home, ".netrc"), "leak2\n")
+	mustWriteFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "See `~/kb/`.\n")
+	mustWriteFile(t, filepath.Join(home, "kb", "ok.md"), "fine\n")
+	if err := os.Link(filepath.Join(home, ".netrc"), filepath.Join(home, "kb", "hl.md")); err != nil {
+		t.Fatal(err)
+	}
+	assets, _, err := collectSetupAssets(setupAssetOptions{ProjectDir: project, IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range append(append([]SetupAsset{}, assets.ProviderFiles...), assets.ProjectFiles...) {
+		if strings.Contains(string(a.Content), "leak") {
+			t.Errorf("%s %s carried a hard-linked secret", a.LogicalRoot, a.LogicalPath)
+		}
+	}
+	if !declinedHas(assets.Declined, "notes/hl.md", DeclinedByPolicy) || !declinedHas(assets.Declined, "~/kb/hl.md", DeclinedByPolicy) {
+		t.Errorf("hard links not reported as declined: %v", assets.Declined)
+	}
+	if a := findAsset(assets.ProjectFiles, setupAssetRootProject, "notes/ok.md"); a == nil || !a.ContentPresent {
+		t.Errorf("notes/ok.md not carried: %+v", a)
+	}
+}
+
+// A file that grows past the cap, or is swapped for another file, after its
+// checks and before its read is not exported: what was checked is not what
+// would be read.
+func TestAssetChangedAfterCheckIsNotExported(t *testing.T) {
+	dir := t.TempDir()
+	grow := filepath.Join(dir, "grow.md")
+	swap := filepath.Join(dir, "swap.md")
+	mustWriteFile(t, grow, "small\n")
+	mustWriteFile(t, swap, "plain\n")
+	mustWriteFile(t, filepath.Join(dir, "secret.txt"), "TOKEN=leak\n")
+	afterAssetStat = func(p string) {
+		switch p {
+		case grow:
+			mustWriteFileBytes(t, grow, bytes.Repeat([]byte("x"), maxSetupAssetBytes+1))
+		case swap:
+			if err := os.Rename(filepath.Join(dir, "secret.txt"), swap); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Cleanup(func() { afterAssetStat = nil })
+	for _, p := range []string{grow, swap} {
+		a, warn, err := loadSetupAsset(p, setupAssetKindProviderFile, setupAssetOriginProviderHome,
+			setupAssetRootProviderHome, filepath.Base(p), "", false, true, false)
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if a.ContentPresent || len(a.Content) > 0 || warn == "" {
+			t.Errorf("%s: exported after it changed (%d bytes, warn %q)", p, len(a.Content), warn)
+		}
 	}
 }

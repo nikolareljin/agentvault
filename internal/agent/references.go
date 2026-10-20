@@ -316,6 +316,7 @@ var (
 	secretDirs = map[string]bool{
 		".ssh": true, ".gnupg": true, ".aws": true, ".kube": true, ".docker": true, ".azure": true,
 	}
+	shortName = regexp.MustCompile(`~[0-9]`)
 	// .env variants that are templates by name, not secrets.
 	envTemplates = map[string]bool{
 		".env.example": true, ".env.sample": true, ".env.template": true, ".env.dist": true,
@@ -326,7 +327,21 @@ var (
 // does not. rel is slash- or OS-separated and relative.
 func SecretBearingReason(rel string) string {
 	slashed := filepath.ToSlash(rel)
-	for _, seg := range strings.Split(slashed, "/") {
+	segs := strings.Split(slashed, "/")
+	for i, seg := range segs {
+		// Windows reads ".env::$DATA" and ".env:x" as .env: a name ends at
+		// the first colon there.
+		if c := strings.IndexByte(seg, ':'); c >= 0 {
+			segs[i] = seg[:c]
+		}
+		// A Windows short name (ENV~1, CREDEN~1.JSO) is another name for a
+		// file whose long name cannot be checked from here.
+		if shortName.MatchString(seg) {
+			return "a Windows short name; its long name cannot be checked"
+		}
+	}
+	slashed = strings.Join(segs, "/")
+	for _, seg := range segs {
 		// Windows drops trailing dots and spaces: ".aws." is .aws there.
 		if secretDirs[strings.TrimRight(strings.ToLower(seg), ". ")] {
 			return "under " + seg + ", which holds credentials"
