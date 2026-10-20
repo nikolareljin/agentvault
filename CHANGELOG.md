@@ -44,16 +44,25 @@
   this machine's value and names each one: `hooks` events, `statusLine`,
   credential helpers, plugins and marketplaces, MCP servers of any type,
   code-loading `env` variables (`NODE_OPTIONS`, `LD_PRELOAD` and the like),
+  `env` variables that route requests (`ANTHROPIC_BASE_URL`, `*PROXY*`),
+  Copilot `trusted_folders`, JSON settings that do not parse as plain JSON,
   other command fields, trusted Codex projects, and new or changed files
   that are not prose or settings (hook scripts, extensionless files). A
   Codex `config.toml` whose parsed `mcp_servers`, `notify`,
-  `model_providers`, `projects`, `approval_policy` or `sandbox_mode` differ,
+  `model_providers`, `projects`, `approval_policy`, `sandbox_mode`, `hooks`
+  or URL and endpoint keys (`chatgpt_base_url`) differ,
   or that does not parse, is not applied.
 - The Codex provider config is applied as files through the same checks.
   `SaveCodexConfig` refuses a rule name that is not a plain file name
   before writing anything (a name such as `../../.bashrc` wrote outside
   `~/.codex/rules`), and import no longer deletes local Codex rules.
   `--keep-bundle-commands` keeps them.
+- `import --dry-run` with `--apply-provider-configs` or `--apply-projects`
+  lists each file it would write, replace, keep or leave out, and writes
+  nothing.
+- Export skips the `.bak-YYYYMMDD-HHMMSS` backups import leaves next to
+  replaced files.
+- Tests run with `HOME` and the config directories pointed at a temp dir.
 - Import keeps broad allow rules such as `Bash(find:*)`, `Bash(git:*)` and
   `Bash(make:*)`, and prints one WARNING block naming each and why it can
   run other programs.

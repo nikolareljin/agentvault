@@ -642,7 +642,7 @@ Flags:
 - `--profile <name|all>`: Which bundle profile to import. Required for a multi-profile
   bundle when stdin is not a terminal. `mirror` accepts a single profile only.
 - `--list` (default: `false`): List the profiles in the bundle and exit.
-- `--dry-run` (default: `false`): Report what would change without writing.
+- `--dry-run` (default: `false`): Report what would change without writing. With `--apply-provider-configs` or `--apply-projects` it also lists each file it would write, back up and replace, keep, or leave out, and each command it would leave out. It writes no file, backup or directory, and asks nothing.
 - `--apply-provider-configs` (default: `false`): Write provider configs and provider asset
   files back to the system after import.
 - `--apply-projects` (default: `false`): Write the bundle's project files into `--project-root`.
@@ -652,12 +652,14 @@ Flags:
 - `--keep-bundle-commands` (default: `false`): Keep the commands the bundle adds or changes. By default import keeps this machine's value, and names each one left out, for:
   - each `hooks` event, `statusLine`, `fileSuggestion`, credential helpers (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`), `enabledPlugins` and `extraKnownMarketplaces`;
   - each MCP server (`mcpServers`, `servers`), of any type, that is new or differs in anything but its blanked secrets;
-  - code-loading variables in an `env` map (`NODE_OPTIONS`, `LD_PRELOAD`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH` and the like);
+  - code-loading variables in an `env` map (`NODE_OPTIONS`, `LD_PRELOAD`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH` and the like), and variables that send requests elsewhere (any `*_URL`, `*_HOST` or `*_ENDPOINT`, such as `ANTHROPIC_BASE_URL`, any `*PROXY*`, and CA bundle settings such as `NODE_EXTRA_CA_CERTS`);
+  - Copilot `trusted_folders`;
+  - a JSON settings file that does not parse as a plain JSON object (comments, trailing data) and differs: it is not applied;
   - any other top-level key under which a `command`, `args`, `*Command` or `*Helper` field differs (Gemini `tools.discoveryCommand`, `tools.callCommand`);
   - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
   - trusted projects from the Codex provider config that are new or changed.
 
-  A Codex `config.toml` is compared after parsing: if its `mcp_servers`, `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), or any command field, differ, or it does not parse, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
+  A Codex `config.toml` is compared after parsing: if its `mcp_servers`, `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, or it does not parse, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
 - `--on-conflict <backup-replace|keep>`: What to do with a provider file, Claude project memory file or `--apply-projects` file that already exists and differs. Without it, import asks on a terminal and backs up and replaces otherwise; `--strategy merge` given explicitly means `keep`, `replace` and `mirror` mean `backup-replace`.
 - `--confirm` (default: `false`): Skip the confirmation prompt that guards `mirror`.
 
@@ -677,7 +679,7 @@ in /home/alex/.claude: local settings.json (changed 2026-10-18 09:12), bundle (c
 [b]ackup + replace / [k]eep existing (ba, ka: same for all remaining) [b]:
 ```
 
-Without a terminal, or with `--on-conflict backup-replace`, the file is backed up and replaced. A backup is the file as it was before the import, at `<file>.bak-YYYYMMDD-HHMMSS` (with `-1`, `-2` added if that name exists; an existing file is never overwritten). Import lists every backup at the end.
+Without a terminal, or with `--on-conflict backup-replace`, the file is backed up and replaced. A backup is the file as it was before the import, at `<file>.bak-YYYYMMDD-HHMMSS` (with `-1`, `-2` added if that name exists; an existing file is never overwritten). Import lists every backup at the end. Export does not carry these backups.
 
 A JSON provider file is merged by top-level key: the bundle's keys overwrite, keys only this machine has stay. A key only this machine has that holds a secret stays only when the bundle changes nothing else in the file, or on a yes to the prompt above.
 

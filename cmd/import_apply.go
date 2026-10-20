@@ -43,6 +43,9 @@ func parseConflictPolicy(v string) (conflictPolicy, error) {
 // files as they were before the run, and the backups made.
 type importApplyContext struct {
 	KeepBundleCommands bool
+	// DryRun reports what would be written, replaced and left out, and
+	// writes nothing: no file, no backup, no directory.
+	DryRun bool
 	// OnConflict is the policy from flags; conflictAsk asks when
 	// interactive and replaces with a backup otherwise.
 	OnConflict  conflictPolicy
@@ -188,11 +191,29 @@ func (c *importApplyContext) decide(dest string) (bool, error) {
 	}
 }
 
+// preview says what a run would do with a conflict on dest, without asking.
+func (c *importApplyContext) preview(dest string) string {
+	policy := c.OnConflict
+	if policy == conflictAsk {
+		policy = c.all
+	}
+	if policy == conflictAsk && (!c.Interactive || c.In == nil) {
+		policy = conflictBackupReplace
+	}
+	switch policy {
+	case conflictKeep:
+		return "would keep this machine's " + dest + ", which differs from the bundle"
+	case conflictBackupReplace:
+		return "would back up and replace " + dest
+	}
+	return "would ask whether to back up and replace " + dest
+}
+
 // restoreAsker asks once per changed definition in one file whether this
 // machine's secret may go into it. Not interactive: no.
 func (c *importApplyContext) restoreAsker(file string) func(owner string, local, bundle any) bool {
 	return func(owner string, local, bundle any) bool {
-		if !c.Interactive || c.In == nil {
+		if !c.Interactive || c.In == nil || c.DryRun {
 			return false
 		}
 		key := file + "\x00" + owner
@@ -298,6 +319,11 @@ func decodeSettingsObject(data []byte) (map[string]any, bool) {
 	if err := dec.Decode(&doc); err != nil || doc == nil {
 		return nil, false
 	}
+	// Anything after the object (a second object, a comment) is a file
+	// the agent tool may read differently, or not at all.
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
+	}
 	return doc, true
 }
 
@@ -310,7 +336,8 @@ func jsonEqual(a, b any) bool {
 // bundleCommandKeys are top-level settings that run code or load it: hooks,
 // the status line, credential helpers, plugins and their marketplaces.
 var bundleCommandKeys = []string{"hooks", "statusLine", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport",
-	"otelHeadersHelper", "enabledPlugins", "extraKnownMarketplaces", "plugins", "marketplaces", "fileSuggestion"}
+	"otelHeadersHelper", "enabledPlugins", "extraKnownMarketplaces", "plugins", "marketplaces", "fileSuggestion",
+	"trusted_folders"}
 
 // codeLoadingEnv are environment variables that make another program load
 // or run code.
@@ -322,6 +349,29 @@ var codeLoadingEnv = map[string]bool{
 	"_JAVA_OPTIONS": true, "JDK_JAVA_OPTIONS": true, "GIT_SSH_COMMAND": true, "GIT_SSH": true, "GIT_EXEC_PATH": true,
 	"GIT_PAGER": true, "PAGER": true, "EDITOR": true, "VISUAL": true, "SHELL": true, "PATH": true,
 	"GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_SYSTEM": true, "NPM_CONFIG_PREFIX": true, "CLAUDE_CODE_SHELL_PREFIX": true,
+}
+
+// routingEnv are environment variables that change where requests go or
+// which certificates are trusted: a bundle that sets one receives this
+// machine's API key or apiKeyHelper output.
+var routingEnv = map[string]bool{
+	"NODE_EXTRA_CA_CERTS": true, "NODE_TLS_REJECT_UNAUTHORIZED": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
+	"REQUESTS_CA_BUNDLE": true, "CURL_CA_BUNDLE": true, "ANTHROPIC_CUSTOM_HEADERS": true, "OTEL_EXPORTER_OTLP_HEADERS": true,
+}
+
+// gatedEnv is an env entry the bundle may not add or change: one that loads
+// code, or one that sends requests (and the key with them) elsewhere.
+func gatedEnv(name string) bool {
+	u := strings.ToUpper(name)
+	if codeLoadingEnv[u] || routingEnv[u] || strings.Contains(u, "PROXY") {
+		return true
+	}
+	for _, suffix := range []string{"_BASE_URL", "_API_URL", "_API_BASE", "_ENDPOINT", "_HOST", "_URL"} {
+		if strings.HasSuffix(u, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // commandField is a key whose value is a program to run: command, args, and
@@ -336,7 +386,8 @@ func commandField(k string) bool {
 //   - each MCP server, wherever an mcpServers map sits, that is new or
 //     differs in anything but its blanked secrets, whatever its type;
 //   - each hooks event, and the other bundleCommandKeys whole;
-//   - each code-loading variable in any env map outside an MCP server;
+//   - each code-loading or request-routing variable in any env map outside
+//     an MCP server;
 //   - any other top-level key under which a command field differs.
 //
 // A value the bundle blanked as a secret is left to the secret restore. It
@@ -443,7 +494,7 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 				}
 				localEnv, _ := lm[k].(map[string]any)
 				for _, v := range sortedKeys(env) {
-					if !codeLoadingEnv[strings.ToUpper(v)] {
+					if !gatedEnv(v) {
 						continue
 					}
 					lv, lok := localEnv[v]
@@ -557,7 +608,10 @@ func codexCommandKey(k string) bool {
 			return true
 		}
 	}
-	return false
+	// Where requests go, and the login token with them (chatgpt_base_url,
+	// an otel endpoint), and hooks.
+	l := strings.ToLower(k)
+	return l == "hooks" || l == "otel" || strings.HasSuffix(l, "url") || strings.HasSuffix(l, "endpoint")
 }
 
 // codexCommandsChanged is whether the bundle's config.toml runs or loads

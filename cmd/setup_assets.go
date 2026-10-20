@@ -571,6 +571,9 @@ func collectSkillAssets(homeDir string, projectDir string, includeSecrets bool) 
 	return assets, warnings, nil
 }
 
+// importBackupName matches the names writeExclusiveBackup creates.
+var importBackupName = regexp.MustCompile(`\.bak-[0-9]{8}-[0-9]{6}(-[0-9]+)?$`)
+
 func collectDirFiles(root string, kind string, origin string, logicalRoot string, logicalPrefix string, projectPrefix string, sensitive bool, includeSecrets bool) ([]SetupAsset, []string, error) {
 	info, err := os.Lstat(root)
 	if err != nil {
@@ -606,6 +609,12 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		}
 		if isCredentialFile(path) {
 			warnings = append(warnings, fmt.Sprintf("skipping credential file %q; sign in on the other machine instead", path))
+			return nil
+		}
+		// A backup import made of a replaced file is this machine's old
+		// copy, secrets and all; it never travels.
+		if importBackupName.MatchString(d.Name()) {
+			warnings = append(warnings, fmt.Sprintf("skipping import backup %q", path))
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)
@@ -1116,8 +1125,10 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
-			return applied, warnings, fmt.Errorf("creating provider asset directory: %w", err)
+		if !ctx.DryRun {
+			if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+				return applied, warnings, fmt.Errorf("creating provider asset directory: %w", err)
+			}
 		}
 		if info, err := os.Lstat(dest); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
@@ -1169,6 +1180,15 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 					continue
 				}
 			} else {
+				if jsonSettingsAsset(asset) && !bytes.Equal(original, content) {
+					if _, ok := decodeSettingsObject(content); !ok {
+						// Comments or trailing data: it cannot be checked key
+						// by key, and the tool may still read it (Gemini
+						// strips comments).
+						warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, it does not parse as a plain JSON object, so its commands cannot be checked; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+						continue
+					}
+				}
 				var dropped []string
 				content, dropped = dropBundleCommands(content, original)
 				for _, d := range dropped {
@@ -1227,7 +1247,19 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		if claudeSettings {
 			ctx.Broad = append(ctx.Broad, broadAllows(content)...)
 		}
-		if _, err := os.Lstat(dest); err == nil && !sameFileBytes(current, content) {
+		_, statErr := os.Lstat(dest)
+		exists := statErr == nil
+		if ctx.DryRun {
+			switch {
+			case !exists:
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: would write %s", desc, dest))
+			case sameFileBytes(current, content):
+			default:
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: %s", desc, ctx.preview(dest)))
+			}
+			continue
+		}
+		if exists && !sameFileBytes(current, content) {
 			replace, err := ctx.decide(dest)
 			if err != nil {
 				return applied, warnings, err
@@ -1257,6 +1289,13 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		applied++
 	}
 	return applied, warnings, nil
+}
+
+// jsonSettingsAsset is a provider file read as JSON settings.
+func jsonSettingsAsset(asset SetupAsset) bool {
+	p := strings.ToLower(strings.TrimRight(asset.LogicalPath, ". "))
+	ext := filepath.Ext(p)
+	return ext == ".json" || ext == ".jsonc"
 }
 
 func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) {

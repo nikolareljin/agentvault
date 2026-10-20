@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -186,7 +187,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		total.Removed += plan.Report.Removed
 
 		if dryRun {
-			printAssetRemaps(cmd, profile.Setup, assetOpts)
+			previewProfileAssets(cmd, profile.Setup, assetOpts)
 			continue
 		}
 		if err := commitProfileImport(v, plan); err != nil {
@@ -445,16 +446,91 @@ func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle
 	return setup, report, nil
 }
 
-// printAssetRemaps is the --dry-run view of remapProfileAssets.
-func printAssetRemaps(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) {
-	_, report, err := remapProfileAssets(setup, opts)
+// previewProfileAssets is the --dry-run view of importProfileAssets: the
+// path rewrites, and with --apply-projects or --apply-provider-configs each
+// file it would write, replace, keep or leave out. It writes nothing.
+func previewProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) {
+	out := cmd.OutOrStdout()
+	setup, report, err := remapProfileAssets(setup, opts)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(err.Error()))
 		return
 	}
 	for _, line := range report {
-		fmt.Fprintf(cmd.OutOrStdout(), "  path: %s\n", printable(line))
+		fmt.Fprintf(out, "  path: %s\n", printable(line))
 	}
+	ctx := opts.applyContext()
+	dry := *ctx
+	dry.DryRun = true
+	if opts.ApplyProjects {
+		for _, line := range previewProjectAssets(setup.ProjectFiles, opts.ProjectRoot, &dry) {
+			fmt.Fprintf(out, "  project: %s\n", printable(line))
+		}
+	}
+	if !opts.ApplyConfigs {
+		return
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not resolve home directory: %v\n", err)
+		return
+	}
+	assets, dropped := providerAssetsToApply(setup, homeDir, ctx.KeepBundleCommands)
+	for _, d := range dropped {
+		fmt.Fprintf(out, "  would: Codex provider config: leave out %s\n", printable(d))
+	}
+	_, lines, err := applyProviderAssetsWith(homeDir, assets, &dry)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(err.Error()))
+	}
+	for _, line := range lines {
+		fmt.Fprintf(out, "  would: %s\n", printable(line))
+	}
+}
+
+// previewProjectAssets says, per project file, what --apply-projects would
+// do in root, without staging or writing anything.
+func previewProjectAssets(files []SetupAsset, root string, ctx *importApplyContext) []string {
+	var out []string
+	for _, asset := range files {
+		if asset.Redacted || asset.Missing || !asset.ContentPresent {
+			continue
+		}
+		rel := asset.ProjectRelativePath
+		if rel == "" {
+			rel = asset.LogicalPath
+		}
+		if reason := projectAssetRefusal(rel); reason != "" {
+			out = append(out, fmt.Sprintf("%s: not written: %s", rel, reason))
+			continue
+		}
+		dest, err := safeJoinUnder(root, rel)
+		if err != nil {
+			out = append(out, fmt.Sprintf("%s: not written: %v", rel, err))
+			continue
+		}
+		existing, err := readExistingFile(dest)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			out = append(out, fmt.Sprintf("%s: would write %s", rel, dest))
+		case err != nil:
+			out = append(out, fmt.Sprintf("%s: not written: %v", rel, err))
+		case bytes.Equal(existing, asset.Content):
+		default:
+			out = append(out, fmt.Sprintf("%s: %s", rel, ctx.preview(dest)))
+		}
+	}
+	return out
+}
+
+// providerAssetsToApply are the files --apply-provider-configs writes: the
+// Claude and Codex provider configs as files, then the bundle's provider
+// files and skills. It also returns what it left out of the Codex config.
+func providerAssetsToApply(setup SetupBundle, homeDir string, keepCommands bool) ([]SetupAsset, []string) {
+	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
+	codexAssets, codexDropped := codexConfigAssets(setup.ProviderConfigs.Codex, homeDir, keepCommands)
+	configAssets = append(configAssets, codexAssets...)
+	return append(append(configAssets, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...), codexDropped
 }
 
 func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) error {
@@ -524,18 +600,15 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 	// The Claude provider config becomes settings.json and keybindings.json,
 	// applied like the bundle's own files: commands and interpreter allows
 	// checked, secrets kept, local keys kept, the old file backed up.
-	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not resolve home directory: %v\n", err)
 		return nil
 	}
-	codexAssets, codexDropped := codexConfigAssets(setup.ProviderConfigs.Codex, homeDir, ctx.KeepBundleCommands)
-	configAssets = append(configAssets, codexAssets...)
+	providerAssets, codexDropped := providerAssetsToApply(setup, homeDir, ctx.KeepBundleCommands)
 	for _, d := range codexDropped {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: Codex provider config: left out %s (use --keep-bundle-commands to take it)\n", printable(d))
 	}
-	providerAssets := append(append(configAssets, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...)
 	applied, warnings, err := applyProviderAssetsWith(homeDir, providerAssets, ctx)
 	if err != nil {
 		return fmt.Errorf("applying provider assets: %w", err)
