@@ -5,10 +5,12 @@
 ### Added
 - `import` rewrites the exporting machine's paths for this one. Its home
   directory becomes this home directory, its `--project` directory becomes
-  `--project-root`, and each `--map OLD=NEW` is applied first (OLD must be
-  an absolute path). This covers
+  `--project-root`, and each `--map OLD=NEW` is applied first (OLD and NEW
+  must be absolute paths; NEW may start with `~/`). This covers
   file content (hook commands, MCP server paths, notes) and Claude's
-  per-project memory directory names. Windows paths match in any case and
+  per-project memory directory names, and the provider configs that
+  `--apply-provider-configs` writes. A rename that would land on another
+  memory directory in the bundle is not made and is reported. Windows paths match in any case and
   with either separator (`C:/Users/x`), and
   a path moved between Windows and POSIX gets the new separators to its end.
   `--dry-run` prints every rewrite.
@@ -21,7 +23,8 @@
   like, and everything under `env` and `headers`). Import fills each blanked
   value from the file already on the machine, or leaves it out. A
   value is restored only into an unchanged definition (for settings.json's
-  own `env`, the rest of `env` must match), so a bundle that
+  own `env`, the rest of `env` must match; for a top-level key, every
+  top-level URL, host or endpoint field must match), so a bundle that
   points an MCP server elsewhere does not receive the local token. A file
   with secret-shaped values under neutral keys (`--token x` in `args` or a command,
   `X-API-Key: x` header arguments, URL credentials, known token prefixes) is

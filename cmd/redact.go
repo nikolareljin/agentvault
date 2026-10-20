@@ -229,6 +229,41 @@ func pointerDelete(doc map[string]any, p string) {
 	}
 }
 
+// pointerBlank removes a map key or sets an array element to "", the way
+// export left it.
+func pointerBlank(doc map[string]any, p string) {
+	parent, last := pointerParent(doc, p)
+	switch t := parent.(type) {
+	case map[string]any:
+		delete(t, last)
+	case []any:
+		if i, err := strconv.Atoi(last); err == nil && i >= 0 && i < len(t) {
+			t[i] = ""
+		}
+	}
+}
+
+// endpointKey names a top-level field that says where a request goes.
+var endpointKey = regexp.MustCompile(`(?i)url|uri|host|endpoint|proxy|server|base|domain`)
+
+// sameEndpoints is whether every top-level string field that names where a
+// request goes (a key such as baseUrl, or a value with "://") is the same in
+// both documents.
+func sameEndpoints(doc, have map[string]any) bool {
+	endpoint := func(k string, v any) bool {
+		s, ok := v.(string)
+		return ok && (endpointKey.MatchString(k) || strings.Contains(s, "://"))
+	}
+	for _, pair := range [][2]map[string]any{{doc, have}, {have, doc}} {
+		for k, v := range pair[0] {
+			if endpoint(k, v) && pair[1][k] != v {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 var (
 	// Credentials in a URL, a credential query parameter, or a well-known
 	// token prefix.
@@ -331,8 +366,9 @@ func restorable(doc, have map[string]any, p string, pointers []string) bool {
 	if cut == 0 {
 		if len(parts) == 1 {
 			// A top-level secret (apiKeyHelper) belongs to the tool that
-			// reads the file, on both machines.
-			return true
+			// reads the file, on both machines, as long as the file still
+			// sends it to the same place.
+			return sameEndpoints(doc, have)
 		}
 		// settings.json's own env: the rest of env must match too, or a
 		// bundle that sets ANTHROPIC_BASE_URL elsewhere receives the key.
@@ -370,7 +406,7 @@ func sameApartFromSecrets(a, b any, prefix string, pointers []string) bool {
 		}
 		for _, p := range pointers {
 			if strings.HasPrefix(p, prefix+"/") {
-				pointerDelete(m, strings.TrimPrefix(p, prefix))
+				pointerBlank(m, strings.TrimPrefix(p, prefix))
 			}
 		}
 		return m

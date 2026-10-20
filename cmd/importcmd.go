@@ -400,6 +400,14 @@ func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle
 	setup.SkillAssets, r = remapAssets(setup.SkillAssets, remaps, targetHome)
 	report = append(report, r...)
 	setup.InstructionOverrides, _ = remapAssets(setup.InstructionOverrides, remaps, targetHome)
+	configs, n, err := remapProviderConfigs(setup.ProviderConfigs, remaps)
+	if err != nil {
+		return setup, report, fmt.Errorf("rewriting paths in provider configs: %w", err)
+	}
+	if n > 0 {
+		setup.ProviderConfigs = configs
+		report = append(report, fmt.Sprintf("rewrote %d path(s) in provider configs", n))
+	}
 	return setup, report, nil
 }
 

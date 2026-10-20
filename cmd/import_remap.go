@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/nikolareljin/agentvault/internal/agent"
 )
 
 // A bundle's files name paths on the machine they came from: a hook command
@@ -52,10 +54,15 @@ func buildPathRemaps(sourceHome, targetHome, sourceProject, projectRoot string, 
 		if !ok || from == "" || to == "" {
 			return nil, fmt.Errorf("--map %q: want OLD=NEW", m)
 		}
+		to = expandUserPath(to)
 		from, to = strings.TrimRight(from, `/\`), strings.TrimRight(to, `/\`)
 		// A relative OLD (src=lib) would rewrite that word in any prose.
 		if !remappableRoot(from) {
 			return nil, fmt.Errorf("--map %q: OLD must be an absolute path below the filesystem root", m)
+		}
+		// A relative NEW would leave a path that depends on where a tool runs.
+		if !remappableRoot(to) {
+			return nil, fmt.Errorf("--map %q: NEW must be an absolute path below the filesystem root", m)
 		}
 		out = append(out, pathRemap{From: from, To: to})
 	}
@@ -272,9 +279,30 @@ func foreignHomePaths(text string) []string {
 // reports what changed and what still names another machine's home.
 func remapAssets(assets []SetupAsset, remaps []pathRemap, targetHome string) ([]SetupAsset, []string) {
 	var report []string
+	newPaths := make([]string, len(assets))
+	for i, a := range assets {
+		newPaths[i] = remapLogicalPath(a, remaps)
+	}
+	// Two directories can map to one name (--map /home/a/work=/home/b next
+	// to the home rewrite). A rename that lands on another asset's path is
+	// not made, so neither file overwrites the other.
+	for changed := true; changed; {
+		changed = false
+		count := map[string]int{}
+		for i, a := range assets {
+			count[a.LogicalRoot+"\x00"+newPaths[i]]++
+		}
+		for i, a := range assets {
+			if newPaths[i] != a.LogicalPath && count[a.LogicalRoot+"\x00"+newPaths[i]] > 1 {
+				report = append(report, fmt.Sprintf("warning: not renaming %q to %q: another file in the bundle has that name", a.LogicalPath, newPaths[i]))
+				newPaths[i] = a.LogicalPath
+				changed = true
+			}
+		}
+	}
 	out := make([]SetupAsset, len(assets))
 	for i, a := range assets {
-		if newPath := remapLogicalPath(a, remaps); newPath != a.LogicalPath {
+		if newPath := newPaths[i]; newPath != a.LogicalPath {
 			report = append(report, fmt.Sprintf("renamed %q -> %q", a.LogicalPath, newPath))
 			a.LogicalPath = newPath
 		}
@@ -328,4 +356,27 @@ func uniqueStrings(in []string) []string {
 		}
 	}
 	return out
+}
+
+// remapProviderConfigs rewrites the paths in the structured provider configs
+// that --apply-provider-configs writes (MCP server commands, Codex trusted
+// project paths), through their JSON form. On any error it returns the
+// configs unchanged.
+func remapProviderConfigs(c agent.ProviderConfig, remaps []pathRemap) (agent.ProviderConfig, int, error) {
+	if len(remaps) == 0 {
+		return c, 0, nil
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		return c, 0, err
+	}
+	text, n := remapText(string(data), remaps)
+	if n == 0 {
+		return c, 0, nil
+	}
+	var out agent.ProviderConfig
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return c, 0, err
+	}
+	return out, n, nil
 }
