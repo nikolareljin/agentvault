@@ -45,7 +45,8 @@
   credential helpers, plugins and marketplaces, MCP servers of any type,
   code-loading `env` variables (`NODE_OPTIONS`, `LD_PRELOAD` and the like),
   `env` variables that route requests (`ANTHROPIC_BASE_URL`, `*PROXY*`),
-  Copilot `trusted_folders`, JSON settings that do not parse as plain JSON,
+  provider switches (`CLAUDE_CODE_USE_BEDROCK`), folder trust (Copilot
+  `trusted_folders`, Gemini `trustedFolders.json`, `security.folderTrust`), JSON settings that do not parse as plain JSON,
   other command fields, trusted Codex projects, and new or changed files
   that are not prose or settings (hook scripts, extensionless files). A
   Codex `config.toml` whose parsed `mcp_servers`, `notify`,

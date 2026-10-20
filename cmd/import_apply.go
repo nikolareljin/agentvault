@@ -357,21 +357,21 @@ var codeLoadingEnv = map[string]bool{
 var routingEnv = map[string]bool{
 	"NODE_EXTRA_CA_CERTS": true, "NODE_TLS_REJECT_UNAUTHORIZED": true, "SSL_CERT_FILE": true, "SSL_CERT_DIR": true,
 	"REQUESTS_CA_BUNDLE": true, "CURL_CA_BUNDLE": true, "ANTHROPIC_CUSTOM_HEADERS": true, "OTEL_EXPORTER_OTLP_HEADERS": true,
+	// Provider selection: the request goes to another cloud account.
+	"CLAUDE_CODE_USE_BEDROCK": true, "CLAUDE_CODE_USE_VERTEX": true, "CLAUDE_CODE_USE_FOUNDRY": true,
+	"ANTHROPIC_FOUNDRY_RESOURCE": true,
 }
 
 // gatedEnv is an env entry the bundle may not add or change: one that loads
 // code, or one that sends requests (and the key with them) elsewhere.
 func gatedEnv(name string) bool {
 	u := strings.ToUpper(name)
-	if codeLoadingEnv[u] || routingEnv[u] || strings.Contains(u, "PROXY") {
+	// Contains, not suffix: AWS_ENDPOINT_URL_BEDROCK_RUNTIME.
+	if codeLoadingEnv[u] || routingEnv[u] || strings.Contains(u, "PROXY") || strings.Contains(u, "ENDPOINT") ||
+		strings.Contains(u, "_URL") || strings.Contains(u, "BASE_URL") || strings.Contains(u, "_API_BASE") {
 		return true
 	}
-	for _, suffix := range []string{"_BASE_URL", "_API_URL", "_API_BASE", "_ENDPOINT", "_HOST", "_URL"} {
-		if strings.HasSuffix(u, suffix) {
-			return true
-		}
-	}
-	return false
+	return strings.HasSuffix(u, "_HOST")
 }
 
 // commandField is a key whose value is a program to run: command, args, and
@@ -438,6 +438,17 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 		}
 		put(doc, k, lv, lok)
 		dropped = append(dropped, k)
+	}
+	// Folder trust lets a tool act in a directory without asking.
+	if sec, ok := doc["security"].(map[string]any); ok {
+		if bv, bok := sec["folderTrust"]; bok {
+			lsec, _ := have["security"].(map[string]any)
+			lv, lok := lsec["folderTrust"]
+			if !lok || !jsonEqual(bv, lv) {
+				put(sec, "folderTrust", lv, lok)
+				dropped = append(dropped, "security.folderTrust")
+			}
+		}
 	}
 	var walk func(b, l any, path string)
 	walk = func(b, l any, path string) {

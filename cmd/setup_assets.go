@@ -1173,6 +1173,12 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			warnings = append(warnings, fmt.Sprintf("provider asset %s: left out script, which the bundle adds or changes; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 			continue
 		}
+		if !ctx.KeepBundleCommands && asset.LogicalRoot == setupAssetRootProviderGemini &&
+			strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "trustedFolders.json") && !sameFileBytes(original, content) {
+			// Trust lets Gemini act in a folder without asking.
+			warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, the bundle adds or changes trusted folders; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+			continue
+		}
 		if !ctx.KeepBundleCommands {
 			if asset.LogicalRoot == setupAssetRootProviderCodex && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.toml") {
 				if codexCommandsChanged(content, original) {

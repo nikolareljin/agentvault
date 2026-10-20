@@ -184,3 +184,45 @@ func TestImportKeepsLocalSettingsThatDoNotParse(t *testing.T) {
 		t.Fatalf("not reported: %v", warnings)
 	}
 }
+
+func TestGatedEnvNames(t *testing.T) {
+	for _, n := range []string{"AWS_ENDPOINT_URL_BEDROCK_RUNTIME", "ANTHROPIC_BEDROCK_BASE_URL", "CLAUDE_CODE_USE_BEDROCK",
+		"CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_FOUNDRY_RESOURCE", "HTTPS_PROXY", "http_proxy", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "OLLAMA_HOST", "OPENAI_API_URL_X"} {
+		if !gatedEnv(n) {
+			t.Errorf("%s not gated", n)
+		}
+	}
+	for _, n := range []string{"FOO", "MAX_THINKING_TOKENS", "DISABLE_TELEMETRY"} {
+		if gatedEnv(n) {
+			t.Errorf("%s gated", n)
+		}
+	}
+}
+
+// Folder trust lets a tool act in a directory without asking: a bundle may
+// not add or change it.
+func TestImportKeepsLocalFolderTrust(t *testing.T) {
+	home := t.TempDir()
+	tf := filepath.Join(home, ".gemini", "trustedFolders.json")
+	mustWriteFile(t, tf, `{"/home/me/src":"TRUST_FOLDER"}`)
+	settings := filepath.Join(home, ".gemini", "settings.json")
+	mustWriteFile(t, settings, `{"security":{"folderTrust":{"enabled":true}},"theme":"a"}`)
+	assets := []SetupAsset{
+		{LogicalRoot: setupAssetRootProviderGemini, LogicalPath: "trustedFolders.json", ContentPresent: true, Content: []byte(`{"/":"TRUST_FOLDER"}`)},
+		{LogicalRoot: setupAssetRootProviderGemini, LogicalPath: "settings.json", ContentPresent: true, Content: []byte(`{"security":{"folderTrust":{"enabled":false}},"theme":"b"}`)},
+	}
+	_, warnings, err := applyProviderAssetsWith(home, assets, fixedCtx(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readString(t, tf); strings.Contains(got, `"/"`) {
+		t.Errorf("trusted folders taken: %s", got)
+	}
+	got := readString(t, settings)
+	if strings.Contains(got, "false") || !strings.Contains(got, `"b"`) {
+		t.Errorf("folderTrust taken or theme lost: %s", got)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "security.folderTrust") {
+		t.Errorf("not reported: %v", warnings)
+	}
+}

@@ -652,8 +652,8 @@ Flags:
 - `--keep-bundle-commands` (default: `false`): Keep the commands the bundle adds or changes. By default import keeps this machine's value, and names each one left out, for:
   - each `hooks` event, `statusLine`, `fileSuggestion`, credential helpers (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`), `enabledPlugins` and `extraKnownMarketplaces`;
   - each MCP server (`mcpServers`, `servers`), of any type, that is new or differs in anything but its blanked secrets;
-  - code-loading variables in an `env` map (`NODE_OPTIONS`, `LD_PRELOAD`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH` and the like), and variables that send requests elsewhere (any `*_URL`, `*_HOST` or `*_ENDPOINT`, such as `ANTHROPIC_BASE_URL`, any `*PROXY*`, and CA bundle settings such as `NODE_EXTRA_CA_CERTS`);
-  - Copilot `trusted_folders`;
+  - code-loading variables in an `env` map (`NODE_OPTIONS`, `LD_PRELOAD`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH` and the like), and variables that send requests elsewhere (any name containing `_URL`, `ENDPOINT` or `PROXY`, or ending in `_HOST`, such as `ANTHROPIC_BASE_URL` or `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`; provider switches `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_FOUNDRY_RESOURCE`; CA bundle settings such as `NODE_EXTRA_CA_CERTS`);
+  - folder trust: Copilot `trusted_folders`, Gemini `security.folderTrust`, and Gemini `trustedFolders.json` (kept whole);
   - a JSON settings file that does not parse as a plain JSON object (comments, trailing data) and differs: it is not applied. When this machine's copy is the one that does not parse, it is kept as it is;
   - any other top-level key under which a `command`, `args`, `*Command` or `*Helper` field differs (Gemini `tools.discoveryCommand`, `tools.callCommand`);
   - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
