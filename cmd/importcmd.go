@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
@@ -524,15 +525,15 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 	// applied like the bundle's own files: commands and interpreter allows
 	// checked, secrets kept, local keys kept, the old file backed up.
 	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
-	if setup.ProviderConfigs.Codex != nil {
-		if err := saveCodexConfigWithBackup(setup.ProviderConfigs.Codex, ctx); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not apply Codex config: %v\n", err)
-		}
-	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not resolve home directory: %v\n", err)
 		return nil
+	}
+	codexAssets, codexDropped := codexConfigAssets(setup.ProviderConfigs.Codex, homeDir, ctx.KeepBundleCommands)
+	configAssets = append(configAssets, codexAssets...)
+	for _, d := range codexDropped {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: Codex provider config: left out %s (use --keep-bundle-commands to take it)\n", printable(d))
 	}
 	providerAssets := append(append(configAssets, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...)
 	applied, warnings, err := applyProviderAssetsWith(homeDir, providerAssets, ctx)
@@ -680,26 +681,58 @@ func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
 	return out
 }
 
-// saveCodexConfigWithBackup writes the Codex provider config. SaveCodexConfig
-// rewrites ~/.codex/config.toml in place, so an existing file is a conflict:
-// kept, or backed up first. A file that cannot be backed up is kept.
-func saveCodexConfigWithBackup(c *agent.CodexConfig, ctx *importApplyContext) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+// codexConfigAssets turns the Codex provider config into the files it
+// would write, so they go through the asset checks (commands, conflicts,
+// backups) instead of SaveCodexConfig, which rewrites config.toml in place
+// and deletes local rules. A trusted project the bundle adds or changes is
+// left out unless keepCommands: trust lets Codex run commands there. A rule
+// whose name is not a plain file name is left out. It returns the assets
+// and what it left out.
+func codexConfigAssets(c *agent.CodexConfig, home string, keepCommands bool) ([]SetupAsset, []string) {
+	if c == nil {
+		return nil, nil
 	}
-	dest := filepath.Join(home, ".codex", "config.toml")
-	if _, err := os.Lstat(dest); err == nil {
-		replace, err := ctx.decide(dest)
-		if err != nil {
-			return err
-		}
-		if !replace {
-			return fmt.Errorf("kept this machine's %s", dest)
-		}
-		if _, err := ctx.backup(dest); err != nil {
-			return err
-		}
+	var dropped []string
+	existing, _ := readExistingFile(filepath.Join(home, ".codex", "config.toml"))
+	var local struct {
+		Projects map[string]struct {
+			TrustLevel string `toml:"trust_level"`
+		} `toml:"projects"`
 	}
-	return agent.SaveCodexConfig(c)
+	_, _ = toml.Decode(string(existing), &local)
+	projects := map[string]string{}
+	for p, v := range local.Projects {
+		projects[p] = v.TrustLevel
+	}
+	for _, p := range sortedStringKeys(c.TrustedProjects) {
+		level := c.TrustedProjects[p]
+		if cur, ok := projects[p]; ok && cur == level {
+			continue
+		}
+		if !keepCommands {
+			dropped = append(dropped, fmt.Sprintf("trusted project %q (%s)", p, level))
+			continue
+		}
+		projects[p] = level
+	}
+	out := []SetupAsset{{LogicalRoot: setupAssetRootProviderCodex, LogicalPath: "config.toml", ContentPresent: true,
+		Content: []byte(agent.CodexConfigTOML(string(existing), projects))}}
+	for _, name := range sortedStringKeys(c.Rules) {
+		if !agent.ValidRuleName(name) {
+			dropped = append(dropped, fmt.Sprintf("rule %q: not a plain file name", name))
+			continue
+		}
+		out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderCodex, LogicalPath: "rules/" + name + ".md",
+			ContentPresent: true, Content: []byte(c.Rules[name])})
+	}
+	return out, dropped
+}
+
+func sortedStringKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

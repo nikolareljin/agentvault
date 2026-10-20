@@ -654,9 +654,10 @@ Flags:
   - each MCP server (`mcpServers`, `servers`), of any type, that is new or differs in anything but its blanked secrets;
   - code-loading variables in an `env` map (`NODE_OPTIONS`, `LD_PRELOAD`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH` and the like);
   - any other top-level key under which a `command`, `args`, `*Command` or `*Helper` field differs (Gemini `tools.discoveryCommand`, `tools.callCommand`);
-  - scripts: a file under `hooks/` or with a script extension that is new or differs is not written.
+  - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
+  - trusted projects from the Codex provider config that are new or changed.
 
-  A Codex `config.toml` is compared after parsing: if its `mcp_servers`, `notify`, `model_providers` or `shell_environment_policy` (top level or under a profile), or any command field, differ, or it does not parse, it is not applied.
+  A Codex `config.toml` is compared after parsing: if its `mcp_servers`, `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), or any command field, differ, or it does not parse, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
 - `--on-conflict <backup-replace|keep>`: What to do with a provider file, Claude project memory file or `--apply-projects` file that already exists and differs. Without it, import asks on a terminal and backs up and replaces otherwise; `--strategy merge` given explicitly means `keep`, `replace` and `mirror` mean `backup-replace`.
 - `--confirm` (default: `false`): Skip the confirmation prompt that guards `mirror`.
 

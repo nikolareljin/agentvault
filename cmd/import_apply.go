@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -523,7 +524,8 @@ func sortedKeys(m map[string]any) []string {
 
 // codexCommandKeys are Codex config.toml keys that run programs or choose
 // where requests go; at the top level and under each profile.
-var codexCommandKeys = []string{"mcp_servers", "notify", "model_providers", "shell_environment_policy"}
+var codexCommandKeys = []string{"mcp_servers", "notify", "model_providers", "shell_environment_policy",
+	"projects", "approval_policy", "sandbox_mode", "sandbox_workspace_write"}
 
 // codexCommandView is the part of a decoded Codex config that runs or loads
 // code: codexCommandKeys at the top level and under profiles, and any
@@ -582,23 +584,24 @@ func codexCommandsChanged(content, local []byte) bool {
 	return false
 }
 
-// scriptAsset is a provider file that runs as a program: one in a hooks
-// directory or one with a script extension. (The execute bit is kept only
-// in a hooks directory, so it adds nothing here.)
+// proseExtensions are file types an agent tool reads rather than runs.
+// JSON and TOML settings are checked key by key instead.
+var proseExtensions = map[string]bool{".md": true, ".markdown": true, ".mdx": true, ".txt": true,
+	".rst": true, ".json": true, ".jsonc": true, ".toml": true}
+
+// scriptAsset is a provider file that may run as a program: anything in a
+// hooks directory, and anything that is not prose by extension (an
+// extensionless file can be a script with a #! line, and a kept command can
+// name any path).
 func scriptAsset(asset SetupAsset) bool {
 	if execAllowed(asset) {
 		return true
 	}
-	p := strings.ToLower(strings.ReplaceAll(asset.LogicalPath, `\`, "/"))
+	p := strings.ToLower(strings.ReplaceAll(strings.TrimRight(asset.LogicalPath, ". "), `\`, "/"))
 	if strings.HasPrefix(p, "hooks/") || strings.Contains(p, "/hooks/") {
 		return true
 	}
-	switch strings.ToLower(filepath.Ext(p)) {
-	case ".sh", ".bash", ".zsh", ".fish", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".php",
-		".ps1", ".psm1", ".bat", ".cmd", ".exe", ".lua", ".jar":
-		return true
-	}
-	return false
+	return !proseExtensions[path.Ext(p)]
 }
 
 // broadAllowReasons are commands common in allow rules that can still run

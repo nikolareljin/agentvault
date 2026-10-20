@@ -462,26 +462,65 @@ func TestRestorePromptSanitizesChangedKeys(t *testing.T) {
 	}
 }
 
-// The Codex provider config rewrites config.toml in place: kept with keep,
-// backed up before it is replaced otherwise.
-func TestCodexProviderConfigIsBackedUpOrKept(t *testing.T) {
+// The Codex provider config is applied as files: a trusted project the
+// bundle adds or changes and a rule name that is not a plain file name are
+// left out; nothing outside ~/.codex/rules is written.
+func TestCodexProviderConfigAssets(t *testing.T) {
 	home := t.TempDir()
 	setTestHomeDir(t, home)
-	cfg := filepath.Join(home, ".codex", "config.toml")
-	const local = "model = \"local\"\n"
-	mustWriteFile(t, cfg, local)
-	c := &agent.CodexConfig{TrustedProjects: map[string]string{"/p": "trusted"}}
-	ctx := fixedCtx("")
-	ctx.OnConflict = conflictKeep
-	if err := saveCodexConfigWithBackup(c, ctx); err == nil || readString(t, cfg) != local {
-		t.Errorf("keep: err=%v file=%q", err, readString(t, cfg))
+	mustWriteFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"m\"\n[projects.\"/ok\"]\ntrust_level = \"trusted\"\n")
+	c := &agent.CodexConfig{
+		TrustedProjects: map[string]string{"/ok": "trusted", "/evil": "trusted"},
+		Rules:           map[string]string{"style": "x", "../../.bashrc": "evil", "/etc/x": "evil", "a\x1bb": "evil", ".hidden": "evil"},
 	}
-	ctx = fixedCtx("")
-	if err := saveCodexConfigWithBackup(c, ctx); err != nil {
+	assets, dropped := codexConfigAssets(c, home, false)
+	if len(assets) != 2 || !strings.Contains(string(assets[0].Content), "/ok") || strings.Contains(string(assets[0].Content), "/evil") ||
+		assets[1].LogicalPath != "rules/style.md" {
+		t.Fatalf("assets = %+v", assets)
+	}
+	if len(dropped) != 5 || !strings.Contains(strings.Join(dropped, "\n"), `trusted project "/evil"`) {
+		t.Errorf("dropped = %v", dropped)
+	}
+	if _, _, err := applyProviderAssetsWith(home, assets, fixedCtx("")); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(readString(t, cfg), "/p") || len(ctx.Backups) != 1 || readString(t, ctx.Backups[0]) != local {
-		t.Errorf("replace: file=%q backups=%v", readString(t, cfg), ctx.Backups)
+	if readString(t, filepath.Join(home, ".codex", "rules", "style.md")) != "x" {
+		t.Error("rule not written")
+	}
+	if assets, _ := codexConfigAssets(c, home, true); !strings.Contains(string(assets[0].Content), "/evil") {
+		t.Error("--keep-bundle-commands did not keep the trusted project")
+	}
+	before := readString(t, filepath.Join(home, ".codex", "config.toml"))
+	if err := agent.SaveCodexConfig(&agent.CodexConfig{Rules: map[string]string{"../x": "evil"}}); err == nil {
+		t.Error("SaveCodexConfig accepted a rule name outside the rules directory")
+	}
+	if readString(t, filepath.Join(home, ".codex", "config.toml")) != before {
+		t.Error("SaveCodexConfig wrote config.toml before refusing the rule name")
+	}
+}
+
+// A bundle config.toml that trusts a new project or loosens approval is
+// not applied.
+func TestCodexConfigTrustAndApprovalAreCommands(t *testing.T) {
+	local := "approval_policy = \"on-request\"\n"
+	for _, evil := range []string{
+		"approval_policy = \"never\"\n",
+		"approval_policy = \"on-request\"\nsandbox_mode = \"danger-full-access\"\n",
+		"approval_policy = \"on-request\"\n[projects.\"/x\"]\ntrust_level = \"trusted\"\n",
+	} {
+		if !codexCommandsChanged([]byte(evil), []byte(local)) {
+			t.Errorf("not caught: %s", evil)
+		}
+	}
+}
+
+// Anything not prose by extension, extensionless included, is gated.
+func TestScriptAssetByExtension(t *testing.T) {
+	for p, want := range map[string]bool{"bin/notify": true, "x.sh": true, "tool.exe": true, "a/b.lua": true,
+		"agents/a.md": false, "settings.json": false, "config.toml": false, "notes.txt": false, "hooks/x.md": true} {
+		if got := scriptAsset(SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: p}); got != want {
+			t.Errorf("%s = %v, want %v", p, got, want)
+		}
 	}
 }
 
