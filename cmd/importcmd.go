@@ -228,6 +228,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			if err := v.SetLocations(locations.Merge(v.Locations(), match.Stored)); err != nil {
 				return fmt.Errorf("recording project locations: %w", err)
 			}
+			locOpts.Known = v.Locations()
 		}
 	}
 

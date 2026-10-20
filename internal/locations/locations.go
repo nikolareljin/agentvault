@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -257,6 +258,54 @@ func sameDir(a, b string) bool {
 		return filepath.Clean(a) == filepath.Clean(b)
 	}
 	return ra == rb
+}
+
+// CleanForeign cleans a path that may come from another OS without
+// converting it to this OS's form: a bundle path /home/a/x stays
+// forward-slashed on Windows, so it still matches the text it rewrites.
+// Trailing separators are removed. A Windows-style path (drive letter or
+// backslash) is only trimmed.
+func CleanForeign(p string) string {
+	p = strings.TrimSpace(p)
+	if strings.Contains(p, `\`) || len(p) >= 2 && p[1] == ':' {
+		return strings.TrimRight(p, `/\`)
+	}
+	if p == "" {
+		return ""
+	}
+	return strings.TrimRight(path.Clean(p), "/")
+}
+
+// foreignKey is CleanForeign with Windows paths compared without case and
+// with forward slashes, for overlap checks between paths of any OS.
+func foreignKey(p string) string {
+	c := CleanForeign(p)
+	if strings.Contains(c, `\`) || len(c) >= 2 && c[1] == ':' {
+		c = strings.ToLower(strings.ReplaceAll(c, `\`, "/"))
+	}
+	return c
+}
+
+// Overlaps reports whether a and b are the same path or one is below the
+// other, comparing paths of any OS.
+func Overlaps(a, b string) bool {
+	ka, kb := foreignKey(a), foreignKey(b)
+	if ka == "" || kb == "" {
+		return false
+	}
+	return ka == kb || strings.HasPrefix(kb, ka+"/") || strings.HasPrefix(ka, kb+"/")
+}
+
+// Below reports whether p is dir or below it, comparing paths of any OS.
+func Below(dir, p string) bool {
+	kd, kp := foreignKey(dir), foreignKey(p)
+	return kd != "" && kp != "" && (kp == kd || strings.HasPrefix(kp, kd+"/"))
+}
+
+// SameIdentity reports whether two records name one repository: the same
+// normalized remote, or no remote on either and a shared root commit set.
+func SameIdentity(a, b Project) bool {
+	return sameIdentity(a, b)
 }
 
 // safeRel is a bundle-supplied relative path that stays where it is joined:

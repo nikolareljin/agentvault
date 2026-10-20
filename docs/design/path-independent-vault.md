@@ -195,7 +195,11 @@ A memory dir key that would collide is still refused and reported.
   dropped with a warning. Bundle strings are printed with control
   characters replaced.
 - Bundle `aliases` are ignored. Import records the bundle `abs` as the one
-  alias, unless it is this home, above home, or above another known project.
+  alias, unless it is this home or above it, or equals, contains or sits
+  below any path or alias of a project with a different identity (known to
+  the vault or accepted earlier in the same import).
+- Bundle paths keep their own OS form (`/home/a` stays forward-slashed on
+  Windows), so they still match the text they rewrite.
 - The scan never follows symlinks out of the scanned root and never runs git
   in a directory it did not find under that root.
 - Remote URLs are stored normalized only, so tokens in `https://tok@host`

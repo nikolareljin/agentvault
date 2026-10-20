@@ -38,7 +38,7 @@ func ResolveWorkDirs(set Set, home string, maps map[string]string) (map[string]s
 	matched := map[string]string{}
 	var unmatched []WorkDir
 	for _, w := range set.WorkDirs {
-		if to, ok := maps[filepath.Clean(w.Abs)]; ok {
+		if to, ok := maps[CleanForeign(w.Abs)]; ok {
 			matched[w.ID] = to
 			continue
 		}

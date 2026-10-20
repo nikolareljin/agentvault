@@ -224,7 +224,7 @@ func TestConfirmDialog(t *testing.T) {
 	if err != nil || got[0].To != "" {
 		t.Fatalf("skip: %+v %v", got, err)
 	}
-	got, out, err = dialog(t, rows, home, "1\nrelative/path\n1\n/no/such/dir\n9\n\n")
+	got, out, err = dialog(t, rows, home, "1\nrelative/path\n1\n"+filepath.Join(home, "nope")+"\n9\n\n")
 	if err != nil || got[0].To != "/h/app" {
 		t.Fatalf("bad input changed a row: %+v %v", got, err)
 	}
@@ -273,5 +273,25 @@ func TestAskWorkDir(t *testing.T) {
 	}
 	if _, _, err := ask(""); !errors.Is(err, ErrAborted) {
 		t.Errorf("EOF: %v", err)
+	}
+}
+
+// A bundle path from another OS keeps its form, so it still matches the
+// text it rewrites: /home/a must not become \home\a on Windows.
+func TestCleanForeign(t *testing.T) {
+	for in, want := range map[string]string{
+		"/home/a/":      "/home/a",
+		"/home/a/./b//": "/home/a/b",
+		`C:\Users\a\`:   `C:\Users\a`,
+		"C:/Users/a/":   "C:/Users/a",
+		"/":             "",
+		"  /x/y  ":      "/x/y",
+	} {
+		if got := CleanForeign(in); got != want {
+			t.Errorf("CleanForeign(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if !Below("/a", "/a/b") || Below("/a/b", "/a") || Below("/a", "/ab") || !Below(`C:\Users`, "c:/users/x") {
+		t.Error("Below")
 	}
 }

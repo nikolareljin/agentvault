@@ -393,3 +393,56 @@ func TestBundleAliasesNotPersisted(t *testing.T) {
 		}
 	}
 }
+
+// An alias must not name a path of a different repository, including one
+// accepted earlier in the same import. The same repository may share it.
+func TestAliasRejectedWhenItNamesAnotherProject(t *testing.T) {
+	other := locations.Project{Abs: "/elsewhere/lib", GitRemote: "github.com/acme/lib", Aliases: []string{"/old/Projects/app"}}
+	self := locations.Project{Abs: "/old/Projects/app", GitRemote: "github.com/acme/app"}
+	if safeAlias(self.Abs, self, "/home/me", []locations.Project{other}) {
+		t.Error("alias equal to another repository's alias accepted")
+	}
+	if safeAlias(self.Abs, self, "/home/me", nil, []locations.Project{{Abs: "/old/Projects/app/sub", GitRemote: "github.com/x/y"}}) {
+		t.Error("alias above a project accepted earlier in this import")
+	}
+	if safeAlias("/old/Projects/app/sub", self, "/home/me", []locations.Project{{Abs: "/old/Projects/app", GitRemote: "github.com/x/y"}}) {
+		t.Error("alias below another repository accepted")
+	}
+	same := locations.Project{Abs: "/home/me/src/app", GitRemote: "github.com/acme/app", Aliases: []string{"/old/Projects/app"}}
+	if !safeAlias(self.Abs, self, "/home/me", []locations.Project{same}) {
+		t.Error("same repository refused its own alias")
+	}
+	if safeAlias("/home", self, "/home/me", nil) || safeAlias("/home/me", self, "/home/me", nil) {
+		t.Error("home or above accepted")
+	}
+	if !safeAlias("/old/Projects/app", self, "/home/me", nil) {
+		t.Error("plain alias refused")
+	}
+	if !locations.Overlaps(`C:\Users\A\x`, "c:/users/a") || locations.Overlaps("/a/bc", "/a/b") {
+		t.Error("Overlaps")
+	}
+}
+
+// Two projects in one bundle: the second one's alias sits under the first
+// one's, accepted moments earlier in the same import. It must be refused.
+func TestAliasCheckedAgainstThisImport(t *testing.T) {
+	_, set, o := matchFixture(t)
+	lib := filepath.Join(o.Home, "src", "lib")
+	mustMkdirAll(t, filepath.Join(lib, ".git"))
+	inner := o.Identify
+	o.Identify = func(ctx context.Context, dir string) (gitid.Repo, error) {
+		if dir == lib {
+			return gitid.Repo{Root: lib, Remote: "github.com/acme/lib"}, nil
+		}
+		return inner(ctx, dir)
+	}
+	set.Projects = append(set.Projects, locations.Project{ID: "p2", WorkDir: "w1", Rel: "app/lib", Abs: "/old/Projects/app/lib", GitRemote: "github.com/acme/lib"})
+	o.AcceptMatches = true
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Stored.Projects) != 2 || len(res.Stored.Projects[0].Aliases) != 1 || len(res.Stored.Projects[1].Aliases) != 0 {
+		t.Errorf("stored %+v", res.Stored.Projects)
+	}
+}

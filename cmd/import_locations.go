@@ -63,7 +63,7 @@ func parseWorkDirMaps(values []string) (map[string]string, error) {
 		if !ok || from == "" || to == "" {
 			return nil, fmt.Errorf("--workdir-map %q: want OLD=NEW", m)
 		}
-		from = strings.TrimRight(from, `/\`)
+		from = locations.CleanForeign(from)
 		if !remappableRoot(from) {
 			return nil, fmt.Errorf("--workdir-map %q: OLD must be an absolute path below the filesystem root", m)
 		}
@@ -74,7 +74,7 @@ func parseWorkDirMaps(values []string) (map[string]string, error) {
 		if info, err := os.Stat(abs); err != nil || !info.IsDir() {
 			return nil, fmt.Errorf("--workdir-map %q: %s is not a directory", m, abs)
 		}
-		out[filepath.Clean(from)] = filepath.Clean(abs)
+		out[from] = filepath.Clean(abs)
 	}
 	return out, nil
 }
@@ -103,7 +103,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 	targets, unmatched := locations.ResolveWorkDirs(*set, o.Home, o.WorkDirMaps)
 	userChosen := map[string]bool{}
 	for _, w := range set.WorkDirs {
-		if _, ok := o.WorkDirMaps[filepath.Clean(w.Abs)]; ok {
+		if _, ok := o.WorkDirMaps[locations.CleanForeign(w.Abs)]; ok {
 			userChosen[w.ID] = true
 		}
 	}
@@ -219,14 +219,14 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		if p := refs[i].project; p != nil {
 			stored := *p
 			stored.Aliases = nil
-			if safeAlias(p.Abs, o.Home, o.Known) {
+			if safeAlias(p.Abs, *p, o.Home, o.Known.Projects, res.Stored.Projects) {
 				stored.Aliases = []string{p.Abs}
 			}
 			stored.Abs = r.To
 			stored.WorkDir = ""
 			stored.Rel = ""
 			res.Stored.Projects = append(res.Stored.Projects, stored)
-			if sourceProject != "" && filepath.Clean(sourceProject) == filepath.Clean(p.Abs) {
+			if sourceProject != "" && locations.CleanForeign(sourceProject) == locations.CleanForeign(p.Abs) {
 				res.ProjectRoot = r.To
 			}
 		}
@@ -242,10 +242,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 func usableLocations(in *locations.Set, out io.Writer) *locations.Set {
 	res := &locations.Set{}
 	clean := func(kind, abs string) (string, bool) {
-		c := strings.TrimRight(strings.TrimSpace(abs), `/\`)
-		if c != "" && !windowsStylePath(c) {
-			c = filepath.Clean(c)
-		}
+		c := locations.CleanForeign(abs)
 		if !remappableRoot(c) || printable(abs) != abs {
 			fmt.Fprintf(out, "  warning: ignoring %s %q from the bundle: not an absolute path below the filesystem root\n", kind, printable(abs))
 			return "", false
@@ -268,18 +265,24 @@ func usableLocations(in *locations.Set, out io.Writer) *locations.Set {
 	return res
 }
 
-// safeAlias is a bundle path that may be recorded as another name of a
-// project: not this home or above it, and not above another known project
-// (an alias of /home/a would let a directory pattern for any path under it
-// follow this repository).
-func safeAlias(alias, home string, known locations.Set) bool {
-	if home != "" && pathWithin(alias, home) {
+// safeAlias is a bundle path that may be recorded as another name of
+// project p: not this home or above it, and not equal to, above or below
+// any path or alias of a project with a different identity, among those
+// the vault knows and those already accepted in this import. Otherwise a
+// directory pattern for that other project would follow this one.
+func safeAlias(alias string, p locations.Project, home string, known ...[]locations.Project) bool {
+	if home != "" && locations.Below(alias, home) {
 		return false
 	}
-	for _, p := range known.Projects {
-		for _, a := range append([]string{p.Abs}, p.Aliases...) {
-			if a != alias && pathWithin(alias, a) {
-				return false
+	for _, set := range known {
+		for _, q := range set {
+			if locations.SameIdentity(p, q) {
+				continue
+			}
+			for _, a := range append([]string{q.Abs}, q.Aliases...) {
+				if locations.Overlaps(alias, a) {
+					return false
+				}
 			}
 		}
 	}
