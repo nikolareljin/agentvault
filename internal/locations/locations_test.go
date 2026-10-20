@@ -69,6 +69,7 @@ func TestResolveWorkDirs(t *testing.T) {
 		{ID: "w5", Label: "..", HomeRel: "", Abs: "/srv"},
 		{ID: "w6", Label: "home", HomeRel: ".", Abs: "/home/a"},
 		{ID: "w7", Label: "Elsewhere", HomeRel: "Elsewhere", Abs: "/home/a/Elsewhere"},
+		{ID: "w8", Label: ".", Abs: "/home/a/dot"},
 	}}
 	maps := map[string]string{"/home/a/Elsewhere": filepath.Join(home, "src")}
 	got, unmatched := ResolveWorkDirs(set, home, maps)
@@ -85,7 +86,7 @@ func TestResolveWorkDirs(t *testing.T) {
 	for _, w := range unmatched {
 		ids = append(ids, w.ID)
 	}
-	if strings.Join(ids, ",") != "w3,w4,w5" {
+	if strings.Join(ids, ",") != "w3,w4,w5,w8" {
 		t.Errorf("unmatched %v", ids)
 	}
 }
@@ -229,6 +230,10 @@ func TestConfirmDialog(t *testing.T) {
 	}
 	if !strings.Contains(out, "not an absolute path") || !strings.Contains(out, "not a directory") || !strings.Contains(out, `No row "9"`) {
 		t.Errorf("errors not shown:\n%s", out)
+	}
+	_, out, _ = dialog(t, []Row{{From: "/a/\x1b]0;x\x07app", To: "/h/app"}}, home, "\n")
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("control characters reached the terminal: %q", out)
 	}
 	if _, _, err := dialog(t, rows, home, "q\n"); !errors.Is(err, ErrAborted) {
 		t.Errorf("q: %v", err)

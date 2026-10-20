@@ -173,6 +173,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	locOpts.Known = v.Locations()
 
 	fmt.Fprintf(out, "Importing %s from %s (created %s, strategy %s)\n",
 		format, bundleOrigin(bundle), bundle.CreatedAt.Format("2006-01-02 15:04"), strategy)
@@ -206,13 +207,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 		if profileOpts.ProjectRoot == "" {
 			profileOpts.ProjectRoot = match.ProjectRoot
 		}
-		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" && !profileOpts.NoProjectWrites {
-			fmt.Fprintln(out, "  Project files not written: no --project-root and no confirmed match for the bundle's project.")
-			profileOpts.ApplyProjects = false
-		}
-		if profileOpts.NoProjectWrites && profileOpts.ApplyProjects && assetOpts.ProjectRoot == "" {
-			fmt.Fprintln(out, "  Project files not written: computed matches were not confirmed.")
-			profileOpts.ApplyProjects = false
+		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" {
+			if match.Refused {
+				return errors.New("--apply-projects: the bundle's project was matched but not confirmed; pass --accept-matches, or name the directory with --project-root")
+			}
+			return errors.New("--apply-projects needs --project-root: the directory to write project files into (no confirmed match for the bundle's project)")
 		}
 
 		if dryRun {

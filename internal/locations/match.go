@@ -52,7 +52,7 @@ func ResolveWorkDirs(set Set, home string, maps map[string]string) (map[string]s
 			matched[w.ID] = home
 			continue
 		}
-		if home != "" && safeRel(w.Label) && !strings.Contains(w.Label, "/") {
+		if home != "" && safeRel(w.Label) && w.Label != "." && !strings.Contains(w.Label, "/") {
 			if p := filepath.Join(home, w.Label); isDir(p) {
 				matched[w.ID] = p
 				continue

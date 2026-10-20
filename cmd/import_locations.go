@@ -32,6 +32,8 @@ type locationOptions struct {
 	Home          string
 	In            *bufio.Reader
 	Out           io.Writer
+	// Known is what the vault already records; aliases are checked against it.
+	Known locations.Set
 	// Identify replaces locations.DefaultIdentifier in tests.
 	Identify locations.Identifier
 }
@@ -97,6 +99,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 	if out == nil {
 		out = io.Discard
 	}
+	set = usableLocations(set, out)
 	targets, unmatched := locations.ResolveWorkDirs(*set, o.Home, o.WorkDirMaps)
 	userChosen := map[string]bool{}
 	for _, w := range set.WorkDirs {
@@ -215,7 +218,10 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		res.Remaps = append(res.Remaps, pathRemap{From: r.From, To: r.To})
 		if p := refs[i].project; p != nil {
 			stored := *p
-			stored.Aliases = append(append([]string{}, p.Aliases...), p.Abs)
+			stored.Aliases = nil
+			if safeAlias(p.Abs, o.Home, o.Known) {
+				stored.Aliases = []string{p.Abs}
+			}
 			stored.Abs = r.To
 			stored.WorkDir = ""
 			stored.Rel = ""
@@ -226,6 +232,58 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		}
 	}
 	return res, nil
+}
+
+// usableLocations keeps the work dirs and projects whose bundle path can be
+// a rewrite source, cleaned the way --workdir-map cleans OLD. It drops "/",
+// a relative path such as "lib" (which would rewrite that word in prose)
+// and anything with control characters, and warns about each. Bundle
+// aliases are dropped: only this vault records aliases.
+func usableLocations(in *locations.Set, out io.Writer) *locations.Set {
+	res := &locations.Set{}
+	clean := func(kind, abs string) (string, bool) {
+		c := strings.TrimRight(strings.TrimSpace(abs), `/\`)
+		if c != "" && !windowsStylePath(c) {
+			c = filepath.Clean(c)
+		}
+		if !remappableRoot(c) || printable(abs) != abs {
+			fmt.Fprintf(out, "  warning: ignoring %s %q from the bundle: not an absolute path below the filesystem root\n", kind, printable(abs))
+			return "", false
+		}
+		return c, true
+	}
+	for _, w := range in.WorkDirs {
+		if c, ok := clean("work dir", w.Abs); ok && printable(w.Label) == w.Label {
+			w.Abs = c
+			res.WorkDirs = append(res.WorkDirs, w)
+		}
+	}
+	for _, p := range in.Projects {
+		if c, ok := clean("project", p.Abs); ok {
+			p.Abs = c
+			p.Aliases = nil
+			res.Projects = append(res.Projects, p)
+		}
+	}
+	return res
+}
+
+// safeAlias is a bundle path that may be recorded as another name of a
+// project: not this home or above it, and not above another known project
+// (an alias of /home/a would let a directory pattern for any path under it
+// follow this repository).
+func safeAlias(alias, home string, known locations.Set) bool {
+	if home != "" && pathWithin(alias, home) {
+		return false
+	}
+	for _, p := range known.Projects {
+		for _, a := range append([]string{p.Abs}, p.Aliases...) {
+			if a != alias && pathWithin(alias, a) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // needed keeps the work dirs that hold a project with an identity.
@@ -299,7 +357,7 @@ func printRows(out io.Writer, rows []locations.Row, status string) {
 func mergeComputedRemaps(base, computed, userMaps []pathRemap) []pathRemap {
 	out := append([]pathRemap{}, base...)
 	for _, c := range computed {
-		if c.From == c.To || coveredByUserMap(c.From, userMaps) {
+		if c.From == c.To || !remappableRoot(c.From) || printable(c.From) != c.From || coveredByUserMap(c.From, userMaps) {
 			continue
 		}
 		out = append(out, c)

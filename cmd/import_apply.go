@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 // conflictPolicy says what import does with a local file that differs from
@@ -851,10 +852,5 @@ func deepCopyJSON(m map[string]any) map[string]any {
 // printable replaces control characters, which a name from the bundle could
 // use to rewrite the terminal around a question, with '?'.
 func printable(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || (r >= 0x7f && r < 0xa0) {
-			return '?'
-		}
-		return r
-	}, s)
+	return textutil.Printable(s)
 }

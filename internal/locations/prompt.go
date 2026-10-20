@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 // ErrAborted is returned when the user quits a dialog or input ends.
@@ -40,12 +42,12 @@ func Confirm(rows []Row, home string, in *bufio.Reader, out io.Writer) ([]Row, e
 					to = "(choose one)"
 				}
 			}
-			fmt.Fprintf(out, "  %d. %s -> %s\n", i+1, r.From, to)
+			fmt.Fprintf(out, "  %d. %s -> %s\n", i+1, textutil.Printable(r.From), textutil.Printable(to))
 			if r.Note != "" {
-				fmt.Fprintf(out, "       %s\n", r.Note)
+				fmt.Fprintf(out, "       %s\n", textutil.Printable(r.Note))
 			}
 			for j, c := range r.Choices {
-				fmt.Fprintf(out, "       %c) %s\n", 'a'+j, c)
+				fmt.Fprintf(out, "       %c) %s\n", 'a'+j, textutil.Printable(c))
 			}
 		}
 		fmt.Fprint(out, "Enter a row number to change its path, empty line to accept all, q to abort: ")
@@ -124,9 +126,9 @@ func readLine(in *bufio.Reader) (string, error) {
 // suggestions. It returns "" when the user skips it.
 func AskWorkDir(w WorkDir, suggestions []string, home string, in *bufio.Reader, out io.Writer) (string, error) {
 	for {
-		fmt.Fprintf(out, "Work dir %s (%q) was not found here.\n", w.Abs, w.Label)
+		fmt.Fprintf(out, "Work dir %s (%q) was not found here.\n", textutil.Printable(w.Abs), w.Label)
 		for i, s := range suggestions {
-			fmt.Fprintf(out, "  %d. %s\n", i+1, s)
+			fmt.Fprintf(out, "  %d. %s\n", i+1, textutil.Printable(s))
 		}
 		fmt.Fprint(out, "Enter a number, a path, empty line to skip, q to abort: ")
 		line, err := readLine(in)

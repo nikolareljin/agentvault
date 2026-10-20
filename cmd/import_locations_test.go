@@ -296,10 +296,10 @@ func TestImportFindsProjectByRemote(t *testing.T) {
 	}
 	setStringArray(t, importCmd.Flags(), "workdir-map", []string{filepath.Join(srcHome, "Projects") + "=" + filepath.Join(dstHome, "code")})
 
-	// Found, but not confirmed: nothing written into the clone.
+	// Found, but not confirmed: refused, nothing written into the clone.
 	in.Reset()
-	if err := runImport(importCmd, []string{bundlePath}); err != nil {
-		t.Fatalf("import: %v\n%s", err, in.String())
+	if err := runImport(importCmd, []string{bundlePath}); err == nil || !strings.Contains(err.Error(), "--accept-matches") {
+		t.Fatalf("unconfirmed match not refused: %v\n%s", err, in.String())
 	}
 	if _, err := os.Stat(filepath.Join(dstProject, "AGENTS.md")); !os.IsNotExist(err) {
 		t.Fatalf("project file written without confirmation:\n%s", in.String())
@@ -321,5 +321,75 @@ func TestImportFindsProjectByRemote(t *testing.T) {
 	p, ok := v.Locations().FindByIdentity("github.com/acme/app", nil)
 	if !ok || p.Abs != dstProject || len(p.Aliases) == 0 || p.Aliases[0] != srcProject {
 		t.Errorf("vault locations: %+v", v.Locations())
+	}
+}
+
+// A hostile bundle can claim any remote. A project path of "lib" or "/"
+// would turn a match into a rewrite of that word, or of every path.
+func TestBundlePathsThatCannotBeRewriteSourcesAreDropped(t *testing.T) {
+	for _, abs := range []string{"lib", "/", "C:\\", "/old/\x1b[2Japp"} {
+		_, set, o := matchFixture(t)
+		set.Projects[0].Abs = abs
+		o.AcceptMatches = true
+		var out bytes.Buffer
+		o.Out = &out
+		res, err := resolveBundleLocations(context.Background(), set, "", o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range res.Remaps {
+			if r.From == abs {
+				t.Errorf("%q became a rewrite source: %+v", abs, res.Remaps)
+			}
+		}
+		if strings.Contains(out.String(), "\x1b") {
+			t.Errorf("control character printed for %q", abs)
+		}
+		if !strings.Contains(out.String(), "warning: ignoring project") {
+			t.Errorf("no warning for %q:\n%s", abs, out.String())
+		}
+	}
+}
+
+func TestComputedRemapsValidatedAtMerge(t *testing.T) {
+	got := mergeComputedRemaps(nil, []pathRemap{{From: "lib", To: "/x"}, {From: "/", To: "/x"}, {From: "/a/\x1bb", To: "/x"}, {From: "/ok", To: "/x"}}, nil)
+	if len(got) != 1 || got[0].From != "/ok" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+// Aliases in a bundle are claims; only the validated bundle path is kept,
+// and never one that is home, above home, or above another project.
+func TestBundleAliasesNotPersisted(t *testing.T) {
+	_, set, o := matchFixture(t)
+	o.AcceptMatches = true
+	set.Projects[0].Aliases = []string{"/", "/home/victim"}
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := res.Stored.Projects[0].Aliases; len(a) != 1 || a[0] != "/old/Projects/app" {
+		t.Errorf("aliases %v", a)
+	}
+	for _, kind := range []string{"home", "above home", "above a project"} {
+		_, set, o := matchFixture(t)
+		o.AcceptMatches = true
+		bad := map[string]string{"home": o.Home, "above home": filepath.Dir(o.Home), "above a project": "/old"}[kind]
+		if bad == "/old" {
+			o.Known = locations.Set{Projects: []locations.Project{{Abs: "/elsewhere", Aliases: []string{"/old/other"}}}}
+			set.Projects[0].Abs = "/old"
+			set.Projects[0].Rel = "old"
+		} else {
+			set.Projects[0].Abs = bad
+		}
+		res, err := resolveBundleLocations(context.Background(), set, "", o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range res.Stored.Projects {
+			if len(p.Aliases) != 0 {
+				t.Errorf("alias %v stored for bundle path %q", p.Aliases, bad)
+			}
+		}
 	}
 }

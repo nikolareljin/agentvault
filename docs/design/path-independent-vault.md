@@ -190,6 +190,12 @@ A memory dir key that would collide is still refused and reported.
     confirmation.
 - A match target must also be under this home, or named in
   `--map`/`--workdir-map`.
+- A bundle `abs` must be an absolute path below the filesystem root with no
+  control characters before it becomes a row or a rewrite; others are
+  dropped with a warning. Bundle strings are printed with control
+  characters replaced.
+- Bundle `aliases` are ignored. Import records the bundle `abs` as the one
+  alias, unless it is this home, above home, or above another known project.
 - The scan never follows symlinks out of the scanned root and never runs git
   in a directory it did not find under that root.
 - Remote URLs are stored normalized only, so tokens in `https://tok@host`
