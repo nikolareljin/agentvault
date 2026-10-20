@@ -33,12 +33,14 @@ type mcpChooser interface {
 // both sides.
 type mcpMergeReport struct {
 	Added, Replaced, KeptLocal, LeftOut []string
+	// EnvLeftOut are "server.VAR" variables of taken servers left out.
+	EnvLeftOut []string
 	// Ask lists the servers a dry run would ask about.
 	Ask []string
 }
 
 func (r mcpMergeReport) empty() bool {
-	return len(r.Added)+len(r.Replaced)+len(r.KeptLocal)+len(r.LeftOut)+len(r.Ask) == 0
+	return len(r.Added)+len(r.Replaced)+len(r.KeptLocal)+len(r.LeftOut)+len(r.Ask)+len(r.EnvLeftOut) == 0
 }
 
 // changed is whether the merge takes anything from the bundle.
@@ -194,6 +196,7 @@ func (c *importApplyContext) askReplaceServer(file, name string, local, bundle a
 	for _, line := range describeDefinitionChange(local, bundle) {
 		fmt.Fprintf(c.Out, "  %s\n", line)
 	}
+	fmt.Fprintf(c.Out, "  bundle's definition: %s\n", describeMCPServer(name, bundle))
 	for {
 		fmt.Fprint(c.Out, "[b]ackup + replace / [k]eep this machine's (ba, ka: same for all remaining servers) [k]: ")
 		line, err := c.In.ReadString('\n')
@@ -259,38 +262,120 @@ func pickMCPServers(out io.Writer, in interface{ ReadString(byte) (string, error
 	}
 }
 
-// describeMCPServer is one line naming a server, its type and what it runs
-// or reaches. Every part comes from the bundle, so all of it is made
+// describeMCPServer names a server and every field that decides what it
+// runs or reaches: type, command, all args, url, env variable names and
+// header names, each on its own line and never clipped. Values under secret
+// keys are masked. Every part comes from the bundle, so all of it is made
 // printable.
 func describeMCPServer(name string, v any) string {
 	m, _ := v.(map[string]any)
 	typ, _ := m["type"].(string)
-	target := ""
-	if u, ok := m["url"].(string); ok && u != "" {
-		target = u
-		if typ == "" {
-			typ = "http"
-		}
-	} else if u, ok := m["httpUrl"].(string); ok && u != "" {
-		target = u
-		if typ == "" {
-			typ = "http"
-		}
-	} else if cmd, ok := m["command"].(string); ok {
-		target = cmd
-		if args, ok := m["args"].([]any); ok {
-			for _, a := range args {
-				target += " " + fmt.Sprint(a)
-			}
-		}
-		if typ == "" {
-			typ = "stdio"
-		}
-	}
 	if typ == "" {
-		typ = "unknown"
+		typ = "stdio"
+		if m["url"] != nil || m["httpUrl"] != nil {
+			typ = "http"
+		}
 	}
-	return fmt.Sprintf("%s (%s) %s", printable(name), printable(typ), printable(clip(target)))
+	lines := []string{fmt.Sprintf("%s (%s)", printable(name), printable(typ))}
+	masked, _ := maskSecrets(m, false).(map[string]any)
+	field := func(label string, val any) {
+		if val == nil {
+			return
+		}
+		text, ok := val.(string)
+		if !ok {
+			b, _ := json.Marshal(val)
+			text = string(b)
+		}
+		lines = append(lines, "      "+label+": "+printable(text))
+	}
+	field("command", masked["command"])
+	field("args", masked["args"])
+	field("url", masked["url"])
+	field("httpUrl", masked["httpUrl"])
+	for _, k := range []string{"env", "headers"} {
+		if mm, ok := m[k].(map[string]any); ok && len(mm) > 0 {
+			names := sortedKeys(mm)
+			for i := range names {
+				names[i] = printable(names[i])
+			}
+			lines = append(lines, "      "+k+" names: "+strings.Join(names, ", "))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// gateConsentedEnv keeps the code-loading and request-routing variables
+// (gatedEnv) of the servers taken from the bundle out, unless this machine
+// already has the same value, the user approves them in a separate question
+// on a terminal, or --keep-bundle-commands is given. It returns
+// "server.VAR" for each variable left out.
+func (c *importApplyContext) gateConsentedEnv(file string, merged, local map[string]any, taken []string) ([]string, error) {
+	if c.KeepBundleCommands {
+		return nil, nil
+	}
+	var dropped []string
+	for _, name := range taken {
+		srv, ok := merged[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		env, ok := srv["env"].(map[string]any)
+		if !ok {
+			continue
+		}
+		lsrv, _ := local[name].(map[string]any)
+		lenv, _ := lsrv["env"].(map[string]any)
+		var gated []string
+		for _, k := range sortedKeys(env) {
+			if !gatedEnv(k) {
+				continue
+			}
+			if lv, ok := lenv[k]; ok && jsonEqual(lv, env[k]) {
+				continue
+			}
+			gated = append(gated, k)
+		}
+		if len(gated) == 0 {
+			continue
+		}
+		approve := false
+		if c.Interactive && c.In != nil && !c.DryRun {
+			fmt.Fprintf(c.Out, "%s: MCP server %s sets variables that load code or send requests elsewhere:\n", printable(file), strconv.Quote(name))
+			for _, k := range gated {
+				shown := maskSecrets(map[string]any{k: env[k]}, false).(map[string]any)[k]
+				fmt.Fprintf(c.Out, "  %s=%s\n", printable(k), printable(fmt.Sprint(shown)))
+			}
+			yes, err := askBool(c.Out, c.In, "keep these variables", false)
+			if err != nil {
+				return nil, err
+			}
+			approve = yes
+		}
+		if approve {
+			continue
+		}
+		// Copy: the map may be the bundle's own.
+		ne := map[string]any{}
+		for k, v := range env {
+			ne[k] = v
+		}
+		ns := map[string]any{}
+		for k, v := range srv {
+			ns[k] = v
+		}
+		for _, k := range gated {
+			if lv, ok := lenv[k]; ok {
+				ne[k] = lv
+			} else {
+				delete(ne, k)
+			}
+			dropped = append(dropped, name+"."+k)
+		}
+		ns["env"] = ne
+		merged[name] = ns
+	}
+	return dropped, nil
 }
 
 // mergeMCPKeysJSON merges the server maps of a JSON settings file one
@@ -325,6 +410,11 @@ func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte
 			return content, nil, rep, err
 		}
 		r.Ask = ch.ask
+		envOut, err := c.gateConsentedEnv(dest, merged, ls, append(append([]string(nil), r.Added...), r.Replaced...))
+		if err != nil {
+			return content, nil, rep, err
+		}
+		rep.EnvLeftOut = append(rep.EnvLeftOut, envOut...)
 		doc[key] = merged
 		touched = true
 		consent[key] = r.consent()
@@ -380,12 +470,14 @@ func formatMCPReport(file string, rep mcpMergeReport, dry bool) string {
 		add("would replace", rep.Replaced)
 		add("would keep local", rep.KeptLocal)
 		add("would leave out", rep.LeftOut)
+		add("would leave out variables", rep.EnvLeftOut)
 		add("would ask about", rep.Ask)
 	} else {
 		add("added", rep.Added)
 		add("replaced", rep.Replaced)
 		add("kept local", rep.KeptLocal)
 		add("left out", rep.LeftOut)
+		add("left out variables", rep.EnvLeftOut)
 	}
 	return printable(file) + ": " + strings.Join(parts, "; ")
 }
@@ -667,6 +759,11 @@ func (c *importApplyContext) mergeCodexConfig(dest string, content, local []byte
 		return none, err
 	}
 	rep.Ask = ch.ask
+	envOut, err := c.gateConsentedEnv(dest, merged, lservers, append(append([]string(nil), rep.Added...), rep.Replaced...))
+	if err != nil {
+		return none, err
+	}
+	rep.EnvLeftOut = envOut
 	// Build on this machine's text when the rest is the same, or when the
 	// rest changes a command that is not taken: then only servers change.
 	restSame := jsonEqualWithout(bdoc, ldoc, "mcp_servers")

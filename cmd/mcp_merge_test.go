@@ -105,7 +105,7 @@ func TestPickMCPServersPrompt(t *testing.T) {
 		if strings.ContainsAny(out.String(), "\x1b\a") {
 			t.Errorf("%q: terminal escape printed: %q", tc.in, out.String())
 		}
-		if !strings.Contains(out.String(), "1. a (stdio) npx srv") || !strings.Contains(out.String(), "(http) https://") {
+		if !strings.Contains(out.String(), "1. a (stdio)\n      command: npx\n      args: [\"srv\"]") || !strings.Contains(out.String(), "url: https://") {
 			t.Errorf("%q: rows = %q", tc.in, out.String())
 		}
 	}
@@ -354,5 +354,78 @@ func TestGenerateMCPKeepsLocalOnlyServers(t *testing.T) {
 	}
 	if got := string(mergeServerObjects([]byte(`[1]`), []byte(`{"a":1}`))); got != `{"a":1}` {
 		t.Errorf("non-object: %s", got)
+	}
+}
+
+// The list shows everything that decides what runs: the command of an http
+// server too, every arg unclipped, env and header names; secret values masked.
+func TestDescribeMCPServerShowsWhatRuns(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	got := describeMCPServer("s", map[string]any{"type": "http", "url": "https://u", "command": "sh",
+		"args": []any{"-c", long}, "env": map[string]any{"NODE_OPTIONS": "--require /e.js", "API_TOKEN": "v"},
+		"headers": map[string]any{"Authorization": "Bearer t"}})
+	for _, want := range []string{"s (http)", "command: sh", long, "url: https://u", "env names: API_TOKEN, NODE_OPTIONS", "headers names: Authorization"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q missing:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Bearer t") {
+		t.Errorf("secret shown:\n%s", got)
+	}
+}
+
+const envBundle = `{"mcpServers":{"n":{"command":"n","env":{"NODE_OPTIONS":"--require /tmp/e.js","PLAIN":"1"}}}}`
+
+// A pick is consent for the server, not for code-loading variables.
+func TestImportPickedServerKeepsEnvGate(t *testing.T) {
+	run := func(ctx *importApplyContext) string {
+		home := t.TempDir()
+		cj := filepath.Join(home, ".claude.json")
+		mustWriteFile(t, cj, `{"mcpServers":{}}`)
+		asset := SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true, Content: []byte(envBundle)}
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		return readString(t, cj)
+	}
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("n")
+	got := run(ctx)
+	if strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"PLAIN": "1"`) || !strings.Contains(got, `"command": "n"`) {
+		t.Errorf("flag: %s", got)
+	}
+	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `left out variables "n.NODE_OPTIONS"`) {
+		t.Errorf("report = %s", r)
+	}
+	// On a terminal: picked, then a separate question; no keeps it out.
+	ctx = fixedCtx("1\n\nn\n")
+	var out bytes.Buffer
+	ctx.Out = &out
+	if got := run(ctx); strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(out.String(), "NODE_OPTIONS=--require /tmp/e.js") {
+		t.Errorf("no: %s\n%s", got, out.String())
+	}
+	if got := run(fixedCtx("1\n\ny\n")); !strings.Contains(got, "NODE_OPTIONS") {
+		t.Errorf("yes dropped it: %s", got)
+	}
+	ctx = fixedCtx("")
+	ctx.KeepBundleCommands = true
+	if got := run(ctx); !strings.Contains(got, "NODE_OPTIONS") {
+		t.Errorf("--keep-bundle-commands dropped it: %s", got)
+	}
+}
+
+// Codex servers go through the same gate.
+func TestImportCodexPickedServerKeepsEnvGate(t *testing.T) {
+	home := t.TempDir()
+	cfg := filepath.Join(home, ".codex", "config.toml")
+	mustWriteFile(t, cfg, "model = \"a\"\n")
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("n")
+	bundle := "model = \"a\"\n\n[mcp_servers.n]\ncommand = \"n\"\n[mcp_servers.n.env]\nLD_PRELOAD = \"/e.so\"\n"
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{codexAsset(bundle)}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := readString(t, cfg); strings.Contains(got, "LD_PRELOAD") || !strings.Contains(got, "[mcp_servers.n]") {
+		t.Errorf("got %s", got)
 	}
 }
