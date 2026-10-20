@@ -576,8 +576,9 @@ Flags:
 - `--include-secrets` (default: `true`): Include secret-bearing provider and asset file content.
 - `--include-sessions` (default: `true`)
 - `--include-templates` (default: `true`)
-- `--include-provider-files` (default: `true`): `~/.claude`, `~/.codex`, `~/.config/github-copilot`.
+- `--include-provider-files` (default: `true`): each agent tool's user-level setup and the files it references. See "What a bundle carries" below.
 - `--include-skills` (default: `true`)
+- `--include-memory` (default: `false`): Claude project memory (`~/.claude/projects/*/memory`) and Codex memories (`~/.codex/memories`). The wizard asks every time; the answer defaults to no.
 - `--include-status` (default: `false`): A quota reading is a snapshot, not a setting.
 - `--detect` (default: `true`)
 - `--project <dir>`: Also capture project-local instruction, workflow and skill assets.
@@ -590,6 +591,37 @@ Environment:
 - `AGENTVAULT_PASSWORD`: Master password tried before prompting, per profile.
 - `AGENTVAULT_EXPORT_PASSWORD`: Bundle password for non-interactive encrypted exports.
 - `AGENTVAULT_CONFIG_DIRS`: Extra config directories to treat as profiles, separated by the OS path list separator (`:` on Unix, `;` on Windows).
+
+#### What a bundle carries
+
+| Tool | User level (`--include-provider-files`) |
+|---|---|
+| Claude Code | `~/.claude/settings.json`, `keybindings.json`, `CLAUDE.md`, `agents/`, `commands/`, `output-styles/`, `hooks/`, `skills/`; MCP servers from `~/.claude.json` (only the `mcpServers` key) |
+| Codex | `~/.codex/config.toml`, `AGENTS.md`, `rules/`, `prompts/`, `skills/` |
+| Gemini CLI | `~/.gemini/GEMINI.md`, `settings.json`, `commands/` |
+| GitHub Copilot | `~/.copilot/config.json`, `mcp-config.json`, `agents/`; `~/.config/github-copilot/` |
+| Cursor, Windsurf | `~/.cursor/mcp.json`, `~/.codeium/windsurf/mcp_config.json` |
+
+Also carried:
+- Every file a user-level instruction file names (backticked paths, markdown links, `@path` imports), followed through the files those name, up to 10 hops. `~/`, `$HOME/` and paths under the home directory are allowed. Anything outside the home directory is listed as declined.
+- The scripts that `settings.json` runs from `hooks` and `statusLine`, when they are under the home directory.
+- With `--project <dir>`: the instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `CONVENTIONS.md`, ...), the rule directories (`.github/instructions/`, `.github/prompts/`, `.cursor/rules/`, `.windsurf/rules/`, `.gemini/commands/`, `.clinerules`), `.claude/agents/` and `.claude/commands/`, `skills/`, and every file or directory those name.
+- A Claude Code plugin inventory. Import prints the `claude plugin marketplace add` and `claude plugin install` commands; it installs nothing itself.
+
+Never carried:
+- Login tokens: `~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, `~/.gemini/google_accounts.json`, `~/.config/github-copilot/hosts.json` and `apps.json`. The login keys of `~/.copilot/config.json` (`copilot_tokens`, `logged_in_users`, `last_logged_in_user`, any key named like a token, except counts and limits such as `max_tokens` and `tokenLimit`) are removed; the rest of that file is carried. They are not carried even with `--include-secrets`. Sign in on the other machine.
+- A project's own settings (`.claude/settings.json`, `.mcp.json`, `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`, `.vscode/mcp.json`). They travel with the repository. The bundle lists them as `repository`.
+- `.local.` files, unless named with `--include-local`.
+- Anything else a reference names inside a tool's directory: only the setup in the table above, rule directories and prose files at the top of that directory are followed. Memory, session transcripts (`~/.claude/projects/`, `~/.codex/sessions/`, `~/.codex/archived_sessions/`), history, backups, caches and logs are declined, also when named through the target of a symlinked tool directory (`~/dotfiles/claude/todos/` with `~/.claude` linked there) or of a link at any depth inside it. Memory travels only with `--include-memory`.
+- Credential files an instruction names, in any letter case and also through a symlink: `.env`, `.env.*` and `*.env` (templates such as `.env.example` are kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`, `.npmrc`, `.git-credentials`, SSH keys, and anything under `.ssh`, `.gnupg`, `.aws`, `.kube`, `.docker` or `.azure`. They are listed as declined. So is a referenced file with a second hard link, also inside a named directory, and with `--include-secrets`: its other name cannot be checked.
+- Windows short names (`SETTIN~1.JSO`), stream suffixes (`.env::$DATA`) and device names (`CON`, `aux.md`, `COM1.txt`). Export leaves them behind with a warning or a declined entry; import refuses them on every platform.
+- Shell and login startup files (`.bashrc`, `.zshrc`, `.profile`, `.config/autostart`, `Library/LaunchAgents`, ...) and any other dotfile at the home root except `~/.claude.json`. Import refuses to write them from a bundle, too.
+
+Settings files that can hold tokens are redacted without `--include-secrets`. So are `~/.claude/hooks/` scripts, files in project rule directories that are neither prose nor TOML, credential-named files in any carried directory, files with a second hard link inside a tool's directory, and referenced files that are not prose, such as scripts and config files; Markdown and text are carried as is.
+
+Files referenced outside the tools' own directories are written back on import only when they are prose. They are written 0600 and never executable. `~/.claude.json` only gets its `mcpServers` key merged in. Referenced scripts and config files are staged under `<config dir>/imported-assets/provider/provider_home/` for review, and never written to the home directory: placed on `PATH` or named by a hook, a file from a bundle runs code.
+
+Import prints plugin commands only for plugin IDs shaped like `name@marketplace` and sources shaped like `owner/repo` or an `https://` URL. Anything else is printed quoted, as a comment.
 
 Stored prompt sessions are excluded from bundles: they are local run history holding
 prompt and response text. Encryption follows the flags and the wizard answer, never the

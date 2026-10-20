@@ -64,8 +64,11 @@ func runExportWizard(cmd *cobra.Command, opts *exportOptions, discovered []disco
 		{"include-secrets", "Include secret-bearing provider and asset file content", &opts.IncludeSecrets},
 		{"include-sessions", "Include multi-agent session definitions", &opts.IncludeSessions},
 		{"include-templates", "Include workflow templates", &opts.IncludeTemplates},
-		{"include-provider-files", "Include provider home files (~/.claude, ~/.codex, ~/.copilot)", &opts.IncludeProviderFile},
+		{"include-provider-files", "Include provider home files (~/.claude, ~/.codex, ~/.gemini, ~/.copilot, Cursor, Windsurf)", &opts.IncludeProviderFile},
 		{"include-skills", "Include skill assets", &opts.IncludeSkills},
+		// Asked every time and defaulting to no: memory is what agents wrote
+		// down about this person and their projects.
+		{"include-memory", "Include agent memory (Claude project memory, Codex memories)", &opts.IncludeMemory},
 		{"detect", "Include detected agent information", &opts.IncludeDetected},
 		{"include-status", "Include a provider token/quota status snapshot", &opts.IncludeStatus},
 	}

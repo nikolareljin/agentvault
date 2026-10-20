@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -43,8 +44,11 @@ var referenceSkipDirs = map[string]bool{
 // either is not treated as a reference: "see the review checklist" is a
 // sentence, `docs/checklist.md` is a reference.
 var (
-	backtickSpan  = regexp.MustCompile("`([^`\n]+)`")
-	markdownLink  = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
+	backtickSpan = regexp.MustCompile("`([^`\n]+)`")
+	markdownLink = regexp.MustCompile(`\[[^\]]*\]\(([^)\s]+)\)`)
+	// Claude Code's import syntax: "@path/to/file" at the start of a line or
+	// after whitespace. Requiring that boundary keeps user@host out.
+	atImport      = regexp.MustCompile(`(?m)(?:^|\s)@(~?[A-Za-z0-9_./-]+)`)
 	fileExtension = regexp.MustCompile(`\.[A-Za-z][A-Za-z0-9]{0,7}$`)
 	globChars     = regexp.MustCompile(`[*?\[\]{}]`)
 	// A version, not a path: everything before the last dot is digits. Catches
@@ -99,6 +103,9 @@ func FindReferences(content string) []string {
 	}
 	for _, m := range markdownLink.FindAllStringSubmatch(content, -1) {
 		add(m[1])
+	}
+	for _, m := range atImport.FindAllStringSubmatch(content, -1) {
+		add(strings.TrimRight(m[1], ".,;:"))
 	}
 	return out
 }
@@ -229,6 +236,10 @@ func classifyReference(root, baseRel, raw string) Reference {
 			return ref
 		}
 	}
+	if reason := SecretBearingReason(lexical); reason != "" {
+		ref.Status, ref.Reason = ReferenceRefused, reason
+		return ref
+	}
 
 	info, err := os.Lstat(full)
 	if err != nil {
@@ -266,13 +277,87 @@ func classifyReference(root, baseRel, raw string) Reference {
 		ref.Reason = fmt.Sprintf("%d bytes, over the %d byte ceiling", info.Size(), MaxReferenceBytes)
 		return ref
 	}
+	// A second hard link is another name for the same file, and that name
+	// was never checked: notes.md can be .env.
+	if HardLinkCount(full, info) > 1 {
+		ref.Status, ref.Reason = ReferenceRefused, "has another hard link; its other name cannot be checked"
+		return ref
+	}
 
 	rel, err := filepath.Rel(root, real)
 	if err != nil {
 		ref.Status, ref.Reason = ReferenceRefused, "cannot be expressed relative to the directory"
 		return ref
 	}
+	// Again on the resolved name: a symlink called notes.md can point at .env.
+	if reason := SecretBearingReason(rel); reason != "" {
+		ref.Status, ref.Reason = ReferenceRefused, reason
+		return ref
+	}
 	ref.Rel = filepath.ToSlash(rel)
 	ref.Status = ReferenceTaken
 	return ref
+}
+
+// Files that hold credentials by convention. Instruction files mention them
+// ("copy `.env.example` to `.env`"), and following that mention would put the
+// secrets themselves in a bundle or the vault.
+var (
+	secretBaseNames = map[string]bool{
+		".env": true, ".netrc": true, ".npmrc": true, ".pypirc": true, ".pgpass": true,
+		".git-credentials": true, "id_rsa": true, "id_dsa": true, "id_ecdsa": true, "id_ed25519": true,
+		".credentials.json": true, "auth.json": true, "oauth_creds.json": true, "google_accounts.json": true,
+		"credentials": true, "credentials.json": true, "hosts.yml": true,
+	}
+	secretExtensions = map[string]bool{
+		".pem": true, ".key": true, ".p12": true, ".pfx": true, ".keystore": true,
+		".jks": true, ".kdbx": true, ".ppk": true,
+	}
+	secretDirs = map[string]bool{
+		".ssh": true, ".gnupg": true, ".aws": true, ".kube": true, ".docker": true, ".azure": true,
+	}
+	shortName = regexp.MustCompile(`~[0-9]`)
+	// .env variants that are templates by name, not secrets.
+	envTemplates = map[string]bool{
+		".env.example": true, ".env.sample": true, ".env.template": true, ".env.dist": true,
+	}
+)
+
+// SecretBearingReason returns why rel names a credential file, or "" when it
+// does not. rel is slash- or OS-separated and relative.
+func SecretBearingReason(rel string) string {
+	slashed := filepath.ToSlash(rel)
+	segs := strings.Split(slashed, "/")
+	for i, seg := range segs {
+		// Windows reads ".env::$DATA" and ".env:x" as .env: a name ends at
+		// the first colon there.
+		if c := strings.IndexByte(seg, ':'); c >= 0 {
+			segs[i] = seg[:c]
+		}
+		// A Windows short name (ENV~1, CREDEN~1.JSO) is another name for a
+		// file whose long name cannot be checked from here.
+		if shortName.MatchString(seg) {
+			return "a Windows short name; its long name cannot be checked"
+		}
+	}
+	slashed = strings.Join(segs, "/")
+	for _, seg := range segs {
+		// Windows drops trailing dots and spaces: ".aws." is .aws there.
+		if secretDirs[strings.TrimRight(strings.ToLower(seg), ". ")] {
+			return "under " + seg + ", which holds credentials"
+		}
+	}
+	base := path.Base(slashed)
+	// Trailing dots and spaces are dropped by Windows: ".env." is .env there.
+	lower := strings.TrimRight(strings.ToLower(base), ". ")
+	if envTemplates[lower] {
+		return ""
+	}
+	if secretBaseNames[lower] || strings.HasPrefix(lower, ".env.") || strings.HasSuffix(lower, ".env") {
+		return "a credential file by name; never followed"
+	}
+	if secretExtensions[strings.ToLower(path.Ext(lower))] {
+		return "a key or certificate file; never followed"
+	}
+	return ""
 }

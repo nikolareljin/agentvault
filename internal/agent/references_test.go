@@ -182,3 +182,87 @@ func TestRootedReasonNamesWindowsCase(t *testing.T) {
 		}
 	}
 }
+
+// Claude Code imports another file with "@path". An address such as
+// user@example.com is not one: the "@" must start a word.
+func TestFindReferencesAtImports(t *testing.T) {
+	content := "Read @docs/rules.md first.\n@~/.claude/personal.md\n" +
+		"Mail nik@example.com, ping @team, see @README.md.\n"
+	got := FindReferences(content)
+	want := map[string]bool{"docs/rules.md": true, "~/.claude/personal.md": true, "README.md": true}
+	for _, g := range got {
+		if !want[g] {
+			t.Errorf("unexpected reference %q in %v", g, got)
+		}
+		delete(want, g)
+	}
+	for w := range want {
+		t.Errorf("missing reference %q in %v", w, got)
+	}
+}
+
+func TestSecretBearingReason(t *testing.T) {
+	secret := []string{".env", "app/.env", ".env.production", "certs/server.pem", "deploy.key",
+		".ssh/config", "home/.aws/config", "id_ed25519", ".npmrc", "store.p12", ".git-credentials",
+		".env::$DATA", "docs/.env:x", ".ssh:s/config", "ENV~1", "CREDEN~1.JSO", "dir/ID_RSA~2"}
+	for _, p := range secret {
+		if SecretBearingReason(p) == "" {
+			t.Errorf("%s: not flagged", p)
+		}
+	}
+	plain := []string{".env.example", "docs/env.md", "README.md", "keys.md", "scripts/check.sh", "config/app.toml", "notes~draft.md"}
+	for _, p := range plain {
+		if r := SecretBearingReason(p); r != "" {
+			t.Errorf("%s: flagged as %q", p, r)
+		}
+	}
+}
+
+// "Copy `.env.example` to `.env`" names a secrets file. It is refused, and
+// the template is taken.
+func TestResolveReferencesRefusesSecretFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{".env", ".env.example", "server.pem"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refs := ResolveReferences(dir, ".", "Copy `.env.example` to `.env`; the cert is `server.pem`.")
+	got := map[string]ReferenceStatus{}
+	for _, r := range refs {
+		got[r.Raw] = r.Status
+	}
+	if got[".env"] != ReferenceRefused || got["server.pem"] != ReferenceRefused {
+		t.Errorf("secret files not refused: %v", got)
+	}
+	if got[".env.example"] != ReferenceTaken {
+		t.Errorf(".env.example not taken: %v", got)
+	}
+}
+
+// A hard link named notes.md to .env is .env under another name.
+func TestResolveReferencesRefusesHardLinks(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(dir, ".env"), filepath.Join(dir, "notes.md")); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	refs := ResolveReferences(dir, ".", "See `notes.md`.")
+	if len(refs) != 1 || refs[0].Status != ReferenceRefused {
+		t.Errorf("hard link not refused: %+v", refs)
+	}
+}
+
+// noSysInfo is a FileInfo whose link count cannot be read.
+type noSysInfo struct{ os.FileInfo }
+
+func (noSysInfo) Sys() any { return nil }
+
+// A link count that cannot be read counts as linked: fail closed.
+func TestHardLinkCountFailsClosed(t *testing.T) {
+	if n := HardLinkCount(filepath.Join(t.TempDir(), "missing"), noSysInfo{}); n < 2 {
+		t.Errorf("unreadable link count = %d, want >= 2", n)
+	}
+}

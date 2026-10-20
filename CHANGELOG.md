@@ -12,6 +12,27 @@
   `production`.
 - `tests/machine/install_check.sh`: installs into a scratch `GOBIN` and runs
   the installed binary.
+- `export` carries the user-level setup of Gemini CLI (`~/.gemini`), the
+  GitHub Copilot CLI (`~/.copilot`), Cursor and Windsurf MCP configs, Claude's
+  user MCP servers from `~/.claude.json` (only `mcpServers`; import merges
+  that key and keeps the rest of the file), Claude output styles and hooks,
+  and Codex's global `AGENTS.md` and prompts.
+- Files named by user-level instruction files (backticks, markdown links,
+  `@path` imports) are carried, followed up to 10 hops, anywhere under the
+  home directory. So are the scripts `settings.json` runs from `hooks` and
+  `statusLine`.
+- With `--project`, every file and directory the instruction files name is
+  carried. Before, the export only recorded what it could not take. Also new
+  with `--project`: `GEMINI.md`, `CONVENTIONS.md`, `.github/instructions/`,
+  `.github/prompts/`, `.cursor/rules/`, `.windsurf/rules/`,
+  `.gemini/commands/` and `.clinerules`.
+- `--include-memory` carries Claude project memory and Codex memories. It is
+  off by default, and the export wizard asks each time.
+- A Claude Code plugin inventory travels in the bundle. Import prints the
+  `claude plugin marketplace add` / `claude plugin install` commands; it
+  installs nothing.
+- `GEMINI.md` is a well-known instruction file for `instructions pull` and
+  `sync`.
 
 ### Changed
 - `actions/checkout` and `actions/github-script` are pinned to commit SHAs.
@@ -24,8 +45,42 @@
   is no longer supported upstream.
 - CI runs the tests on macOS (`macos-latest`) on push and pull request, next
   to Linux and Windows.
+- A project's own settings files (`.claude/settings.json`, `.mcp.json`,
+  `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`,
+  `.vscode/mcp.json`) are listed in the bundle as `repository` and not
+  carried, in any letter case and also when an instruction file names them. They travel with the repository. Before, `.claude/settings.json`
+  was carried.
+- Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
+  `google_accounts.json`) are never collected, even with `--include-secrets`,
+  and import never writes one from a bundle, under any spelling
+  (`x/../auth.json`, `auth.json/.`, `Auth.json.`). Import takes provider
+  paths only in clean form.
+- `~/.copilot/config.json` travels without its login keys (`copilot_tokens`,
+  `logged_in_users`, `last_logged_in_user`, any key named like a token
+  except counts and limits such as `max_tokens` and `tokenLimit`),
+  even with `--include-secrets`. The export lists it as carried in part and
+  skips it when it is not JSON. Import strips the same keys from a bundle and
+  keeps this machine's sign-in, also when the bundle spells the name
+  `config.json.`, which Windows writes to `config.json`.
 
 ### Security
+- Windows short names (`SETTIN~1.JSO`) and alternate data streams
+  (`.env::$DATA`) name another file there. Import refuses any bundle path
+  segment with `~N`, and the reference closure refuses both forms, so no
+  name check is judged against the wrong name.
+- Import refuses Windows device names (`CON`, `NUL`, `aux.md`, `COM1.txt`)
+  in any path segment: Windows opens them as devices, and writing one can
+  block.
+- A hard link inside a directory an instruction file names is refused, with
+  or without `--include-secrets`, as one named directly is. Pipes, sockets
+  and unreadable files there are listed as declined instead of ending the
+  export.
+- A pipe, socket or a name import would refuse (`backup~1.md`, `aux.md`)
+  inside a carried tool directory is skipped with a warning instead of
+  ending the export.
+- An asset is read through the descriptor that was checked, to at most its
+  cap: a file swapped, grown past the cap or replaced by a pipe after its
+  checks is not exported, and the read does not block.
 - Vault and bundle files carry their key-derivation parameters in a versioned
   header (`AVK2`), and new files use Argon2id t=3, 64 MiB, 4 lanes (RFC 9106).
   Before, t=1 was fixed in the code. The header is authenticated with the
@@ -50,6 +105,65 @@
   provider response is read into an error.
 - A referenced file is re-checked after it is opened: it must still be a
   regular file inside the directory and at most 256 KiB.
+- Reference following (`instructions pull` and `export`) refuses credential
+  files by name: `.env` and `.env.*` (templates such as `.env.example` are
+  kept), keys and certificates (`.pem`, `.key`, `.p12`, ...), `.netrc`,
+  `.npmrc`, `.git-credentials`, SSH keys, and anything under `.ssh`,
+  `.gnupg`, `.aws`, `.kube`, `.docker` or `.azure`. Before, an instruction
+  file that said "copy `.env.example` to `.env`" pulled `.env` into the vault.
+  The check also runs on a reference's resolved path, so a symlink named
+  `notes.md` that points at `.netrc` is refused. Directory names (`.SSH`)
+  and token file names (`Auth.json`) match in any letter case. A reference
+  to `~/.claude.json` is declined: that file travels as `mcpServers` only.
+- A referenced file is judged by its name and by its symlink target, at user
+  and at project scope. A `.local.` file named by an instruction file stays
+  behind unless named with `--include-local`. Project files named by
+  instructions that are not prose are redacted without `--include-secrets`.
+- Outside the tools' own directories, import writes back only prose files
+  (0600, never executable) and the `mcpServers` key of `~/.claude.json`. The
+  merged keys are fixed in code, not read from the bundle, and a machine
+  with no `~/.claude.json` yet gets only those keys. Referenced scripts
+  and config files are staged for review and not written. Startup files,
+  credential paths and home-root dotfiles are refused in any letter case.
+- Referenced files that are not prose (scripts, config) and `~/.claude/hooks/`
+  scripts are redacted without `--include-secrets`. Scripts that
+  `settings.json` runs and that cannot be carried are listed as declined.
+  `*.env` files are refused like `.env`. A symlinked optional file (for
+  example `~/.gemini/GEMINI.md`, `~/.claude/settings.json` or
+  `CONVENTIONS.md`) is skipped with a warning instead of failing the export.
+  Credential and startup directories match with trailing dots and spaces
+  too (`~/.aws./config`), which Windows drops.
+- The plugin inventory drops the user and password from a marketplace URL,
+  so `https://token@host/repo` does not carry the token. Only http, https,
+  ssh and git URLs with a host are kept, without query or fragment;
+  `user@host:path` keeps `host:path`; any other source with an `@` is dropped.
+- Plugin install commands are printed only for IDs and sources that cannot
+  carry shell syntax. Anything else is printed quoted, as a comment.
+- A credential file by name (`.env`, `*.pem`, ...) inside a tool or rule
+  directory (`~/.claude/agents/`, `.cursor/rules/`, ...), and any carried
+  file with a second hard link, is redacted without `--include-secrets`. A
+  hard link named `notes.md` can be `.env` under another name.
+  Reference following (`instructions pull`, `--project`) refuses a file
+  with a second hard link. Files in project rule directories that are
+  neither prose nor TOML (`.github/instructions/token.json`) are redacted
+  too.
+- A user-level reference inside a tool's directory (`~/.claude`, `~/.codex`,
+  `~/.gemini`, `~/.copilot`, `~/.cursor`, `~/.codeium`) is followed only into
+  the setup the bundle carries, rule directories, and prose files at the
+  top of that directory. Memory, session transcripts, archived sessions,
+  history, backups and caches are declined. Before, naming
+  `~/.claude/projects/` carried session transcripts, and memory without
+  `--include-memory`. The same holds through a symlink: with `~/.claude`
+  linked to `~/dotfiles/claude`, a reference to
+  `~/dotfiles/claude/todos/` is declined too, and so is a link at any
+  depth (`~/.claude/projects/p/memory` linked to `~/notes/mem`). Import
+  does not write those paths from the home root either.
+- `~/.config/github-copilot/hosts.json` and `apps.json` hold GitHub OAuth
+  tokens. They are login token files like `auth.json`: never collected,
+  not followed as a reference, and never written from a bundle, in any
+  spelling.
+- A file whose hard link count cannot be read is treated as hard-linked.
+  The export warning for a hard-linked file says why it was redacted.
 
 ### Fixed
 - `generate mcp` writes by default to Claude Desktop's config for the OS:

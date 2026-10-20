@@ -399,6 +399,7 @@ otherwise removes the first match by name.`,
 var knownFilenameToName = map[string]string{
 	"AGENTS.md":      "agents",
 	"CLAUDE.md":      "claude",
+	"GEMINI.md":      "gemini",
 	"codex.md":       "codex",
 	"MELDBOT.md":     "meldbot",
 	"OPENCLAW.md":    "openclaw",

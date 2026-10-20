@@ -43,6 +43,9 @@ const (
 	DeclinedByPolicy = "policy"
 	// DeclinedAbsent: it was named or expected, and is not on disk.
 	DeclinedAbsent = "absent"
+	// DeclinedRepoScope: a repository's own settings file. It travels with
+	// the repository through git, so the bundle lists it and does not carry it.
+	DeclinedRepoScope = "repository"
 )
 
 type SetupBundle struct {
@@ -64,6 +67,7 @@ type SetupBundle struct {
 	DetectedAgents       []DetectedAgent              `json:"detected_agents,omitempty"`
 	InstallGuide         InstallGuide                 `json:"install_guide"`
 	Declined             []DeclinedAsset              `json:"declined,omitempty"`
+	Plugins              *PluginInventory             `json:"plugins,omitempty"`
 }
 
 // MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.

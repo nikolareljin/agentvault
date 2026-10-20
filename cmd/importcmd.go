@@ -358,6 +358,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, applyConfigs boo
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 	}
 
+	printPluginInstallCommands(cmd.OutOrStdout(), setup.Plugins)
 	if !applyConfigs {
 		return nil
 	}
@@ -420,8 +421,15 @@ func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
 	for _, d := range declined {
 		byCategory[d.Category] = append(byCategory[d.Category], d)
 	}
-	fmt.Fprintf(out, "    Declined: %d (%d refused by policy, %d not present)\n",
-		len(declined), len(byCategory[DeclinedByPolicy]), len(byCategory[DeclinedAbsent]))
+	repoNote := ""
+	if n := len(byCategory[DeclinedRepoScope]); n > 0 {
+		repoNote = fmt.Sprintf(", %d repository settings", n)
+	}
+	fmt.Fprintf(out, "    Declined: %d (%d refused by policy, %d not present%s)\n",
+		len(declined), len(byCategory[DeclinedByPolicy]), len(byCategory[DeclinedAbsent]), repoNote)
+	for _, d := range byCategory[DeclinedRepoScope] {
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedRepoScope, d.Path, d.Reason)
+	}
 	// Policy declines are few and each is a decision somebody can act on, so
 	// they are all printed. Absent ones are mostly prose naming a file that was
 	// never there -- eighteen of them against four policy declines on a real

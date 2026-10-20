@@ -641,7 +641,8 @@ Flags:
 - `--include-secrets` (default: `true`): Include secret-bearing provider and asset file content. Plaintext output with secrets requires interactive confirmation or `--confirm`.
 - `--include-sessions` (default: `true`)
 - `--include-templates` (default: `true`): Workflow templates from the profile's config storage.
-- `--include-provider-files` (default: `true`): `~/.claude`, `~/.codex`, `~/.copilot` files.
+- `--include-provider-files` (default: `true`): user-level setup of Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor and Windsurf, and the files it references. The full list is in `docs/cli-reference.md`, "What a bundle carries".
+- `--include-memory` (default: `false`): Claude project memory and Codex memories. The wizard asks every time.
 - `--include-skills` (default: `true`)
 - `--include-status` (default: `false`): A token/quota reading is a snapshot, not a setting.
 - `--detect` (default: `true`): Record which agents are installed on this machine.

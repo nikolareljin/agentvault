@@ -85,7 +85,7 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 	mustWriteFile(t, filepath.Join(homeDir, ".claude", "keybindings.json"), `{"up":"k"}`)
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "config.toml"), `model = "gpt"`)
 	mustWriteFile(t, filepath.Join(homeDir, ".codex", "rules", "review.md"), "review rules")
-	mustWriteFile(t, filepath.Join(homeDir, ".config", "github-copilot", "hosts.json"), `{"github.com":{"oauth_token":"secret"}}`)
+	mustWriteFile(t, filepath.Join(homeDir, ".config", "github-copilot", "versions.json"), `{"token":"secret"}`)
 
 	assets, _, err := collectSetupAssets(setupAssetOptions{})
 	if err != nil {
@@ -100,7 +100,7 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 		t.Fatalf("claude settings asset = %#v, want sensitive redacted metadata", settings)
 	}
 
-	copilotHosts := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilot, "hosts.json")
+	copilotHosts := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilot, "versions.json")
 	if copilotHosts == nil {
 		t.Fatalf("provider files missing copilot config")
 	}
@@ -620,7 +620,7 @@ func TestApplyProviderAssetsToSystemRejectsSymlinkProviderDirectory(t *testing.T
 	applied, warnings, err := applyProviderAssetsToSystem(homeDir, []SetupAsset{{
 		Kind:           setupAssetKindProviderFile,
 		LogicalRoot:    setupAssetRootProviderCopilot,
-		LogicalPath:    "hosts.json",
+		LogicalPath:    "versions.json",
 		ContentPresent: true,
 		Content:        []byte(`{"github.com":{"oauth_token":"secret"}}`),
 	}})
@@ -631,7 +631,7 @@ func TestApplyProviderAssetsToSystemRejectsSymlinkProviderDirectory(t *testing.T
 	if applied != 0 || !strings.Contains(joined, "destination directory contains a symlink") {
 		t.Fatalf("applyProviderAssetsToSystem() = (%d, %v), want provider-dir symlink warning", applied, warnings)
 	}
-	if _, err := os.Stat(filepath.Join(outsideDir, "hosts.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(outsideDir, "versions.json")); !os.IsNotExist(err) {
 		t.Fatalf("copilot provider symlink target should remain untouched, got err=%v", err)
 	}
 }
@@ -941,13 +941,19 @@ func TestCollectSetupAssets_CarriesDirectoryScopeAndDeclinesLocalFiles(t *testin
 			agentAsset.Redacted, agentAsset.ContentPresent)
 	}
 
-	// settings.json can hold credentials, so without --include-secrets it is
-	// carried as metadata only, exactly as the user-level one is.
-	settingsAsset := findAsset(assets.ProjectFiles, setupAssetRootProject, ".claude/settings.json")
-	if settingsAsset == nil {
-		t.Error(".claude/settings.json was not carried")
-	} else if !settingsAsset.Redacted {
-		t.Error(".claude/settings.json was carried unredacted without --include-secrets")
+	// settings.json is the repository's own: it travels with the repository,
+	// so the bundle lists it and does not carry it.
+	if findAsset(assets.ProjectFiles, setupAssetRootProject, ".claude/settings.json") != nil {
+		t.Error(".claude/settings.json was carried; repository-scope settings are listed only")
+	}
+	listed := false
+	for _, d := range assets.Declined {
+		if d.Path == ".claude/settings.json" && d.Category == DeclinedRepoScope {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Errorf(".claude/settings.json was not listed as repository-scope; declined: %v", assets.Declined)
 	}
 	if hasAsset(assets.ProjectFiles, setupAssetKindProjectFile, setupAssetRootProject, ".claude/settings.local.json") {
 		t.Fatal("a .local. file was carried by default; it may hold credentials")
@@ -1225,5 +1231,33 @@ func TestDedupeDeclined_KeepsOnePerPathAndCategory(t *testing.T) {
 	}
 	if got[0].Reason != "named by AGENTS.md" {
 		t.Errorf("kept %q, want the first seen", got[0].Reason)
+	}
+}
+
+// Windows opens SETTIN~1.JSO as settings.json: a short name would dodge
+// every check by name, so import refuses it.
+func TestSanitizeAssetRelativePathRefusesShortNames(t *testing.T) {
+	for _, p := range []string{"SETTIN~1.JSO", ".claude/.CREDE~1.JSO", "CREDEN~1.JSO", "PROGRA~1/x.md"} {
+		if _, err := sanitizeAssetRelativePath(p); err == nil {
+			t.Errorf("%s: accepted", p)
+		}
+	}
+	if _, err := sanitizeAssetRelativePath("notes~draft.md"); err != nil {
+		t.Errorf("notes~draft.md: %v", err)
+	}
+}
+
+// Windows opens aux.md, CON and COM1.txt as devices, not files: import
+// refuses them on every platform.
+func TestSanitizeAssetRelativePathRefusesDeviceNames(t *testing.T) {
+	for _, p := range []string{"CON", "nul", "aux.md", ".claude/COM1.txt", "lpt9", "Con .txt", "PRN.", "agents/conout$", "COM\u00b9.md"} {
+		if _, err := sanitizeAssetRelativePath(p); err == nil {
+			t.Errorf("%s: accepted", p)
+		}
+	}
+	for _, p := range []string{"console.md", "auxiliary.md", "com10.txt", "com.md", "agents/null.md"} {
+		if _, err := sanitizeAssetRelativePath(p); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -53,6 +54,10 @@ type SetupAsset struct {
 	SizeBytes           int64  `json:"size_bytes,omitempty"`
 	Content             []byte `json:"content,omitempty"`
 	SHA256              string `json:"sha256,omitempty"`
+	// MergeKeys, when set, are the only top-level JSON keys this asset
+	// carries. Import merges them into the existing file instead of replacing
+	// it, because the rest of that file is the other machine's own state.
+	MergeKeys []string `json:"merge_keys,omitempty"`
 }
 
 type setupAssetCollection struct {
@@ -74,6 +79,9 @@ type setupAssetOptions struct {
 	// per-machine values and some hold credentials, so carrying them is a
 	// decision about a specific file, not a mode.
 	IncludeLocalFiles []string
+	// Agent memory (Claude project memory, Codex memories). Opt-in: it is
+	// personal, and carrying it is a choice per export.
+	IncludeMemory bool
 }
 
 func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string, error) {
@@ -93,6 +101,36 @@ func collectSetupAssets(opts setupAssetOptions) (setupAssetCollection, []string,
 	if err != nil {
 		return setupAssetCollection{}, nil, err
 	}
+	extraAssets, extraWarnings, extraDeclined, err := collectExtraProviderAssets(homeDir, opts.IncludeSecrets)
+	if err != nil {
+		return setupAssetCollection{}, nil, err
+	}
+	providerDeclined = append(providerDeclined, extraDeclined...)
+	warnings = append(warnings, extraWarnings...)
+	if opts.IncludeMemory {
+		memoryAssets, memoryWarnings, err := collectMemoryAssets(homeDir, opts.IncludeSecrets)
+		if err != nil {
+			return setupAssetCollection{}, nil, err
+		}
+		extraAssets = append(extraAssets, memoryAssets...)
+		warnings = append(warnings, memoryWarnings...)
+	}
+	extraAssets, localWarnings, localDeclined := declineLocalFiles(extraAssets, optedLocalFiles(opts.IncludeLocalFiles))
+	warnings = append(warnings, localWarnings...)
+	providerDeclined = append(providerDeclined, localDeclined...)
+	providerAssets = append(providerAssets, extraAssets...)
+
+	referenced, referencedDeclined, referencedWarnings, err := collectHomeReferencedFiles(homeDir, providerAssets, opts.IncludeSecrets)
+	if err != nil {
+		return setupAssetCollection{}, nil, err
+	}
+	referenced, localWarnings, localDeclined = declineLocalFiles(referenced, optedLocalFiles(opts.IncludeLocalFiles))
+	warnings = append(warnings, localWarnings...)
+	providerDeclined = append(providerDeclined, localDeclined...)
+	providerAssets = append(providerAssets, referenced...)
+	providerDeclined = append(providerDeclined, referencedDeclined...)
+	warnings = append(warnings, referencedWarnings...)
+
 	assets.ProviderFiles = providerAssets
 	assets.Declined = append(assets.Declined, providerDeclined...)
 	warnings = append(warnings, providerWarnings...)
@@ -175,6 +213,10 @@ func collectProviderHomeAssets(homeDir string, includeSecrets bool, includeLocal
 	var warnings []string
 	var declinedAssets []DeclinedAsset
 	for _, spec := range specs {
+		if warn, skip := symlinkedAsset(spec.path); skip && spec.optional {
+			warnings = append(warnings, warn)
+			continue
+		}
 		asset, warn, err := loadSetupAsset(spec.path, setupAssetKindProviderFile, setupAssetOriginProviderHome, spec.root, spec.logicalPath, "", spec.sensitive, includeSecrets, spec.optional)
 		if err != nil {
 			return nil, warnings, declinedAssets, err
@@ -325,6 +367,11 @@ func collectProjectAgentSettings(projectDir string, includeSecrets bool, include
 				strings.HasPrefix(logical, ".claude/commands/")) {
 				continue
 			}
+			// Repository-scope settings are listed, not carried; see
+			// projectRepoScopeSettings.
+			if isProjectRepoScopeSetting(logical) {
+				continue
+			}
 			assets = append(assets, a)
 		}
 	}
@@ -426,32 +473,28 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	}
 	warnings = append(warnings, workflowWarnings...)
 
-	// What the instruction files name, and what became of it. Without this the
-	// bundle records a refusal by policy and nothing at all about a rule that
-	// points at a file which is not there, which is the failure this whole
-	// epic is about: on the far end both look like a file that is not here.
-	for _, inst := range projectFiles {
-		if inst.Kind != setupAssetKindProjectFile || !inst.ContentPresent {
-			continue
-		}
-		base := filepath.Dir(filepath.FromSlash(inst.LogicalPath))
-		for _, ref := range agent.ResolveReferences(projectDir, base, string(inst.Content)) {
-			switch ref.Status {
-			case agent.ReferenceNotFound:
-				projectDeclined = append(projectDeclined, DeclinedAsset{
-					Path:     ref.Raw,
-					Category: DeclinedAbsent,
-					Reason:   fmt.Sprintf("named by %s and not present", inst.LogicalPath),
-				})
-			case agent.ReferenceRefused:
-				projectDeclined = append(projectDeclined, DeclinedAsset{
-					Path:     ref.Raw,
-					Category: DeclinedByPolicy,
-					Reason:   fmt.Sprintf("named by %s: %s", inst.LogicalPath, ref.Reason),
-				})
-			}
-		}
+	extras, extraWarnings, err := collectProjectInstructionExtras(projectDir, includeSecrets)
+	if err != nil {
+		return nil, nil, warnings, projectDeclined, err
 	}
+	projectFiles = append(projectFiles, extras...)
+	warnings = append(warnings, extraWarnings...)
+
+	// What the instruction files name, followed to the files it names in turn,
+	// is carried; what cannot be is recorded with the reason. Without the
+	// files, a rule pointing at a checklist arrives pointing at nothing.
+	closure, closureDeclined, closureWarnings, err := collectProjectReferenceClosure(projectDir, projectFiles, includeSecrets)
+	if err != nil {
+		return nil, nil, warnings, projectDeclined, err
+	}
+	// A named .local. file follows the same rule as everywhere else.
+	closure, localWarnings, localDeclined := declineLocalFiles(closure, optedLocalFiles(includeLocal))
+	warnings = append(warnings, localWarnings...)
+	projectDeclined = append(projectDeclined, localDeclined...)
+	projectFiles = append(projectFiles, closure...)
+	projectDeclined = append(projectDeclined, closureDeclined...)
+	warnings = append(warnings, closureWarnings...)
+	projectDeclined = append(projectDeclined, declineProjectRepoScopeSettings(projectDir)...)
 
 	// Directory scope: the project's own agent configuration. An agent reads
 	// system, user and directory scope; the bundle covered parts of two.
@@ -462,6 +505,7 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	projectFiles = append(projectFiles, dirScope...)
 	warnings = append(warnings, dirWarnings...)
 	projectDeclined = append(projectDeclined, dirDeclined...)
+	projectFiles = dedupeAssetsByLogicalPath(projectFiles)
 
 	return projectFiles, instructionOverrides, warnings, projectDeclined, nil
 }
@@ -524,11 +568,23 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 			warnings = append(warnings, fmt.Sprintf("skipping symlink asset %q under %q", path, root))
 			return nil
 		}
+		if !d.Type().IsRegular() {
+			// A pipe or socket would block or fail the read, and end the export.
+			warnings = append(warnings, fmt.Sprintf("skipping %q under %q: not a regular file", path, root))
+			return nil
+		}
+		if isCredentialFile(path) {
+			warnings = append(warnings, fmt.Sprintf("skipping credential file %q; sign in on the other machine instead", path))
+			return nil
+		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return fmt.Errorf("computing relative path for %q: %w", path, err)
 		}
 		rel = filepath.ToSlash(rel)
+		// A .env or a key file inside a rules or agents directory holds a
+		// secret like any other: redacted without --include-secrets.
+		fileSensitive := sensitive || agent.SecretBearingReason(rel) != ""
 		logicalPath := rel
 		if logicalPrefix != "" {
 			logicalPath = filepath.ToSlash(filepath.Join(logicalPrefix, rel))
@@ -537,7 +593,13 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 		if projectPrefix != "" {
 			projectRelative = filepath.ToSlash(filepath.Join(projectPrefix, rel))
 		}
-		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, sensitive, includeSecrets, false)
+		// A name import would refuse (NOTES~1.MD, aux.md) is left behind
+		// here with a warning, not an error that ends the export.
+		if _, err := sanitizeAssetRelativePath(logicalPath); err != nil {
+			warnings = append(warnings, fmt.Sprintf("skipping %q under %q: %v", path, root, err))
+			return nil
+		}
+		asset, warn, err := loadSetupAsset(path, kind, origin, logicalRoot, logicalPath, projectRelative, fileSensitive, includeSecrets, false)
 		if err != nil {
 			return err
 		}
@@ -576,7 +638,7 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 		Sensitive:           sensitive,
 	}
 
-	info, statErr := os.Lstat(path)
+	info, statErr := lstatPinned(path)
 	if statErr != nil {
 		if os.IsNotExist(statErr) && optional {
 			asset.Missing = true
@@ -594,12 +656,32 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	if asset.SizeBytes > maxSetupAssetBytes {
 		return asset, fmt.Sprintf("asset %q exceeds %d bytes; exporting metadata only", path, maxSetupAssetBytes), nil
 	}
+	// A hard link has another name that was never checked: notes.md can be
+	// .netrc. Its content is treated as secret.
+	hardLinked := agent.HardLinkCount(path, info) > 1
+	if hardLinked {
+		sensitive = true
+		asset.Sensitive = true
+	}
 
-	data, err := os.ReadFile(path)
+	if afterAssetStat != nil {
+		afterAssetStat(path)
+	}
+	data, changed, err := readStattedFile(path, info, maxSetupAssetBytes)
 	if err != nil {
 		return SetupAsset{}, "", fmt.Errorf("reading asset %q: %w", path, err)
 	}
+	if changed != "" {
+		// Swapped or grown since the checks above: what those checks judged
+		// is not what would be read.
+		asset.Redacted = true
+		return asset, fmt.Sprintf("asset %q %s; not exported", path, changed), nil
+	}
 	asset.SizeBytes = int64(len(data))
+	if hardLinked && !includeSecrets {
+		asset.Redacted = true
+		return asset, fmt.Sprintf("asset %q has a second hard link; redacted, use --include-secrets to carry", path), nil
+	}
 	if sensitive && !includeSecrets {
 		asset.Redacted = true
 		return asset, fmt.Sprintf("sensitive asset %q excluded from export content (use --include-secrets to include it)", path), nil
@@ -608,6 +690,48 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	asset.ContentPresent = true
 	asset.Content = data
 	return asset, "", nil
+}
+
+// lstatPinned is os.Lstat with the file's identity read now. On Windows
+// os.SameFile looks a FileInfo's identity up by path on first use, so a
+// file swapped after Lstat would compare equal to its replacement.
+func lstatPinned(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err == nil {
+		_ = os.SameFile(info, info)
+	}
+	return info, err
+}
+
+// afterAssetStat is a test seam: it runs between the checks on a file and
+// the read of it.
+var afterAssetStat func(path string)
+
+// readStattedFile reads path through one open descriptor, and only when that
+// descriptor is still the regular file info described, read to at most max
+// bytes. changed says why not, when the file was swapped or grew past max
+// after info was taken. The open does not block on a pipe swapped in.
+func readStattedFile(path string, info os.FileInfo, max int64) ([]byte, string, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|openNonBlock, 0)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	got, err := f.Stat()
+	if err != nil {
+		return nil, "", err
+	}
+	if !got.Mode().IsRegular() || !os.SameFile(info, got) {
+		return nil, "changed after it was checked", nil
+	}
+	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Sprintf("grew past %d bytes while read", max), nil
+	}
+	return data, "", nil
 }
 
 func hashSetupAssetContent(data []byte) string {
@@ -853,7 +977,36 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 		} else if !os.IsNotExist(err) {
 			return applied, warnings, fmt.Errorf("checking provider asset destination %q: %w", dest, err)
 		}
-		if err := writeRegularFileAtomic(homeDir, dest, asset.Content, 0600); err != nil {
+		content := asset.Content
+		perm := os.FileMode(0600)
+		if asset.LogicalRoot == setupAssetRootProviderCopilotCLI && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.json") {
+			// Trailing dots and spaces too: Windows writes "config.json." to config.json.
+			// A bundle is not trusted to replace this machine's sign-in.
+			stripped, _, err := stripCopilotLoginState(content)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				continue
+			}
+			content = keepLocalCopilotLogin(dest, stripped)
+		}
+		mergeKeys := asset.MergeKeys
+		if asset.LogicalRoot == setupAssetRootProviderHome {
+			// Never executable from the home root, and the keys merged into
+			// ~/.claude.json are fixed here, not taken from the bundle.
+			mergeKeys = nil
+			if asset.LogicalPath == ".claude.json" {
+				mergeKeys = claudeUserConfigMergeKeys
+			}
+		}
+		if len(mergeKeys) > 0 {
+			merged, err := mergeJSONKeysIntoFile(dest, content, mergeKeys)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
+				continue
+			}
+			content = merged
+		}
+		if err := writeRegularFileAtomic(homeDir, dest, content, perm); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
 		}
 		applied++
@@ -862,37 +1015,37 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 }
 
 func providerAssetDestination(homeDir string, asset SetupAsset) (string, error) {
-	switch asset.LogicalRoot {
-	case setupAssetRootProviderClaude:
-		return safeJoinUnder(filepath.Join(homeDir, ".claude"), asset.LogicalPath)
-	case setupAssetRootProviderCodex:
-		return safeJoinUnder(filepath.Join(homeDir, ".codex"), asset.LogicalPath)
-	case setupAssetRootProviderCopilot:
-		return safeJoinUnder(filepath.Join(homeDir, ".config", "github-copilot"), asset.LogicalPath)
-	case setupAssetRootProviderClaudeSkill:
-		return safeJoinUnder(filepath.Join(homeDir, ".claude", "skills"), asset.LogicalPath)
-	case setupAssetRootProviderCodexSkill:
-		return safeJoinUnder(filepath.Join(homeDir, ".codex", "skills"), asset.LogicalPath)
-	default:
+	dir, ok := providerRootDirs[asset.LogicalRoot]
+	if !ok {
 		return "", fmt.Errorf("unsupported provider asset root %q", asset.LogicalRoot)
 	}
+	// The path the bundle gives must already be the clean form, so checks
+	// made on it hold for the file written: "x/../auth.json" is auth.json.
+	rel, err := sanitizeAssetRelativePath(asset.LogicalPath)
+	if err != nil {
+		return "", err
+	}
+	if rel != asset.LogicalPath {
+		return "", fmt.Errorf("%q: not in clean form (%q); refused", asset.LogicalPath, rel)
+	}
+	// Export never carries login tokens; a bundle that does is not trusted
+	// to replace the ones here.
+	if isCredentialFile(rel) {
+		return "", fmt.Errorf("%s: a login token file; sign in on this machine instead", rel)
+	}
+	if asset.LogicalRoot == setupAssetRootProviderHome {
+		rel, err := homeAssetWritable(rel)
+		if err != nil {
+			return "", err
+		}
+		return safeJoinUnder(homeDir, rel)
+	}
+	return safeJoinUnder(filepath.Join(homeDir, dir), rel)
 }
 
 func providerStageDirectoryName(logicalRoot string) (string, bool) {
-	switch logicalRoot {
-	case setupAssetRootProviderClaude:
-		return setupAssetRootProviderClaude, true
-	case setupAssetRootProviderCodex:
-		return setupAssetRootProviderCodex, true
-	case setupAssetRootProviderCopilot:
-		return setupAssetRootProviderCopilot, true
-	case setupAssetRootProviderClaudeSkill:
-		return setupAssetRootProviderClaudeSkill, true
-	case setupAssetRootProviderCodexSkill:
-		return setupAssetRootProviderCodexSkill, true
-	default:
-		return "", false
-	}
+	_, ok := providerRootDirs[logicalRoot]
+	return logicalRoot, ok
 }
 
 func safeSubpath(root string, path string) (string, error) {
@@ -945,7 +1098,42 @@ func sanitizeAssetRelativePath(path string) (string, error) {
 	if strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal is not allowed: %q", path)
 	}
+	// Windows resolves a short name such as SETTIN~1.JSO to the long file,
+	// so a name check on the bundle path would judge the wrong name.
+	for _, seg := range strings.Split(filepath.ToSlash(cleaned), "/") {
+		if windowsShortName.MatchString(seg) {
+			return "", fmt.Errorf("Windows short name (~N) is not allowed: %q", path)
+		}
+		if isWindowsDeviceName(seg) {
+			return "", fmt.Errorf("Windows device name is not allowed: %q", path)
+		}
+	}
 	return filepath.ToSlash(cleaned), nil
+}
+
+var windowsShortName = regexp.MustCompile(`~[0-9]`)
+
+// isWindowsDeviceName is whether Windows opens seg as a device rather than a
+// file: CON, NUL, AUX, PRN, COM1-9 and LPT1-9, with any extension, any case
+// and trailing dots or spaces (aux.md, Con .txt). Writing COM1 can block.
+func isWindowsDeviceName(seg string) bool {
+	stem := strings.ToLower(seg)
+	if i := strings.IndexByte(stem, '.'); i >= 0 {
+		stem = stem[:i]
+	}
+	stem = strings.TrimRight(stem, " ")
+	switch stem {
+	case "con", "prn", "aux", "nul", "conin$", "conout$":
+		return true
+	}
+	if len(stem) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
+		return stem[3] >= '0' && stem[3] <= '9'
+	}
+	r := []rune(stem)
+	if len(r) == 4 && (strings.HasPrefix(stem, "com") || strings.HasPrefix(stem, "lpt")) {
+		return r[3] == '\u00b9' || r[3] == '\u00b2' || r[3] == '\u00b3'
+	}
+	return false
 }
 
 func replaceRegularFile(tmpPath string, destPath string) error {

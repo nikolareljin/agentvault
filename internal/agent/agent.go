@@ -199,6 +199,7 @@ const PromptSessionIDMaxRunes = 128
 var WellKnownInstructions = map[string]string{
 	"agents":   "AGENTS.md",
 	"claude":   "CLAUDE.md",
+	"gemini":   "GEMINI.md",
 	"codex":    "codex.md",
 	"copilot":  ".github/copilot-instructions.md",
 	"meldbot":  "MELDBOT.md",
@@ -218,7 +219,7 @@ var ProviderInstructionMap = map[Provider][]string{
 	ProviderOpenclaw: {"openclaw", "agents"},
 	ProviderNanoclaw: {"nanoclaw", "agents"},
 	ProviderAider:    {"aider", "agents"},
-	ProviderGemini:   {"agents"},
+	ProviderGemini:   {"gemini", "agents"},
 	ProviderOllama:   {"agents"},
 	ProviderOpenAI:   {"agents"},
 	ProviderCustom:   {"agents"},
