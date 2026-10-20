@@ -23,8 +23,8 @@
   like, and everything under `env` and `headers`). Import fills each blanked
   value from the file already on the machine, or leaves it out. A
   value is restored only into an unchanged definition (for settings.json's
-  own `env`, the rest of `env` must match; for a top-level key, every
-  top-level URL, host or endpoint field must match), so a bundle that
+  own `env`, the rest of `env` must match; for a top-level key, the rest
+  of the file must match), so a bundle that
   points an MCP server elsewhere does not receive the local token. A file
   with secret-shaped values under neutral keys (`--token x` in `args` or a command,
   `X-API-Key: x` header arguments, URL credentials, known token prefixes) is

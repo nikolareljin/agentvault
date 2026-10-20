@@ -135,13 +135,22 @@ func restoreRedactedFields(incoming []byte, pointers []string, existing []byte) 
 			have = nil
 		}
 	}
+	// The pointer list comes from the bundle. Only a pointer that names a
+	// blanked value under a secret key counts as a secret; any other listed
+	// field is part of the definition and must match.
+	var secrets []string
+	for _, p := range pointers {
+		if v, ok := pointerGet(doc, p); ok && v == "" && secretPointer(p) {
+			secrets = append(secrets, p)
+		}
+	}
 	restored := 0
 	// Deepest first, so removing an array element does not shift a sibling
 	// pointer that is still to be handled.
 	sorted := append([]string(nil), pointers...)
 	sort.Sort(sort.Reverse(sort.StringSlice(sorted)))
 	for _, p := range sorted {
-		if v, ok := pointerGet(have, p); ok && restorable(doc, have, p, pointers) {
+		if v, ok := pointerGet(have, p); ok && restorable(doc, have, p, secrets) {
 			pointerSet(doc, p, v)
 			restored++
 			continue
@@ -243,25 +252,14 @@ func pointerBlank(doc map[string]any, p string) {
 	}
 }
 
-// endpointKey names a top-level field that says where a request goes.
-var endpointKey = regexp.MustCompile(`(?i)url|uri|host|endpoint|proxy|server|base|domain`)
-
-// sameEndpoints is whether every top-level string field that names where a
-// request goes (a key such as baseUrl, or a value with "://") is the same in
-// both documents.
-func sameEndpoints(doc, have map[string]any) bool {
-	endpoint := func(k string, v any) bool {
-		s, ok := v.(string)
-		return ok && (endpointKey.MatchString(k) || strings.Contains(s, "://"))
-	}
-	for _, pair := range [][2]map[string]any{{doc, have}, {have, doc}} {
-		for k, v := range pair[0] {
-			if endpoint(k, v) && pair[1][k] != v {
-				return false
-			}
+// secretPointer is a pointer with a secret key or container on its path.
+func secretPointer(p string) bool {
+	for _, part := range splitPointer(p) {
+		if isSecretKey(part) || secretContainers[strings.ToLower(part)] {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 var (
@@ -347,16 +345,10 @@ func restorable(doc, have map[string]any, p string, pointers []string) bool {
 	if v, ok := pointerGet(doc, p); !ok || v != "" {
 		return false
 	}
-	parts := splitPointer(p)
-	secretPath := false
-	for _, part := range parts {
-		if isSecretKey(part) || secretContainers[strings.ToLower(part)] {
-			secretPath = true
-		}
-	}
-	if !secretPath {
+	if !secretPointer(p) {
 		return false
 	}
+	parts := splitPointer(p)
 	// The nearest object that is not itself a secret container: for
 	// /mcpServers/x/headers/Authorization that is /mcpServers/x.
 	cut := len(parts) - 1
@@ -366,9 +358,9 @@ func restorable(doc, have map[string]any, p string, pointers []string) bool {
 	if cut == 0 {
 		if len(parts) == 1 {
 			// A top-level secret (apiKeyHelper) belongs to the tool that
-			// reads the file, on both machines, as long as the file still
-			// sends it to the same place.
-			return sameEndpoints(doc, have)
+			// reads the file, on both machines, as long as the rest of the
+			// file is the same: any field may say where the secret is sent.
+			return sameApartFromSecrets(doc, have, "", pointers)
 		}
 		// settings.json's own env: the rest of env must match too, or a
 		// bundle that sets ANTHROPIC_BASE_URL elsewhere receives the key.

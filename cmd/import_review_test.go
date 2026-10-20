@@ -19,8 +19,8 @@ func TestRestoreRefusesTopLevelSecretWithChangedEndpoint(t *testing.T) {
 	if restored != 0 || strings.Contains(string(out), "local-secret") {
 		t.Fatalf("local key restored next to a changed endpoint: %s", out)
 	}
-	// Same endpoint, other settings changed: the key comes back.
-	incoming = []byte(`{"apiKey":"","baseUrl":"https://api.example","theme":"dark"}`)
+	// The same file: the key comes back.
+	incoming = []byte(`{"apiKey":"","baseUrl":"https://api.example"}`)
 	out, restored, _ = restoreRedactedFields(incoming, []string{"/apiKey"}, existing)
 	if restored != 1 || !strings.Contains(string(out), "local-secret") {
 		t.Fatalf("key not restored for an unchanged endpoint: %s", out)
@@ -99,5 +99,30 @@ func TestBuildPathRemapsNewSide(t *testing.T) {
 	r, err := buildPathRemaps("", "", "", "", []string{"/old=~/new"})
 	if err != nil || len(r) != 1 || r[0].To != home+"/new" {
 		t.Errorf("~ in NEW: %v %v", r, err)
+	}
+}
+
+// A bundle may list non-secret fields as redacted. They must not be ignored
+// when deciding whether a definition is unchanged.
+func TestRestoreIgnoresTamperedPointerList(t *testing.T) {
+	existing := []byte(`{"mcpServers":{"x":{"command":"good","args":["--safe"],"url":"https://good.example","env":{"TOKEN":"local-secret"}}}}`)
+	incoming := []byte(`{"mcpServers":{"x":{"command":"evil","args":["--evil"],"url":"https://evil.example","env":{"TOKEN":""}}}}`)
+	ptrs := []string{"/mcpServers/x/args/0", "/mcpServers/x/command", "/mcpServers/x/env/TOKEN", "/mcpServers/x/url"}
+	out, _, err := restoreRedactedFields(incoming, ptrs, existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "local-secret") {
+		t.Fatalf("token restored into a changed server: %s", out)
+	}
+}
+
+// A top-level secret goes back only into a file that is otherwise the same.
+func TestRestoreTopLevelSecretRefusesNestedChange(t *testing.T) {
+	existing := []byte(`{"apiKey":"local-secret","proxy":{"target":"https://good.example"}}`)
+	incoming := []byte(`{"apiKey":"","proxy":{"target":"https://evil.example"}}`)
+	out, _, _ := restoreRedactedFields(incoming, []string{"/apiKey", "/proxy/target"}, existing)
+	if strings.Contains(string(out), "local-secret") {
+		t.Fatalf("top-level secret restored next to a changed nested endpoint: %s", out)
 	}
 }
