@@ -3,7 +3,9 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -1463,8 +1465,12 @@ func isProjectInstructionPath(slashed string) bool {
 // the same bytes as src.
 func sameFileContent(src, dest string) (same bool, exists bool) {
 	d, err := readExistingFile(dest)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return false, false
+	}
+	if err != nil {
+		// Unreadable or over the cap: it exists, so merge must keep it.
+		return false, true
 	}
 	s, err := os.ReadFile(src)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -28,5 +29,21 @@ func TestApplyProjectsRefusesNamesImportRefuses(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(project, n)); err == nil {
 			t.Errorf("%s written", n)
 		}
+	}
+}
+
+func TestApplyProjectsMergeKeepsUnreadableDestination(t *testing.T) {
+	cfg := t.TempDir()
+	project := t.TempDir()
+	stage := filepath.Join(cfg, setupImportedAssetsDirName, "project")
+	mustWriteFile(t, filepath.Join(stage, "big.md"), "new\n")
+	big := strings.Repeat("x", maxSetupAssetBytes+1)
+	mustWriteFile(t, filepath.Join(project, "big.md"), big)
+	applied, skipped, err := applyStagedProjectAssetsWith(cfg, project, false)
+	if err != nil || applied != 0 || len(skipped) != 1 {
+		t.Errorf("applied %d, skipped %v, err %v", applied, skipped, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(project, "big.md")); string(got) != big {
+		t.Error("merge overwrote a destination it could not read")
 	}
 }
