@@ -16,9 +16,6 @@ import (
 // segments below root are compared; root itself may be spelled with short
 // names (C:\Users\RUNNER~1\...).
 func Check(root, p string) error {
-	if os.Getenv("CI") != "" {
-		return nil
-	}
 	// A link resolves to its target by design; callers refuse links with
 	// their own error, so this check leaves them alone.
 	if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink != 0 {
