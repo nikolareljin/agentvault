@@ -137,3 +137,18 @@ func applyAndRead(t *testing.T, home, name string) ([]byte, int, error) {
 	}
 	return nil, applied, nil
 }
+
+func TestIsInterpreterAllowMoreInterpretersAndRunners(t *testing.T) {
+	for _, r := range []string{"Bash(pypy3:*)", "Bash(irb:*)", "Bash(guile:*)", "Bash(racket:*)", "Bash(elixir:*)",
+		"Bash(jshell:*)", "Bash(swift:*)", "Bash(rlwrap:*)", "Bash(go run:*)", "Bash(cargo run:*)", "Bash(npm x:*)",
+		"Bash(pnpm x:*)", "Bash(dotnet run:*)", "Bash(deno run:*)", "Bash(uv tool:*)"} {
+		if !isInterpreterAllow(r) {
+			t.Errorf("%s not flagged", r)
+		}
+	}
+	for _, r := range []string{"Bash(go build:*)", "Bash(cargo test:*)", "Bash(npm test:*)"} {
+		if isInterpreterAllow(r) {
+			t.Errorf("%s flagged", r)
+		}
+	}
+}

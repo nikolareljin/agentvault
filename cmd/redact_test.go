@@ -233,3 +233,34 @@ func TestRedactFallsBackOnSecretInArgumentText(t *testing.T) {
 		t.Error("plain settings fell back to whole-file redaction")
 	}
 }
+
+// A camelCase flag or a NAME=value argument carries a secret as well as
+// --token does; field-level redaction cannot place it, so the file falls back.
+func TestRedactFallsBackForCamelCaseFlagsAndEnvAssignments(t *testing.T) {
+	for _, d := range []string{
+		`{"mcpServers":{"x":{"command":"srv","args":["--authToken","abc123"]}}}`,
+		`{"mcpServers":{"x":{"command":"srv","args":["--apiToken=abc123"]}}}`,
+		`{"mcpServers":{"x":{"command":"docker","args":["run","-e","GITHUB_TOKEN=abc123xyz","img"]}}}`,
+		`{"mcpServers":{"x":{"command":"srv --authToken abc123"}}}`,
+		`{"mcpServers":{"x":{"command":"API_KEY=abc123 srv"}}}`,
+	} {
+		if _, _, ok := redactJSONSecrets([]byte(d)); ok {
+			t.Errorf("secret carried in %s", d)
+		}
+	}
+	for _, d := range []string{
+		`{"mcpServers":{"x":{"command":"srv","args":["--max-tokens","5","PATH=/usr/bin","MAX_TOKENS=5"]}}}`,
+	} {
+		if _, _, ok := redactJSONSecrets([]byte(d)); !ok {
+			t.Errorf("no secret, but fell back: %s", d)
+		}
+	}
+}
+
+// A byte order mark must not let a settings file through unfiltered.
+func TestDropInterpreterAllowsWithByteOrderMark(t *testing.T) {
+	out, dropped := dropInterpreterAllows([]byte("\xef\xbb\xbf" + `{"permissions":{"allow":["Bash(*)","Bash(git:*)"]}}`))
+	if len(dropped) != 1 || bytes.Contains(out, []byte("Bash(*)")) {
+		t.Errorf("dropped=%v out=%s", dropped, out)
+	}
+}

@@ -366,3 +366,14 @@ func TestRemapWindowsHomeWithForwardSlashes(t *testing.T) {
 		t.Fatal("own home in forward slashes reported as foreign")
 	}
 }
+
+// file:///home/alex is the home path after a URL scheme.
+func TestRemapTextFileURL(t *testing.T) {
+	out, n := remapText(`{"u":"file:///home/alex/x"}`, []pathRemap{{"/home/alex", "/Users/alex"}})
+	if n != 1 || out != `{"u":"file:///Users/alex/x"}` {
+		t.Errorf("got %s (%d)", out, n)
+	}
+	if got := foreignHomePaths("see file:///home/bob/x"); len(got) != 1 || got[0] != "/home/bob" {
+		t.Errorf("warning missed: %v", got)
+	}
+}

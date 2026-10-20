@@ -239,9 +239,12 @@ var (
 	secretFlagInline = regexp.MustCompile(`(?i)(^|\s)--?(` + secretFlagNames + `)(=|\s+)[^-\s]`)
 	// An HTTP header passed as an argument: "Authorization: Bearer x".
 	headerArg = regexp.MustCompile(`^\s*([A-Za-z0-9_-]+)\s*:\s*\S`)
+	// An environment assignment passed as an argument or inside a command
+	// line: docker run -e GITHUB_TOKEN=x.
+	envAssign = regexp.MustCompile(`(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=\S`)
 )
 
-const secretFlagNames = `token|[a-z]+[-_]token|api[-_]?key|key|pat|pass|password|passwd|secret|auth|bearer|access[-_]?key|private[-_]?key|client[-_]?secret|credentials?|cookie`
+const secretFlagNames = `[a-z]*[-_]?(token|secret|password|api[-_]?key)|key|pat|pass|passwd|auth|bearer|access[-_]?key|private[-_]?key|client[-_]?secret|credentials?|cookie`
 
 // secretString is a string value that carries a secret in its text.
 func secretString(s string) bool {
@@ -250,6 +253,11 @@ func secretString(s string) bool {
 	}
 	if secretValueShapes.MatchString(s) || secretFlagInline.MatchString(s) {
 		return true
+	}
+	for _, a := range envAssign.FindAllStringSubmatch(s, -1) {
+		if isSecretKey(a[1]) && !settingLikeKey(a[1]) {
+			return true
+		}
 	}
 	m := headerArg.FindStringSubmatch(s)
 	return m != nil && isSecretKey(m[1])
@@ -384,7 +392,10 @@ var interpreters = map[string]bool{
 	"systemd-run": true, "pkexec": true, "py": true, "ipython": true, "tcsh": true, "csh": true, "ash": true,
 	"mksh": true, "yash": true, "nu": true, "xonsh": true, "elvish": true, "ts-node": true, "tsx": true,
 	"rscript": true, "wsl": true, "run0": true, "setpriv": true, "parallel": true, "pnpx": true,
-	"r": true, "julia": true, "wish": true, "toybox": true,
+	"r": true, "julia": true, "wish": true, "toybox": true, "pypy": true, "pypy3": true, "irb": true,
+	"pry": true, "guile": true, "racket": true, "elixir": true, "iex": true, "erl": true, "escript": true,
+	"groovy": true, "jshell": true, "swift": true, "rlwrap": true, "scala": true, "kotlin": true,
+	"runghc": true, "runhaskell": true, "ghci": true, "sbcl": true, "clojure": true, "clj": true,
 }
 
 var bashRule = regexp.MustCompile(`^Bash(?:\((.*)\))?$`)
@@ -438,7 +449,8 @@ func isInterpreterAllow(rule string) bool {
 
 // packageRunners download and run a package: the first two words.
 var packageRunners = map[string]bool{"npm exec": true, "pnpm dlx": true, "pnpm exec": true, "yarn dlx": true,
-	"yarn exec": true, "bun x": true, "pipx run": true, "uv run": true}
+	"yarn exec": true, "bun x": true, "pipx run": true, "uv run": true, "npm x": true, "pnpm x": true,
+	"go run": true, "cargo run": true, "dotnet run": true, "uv tool": true, "deno run": true}
 
 // plainWord is a literal argument: no shell metacharacter, quote, glob,
 // backslash or env assignment.
@@ -473,7 +485,8 @@ var commandWrappers = map[string]bool{
 // removed. A document that is not JSON is returned unchanged.
 func dropInterpreterAllows(data []byte) ([]byte, []string) {
 	var doc map[string]any
-	dec := json.NewDecoder(bytes.NewReader(data))
+	// A byte order mark would make the decode fail and the file pass whole.
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
 	dec.UseNumber()
 	if err := dec.Decode(&doc); err != nil {
 		return data, nil

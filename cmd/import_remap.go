@@ -125,7 +125,8 @@ func remapText(text string, remaps []pathRemap) (string, int) {
 	total := 0
 	for i := 0; i < len(text); {
 		matched := false
-		if i == 0 || !isPathByte(text[i-1], true) {
+		// file:///home/alex is a home path; the third slash is not a parent.
+		if i == 0 || !isPathByte(text[i-1], true) || strings.HasSuffix(text[:i], "://") {
 			for _, r := range rules {
 				end := i + len(r.from)
 				if r.from == "" || end > len(text) || (end < len(text) && isPathByte(text[end], false)) {
@@ -256,7 +257,7 @@ func remapLogicalPath(asset SetupAsset, remaps []pathRemap) string {
 // foreignHomePath finds a home-directory path that no rewrite covered.
 // A Windows path may sit in JSON with its backslashes doubled. The match
 // starts a path: /mnt/c/Users/b and ~/home/x are not home paths.
-var foreignHomePath = regexp.MustCompile(`(?:^|[^~/\\` + pathChar + `])(/home/[` + pathChar + `]+|/Users/[` + pathChar + `]+|(?i:[A-Za-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/))[` + pathChar + `]+)`)
+var foreignHomePath = regexp.MustCompile(`(?:^|[^~/\\` + pathChar + `]|://)(/home/[` + pathChar + `]+|/Users/[` + pathChar + `]+|(?i:[A-Za-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/))[` + pathChar + `]+)`)
 
 // foreignHomePaths returns each home path foreignHomePath finds in text.
 func foreignHomePaths(text string) []string {
