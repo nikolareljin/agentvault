@@ -107,7 +107,7 @@ func NormalizeRemote(raw string) (string, bool) {
 		host, path = rest[:colon], rest[colon+1:]
 	}
 	// A trailing dot is the DNS root: github.com. is github.com.
-	host = strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
+	host = strings.TrimRight(strings.ToLower(strings.Trim(host, "[]")), ".")
 	if !validHost(host) {
 		return "", false
 	}

@@ -138,7 +138,7 @@ func TestUnmatchedWorkDirNeedsAnswer(t *testing.T) {
 	}
 	var sum bytes.Buffer
 	printMissed(&sum, miss.Missed)
-	if !strings.Contains(sum.String(), "pass --workdir-map '/old/Projects=<path here>'") || !strings.Contains(sum.String(), "maybe: ") {
+	if !strings.Contains(sum.String(), "pass --workdir-map /old/Projects=<path here>") || !strings.Contains(sum.String(), "maybe: ") {
 		t.Errorf("summary:\n%s", sum.String())
 	}
 	o.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o.Home, "src")}
@@ -303,7 +303,7 @@ func TestImportFindsProjectByRemote(t *testing.T) {
 	withFlags(t, importCmd, map[string]string{"apply-projects": "true"})
 
 	// Projects/ does not exist here: without --workdir-map nothing is written.
-	if err := runImport(importCmd, []string{bundlePath}); err == nil || !strings.Contains(in.String(), "--workdir-map '"+filepath.Join(srcHome, "Projects")+"=") {
+	if err := runImport(importCmd, []string{bundlePath}); err == nil || !strings.Contains(in.String(), "--workdir-map "+filepath.Join(srcHome, "Projects")+"=") {
 		t.Fatalf("missing work dir not reported: %v\n%s", err, in.String())
 	}
 	setStringArray(t, importCmd.Flags(), "workdir-map", []string{filepath.Join(srcHome, "Projects") + "=" + filepath.Join(dstHome, "code")})
@@ -411,23 +411,23 @@ func TestBundleAliasesNotPersisted(t *testing.T) {
 func TestAliasRejectedWhenItNamesAnotherProject(t *testing.T) {
 	other := locations.Project{Abs: "/elsewhere/lib", GitRemote: "github.com/acme/lib", Aliases: []string{"/old/Projects/app"}}
 	self := locations.Project{Abs: "/old/Projects/app", GitRemote: "github.com/acme/app"}
-	if safeAlias(self.Abs, self, "/home/me", nil, []locations.Project{other}) {
+	if safeAlias(self.Abs, self, "/home/me", nil, nil, []locations.Project{other}) {
 		t.Error("alias equal to another repository's alias accepted")
 	}
-	if safeAlias(self.Abs, self, "/home/me", nil, nil, []locations.Project{{Abs: "/old/Projects/app/sub", GitRemote: "github.com/x/y"}}) {
+	if safeAlias(self.Abs, self, "/home/me", nil, nil, nil, []locations.Project{{Abs: "/old/Projects/app/sub", GitRemote: "github.com/x/y"}}) {
 		t.Error("alias above a project accepted earlier in this import")
 	}
-	if safeAlias("/old/Projects/app/sub", self, "/home/me", nil, []locations.Project{{Abs: "/old/Projects/app", GitRemote: "github.com/x/y"}}) {
+	if safeAlias("/old/Projects/app/sub", self, "/home/me", nil, nil, []locations.Project{{Abs: "/old/Projects/app", GitRemote: "github.com/x/y"}}) {
 		t.Error("alias below another repository accepted")
 	}
 	same := locations.Project{Abs: "/home/me/src/app", GitRemote: "github.com/acme/app", Aliases: []string{"/old/Projects/app"}}
-	if !safeAlias(self.Abs, self, "/home/me", nil, []locations.Project{same}) {
+	if !safeAlias(self.Abs, self, "/home/me", nil, nil, []locations.Project{same}) {
 		t.Error("same repository refused its own alias")
 	}
-	if safeAlias("/home", self, "/home/me", nil, nil) || safeAlias("/home/me", self, "/home/me", nil, nil) {
+	if safeAlias("/home", self, "/home/me", nil, nil, nil) || safeAlias("/home/me", self, "/home/me", nil, nil, nil) {
 		t.Error("home or above accepted")
 	}
-	if !safeAlias("/old/Projects/app", self, "/home/me", nil, nil) {
+	if !safeAlias("/old/Projects/app", self, "/home/me", nil, nil, nil) {
 		t.Error("plain alias refused")
 	}
 	if !locations.Overlaps(`C:\Users\A\x`, "c:/users/a") || locations.Overlaps("/a/bc", "/a/b") {
@@ -775,7 +775,7 @@ func TestImportTwoProfilesListMissingWorkDirOnce(t *testing.T) {
 	if !strings.Contains(in.String(), "Not imported (1):") {
 		t.Errorf("summary count:\n%s", in.String())
 	}
-	if n := strings.Count(in.String(), "pass --workdir-map '"+filepath.Join(srcHome, "Projects")+"="); n != 1 {
+	if n := strings.Count(in.String(), "pass --workdir-map "+filepath.Join(srcHome, "Projects")+"="); n != 1 {
 		t.Errorf("work dir listed %d times:\n%s", n, in.String())
 	}
 	if strings.Contains(in.String(), "was not found here") {
@@ -783,5 +783,70 @@ func TestImportTwoProfilesListMissingWorkDirOnce(t *testing.T) {
 	}
 	if strings.Count(in.String(), "Profile \"") != 2 {
 		t.Errorf("both profiles not imported:\n%s", in.String())
+	}
+}
+
+func TestFlagHintQuoting(t *testing.T) {
+	for from, want := range map[string]string{
+		"/old/Projects":     "--workdir-map /old/Projects=<path here>",
+		"/old/My Projects":  "--workdir-map '/old/My Projects'=<path here>",
+		"/old/it's":         `--workdir-map '/old/it'\''s'=<path here>`,
+		`C:\Users\a\My Dir`: `--workdir-map "C:\Users\a\My Dir"=<path here>`,
+		`C:\Users\a\src`:    `--workdir-map "C:\Users\a\src"=<path here>`,
+	} {
+		if got := flagHint("--workdir-map", from); got != want {
+			t.Errorf("flagHint(%q) = %s, want %s", from, got, want)
+		}
+	}
+}
+
+// A project whose own path is the work dir of a repository nested in it
+// keeps its alias; ~/Projects as a project is still refused.
+func TestNestedWorkDirKeepsAlias(t *testing.T) {
+	bundle := &locations.Set{
+		WorkDirs: []locations.WorkDir{{ID: "w1", Abs: "/old/Projects"}, {ID: "w2", Abs: "/old/Projects/app"}},
+		Projects: []locations.Project{
+			{ID: "p1", WorkDir: "w1", Abs: "/old/Projects/app", GitRemote: "github.com/acme/app"},
+			{ID: "p2", WorkDir: "w2", Abs: "/old/Projects/app/lib", GitRemote: "github.com/acme/lib"},
+			{ID: "p3", WorkDir: "w1", Abs: "/old/Projects/other", GitRemote: "github.com/acme/other"},
+		},
+	}
+	wds := []string{"/old/Projects", "/old/Projects/app"}
+	if !safeAlias("/old/Projects/app", bundle.Projects[0], "/home/me", wds, bundle) {
+		t.Error("nested repository's work dir took the parent project's alias")
+	}
+	if safeAlias("/old/Projects", locations.Project{WorkDir: "w1", Abs: "/old/Projects", GitRemote: "github.com/x/y"}, "/home/me", wds, bundle) {
+		t.Error("~/Projects accepted as an alias")
+	}
+	if safeAlias("/old", bundle.Projects[0], "/home/me", wds, bundle) {
+		t.Error("alias above work dirs accepted")
+	}
+	// A work dir at the project's path that also holds something outside it.
+	bad := &locations.Set{WorkDirs: bundle.WorkDirs, Projects: append(append([]locations.Project{}, bundle.Projects...), locations.Project{WorkDir: "w2", Abs: "/old/Projects/app"})}
+	if safeAlias("/old/Projects/app", bundle.Projects[0], "/home/me", wds, bad) {
+		t.Error("work dir holding the project itself accepted")
+	}
+}
+
+// An answer remembered from an earlier profile is not added again.
+func TestRememberedAnswerSavedOnce(t *testing.T) {
+	_, set, o := matchFixture(t)
+	set.WorkDirs[0].HomeRel, set.WorkDirs[0].Label = "Code", "Code"
+	var out bytes.Buffer
+	o.Out, o.Interactive, o.Asked = &out, true, newAskMemo()
+	o.In = bufio.NewReader(strings.NewReader("~/src\n\n\n"))
+	first, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil || len(first.NewMaps) != 1 {
+		t.Fatalf("first: %+v %v", first, err)
+	}
+	second, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil || len(second.NewMaps) != 0 {
+		t.Fatalf("second profile saved the answer again: %+v %v", second.NewMaps, err)
+	}
+	var r locationResult
+	r.addNewMap("/a/", "/x")
+	r.addNewMap("/a", "/y")
+	if len(r.NewMaps) != 1 || r.NewMaps[0].To != "/y" {
+		t.Errorf("addNewMap: %+v", r.NewMaps)
 	}
 }
