@@ -219,7 +219,7 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 		}
 	}
 	r := Repo{Root: root, GitDir: gitDir, CommonDir: common}
-	if b, err := os.ReadFile(filepath.Join(common, "config")); err == nil {
+	if b, err := os.ReadFile(filepath.Join(common, "config")); err == nil { // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
 		r.RemoteName, r.Remote = pickRemote(parseRemotes(b))
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Repo{}, err
@@ -269,7 +269,7 @@ func ownedPaths(root, gitDir, common string) bool {
 		}
 	}
 	for _, p := range []string{filepath.Join(common, "config"), filepath.Join(gitDir, "config.worktree")} {
-		if _, err := os.Lstat(p); err == nil && !ownerCheck(p) {
+		if _, err := os.Lstat(p); err == nil && !ownerCheck(p) { // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
 			return false
 		}
 	}
@@ -338,7 +338,7 @@ func headBorn(gitDir, common string) (bool, error) {
 			return true, nil
 		}
 	}
-	packed, err := os.ReadFile(filepath.Join(common, "packed-refs"))
+	packed, err := os.ReadFile(filepath.Join(common, "packed-refs")) // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
 	if err != nil {
 		return false, nil
 	}
