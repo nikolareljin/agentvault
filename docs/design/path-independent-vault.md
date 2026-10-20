@@ -41,11 +41,23 @@ Project { id, work_dir, rel, abs, git_remote, root_commits[], namespace }
 - Work dirs: the parent of every path that names a project (`--project`,
   Claude memory keys decoded against existing dirs, Codex trusted projects,
   directory-scoped instruction patterns) plus any `--workdir DIR` given.
-- Per project: `gitid.Identify`. The remote comes from `.git/config` read as
-  a file (handles `.git` files for worktrees and submodules, `commondir`).
-  Root commits need `git rev-list --max-parents=0 HEAD`, run with
-  `--git-dir`, `core.fsmonitor=false`, no prompt, 5 s timeout. Unborn HEAD is
-  detected from files and skips git. No git binary: project keeps path only.
+- Per project: `gitid.Identify`. The remote is read by parsing the config
+  file as text (handles `.git` files for worktrees and submodules,
+  `commondir`); git is never run for it.
+- Root commits need `git rev-list --max-parents=0 HEAD`. Parsing loose and
+  packed objects in Go is the only exec-free way and is too much code for one
+  hash, so git runs, hardened: `--git-dir`, `core.hooksPath=/dev/null`
+  (`NUL` on Windows), `core.fsmonitor=false`, `protocol.allow=never`,
+  `remote.origin.promisor=false`, env `GIT_NO_LAZY_FETCH=1`,
+  `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
+  `GIT_TERMINAL_PROMPT=0`, other `GIT_*` removed, 5 s timeout. It runs only
+  when the repository dir is owned by the current user (Unix uid check;
+  on Windows git's own safe.directory check, with no global config, refuses
+  a foreign owner). Unborn HEAD, or a HEAD ref outside `refs/`, is detected
+  from files and skips git. No git binary: project keeps path only.
+- Normalized remotes never hold `@` or `:` in a path segment; scp-like
+  `user:token@host:path` drops everything up to the last `@` before the
+  first slash.
 - A project that no longer exists on disk is recorded with `abs` only.
 
 ## Matching on import

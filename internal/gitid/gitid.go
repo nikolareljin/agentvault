@@ -37,6 +37,8 @@ type Repo struct {
 	// (host/owner/repo). Both are empty when no remote has a network URL.
 	RemoteName string
 	Remote     string
+	// RootSkipped says why RootCommits was not read, when it was not.
+	RootSkipped string
 	// RootCommits are the hashes of the commits with no parent reachable
 	// from HEAD, sorted. Empty when HEAD has no commits yet.
 	RootCommits []string
@@ -79,23 +81,22 @@ func NormalizeRemote(raw string) (string, bool) {
 			port = ""
 		}
 	} else {
-		// scp-like: [user@]host:path. A colon after a slash, or a single
-		// letter before it (C:\x), is a local path.
-		colon := strings.IndexByte(s, ':')
-		if colon <= 0 || strings.ContainsAny(s[:colon], `/\`) {
+		// scp-like: [user[:token]@]host:path. Everything up to the last @
+		// before the first slash is credentials. A slash before the colon,
+		// or a single letter before it (C:\x), is a local path.
+		limit := strings.IndexAny(s, `/\`)
+		if limit < 0 {
+			limit = len(s)
+		}
+		rest := s[strings.LastIndexByte(s[:limit], '@')+1:]
+		colon := strings.IndexByte(rest, ':')
+		if colon <= 1 || strings.ContainsAny(rest[:colon], `/\`) {
 			return "", false
 		}
-		hostPart := s[:colon]
-		if at := strings.LastIndexByte(hostPart, '@'); at >= 0 {
-			hostPart = hostPart[at+1:]
-		}
-		if len(hostPart) == 1 {
-			return "", false
-		}
-		host, path = hostPart, s[colon+1:]
+		host, path = rest[:colon], rest[colon+1:]
 	}
 	host = strings.ToLower(strings.Trim(host, "[]"))
-	if host == "" {
+	if host == "" || strings.Contains(host, "@") {
 		return "", false
 	}
 	var segs []string
@@ -104,6 +105,10 @@ func NormalizeRemote(raw string) (string, bool) {
 		case "", ".":
 			continue
 		case "..":
+			return "", false
+		}
+		// @ or : in a segment is credentials or a mis-parse; never keep it.
+		if strings.ContainsAny(seg, "@:") {
 			return "", false
 		}
 		segs = append(segs, seg)
@@ -133,15 +138,17 @@ type Runner func(ctx context.Context, gitDir string, args ...string) ([]byte, er
 // gitTimeout bounds one git call; a hung git must not hang an export.
 const gitTimeout = 5 * time.Second
 
-// ExecGit runs the git binary with a timeout. It names the repository with
-// --git-dir so git does not search parents, disables the fsmonitor hook a
-// repository's config could name, and never prompts.
+// ExecGit runs the git binary with a timeout, hardened against the
+// repository's own config: no hooks, no fsmonitor, no network (no lazy fetch
+// from a promisor remote, no protocol allowed), no global or system config,
+// no prompt. It names the repository with --git-dir so git does not search
+// parents. Identify calls it only for a repository owned by this user.
 func ExecGit(ctx context.Context, gitDir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	full := append([]string{"--git-dir=" + gitDir, "-c", "core.fsmonitor=false"}, args...)
+	full, env := gitInvocation(gitDir, args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = append(cleanEnv(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = env
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -149,6 +156,24 @@ func ExecGit(ctx context.Context, gitDir string, args ...string) ([]byte, error)
 		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return out, nil
+}
+
+// gitInvocation is the argument list and environment ExecGit uses.
+func gitInvocation(gitDir string, args ...string) ([]string, []string) {
+	full := []string{
+		"--git-dir=" + gitDir,
+		"-c", "core.hooksPath=" + os.DevNull,
+		"-c", "core.fsmonitor=false",
+		"-c", "protocol.allow=never",
+		"-c", "remote.origin.promisor=false",
+	}
+	env := append(cleanEnv(),
+		"GIT_NO_LAZY_FETCH=1",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	return append(full, args...), env
 }
 
 // cleanEnv is the environment without GIT_* variables, so a caller running
@@ -192,6 +217,10 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 		return Repo{}, err
 	}
 	if !born {
+		return r, nil
+	}
+	if !ownedByCurrentUser(common) {
+		r.RootSkipped = "repository not owned by the current user"
 		return r, nil
 	}
 	out, err := run(ctx, gitDir, "rev-list", "--max-parents=0", "HEAD")
@@ -261,6 +290,10 @@ func headBorn(gitDir, common string) (bool, error) {
 		return isHash(head), nil
 	}
 	ref = strings.TrimSpace(ref)
+	// A HEAD that points outside refs/ is not a branch; do not follow it.
+	if !strings.HasPrefix(ref, "refs/") || !filepath.IsLocal(filepath.FromSlash(ref)) {
+		return false, nil
+	}
 	for _, d := range []string{gitDir, common} {
 		if _, err := os.Stat(filepath.Join(d, filepath.FromSlash(ref))); err == nil {
 			return true, nil

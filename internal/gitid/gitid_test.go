@@ -42,6 +42,13 @@ func TestNormalizeRemote(t *testing.T) {
 		{"https://github.com/owner/repo.git?x=1#frag", "github.com/owner/repo"},
 		{"  git@github.com:owner/repo.git\n", "github.com/owner/repo"},
 		{"https://github.com//owner//repo", "github.com/owner/repo"},
+		// Credentials in scp-like form never survive.
+		{"user:tok" + "@github.com:owner/repo.git", "github.com/owner/repo"},
+		{"a@b:tok" + "@github.com:owner/repo", "github.com/owner/repo"},
+		{"git@github.com:owner/re@po", ""},
+		{"git@github.com:own:er/repo", ""},
+		{"https://github.com/owner/re@po", ""},
+		{"https://github.com/own:er/repo", ""},
 		// Not network remotes.
 		{"", ""},
 		{"file:///srv/git/repo.git", ""},
@@ -212,7 +219,7 @@ func TestIdentifyWorktree(t *testing.T) {
 	if r.Root != wt || r.Remote != "gitlab.com/g/sub/r" || len(r.RootCommits) != 1 || r.RootCommits[0] != root {
 		t.Fatalf("got %+v", r)
 	}
-	if r.CommonDir != filepath.Join(dir, ".git") || r.GitDir == r.CommonDir {
+	if !sameFile(r.CommonDir, filepath.Join(dir, ".git")) || sameFile(r.GitDir, r.CommonDir) {
 		t.Fatalf("gitdir %q commondir %q", r.GitDir, r.CommonDir)
 	}
 }
@@ -272,6 +279,44 @@ func TestIdentifyPackedRefAndDetachedHead(t *testing.T) {
 	r, err = Identify(context.Background(), dir, nil)
 	if err != nil || len(r.RootCommits) != 1 || r.RootCommits[0] != root {
 		t.Fatalf("detached: %+v %v", r, err)
+	}
+}
+
+func sameFile(a, b string) bool {
+	x, err1 := os.Stat(a)
+	y, err2 := os.Stat(b)
+	return err1 == nil && err2 == nil && os.SameFile(x, y)
+}
+
+func TestIdentifyRejectsHeadRefOutsideRefs(t *testing.T) {
+	needGit(t)
+	dir, _ := newRepo(t, "")
+	if err := os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("ref: ../../../../etc/passwd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	r, err := Identify(context.Background(), dir, func(context.Context, string, ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	})
+	if err != nil || called || len(r.RootCommits) != 0 {
+		t.Fatalf("got %+v %v called=%v", r, err, called)
+	}
+}
+
+func TestExecGitHardening(t *testing.T) {
+	args, env := gitInvocation("/x/.git", "rev-list")
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--git-dir=/x/.git", "core.hooksPath=" + os.DevNull, "core.fsmonitor=false", "protocol.allow=never", "remote.origin.promisor=false"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args %q lack %q", joined, want)
+		}
+	}
+	envs := strings.Join(env, "\n")
+	for _, want := range []string{"GIT_NO_LAZY_FETCH=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0"} {
+		if !strings.Contains(envs, want) {
+			t.Errorf("env lacks %q", want)
+		}
 	}
 }
 
