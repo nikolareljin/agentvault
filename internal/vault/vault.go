@@ -29,6 +29,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
+	"github.com/nikolareljin/agentvault/internal/locations"
 	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
@@ -40,6 +41,7 @@ type vaultData struct {
 	ProviderConfigs   agent.ProviderConfig         `json:"provider_configs"`
 	Sessions          agent.SessionConfig          `json:"sessions"`
 	ModelCapabilities []agent.ModelCapabilityEntry `json:"model_capabilities,omitempty"`
+	Locations         locations.Set                `json:"locations,omitempty"`
 }
 
 // Vault represents the encrypted agent store.
@@ -50,6 +52,7 @@ type Vault struct {
 	providerConfigs   agent.ProviderConfig
 	sessions          agent.SessionConfig
 	modelCapabilities []agent.ModelCapabilityEntry
+	locations         locations.Set // work dirs and projects, by identity
 	key               []byte        // derived key, set after Init or Unlock
 	header            crypto.Header // key-derivation header written ahead of the ciphertext
 	legacyOnDisk      bool          // file on disk is format 1; back it up before the first write
@@ -148,6 +151,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.providerConfigs = vd.ProviderConfigs
 	v.sessions = vd.Sessions
 	v.modelCapabilities = normalizeCapabilityEntries(vd.ModelCapabilities)
+	v.locations = vd.Locations
 	if v.sessions.ParallelLimit != 0 {
 		v.sessions.ParallelLimitSet = true
 	} else if sessionParallelLimitDefined(plaintext) {
@@ -193,6 +197,17 @@ func (v *Vault) SetCodexConfig(cc *agent.CodexConfig) error {
 // SetOllamaConfig updates Ollama-specific configuration.
 func (v *Vault) SetOllamaConfig(oc *agent.OllamaConfig) error {
 	v.providerConfigs.Ollama = oc
+	return v.Save()
+}
+
+// Locations returns the work dirs and projects the vault knows.
+func (v *Vault) Locations() locations.Set {
+	return v.locations
+}
+
+// SetLocations replaces the known work dirs and projects and persists.
+func (v *Vault) SetLocations(s locations.Set) error {
+	v.locations = s
 	return v.Save()
 }
 
@@ -556,7 +571,7 @@ func (v *Vault) ListInstructions() []agent.InstructionFile {
 
 // ExportData returns the vault contents as JSON (for export to a file).
 func (v *Vault) ExportData() ([]byte, error) {
-	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations}
 	return json.MarshalIndent(vd, "", "  ")
 }
 
@@ -853,7 +868,7 @@ func sessionParallelLimitDefined(data []byte) bool {
 // write encrypts the entire vault state and writes it atomically to disk.
 // The output format is: [format 2 header][nonce + AES-256-GCM ciphertext].
 func (v *Vault) write() error {
-	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations}
 	plaintext, err := json.Marshal(vd)
 	if err != nil {
 		return fmt.Errorf("encoding vault: %w", err)

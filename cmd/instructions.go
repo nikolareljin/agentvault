@@ -550,6 +550,11 @@ Examples:
 			}
 		}
 
+		if pulled > 0 {
+			if err := recordProjectLocation(v, dir); err != nil {
+				return fmt.Errorf("recording project location: %w", err)
+			}
+		}
 		if pulled == 0 {
 			fmt.Println("No instruction files found in", dir)
 		} else {
@@ -612,7 +617,9 @@ Examples:
 		}
 		specificName, _ := cmd.Flags().GetString("name")
 
-		instructions := agent.ResolveEffectiveInstructions(v.ListInstructions(), dir)
+		// A pattern written for this repository's checkout on another
+		// machine applies here too: the vault knows both paths.
+		instructions := agent.ResolveEffectiveInstructions(aliasDirectoryPatterns(v.ListInstructions(), v.Locations(), dir, nil), dir)
 		if len(instructions) == 0 {
 			fmt.Println("No instruction files stored. Use 'pull' or 'set' first.")
 			return nil
@@ -657,7 +664,9 @@ Examples:
 		if abs, err := filepath.Abs(dir); err == nil {
 			dir = abs
 		}
-		instructions := agent.ResolveEffectiveInstructions(v.ListInstructions(), dir)
+		// A pattern written for this repository's checkout on another
+		// machine applies here too: the vault knows both paths.
+		instructions := agent.ResolveEffectiveInstructions(aliasDirectoryPatterns(v.ListInstructions(), v.Locations(), dir, nil), dir)
 		if len(instructions) == 0 {
 			fmt.Println("No instruction files stored.")
 			return nil

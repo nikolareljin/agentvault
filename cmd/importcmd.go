@@ -16,6 +16,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/fsname"
+	"github.com/nikolareljin/agentvault/internal/locations"
+	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -80,8 +82,11 @@ func init() {
 	importCmd.Flags().Bool("apply-provider-configs", false, "apply provider configs and provider asset files to the system after import")
 	importCmd.Flags().Bool("confirm", false, "skip the confirmation prompt for destructive strategies")
 	importCmd.Flags().StringArray("map", nil, "rewrite a path prefix from the exporting machine, OLD=NEW (repeatable); the home directory is rewritten without it")
-	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root")
-	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects")
+	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root, or into the confirmed match of the bundle's project")
+	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects (default: the confirmed match of the bundle's project)")
+	importCmd.Flags().StringArray("workdir-map", nil, "place a work dir from the bundle here, OLD=NEW (repeatable); projects under it match by identity")
+	importCmd.Flags().Bool("no-match", false, "do not look for the bundle's projects on this machine; rewrite paths only by --map and the home directory")
+	importCmd.Flags().Bool("accept-matches", false, "apply computed project matches without asking (for non-interactive imports)")
 	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine and MCP server commands that the bundle adds or changes; left out by default")
 	importCmd.Flags().String("on-conflict", "", "when a local file differs from the bundle: backup-replace or keep (default: ask on a terminal, else backup-replace; --strategy merge means keep)")
 	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
@@ -160,10 +165,16 @@ func runImport(cmd *cobra.Command, args []string) error {
 	assetOpts.Apply.Out = cmd.ErrOrStderr()
 	assetOpts.Apply.BundleTime = bundle.CreatedAt
 
+	locOpts, err := locationOptionsFromFlags(cmd, interactive, dryRun, stdin, assetOpts.Maps)
+	if err != nil {
+		return err
+	}
+
 	v, err := openVault()
 	if err != nil {
 		return err
 	}
+	locOpts.Known = v.Locations()
 
 	fmt.Fprintf(out, "Importing %s from %s (created %s, strategy %s)\n",
 		format, bundleOrigin(bundle), bundle.CreatedAt.Format("2006-01-02 15:04"), strategy)
@@ -171,6 +182,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(out, "Dry run: no changes are written.")
 	}
 
+	var allMissed []missedEntry
 	now := time.Now()
 	total := importReport{}
 	for _, profile := range selected {
@@ -187,14 +199,39 @@ func runImport(cmd *cobra.Command, args []string) error {
 		total.Skipped += plan.Report.Skipped
 		total.Removed += plan.Report.Removed
 
+		profileOpts := assetOpts
+		match, err := resolveBundleLocations(cmd.Context(), profile.Setup.Locations, profile.Setup.SourceProject, locOpts)
+		if err != nil {
+			return err
+		}
+		profileOpts.Computed = match.Remaps
+		profileOpts.NoProjectWrites = match.Refused
+		if profileOpts.ProjectRoot == "" {
+			profileOpts.ProjectRoot = match.ProjectRoot
+		}
+		allMissed = append(allMissed, match.Missed...)
+		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" && match.SourceSkipped {
+			// Listed in the summary at the end; the rest of the import goes on.
+			profileOpts.ApplyProjects = false
+		}
+		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" {
+			if match.Refused {
+				return errors.New("--apply-projects: the bundle's project was matched but not confirmed; pass --accept-matches, or name the directory with --project-root")
+			}
+			return errors.New("--apply-projects needs --project-root: the directory to write project files into (no confirmed match for the bundle's project)")
+		}
+
 		if dryRun {
-			previewProfileAssets(cmd, profile.Setup, assetOpts)
+			previewProfileAssets(cmd, profile.Setup, profileOpts)
 			continue
 		}
 		if err := commitProfileImport(v, plan); err != nil {
 			return err
 		}
-		if err := importProfileAssets(cmd, profile.Setup, assetOpts); err != nil {
+		if err := importProfileAssets(cmd, profile.Setup, profileOpts); err != nil {
+			return err
+		}
+		if err := recordLocations(v, match, &locOpts); err != nil {
 			return err
 		}
 	}
@@ -208,11 +245,19 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(out, "\nSummary: %d added, %d updated, %d skipped, %d removed\n",
 		total.Added, total.Updated, total.Skipped, total.Removed)
+	allMissed = dedupeMissed(allMissed)
+	if len(allMissed) > 0 {
+		printMissed(out, allMissed)
+	}
 	if dryRun {
 		fmt.Fprintln(out, "Dry run complete; re-run without --dry-run to apply.")
 		return nil
 	}
 	printInstallGuide(cmd, selected)
+	if len(allMissed) > 0 {
+		// Everything else was imported; the exit status says it was not all.
+		return fmt.Errorf("%d work dir(s) or project(s) not imported; see \"Not imported\" above", len(allMissed))
+	}
 	return nil
 }
 
@@ -379,6 +424,12 @@ type importAssetOptions struct {
 	ApplyProjects bool
 	ProjectRoot   string
 	Maps          []string
+	// Computed are the accepted rewrites from matching the bundle's
+	// projects; --map rules win over them.
+	Computed []pathRemap
+	// NoProjectWrites is set when computed matches were not accepted:
+	// project files are then not written.
+	NoProjectWrites bool
 	// Overwrite existing project files that differ. Follows --strategy:
 	// merge keeps what is there; replace and mirror overwrite.
 	Overwrite bool
@@ -400,9 +451,6 @@ func importAssetOptionsFromFlags(cmd *cobra.Command, applyConfigs bool) (importA
 	opts.ProjectRoot = mustString(cmd, "project-root")
 	opts.Maps, _ = cmd.Flags().GetStringArray("map")
 	keepInterpreterAllows, _ = cmd.Flags().GetBool("keep-interpreter-allows")
-	if opts.ApplyProjects && strings.TrimSpace(opts.ProjectRoot) == "" {
-		return opts, errors.New("--apply-projects needs --project-root: the directory to write project files into")
-	}
 	if opts.ProjectRoot != "" {
 		root, err := filepath.Abs(expandUserPath(opts.ProjectRoot))
 		if err != nil {
@@ -427,6 +475,10 @@ func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle
 	remaps, err := buildPathRemaps(setup.SourceHome, targetHome, setup.SourceProject, opts.ProjectRoot, opts.Maps)
 	if err != nil {
 		return setup, nil, err
+	}
+	if len(opts.Computed) > 0 {
+		userMaps, _ := buildPathRemaps("", "", "", "", opts.Maps)
+		remaps = mergeComputedRemaps(remaps, opts.Computed, userMaps)
 	}
 	var report, r []string
 	setup.ProviderFiles, r = remapAssets(setup.ProviderFiles, remaps, targetHome)
@@ -812,4 +864,43 @@ func sortedStringKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// locationOptionsFromFlags reads the matching flags.
+func locationOptionsFromFlags(cmd *cobra.Command, interactive, dryRun bool, in *bufio.Reader, maps []string) (locationOptions, error) {
+	o := locationOptions{Interactive: interactive, DryRun: dryRun, In: in, Out: cmd.ErrOrStderr(), Home: exportSourceHome(), Asked: newAskMemo()}
+	o.NoMatch, _ = cmd.Flags().GetBool("no-match")
+	o.AcceptMatches, _ = cmd.Flags().GetBool("accept-matches")
+	values, _ := cmd.Flags().GetStringArray("workdir-map")
+	wm, err := parseWorkDirMaps(values)
+	if err != nil {
+		return o, err
+	}
+	o.WorkDirMaps = wm
+	userMaps, err := buildPathRemaps("", "", "", "", maps)
+	if err != nil {
+		return o, err
+	}
+	o.UserMaps = userMaps
+	return o, nil
+}
+
+// recordLocations stores one profile's accepted projects in the vault and
+// refreshes what the next profile's alias checks see.
+func recordLocations(v *vault.Vault, match locationResult, o *locationOptions) error {
+	add := match.Stored
+	for _, m := range match.NewMaps {
+		if add.WorkDirMaps == nil {
+			add.WorkDirMaps = map[string]string{}
+		}
+		add.WorkDirMaps[locations.CleanForeign(m.From)] = m.To
+	}
+	if add.Empty() {
+		return nil
+	}
+	if err := v.SetLocations(locations.Merge(v.Locations(), add)); err != nil {
+		return fmt.Errorf("recording project locations: %w", err)
+	}
+	o.Known = v.Locations()
+	return nil
 }

@@ -34,6 +34,7 @@ type exportOptions struct {
 	IncludeDetected     bool
 	IncludeMemory       bool
 	ProjectDir          string
+	WorkDirs            []string
 	Encrypt             bool
 	VaultOnly           bool
 	Confirm             bool
@@ -110,6 +111,7 @@ func init() {
 	exportCmd.Flags().Bool("include-status", defaults.IncludeStatus, "include a provider token/quota status snapshot")
 	exportCmd.Flags().Bool("detect", defaults.IncludeDetected, "include detected agent information")
 	exportCmd.Flags().String("project", "", "also capture project-local instruction, workflow and skill assets from this directory")
+	exportCmd.Flags().StringArray("workdir", nil, "record DIR as a work dir (a folder of projects) so import can place its projects by name and identity (repeatable)")
 	exportCmd.Flags().Bool("encrypt", defaults.Encrypt, "encrypt the bundle with a password")
 	exportCmd.Flags().Bool("plain", false, "write plaintext JSON (turns off encryption)")
 	exportCmd.Flags().Bool("vault-only", false, "write the legacy single-vault export instead of a portable bundle")
@@ -232,6 +234,9 @@ func applyExportFlags(cmd *cobra.Command, opts *exportOptions) {
 	if project, err := flags.GetString("project"); err == nil {
 		opts.ProjectDir = project
 	}
+	if dirs, err := flags.GetStringArray("workdir"); err == nil && len(dirs) > 0 {
+		opts.WorkDirs = dirs
+	}
 }
 
 // selectProfilesForExport narrows discovered profiles to the requested names.
@@ -291,6 +296,7 @@ func buildProfileBundle(cmd *cobra.Command, profile discoveredProfile, opts expo
 		IncludeDetected:      opts.IncludeDetected,
 		IncludeMemory:        opts.IncludeMemory,
 		ProjectDir:           opts.ProjectDir,
+		WorkDirs:             opts.WorkDirs,
 		IncludeLocalFiles:    opts.IncludeLocalFiles,
 	})
 	if err != nil {
@@ -445,6 +451,7 @@ type setupCollectOptions struct {
 	IncludeDetected      bool
 	IncludeMemory        bool
 	ProjectDir           string
+	WorkDirs             []string
 	AgentName            string
 	// Project-relative `.local.` files to carry anyway, named one at a time.
 	IncludeLocalFiles []string
@@ -485,6 +492,7 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 	if opts.IncludeSessions {
 		bundle.Sessions = v.Sessions()
 	}
+	bundle.Locations = captureBundleLocations(cmd, v, bundle, opts)
 	if strings.TrimSpace(opts.AgentName) != "" {
 		selected, err := selectAgentsForExport(bundle.Agents, opts.AgentName)
 		if err != nil {

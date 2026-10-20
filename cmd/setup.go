@@ -12,6 +12,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
+	"github.com/nikolareljin/agentvault/internal/locations"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
@@ -72,6 +73,9 @@ type SetupBundle struct {
 	// machine. Import rewrites them to this machine's paths.
 	SourceHome    string `json:"source_home,omitempty"`
 	SourceProject string `json:"source_project,omitempty"`
+	// Locations names the projects by work dir and git identity, so import
+	// can find them where they are checked out on this machine.
+	Locations *locations.Set `json:"locations,omitempty"`
 }
 
 // MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.
