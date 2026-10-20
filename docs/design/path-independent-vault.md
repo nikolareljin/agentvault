@@ -251,7 +251,14 @@ A memory dir key that would collide is still refused and reported.
    dir again; save the answer and every `--workdir-map` in the vault.
 7. Targets in hidden folders below home are confirmed per entry;
    `--accept-matches` does not cover them, `--workdir-map` to that exact
-   target does.
+   target does. A work dir confirmation (y, a typed hidden path, or
+   `--workdir-map`) is saved in the vault as `confirmed_hidden`, keyed to
+   the (bundle path, target) pair. A later import whose saved mapping is
+   that same pair does not ask again; the row is shown as "work dir, saved
+   mapping (hidden, confirmed)" and projects under it count as confirmed.
+   Mapping the path to another target drops the confirmation. Only this
+   machine's answers fill the list: export clears it and import ignores
+   one in a bundle.
 2. Azure DevOps remote forms are not unified now.
 3. Owner/repo case is folded only for github.com and bitbucket.org.
 4. Work dirs and projects are stored in the vault too.

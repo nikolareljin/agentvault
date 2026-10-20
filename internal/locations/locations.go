@@ -46,11 +46,16 @@ type Set struct {
 	// WorkDirMaps are mappings the user chose, bundle work dir path to a
 	// directory here. Only the vault keeps them; later imports reuse them.
 	WorkDirMaps map[string]string `json:"work_dir_maps,omitempty"`
+	// ConfirmedHidden are saved mappings to a hidden folder that the user
+	// confirmed on this machine, bundle work dir path to the confirmed
+	// target. A confirmation holds only while WorkDirMaps maps the same path
+	// to the same target. Only the vault keeps them, never a bundle.
+	ConfirmedHidden map[string]string `json:"confirmed_hidden,omitempty"`
 }
 
 // Empty reports whether the set names nothing.
 func (s *Set) Empty() bool {
-	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0 && len(s.WorkDirMaps) == 0
+	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0 && len(s.WorkDirMaps) == 0 && len(s.ConfirmedHidden) == 0
 }
 
 // Identifier is gitid.Identify; tests replace it.
@@ -199,6 +204,24 @@ func Merge(s, other Set) Set {
 			}
 			out.WorkDirMaps[k] = v
 		}
+	}
+	// A confirmation is for one (path, target) pair: a mapping changed to
+	// another target, or removed, drops it.
+	for _, m := range []map[string]string{s.ConfirmedHidden, other.ConfirmedHidden} {
+		for k, v := range m {
+			if out.ConfirmedHidden == nil {
+				out.ConfirmedHidden = map[string]string{}
+			}
+			out.ConfirmedHidden[k] = v
+		}
+	}
+	for k, v := range out.ConfirmedHidden {
+		if out.WorkDirMaps[k] != v {
+			delete(out.ConfirmedHidden, k)
+		}
+	}
+	if len(out.ConfirmedHidden) == 0 {
+		out.ConfirmedHidden = nil
 	}
 	return out
 }
