@@ -1280,3 +1280,34 @@ func TestSanitizeAssetRelativePathRefusesDeviceNames(t *testing.T) {
 		}
 	}
 }
+
+// A home under a Windows short name (C:\Users\RUNNER~1) must not force
+// whole-file redaction of every settings file below it.
+func TestCollectSetupAssets_ShortNameHomeStillBlanksFields(t *testing.T) {
+	homeDir := filepath.Join(t.TempDir(), "RUNNER~1")
+	setTestHomeDir(t, homeDir)
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "settings.json"), `{"apiKey":"secret","model":"m"}`)
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "settings.json")
+	if a == nil || a.Redacted || !a.ContentPresent || bytes.Contains(a.Content, []byte("secret")) ||
+		len(a.RedactedFields) != 1 || a.RedactedFields[0] != "/apiKey" {
+		t.Fatalf("settings asset = %#v, want content with /apiKey blanked", a)
+	}
+}
+
+func TestAssetPathTail(t *testing.T) {
+	cases := []struct{ path, logical, want string }{
+		{"/c/Users/RUNNER~1/.claude/settings.json", "settings.json", ".claude/settings.json"},
+		{"/home/u/.aws/sub/config.json", "sub/config.json", ".aws/sub/config.json"},
+		{"settings.json", "settings.json", "settings.json"},
+	}
+	for _, c := range cases {
+		if got := assetPathTail(filepath.FromSlash(c.path), c.logical); got != c.want {
+			t.Errorf("assetPathTail(%q, %q) = %q, want %q", c.path, c.logical, got, c.want)
+		}
+	}
+}

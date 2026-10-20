@@ -244,7 +244,7 @@ var (
 	envAssign = regexp.MustCompile(`(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=\S`)
 )
 
-const secretFlagNames = `[a-z]*[-_]?(token|secret|password|api[-_]?key)|key|pat|pass|passwd|auth|bearer|access[-_]?key|private[-_]?key|client[-_]?secret|credentials?|cookie`
+const secretFlagNames = `[a-z]*[-_]?(token|secret|password|api[-_]?key)|key|pat|pass|passwd|auth|bearer|access[-_]?key|private[-_]?key|client[-_]?secret|credentials?|cookie` // #nosec G101 -- a regexp of flag names, not a credential
 
 // secretString is a string value that carries a secret in its text.
 func secretString(s string) bool {

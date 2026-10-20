@@ -645,6 +645,19 @@ func collectDirFiles(root string, kind string, origin string, logicalRoot string
 	return assets, warnings, nil
 }
 
+// assetPathTail is the end of path that names the asset within its root,
+// plus the root directory itself (.aws, .docker). Directories above the root
+// are the user's home or a temp dir, and are not checked: on Windows they
+// can be short names (C:\Users\RUNNER~1), which would redact every file.
+func assetPathTail(path, logicalPath string) string {
+	segs := strings.Split(filepath.ToSlash(path), "/")
+	n := len(strings.Split(filepath.ToSlash(logicalPath), "/")) + 1
+	if n < len(segs) {
+		segs = segs[len(segs)-n:]
+	}
+	return strings.Join(segs, "/")
+}
+
 func loadSetupAsset(path string, kind string, origin string, logicalRoot string, logicalPath string, projectRelativePath string, sensitive bool, includeSecrets bool, optional bool) (SetupAsset, string, error) {
 	safeLogicalPath, err := sanitizeAssetRelativePath(logicalPath)
 	if err != nil {
@@ -716,7 +729,7 @@ func loadSetupAsset(path string, kind string, origin string, logicalRoot string,
 	// A credential by name or location (.aws/, .docker/config.json) is
 	// redacted whole: its secret may sit under a key no pattern names.
 	if sensitive && !includeSecrets && strings.EqualFold(filepath.Ext(path), ".json") &&
-		agent.SecretBearingReason(safeLogicalPath) == "" && agent.SecretBearingReason(path) == "" {
+		agent.SecretBearingReason(safeLogicalPath) == "" && agent.SecretBearingReason(assetPathTail(path, safeLogicalPath)) == "" {
 		if out, pointers, ok := redactJSONSecrets(data); ok {
 			asset.Content = out
 			asset.ContentPresent = true
