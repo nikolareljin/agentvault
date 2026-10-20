@@ -1188,6 +1188,12 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 						warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, it does not parse as a plain JSON object, so its commands cannot be checked; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 						continue
 					}
+					// This machine's file with comments: its servers and keys
+					// cannot be compared or kept, so they would be lost.
+					if _, ok := decodeSettingsObject(original); !ok && len(bytes.TrimSpace(original)) > 0 {
+						warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, this machine's %s does not parse as a plain JSON object (comments?), so it cannot be merged; kept it", desc, dest))
+						continue
+					}
 				}
 				var dropped []string
 				content, dropped = dropBundleCommands(content, original)

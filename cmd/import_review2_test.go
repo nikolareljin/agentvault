@@ -164,3 +164,23 @@ func TestImportUnionGuardsLocalSecretOnOtherChange(t *testing.T) {
 		t.Errorf("local key helper kept with the file changed: %s", got)
 	}
 }
+
+// A local settings file with comments cannot be merged; it is kept, not
+// replaced by a copy that lost its servers.
+func TestImportKeepsLocalSettingsThatDoNotParse(t *testing.T) {
+	home := t.TempDir()
+	dest := filepath.Join(home, ".gemini", "settings.json")
+	local := "{\n// mine\n\"mcpServers\":{\"fs\":{\"command\":\"local-fs\"}}}"
+	mustWriteFile(t, dest, local)
+	asset := SetupAsset{LogicalRoot: setupAssetRootProviderGemini, LogicalPath: "settings.json", ContentPresent: true, Content: []byte(`{"mcpServers":{"fs":{"command":"local-fs"}},"theme":"dark"}`)}
+	_, warnings, err := applyProviderAssetsWith(home, []SetupAsset{asset}, fixedCtx(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readString(t, dest); got != local {
+		t.Fatalf("local file changed: %s", got)
+	}
+	if !strings.Contains(strings.Join(warnings, "\n"), "cannot be merged") {
+		t.Fatalf("not reported: %v", warnings)
+	}
+}
