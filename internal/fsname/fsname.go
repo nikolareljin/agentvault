@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// CheckBeforeWrite runs Check on p, or on its nearest
-// existing parent below root, before anything is created: PROGRA~1/x.md
-// would otherwise land in an existing long-named directory.
+// CheckBeforeWrite runs Check on p, or on its nearest existing parent below
+// root, before anything is created: PROGRA~1/x.md would otherwise land in an
+// existing long-named directory.
 func CheckBeforeWrite(root, p string) error {
 	if runtime.GOOS != "windows" {
 		return nil

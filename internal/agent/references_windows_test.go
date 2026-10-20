@@ -26,7 +26,10 @@ func TestReferenceShortNameJudgedByLongName(t *testing.T) {
 		t.Fatal(err)
 	}
 	short := filepath.Base(windows.UTF16ToString(buf[:n]))
-	if strings.EqualFold(short, ".env.production") {
+	if strings.EqualFold(short, ".env.production") || !strings.Contains(short, "~") {
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			t.Fatalf("no 8.3 short name in CI (got %q)", short)
+		}
 		t.Skip("no 8.3 short names on this volume")
 	}
 	real, err := filepath.EvalSymlinks(root)

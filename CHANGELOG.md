@@ -155,6 +155,8 @@
   Windows cannot.
 - Codex rule names may contain `~` (`draft~2`); on Windows a rule name that
   is a device name is refused.
+- Workflow template names: `con.txt` and other device names are refused on
+  Windows only; export elsewhere warns that Windows cannot write them.
 - A hard link inside a directory an instruction file names is refused, with
   or without `--include-secrets`, as one named directly is. Pipes, sockets
   and unreadable files there are listed as declined instead of ending the

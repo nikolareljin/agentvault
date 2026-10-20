@@ -12,8 +12,9 @@ import (
 )
 
 // Check refuses p when the file Windows opened for it is not the one
-// named: an 8.3 short name (SETTIN~1.JSO) opens settings.json. Only the segments below root are compared; root itself may be
-// spelled with short names (C:\Users\RUNNER~1\...).
+// named: an 8.3 short name (SETTIN~1.JSO) opens settings.json. Only the
+// segments below root are compared; root itself may be spelled with short
+// names (C:\Users\RUNNER~1\...).
 func Check(root, p string) error {
 	// A link resolves to its target by design; callers refuse links with
 	// their own error, so this check leaves them alone.

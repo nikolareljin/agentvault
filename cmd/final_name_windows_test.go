@@ -26,7 +26,11 @@ func shortBase(t *testing.T, p string) string {
 		t.Fatalf("GetShortPathName(%q): %v", p, err)
 	}
 	short := filepath.Base(windows.UTF16ToString(buf[:n]))
-	if strings.EqualFold(short, filepath.Base(p)) {
+	if strings.EqualFold(short, filepath.Base(p)) || !strings.Contains(short, "~") {
+		// CI must exercise the alias: a skip there would pass unseen.
+		if os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
+			t.Fatalf("no 8.3 short name for %q in CI (got %q)", p, short)
+		}
 		t.Skipf("no 8.3 short name on this volume for %q", p)
 	}
 	return short

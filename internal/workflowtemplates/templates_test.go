@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1391,7 +1392,11 @@ func TestImportRefusesHostileAssets(t *testing.T) {
 	cfgDir := t.TempDir()
 	dir := filepath.Join(cfgDir, TemplatesDirName)
 	writeTemplate(t, dir, "notes.md", "my notes\n")
-	for _, name := range []string{"evil.sh", "Upper.txt", "con.txt", "a\x00.txt", "../x.txt", strings.Repeat("a", 70) + ".txt"} {
+	hostile := []string{"evil.sh", "Upper.txt", "a\x00.txt", "../x.txt", strings.Repeat("a", 70) + ".txt"}
+	if runtime.GOOS == "windows" {
+		hostile = append(hostile, "con.txt")
+	}
+	for _, name := range hostile {
 		bundle := Bundle{SchemaVersion: DefaultSchemaVersion, Assets: []TemplateAsset{
 			{Key: "implement_pr", Filename: name, Content: "x\n"},
 		}}
@@ -1561,5 +1566,28 @@ func TestImportKeepsAFileABuiltInIsStoredUnder(t *testing.T) {
 	}
 	if got := findResolved(t, resolved, "my_x"); got.Content != "custom\n" {
 		t.Fatalf("custom my_x not imported: %+v", got)
+	}
+}
+
+// Device names are refused on Windows only; the pattern already rules out
+// short names (no '~').
+func TestReservedStemPerOS(t *testing.T) {
+	for _, n := range []string{"con.txt", "aux.md", "com1.txt", "lpt9.md", "nul.txt", "prn.md"} {
+		if !reservedStemFor("windows", n) {
+			t.Errorf("windows %s: not reserved", n)
+		}
+		for _, goos := range []string{"linux", "darwin"} {
+			if reservedStemFor(goos, n) {
+				t.Errorf("%s %s: reserved", goos, n)
+			}
+		}
+	}
+	for _, n := range []string{"console.md", "com10.txt", "notes.md"} {
+		if reservedStemFor("windows", n) {
+			t.Errorf("windows %s: reserved", n)
+		}
+	}
+	if customFilenamePattern.MatchString("draft~2.md") {
+		t.Error("pattern admits ~")
 	}
 }
