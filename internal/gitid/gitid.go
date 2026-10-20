@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -58,8 +59,10 @@ var defaultPorts = map[string]string{
 
 // NormalizeRemote returns host[:port]/path for a network git URL, with the
 // scheme, user, password or token, default port, query, trailing slash and
-// .git suffix removed and the host lower-cased. The path keeps its case and
-// all its segments, so a GitLab subgroup stays in it. It returns false for a
+// .git suffix removed and the host lower-cased. The path keeps all its
+// segments, so a GitLab subgroup stays in it, and keeps its case except on
+// github.com and bitbucket.org, which ignore it. SSH, scp-like and HTTPS
+// spellings of one repository give one result. It returns false for a
 // local path, a file:// URL, or anything without a host and an owner/repo
 // path. It also refuses forms that could give two repositories one identity
 // or put something other than a host in it: control characters, an encoded
@@ -130,6 +133,11 @@ func NormalizeRemote(raw string) (string, bool) {
 	if len(segs) < 2 {
 		return "", false
 	}
+	if caseInsensitiveHosts[host] {
+		for i := range segs {
+			segs[i] = strings.ToLower(segs[i])
+		}
+	}
 	if strings.Contains(host, ":") {
 		host = "[" + host + "]" // IPv6, so a port stays unambiguous
 	}
@@ -137,6 +145,14 @@ func NormalizeRemote(raw string) (string, bool) {
 		host += ":" + port
 	}
 	return host + "/" + strings.Join(segs, "/"), true
+}
+
+// caseInsensitiveHosts serve owner/repo paths without regard to case, so
+// Owner/Repo and owner/repo are one repository there. Elsewhere (GitLab,
+// self-hosted) path case is significant and kept.
+var caseInsensitiveHosts = map[string]bool{
+	"github.com":    true,
+	"bitbucket.org": true,
 }
 
 // validHost accepts an IP address or an ASCII DNS-style name (letters,
@@ -173,6 +189,10 @@ func hasControl(s string) bool {
 // Runner runs git against one repository (its git dir and common dir, both
 // already owner-checked) and returns its stdout. Tests replace it.
 type Runner func(ctx context.Context, gitDir, commonDir string, args ...string) ([]byte, error)
+
+// remoteOnly skips root commits: on Windows matching uses the remote URL
+// only, because there is no owner check to gate running git. Tests set it.
+var remoteOnly = runtime.GOOS == "windows"
 
 // ownerCheck is ownedByCurrentUser; tests replace it.
 var ownerCheck = ownedByCurrentUser
@@ -305,6 +325,10 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 		return Repo{}, err
 	}
 	if !born {
+		return r, nil
+	}
+	if remoteOnly {
+		r.RootSkipped = "root commits are not read on this OS; matching uses the remote only"
 		return r, nil
 	}
 	if !ownedPaths(root, gitDir, common) {

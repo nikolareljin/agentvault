@@ -417,9 +417,13 @@ Flags:
 - `--name <instruction-name>`
 - `--file <filename>`
 
+When the directory is a git checkout, the vault records it by remote (or root commits), so a later import or push can find the same repository at another path.
+
 ### `agentvault instructions push [directory]`
 Flags:
 - `--name <instruction-name>`
+
+A directory-scoped instruction whose pattern names another known path of the same repository (its path on the machine a bundle came from, or an older checkout) applies to the directory too.
 
 ### `agentvault instructions diff [directory]`
 No flags.
@@ -582,6 +586,7 @@ Flags:
 - `--include-status` (default: `false`): A quota reading is a snapshot, not a setting.
 - `--detect` (default: `true`)
 - `--project <dir>`: Also capture project-local instruction, workflow and skill assets.
+- `--workdir <dir>` (repeatable): Record a folder of projects. Projects under it are recorded relative to it, so import can place them in the folder of the same name on the other machine.
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
 - `--vault-only` (default: `false`): Write the legacy single-vault export instead.
@@ -649,9 +654,12 @@ Flags:
 - `--dry-run` (default: `false`): Report what would change without writing. With `--apply-provider-configs` or `--apply-projects` it also lists each file it would write, back up and replace, keep, or leave out, and each command it would leave out. It writes no file, backup or directory, and asks nothing.
 - `--apply-provider-configs` (default: `false`): Write provider configs and provider asset
   files back to the system after import.
-- `--apply-projects` (default: `false`): Write the bundle's project files into `--project-root`.
+- `--apply-projects` (default: `false`): Write the bundle's project files into `--project-root`, or, without it, into the confirmed match of the bundle's project (see below).
 - `--project-root <dir>`: Where `--apply-projects` writes. The exporting machine's `--project` directory is rewritten to it in every file.
-- `--map OLD=NEW` (repeatable): Rewrite another path prefix from the exporting machine. OLD and NEW must be absolute paths; NEW may start with `~/`.
+- `--map OLD=NEW` (repeatable): Rewrite another path prefix from the exporting machine. OLD and NEW must be absolute paths; NEW may start with `~/`. A `--map` always wins over a computed match.
+- `--workdir-map OLD=NEW` (repeatable): Place a work dir from the bundle at NEW, an existing directory. Projects under it are matched by identity.
+- `--accept-matches` (default: `false`): Apply computed project matches without a terminal. Ambiguous matches are still skipped.
+- `--no-match` (default: `false`): Do not look for the bundle's projects; rewrite paths only by `--map`, `--project-root` and the home directory.
 - `--keep-interpreter-allows` (default: `false`): Keep Claude permissions such as `Bash(bash:*)`, `Bash(python3:*)` or `Bash(*)`. By default they are left out on import and each one is reported. A Bash rule is kept only when it is a plain command line: literal words (letters, digits and `._/@%+,-`) separated by single spaces, an optional trailing `:*` or ` *`, and a command that is not an interpreter, wrapper or shell keyword. Any other Bash rule counts as a blanket grant: on the other machine such a rule lets any program run without asking, and nobody there granted it.
 - `--keep-bundle-commands` (default: `false`): Keep the commands the bundle adds or changes. By default import keeps this machine's value, and names each one left out, for:
   - each `hooks` event, `statusLine`, `fileSuggestion`, credential helpers (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`), `enabledPlugins` and `extraKnownMarketplaces`;
@@ -694,7 +702,25 @@ Claude allow rules such as `Bash(find:*)`, `Bash(git:*)`, `Bash(make:*)`, `Bash(
 The bundle records the exporting machine's home directory and `--project` directory. On import, every text file is rewritten:
 - each `--map` first;
 - then the project directory to `--project-root`;
+- then each confirmed project and work dir match (below);
 - then the old home to this machine's home.
+
+#### Finding projects by identity
+
+A bundle records each project (the `--project` directory and the Codex trusted projects) with its work dir and git identity: the normalized remote (`github.com/owner/repo`; SSH, scp-like and HTTPS spellings of one remote are one identity, owner and repo compared without case on github.com and bitbucket.org only) and, except on Windows, the root commits. Import finds each work dir under this home by its path relative to home, then by name. A work dir it cannot find is asked about on a terminal, with the closest top-level home folders offered; without a terminal import stops and names the `--workdir-map` to add. Import then scans the work dirs and home (three levels, no symlinks, no hidden folders, `node_modules` or `vendor`) for checkouts of the same repository.
+
+Every computed match is shown and confirmed, even a unique one:
+
+```
+Projects in the bundle and where they go here:
+  1. /home/alex/Projects -> /home/alex/src
+       work dir
+  2. /home/alex/Projects/app -> /home/alex/src/app
+       score 130: same remote github.com/acme/app, same place in work dir, same name
+Enter a row number to change its path, empty line to accept all, q to abort:
+```
+
+A row number edits that row's path (an existing absolute directory, `~/` allowed; a letter picks one of the candidates of an ambiguous row; `-` skips the row). Without a terminal the list is printed and nothing computed is used, and no project files are written, unless `--accept-matches` is given. Confirmed matches are recorded in the vault, so `instructions push` uses them too.
 
 Rewrites match whole path segments, so `/home/alex` does not rewrite `/home/alexandra` or `/srv/home/alex`. Each spot is rewritten once, and a Windows path also matches its JSON spelling (`C:\\Users\\alex`), its forward-slash spelling (`C:/Users/alex`) and any letter case. A path moved between Windows and POSIX gets the new separators up to its end (`C:\Users\alex\bin\x` becomes `/home/alex/bin/x`). In a JSON file the path runs to the closing quote, spaces included, or to a space before a flag, a drive or another absolute path; in other text it ends at the first whitespace, so `My Docs\x` there keeps its backslash. Claude's per-project memory directories (`~/.claude/projects/-home-alex-...`) are renamed the same way, unless the new name is already taken by another directory in the bundle. Provider configs applied with `--apply-provider-configs` are rewritten too. A home path that no rewrite covers is reported with the `--map` to add. `--dry-run` prints every rewrite and changes nothing.
 

@@ -1,6 +1,7 @@
 # Machine-independent project paths
 
-Status: design, for review. Only `internal/gitid` is implemented.
+Status: implemented (`internal/gitid`, `internal/locations`, export, import,
+`instructions pull`/`push`). Owner decisions of 2026-10-20 are folded in.
 
 ## Problem
 
@@ -25,22 +26,34 @@ Added to `SetupBundle` as `locations` (optional, `omitempty`):
 
 ```
 WorkDir { id, label, home_rel, abs }
-Project { id, work_dir, rel, abs, git_remote, root_commits[], namespace }
+Project { id, work_dir, rel, abs, git_remote, root_commits[], namespace, aliases[] }
 ```
 
+The same structure is stored in the vault (`locations`), so `instructions
+push` uses the same identities as import. `aliases` (vault only, never
+exported) are other paths the repository was known by, such as its path on
+the machine a bundle came from.
+
 - `WorkDir.id`: stable within one bundle (`w1`, `w2`). `home_rel` is the path
-  relative to `source_home` (`Projects`), empty when outside home. `abs` is the
+  relative to `source_home` (`Projects`), `.` for home itself, empty when
+  outside home. `abs` is the
   old absolute path, kept as the fallback.
 - `Project.rel`: path relative to its work dir (`app`, `client/web`).
 - `git_remote`: `gitid.NormalizeRemote` output, `host[:port]/owner/repo`.
+  SSH, scp-like and HTTPS forms of one remote give one value
+  (`git@host:o/r.git`, `ssh://git@host[:22]/o/r`, `https://[user@]host/o/r[.git][/]`).
+  Owner and repo are lower-cased on github.com and bitbucket.org only; on
+  every other host path case is significant. Azure DevOps SSH
+  (`v3/org/proj/repo`) and HTTPS (`org/proj/_git/repo`) forms are not
+  unified: they are two identities and simply do not match.
 - `root_commits`: sorted root commit hashes; used when there is no remote.
 - `namespace`: the remote path minus the repo name (`owner`, `group/sub`).
 
 ## Capture on export
 
-- Work dirs: the parent of every path that names a project (`--project`,
-  Claude memory keys decoded against existing dirs, Codex trusted projects,
-  directory-scoped instruction patterns) plus any `--workdir DIR` given.
+- Projects: `--project` and the Codex trusted projects, merged with what the
+  vault already records (from earlier imports and `instructions pull`).
+- Work dirs: any `--workdir DIR` given; otherwise each project's parent.
 - Per project: `gitid.Identify`. The remote is read by parsing the config
   file as text (handles `.git` files for worktrees and submodules,
   `commondir`); git is never run for it.
@@ -60,8 +73,8 @@ Project { id, work_dir, rel, abs, git_remote, root_commits[], namespace }
   (trailing CR/LF only, relative to the git dir) and all paths are resolved
   through symlinks first. Git runs only when the work tree, git dir, common
   dir, `config` and `config.worktree` are all owned by the current user
-  (Unix uid). On Windows the check fails closed: no git, root commits
-  empty, `RootSkipped` set; an owner-SID check is future work.
+  (Unix uid). On Windows git is never run: matching there uses the remote
+  only (root commits empty, `RootSkipped` set).
   A `config` or `config.worktree` with an `include` or `includeIf`
   section also skips git (`RootSkipped` set): git would load files the
   owner check cannot name. Ownership is checked after symlinks are
@@ -95,11 +108,16 @@ Project { id, work_dir, rel, abs, git_remote, root_commits[], namespace }
 Order: work dirs first, then projects inside the matched work dirs, then
 projects anywhere under the candidate roots.
 
-1. Work dir: same `home_rel` under this home if it exists (score 100), else a
-   `--workdir-map OLD=NEW`, else same `label` under home (50). Ties ask.
+1. Work dir: a `--workdir-map OLD=NEW` first, else same `home_rel` under this
+   home, else same `label` directly under home. A work dir that holds a
+   project with an identity and is still not found is never guessed: on a
+   terminal the user is asked, with the three closest top-level home folders
+   (by name) offered, and may type a path or skip; without a terminal the
+   import stops and prints the `--workdir-map OLD=<path here>` line to add.
 2. Candidates for a project: git checkouts found by a bounded scan (depth 3,
-   skip `node_modules`, `vendor`, hidden dirs) of the matched work dirs, then
-   of home's top-level dirs if not found.
+   skip `node_modules`, `vendor`, hidden dirs, never follow symlinks) of the
+   matched work dirs and of home. When every bundle project has a remote,
+   the scan never runs git.
 3. Score each candidate:
 
 | Signal | Score |
@@ -115,11 +133,19 @@ projects anywhere under the candidate roots.
 4. Best score >= 80 and alone at that score: match. Two or more at the top
    score: ambiguous. Below 80: no match; fall back to `abs` and the home
    rewrite, as today.
-5. Ambiguous on a terminal: list candidates, ask. Without a terminal: print
-   each ambiguity with a ready `--map OLD=NEW` line and skip that project.
-6. A unique match is still a proposal (see Security): on a terminal it is
-   shown and confirmed once per import; without a terminal it is applied
-   only with `--accept-matches`, otherwise reported like an ambiguity.
+5. Every computed match, unique or not, is a proposal (see Security). All of
+   them, work dirs first, are shown as one numbered list,
+   `bundle path -> local path` with score and reason. The user enters a row
+   number to change that row's path (an existing absolute directory, `~/`
+   allowed; a letter picks a candidate of an ambiguous row; `-` skips the
+   row), an empty line to accept the list, `q` to abort the import. End of
+   input aborts.
+6. Without a terminal: with `--accept-matches` unique matches are applied
+   and ambiguous ones skipped with a `--map` hint; without it the list is
+   printed, no computed path is used and no project files are written.
+7. Accepted project matches are recorded in the vault (local path, bundle
+   path as alias). `--apply-projects` without `--project-root` writes into
+   the accepted match of the bundle's `--project`.
 
 ## Flags
 
@@ -128,7 +154,8 @@ projects anywhere under the candidate roots.
   `rel` and identity.
 - `--no-match`: old behaviour, literal paths only.
 - `--accept-matches`: apply unique computed matches without a terminal.
-- `--dry-run`: prints each match with its score and reason.
+- export `--workdir DIR`: record a work dir explicitly.
+- `--dry-run`: prints each match with its score and reason, asks nothing.
 
 ## How remap consumes it
 
@@ -156,9 +183,7 @@ A memory dir key that would collide is still refused and reported.
   user's own dotfiles or work repo and score 100. A computed match
   therefore never writes on its own:
   - on a terminal, the import lists every computed match (bundle path ->
-    local path, score, reason) and the files it would write there, with
-    executable content (hooks, MCP commands, `settings.json`) flagged, and
-    asks once before writing;
+    local path, score, reason) and asks once before using any of them;
   - without a terminal, computed matches are reported with ready
     `--map OLD=NEW` lines and skipped unless `--accept-matches` is given;
   - `--map`/`--workdir-map` targets are the user's own choice and need no
@@ -180,18 +205,15 @@ A memory dir key that would collide is still refused and reported.
   home B with `~/src/app`; memory key and Codex trust land on the new path.
 - Old bundle fixture imports unchanged.
 
-## Open questions
+## Decisions (2026-10-20)
 
-1. Scan scope when no work dir matches: home top level only, or ask?
-2. Azure DevOps ssh (`v3/org/proj/repo`) vs https (`org/proj/_git/repo`):
-   normalize to one form now or later?
-3. Should `git_remote` comparison fold path case for every host, or only for
-   github.com, bitbucket.org (GitLab paths are case-sensitive)?
-4. Record work dirs in the vault itself (for `instructions push`), or only in
-   export bundles for now?
-5. Windows: add an owner-SID check (x/sys/windows) so local-only repos can
-   match by root commit there, or accept remote-only matching on Windows?
-6. Confirmation of unique matches (Matching step 6) changes the earlier
-   decision that only ambiguous matches stop a non-interactive import. Is
-   `--accept-matches` the right opt-in, or should project-file writes
-   (hooks, MCP) be the only part gated?
+1. No work dir match: ask, offering the closest top-level home folders;
+   never guess. Without a terminal, report and require `--workdir-map`.
+2. Azure DevOps remote forms are not unified now.
+3. Owner/repo case is folded only for github.com and bitbucket.org.
+4. Work dirs and projects are stored in the vault too.
+5. Windows matches by remote only; SSH and HTTPS forms of a remote are one
+   identity on every OS (`NormalizeRemote` is OS-independent).
+6. Every match is confirmed, unique ones included, in one editable list;
+   `--accept-matches` for non-interactive imports, which otherwise print
+   the list and write no project files.

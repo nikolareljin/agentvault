@@ -16,7 +16,10 @@ func TestNormalizeRemote(t *testing.T) {
 		in   string
 		want string // "" means not a network remote
 	}{
-		{"git@github.com:Owner/Repo.git", "github.com/Owner/Repo"},
+		{"git@github.com:Owner/Repo.git", "github.com/owner/repo"},
+		{"https://gitlab.com/Group/Repo", "gitlab.com/Group/Repo"},
+		{"git@git.example.com:Owner/Repo.git", "git.example.com/Owner/Repo"},
+		{"https://BitBucket.org/Team/Repo", "bitbucket.org/team/repo"},
 		{"github.com:owner/repo", "github.com/owner/repo"},
 		{"https://github.com/owner/repo.git", "github.com/owner/repo"},
 		{"https://github.com/owner/repo", "github.com/owner/repo"},
@@ -171,7 +174,7 @@ func TestIdentifyRepoAndSubdir(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if r.Remote != "github.com/Owner/Repo" || r.RemoteName != "origin" {
+		if r.Remote != "github.com/owner/repo" || r.RemoteName != "origin" {
 			t.Errorf("%s: remote %q %q", d, r.RemoteName, r.Remote)
 		}
 		if len(r.RootCommits) != 1 || r.RootCommits[0] != root {
@@ -367,9 +370,10 @@ func trustOwnerOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		return
 	}
-	old := ownerCheck
+	old, oldRemoteOnly := ownerCheck, remoteOnly
 	ownerCheck = func(string) bool { return true }
-	t.Cleanup(func() { ownerCheck = old })
+	remoteOnly = false
+	t.Cleanup(func() { ownerCheck, remoteOnly = old, oldRemoteOnly })
 }
 
 func TestParseCommonDir(t *testing.T) {
