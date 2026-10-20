@@ -781,6 +781,26 @@ func readStattedFile(path string, info os.FileInfo, max int64) ([]byte, string, 
 	return data, "", nil
 }
 
+// readExistingFile reads a file already on this machine that import merges
+// with. Anything but a regular file is an error, so a pipe never blocks it.
+func readExistingFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	data, reason, err := readStattedFile(path, info, maxSetupAssetBytes)
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		return nil, fmt.Errorf("%s %s", path, reason)
+	}
+	return data, nil
+}
+
 func hashSetupAssetContent(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
@@ -1005,6 +1025,10 @@ func applyStagedProjectAssetsWith(configDir string, targetDir string, overwrite 
 		if err != nil {
 			return applied, skipped, fmt.Errorf("resolving target asset path: %w", err)
 		}
+		if info, err := os.Lstat(destPath); err == nil && !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			skipped = append(skipped, fmt.Sprintf("%s: exists and is not a regular file; kept", rel))
+			continue
+		}
 		if !overwrite {
 			if same, exists := sameFileContent(srcPath, destPath); exists && !same {
 				skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept (use --strategy replace to overwrite)", rel))
@@ -1052,6 +1076,11 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: destination path is a symlink", describeSetupAsset(asset)))
 				continue
 			}
+			// A pipe there would block the reads below that merge with it.
+			if !info.Mode().IsRegular() {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: destination is not a regular file", describeSetupAsset(asset)))
+				continue
+			}
 		} else if !os.IsNotExist(err) {
 			return applied, warnings, fmt.Errorf("checking provider asset destination %q: %w", dest, err)
 		}
@@ -1078,7 +1107,7 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 			}
 		}
 		if len(asset.RedactedFields) > 0 {
-			existing, _ := os.ReadFile(dest)
+			existing, _ := readExistingFile(dest)
 			filled, restored, err := restoreRedactedFields(content, asset.RedactedFields, existing)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))

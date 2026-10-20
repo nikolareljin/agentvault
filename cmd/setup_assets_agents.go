@@ -381,7 +381,7 @@ func collectCopilotConfig(path string, includeSecrets bool) (*SetupAsset, []Decl
 // keepLocalCopilotLogin puts this machine's own login keys from the config.json
 // at dest back into incoming, so applying a bundle does not sign anyone out.
 func keepLocalCopilotLogin(dest string, incoming []byte) []byte {
-	existing, err := os.ReadFile(dest)
+	existing, err := readExistingFile(dest)
 	if err != nil {
 		return incoming
 	}
@@ -1373,7 +1373,7 @@ func dedupeAssetsByLogicalPath(in []SetupAsset) []SetupAsset {
 // only: the rest of incoming is never written. A file that is not a JSON
 // object is refused rather than overwritten.
 func mergeJSONKeysIntoFile(path string, incoming []byte, keys []string) ([]byte, error) {
-	existing, err := os.ReadFile(path)
+	existing, err := readExistingFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -1402,6 +1402,11 @@ func mergeJSONKeysIntoFile(path string, incoming []byte, keys []string) ([]byte,
 // repository settings), credential files, and other non-prose files, which
 // stay staged for review.
 func projectAssetRefusal(rel string) string {
+	// The stage outlives one import: refuse what import refuses (device
+	// names, short names) here too, so one such file is skipped, not fatal.
+	if _, err := sanitizeAssetRelativePath(rel); err != nil {
+		return err.Error()
+	}
 	slashed := filepath.ToSlash(filepath.Clean(rel))
 	folded := strings.ToLower(slashed)
 	for _, seg := range strings.Split(slashed, "/") {
@@ -1457,7 +1462,7 @@ func isProjectInstructionPath(slashed string) bool {
 // sameFileContent reports whether dest exists and, if so, whether it holds
 // the same bytes as src.
 func sameFileContent(src, dest string) (same bool, exists bool) {
-	d, err := os.ReadFile(dest)
+	d, err := readExistingFile(dest)
 	if err != nil {
 		return false, false
 	}
