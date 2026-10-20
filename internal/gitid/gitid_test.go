@@ -20,6 +20,8 @@ func TestNormalizeRemote(t *testing.T) {
 		{"https://gitlab.com/Group/Repo", "gitlab.com/Group/Repo"},
 		{"git@git.example.com:Owner/Repo.git", "git.example.com/Owner/Repo"},
 		{"https://BitBucket.org/Team/Repo", "bitbucket.org/team/repo"},
+		{"https://GitHub.com./Owner/Repo", "github.com/owner/repo"},
+		{"git@github.com.:owner/repo.git", "github.com/owner/repo"},
 		{"github.com:owner/repo", "github.com/owner/repo"},
 		{"https://github.com/owner/repo.git", "github.com/owner/repo"},
 		{"https://github.com/owner/repo", "github.com/owner/repo"},

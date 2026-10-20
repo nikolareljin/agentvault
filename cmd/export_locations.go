@@ -43,6 +43,11 @@ func captureBundleLocations(cmd *cobra.Command, v *vault.Vault, bundle SetupBund
 	for i := range merged.Projects {
 		merged.Projects[i].Aliases = nil
 	}
+	// Work dir mappings are this machine's choices, not the bundle's.
+	merged.WorkDirMaps = nil
+	if merged.Empty() {
+		return nil
+	}
 	return &merged
 }
 

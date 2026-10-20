@@ -41,7 +41,8 @@ the machine a bundle came from.
 - `Project.rel`: path relative to its work dir (`app`, `client/web`).
 - `git_remote`: `gitid.NormalizeRemote` output, `host[:port]/owner/repo`.
   SSH, scp-like and HTTPS forms of one remote give one value
-  (`git@host:o/r.git`, `ssh://git@host[:22]/o/r`, `https://[user@]host/o/r[.git][/]`).
+  (`git@host:o/r.git`, `ssh://git@host[:22]/o/r`, `https://[user@]host/o/r[.git][/]`);
+  a trailing dot on the host is dropped.
   Owner and repo are lower-cased on github.com and bitbucket.org only; on
   every other host path case is significant. Azure DevOps SSH
   (`v3/org/proj/repo`) and HTTPS (`org/proj/_git/repo`) forms are not
@@ -123,8 +124,11 @@ projects anywhere under the candidate roots.
    A target with a hidden folder (name starting with `.`) below home,
    work dir or project, needs its own confirmation per entry (y, or a
    different path), even when it exists and even with `--accept-matches`.
-   `--workdir-map` naming that exact target is the confirmation. Without a
-   terminal an unconfirmed hidden target is treated as missing.
+   `--workdir-map` naming that exact target is the confirmation, and also
+   confirms everything under it. Without a terminal an unconfirmed hidden
+   target is treated as missing. Each question is asked once per import,
+   however many profiles name the same work dir, and the summary lists each
+   path once; its `--workdir-map` line is shell-quoted.
 2. Candidates for a project: git checkouts found by a bounded scan (depth 3,
    skip `node_modules`, `vendor`, hidden dirs, never follow symlinks) of the
    matched work dirs and of home. When every bundle project has a remote,
@@ -208,7 +212,10 @@ A memory dir key that would collide is still refused and reported.
 - Bundle `aliases` are ignored. Import records the bundle `abs` as the one
   alias, unless it is this home or above it, or equals, contains or sits
   below any path or alias of a project with a different identity (known to
-  the vault or accepted earlier in the same import).
+  the vault or accepted earlier in the same import), or equals or contains
+  any known work dir or mapped work dir target (so `~/Projects` never
+  becomes the alias of one repository).
+- Work dir mappings stay in the vault; a bundle never carries them.
 - Bundle paths keep their own OS form (`/home/a` stays forward-slashed on
   Windows), so they still match the text they rewrite.
 - The scan never follows symlinks out of the scanned root and never runs git

@@ -35,6 +35,67 @@ type locationOptions struct {
 	Known locations.Set
 	// Identify replaces locations.DefaultIdentifier in tests.
 	Identify locations.Identifier
+	// Asked remembers answers across the profiles of one import, so each
+	// question is asked once. Nil means no memory.
+	Asked *askMemo
+	// workDirs are every work dir path this import knows (bundle, vault,
+	// mapped targets); an alias may not cover one.
+	workDirs []string
+}
+
+// askMemo holds the answers given during one import.
+type askMemo struct {
+	workDir map[string]string // bundle work dir path -> answer ("" = skipped)
+	hidden  map[string]string // from + NUL + target -> answer ("" = skipped)
+}
+
+func newAskMemo() *askMemo {
+	return &askMemo{workDir: map[string]string{}, hidden: map[string]string{}}
+}
+
+// askHidden is ConfirmHidden, asked once per entry per import.
+func askHidden(o locationOptions, from, to string, out io.Writer) (string, error) {
+	key := from + "\x00" + to
+	if o.Asked != nil {
+		if a, ok := o.Asked.hidden[key]; ok {
+			return a, nil
+		}
+	}
+	got, err := locations.ConfirmHidden(from, to, o.Home, o.In, out)
+	if err == nil && o.Asked != nil {
+		o.Asked.hidden[key] = got
+	}
+	return got, err
+}
+
+// askWorkDir is AskWorkDir, asked once per work dir per import.
+func askWorkDir(o locationOptions, w locations.WorkDir, out io.Writer) (string, error) {
+	key := locations.CleanForeign(w.Abs)
+	if o.Asked != nil {
+		if a, ok := o.Asked.workDir[key]; ok {
+			return a, nil
+		}
+	}
+	got, err := locations.AskWorkDir(w, locations.Suggest(o.Home, w), o.Home, o.In, out)
+	if err == nil && o.Asked != nil {
+		o.Asked.workDir[key] = got
+	}
+	return got, err
+}
+
+// shellQuote makes s one shell word.
+func shellQuote(s string) string {
+	safe := s != ""
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("/._-=+:,@%", c)) {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // locationResult is what matching decided for one profile.
@@ -138,11 +199,14 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 			continue
 		}
 		if o.Interactive && !o.DryRun {
-			got, err := locations.ConfirmHidden(w.Abs, to, o.Home, o.In, out)
+			got, err := askHidden(o, w.Abs, to, out)
 			if err != nil {
 				return res, fmt.Errorf("import aborted: %w", err)
 			}
 			if got != "" {
+				if got != to {
+					res.NewMaps = append(res.NewMaps, pathRemap{From: w.Abs, To: got})
+				}
 				targets[w.ID], userChosen[w.ID] = got, true
 				continue
 			}
@@ -153,6 +217,19 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		}
 	}
 
+	o.workDirs = nil
+	for _, w := range set.WorkDirs {
+		o.workDirs = append(o.workDirs, w.Abs)
+	}
+	for _, w := range o.Known.WorkDirs {
+		o.workDirs = append(o.workDirs, w.Abs)
+	}
+	for k, v := range maps {
+		o.workDirs = append(o.workDirs, k, v)
+	}
+	for _, t := range targets {
+		o.workDirs = append(o.workDirs, t)
+	}
 	if err := matchAndConfirm(ctx, without(set, missed), sourceProject, targets, userChosen, o, out, &res); err != nil {
 		return res, err
 	}
@@ -163,7 +240,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 			continue
 		}
 		if o.Interactive && !o.DryRun {
-			to, err := locations.AskWorkDir(w, locations.Suggest(o.Home, w), o.Home, o.In, out)
+			to, err := askWorkDir(o, w, out)
 			if err != nil {
 				return res, fmt.Errorf("import aborted: %w", err)
 			}
@@ -177,7 +254,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 				continue
 			}
 		}
-		res.Missed = append(res.Missed, missedEntry{Path: w.Abs, Reason: reason, Hint: "--workdir-map " + w.Abs + "=<path here>", Suggest: locations.Suggest(o.Home, w)})
+		res.Missed = append(res.Missed, missedEntry{Path: w.Abs, Reason: reason, Hint: "--workdir-map " + shellQuote(w.Abs+"=<path here>"), Suggest: locations.Suggest(o.Home, w)})
 		if sourceProject != "" {
 			for _, p := range set.Projects {
 				if p.WorkDir == w.ID && locations.CleanForeign(p.Abs) == locations.CleanForeign(sourceProject) {
@@ -290,16 +367,16 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 		if p.Target != "" && !allowedTarget(p.Target, o.Home, targets, userChosen) {
 			continue
 		}
-		if p.Target != "" && locations.HiddenBelowHome(p.Target, o.Home) {
+		if p.Target != "" && locations.HiddenBelowHome(p.Target, o.Home) && !underChosen(p.Target, targets, userChosen) {
 			got := ""
 			if o.Interactive && !o.DryRun {
 				var err error
-				if got, err = locations.ConfirmHidden(p.Project.Abs, p.Target, o.Home, o.In, out); err != nil {
+				if got, err = askHidden(o, p.Project.Abs, p.Target, out); err != nil {
 					return fmt.Errorf("import aborted: %w", err)
 				}
 			}
 			if got == "" {
-				res.Missed = append(res.Missed, missedEntry{Path: p.Project.Abs, Reason: "target " + p.Target + " is in a hidden folder and was not confirmed", Hint: "--map " + p.Project.Abs + "=<path here>, or confirm it on a terminal"})
+				res.Missed = append(res.Missed, missedEntry{Path: p.Project.Abs, Reason: "target " + p.Target + " is in a hidden folder and was not confirmed", Hint: "--map " + shellQuote(p.Project.Abs+"=<path here>") + ", or confirm it on a terminal"})
 				if sourceProject != "" && locations.CleanForeign(sourceProject) == locations.CleanForeign(p.Project.Abs) {
 					res.SourceSkipped = true
 				}
@@ -344,7 +421,7 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 		if p := refs[i].project; p != nil {
 			stored := *p
 			stored.Aliases = nil
-			if safeAlias(p.Abs, *p, o.Home, o.Known.Projects, res.Stored.Projects) {
+			if safeAlias(p.Abs, *p, o.Home, o.workDirs, o.Known.Projects, res.Stored.Projects) {
 				stored.Aliases = []string{p.Abs}
 			}
 			stored.Abs = r.To
@@ -368,6 +445,31 @@ func printMissed(out io.Writer, missed []missedEntry) {
 			fmt.Fprintf(out, "    maybe: %s\n", printable(s))
 		}
 	}
+}
+
+// underChosen is a path inside a work dir target the user named (by
+// --workdir-map or an answer): that choice confirms what is under it.
+func underChosen(p string, targets map[string]string, userChosen map[string]bool) bool {
+	for id, t := range targets {
+		if userChosen[id] && pathWithin(t, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// dedupeMissed keeps the first entry per path, so a work dir missed by
+// several profiles is listed once.
+func dedupeMissed(in []missedEntry) []missedEntry {
+	seen := map[string]bool{}
+	var out []missedEntry
+	for _, m := range in {
+		if !seen[m.Path] {
+			seen[m.Path] = true
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // usableLocations keeps the work dirs and projects whose bundle path can be
@@ -406,9 +508,16 @@ func usableLocations(in *locations.Set, out io.Writer) *locations.Set {
 // any path or alias of a project with a different identity, among those
 // the vault knows and those already accepted in this import. Otherwise a
 // directory pattern for that other project would follow this one.
-func safeAlias(alias string, p locations.Project, home string, known ...[]locations.Project) bool {
+func safeAlias(alias string, p locations.Project, home string, workDirs []string, known ...[]locations.Project) bool {
 	if home != "" && locations.Below(alias, home) {
 		return false
+	}
+	// ~/Projects as the alias of one repository would pull every pattern
+	// for the folder onto it.
+	for _, w := range workDirs {
+		if locations.Below(alias, w) {
+			return false
+		}
 	}
 	for _, set := range known {
 		for _, q := range set {

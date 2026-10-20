@@ -245,6 +245,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(out, "\nSummary: %d added, %d updated, %d skipped, %d removed\n",
 		total.Added, total.Updated, total.Skipped, total.Removed)
+	allMissed = dedupeMissed(allMissed)
 	if len(allMissed) > 0 {
 		printMissed(out, allMissed)
 	}
@@ -867,7 +868,7 @@ func sortedStringKeys(m map[string]string) []string {
 
 // locationOptionsFromFlags reads the matching flags.
 func locationOptionsFromFlags(cmd *cobra.Command, interactive, dryRun bool, in *bufio.Reader, maps []string) (locationOptions, error) {
-	o := locationOptions{Interactive: interactive, DryRun: dryRun, In: in, Out: cmd.ErrOrStderr(), Home: exportSourceHome()}
+	o := locationOptions{Interactive: interactive, DryRun: dryRun, In: in, Out: cmd.ErrOrStderr(), Home: exportSourceHome(), Asked: newAskMemo()}
 	o.NoMatch, _ = cmd.Flags().GetBool("no-match")
 	o.AcceptMatches, _ = cmd.Flags().GetBool("accept-matches")
 	values, _ := cmd.Flags().GetStringArray("workdir-map")

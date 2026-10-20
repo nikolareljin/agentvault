@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -136,7 +137,7 @@ func TestUnmatchedWorkDirNeedsAnswer(t *testing.T) {
 	}
 	var sum bytes.Buffer
 	printMissed(&sum, miss.Missed)
-	if !strings.Contains(sum.String(), "pass --workdir-map /old/Projects=<path here>") || !strings.Contains(sum.String(), "maybe: ") {
+	if !strings.Contains(sum.String(), "pass --workdir-map '/old/Projects=<path here>'") || !strings.Contains(sum.String(), "maybe: ") {
 		t.Errorf("summary:\n%s", sum.String())
 	}
 	o.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o.Home, "src")}
@@ -301,7 +302,7 @@ func TestImportFindsProjectByRemote(t *testing.T) {
 	withFlags(t, importCmd, map[string]string{"apply-projects": "true"})
 
 	// Projects/ does not exist here: without --workdir-map nothing is written.
-	if err := runImport(importCmd, []string{bundlePath}); err == nil || !strings.Contains(in.String(), "--workdir-map "+filepath.Join(srcHome, "Projects")+"=") {
+	if err := runImport(importCmd, []string{bundlePath}); err == nil || !strings.Contains(in.String(), "--workdir-map '"+filepath.Join(srcHome, "Projects")+"=") {
 		t.Fatalf("missing work dir not reported: %v\n%s", err, in.String())
 	}
 	setStringArray(t, importCmd.Flags(), "workdir-map", []string{filepath.Join(srcHome, "Projects") + "=" + filepath.Join(dstHome, "code")})
@@ -409,23 +410,23 @@ func TestBundleAliasesNotPersisted(t *testing.T) {
 func TestAliasRejectedWhenItNamesAnotherProject(t *testing.T) {
 	other := locations.Project{Abs: "/elsewhere/lib", GitRemote: "github.com/acme/lib", Aliases: []string{"/old/Projects/app"}}
 	self := locations.Project{Abs: "/old/Projects/app", GitRemote: "github.com/acme/app"}
-	if safeAlias(self.Abs, self, "/home/me", []locations.Project{other}) {
+	if safeAlias(self.Abs, self, "/home/me", nil, []locations.Project{other}) {
 		t.Error("alias equal to another repository's alias accepted")
 	}
-	if safeAlias(self.Abs, self, "/home/me", nil, []locations.Project{{Abs: "/old/Projects/app/sub", GitRemote: "github.com/x/y"}}) {
+	if safeAlias(self.Abs, self, "/home/me", nil, nil, []locations.Project{{Abs: "/old/Projects/app/sub", GitRemote: "github.com/x/y"}}) {
 		t.Error("alias above a project accepted earlier in this import")
 	}
-	if safeAlias("/old/Projects/app/sub", self, "/home/me", []locations.Project{{Abs: "/old/Projects/app", GitRemote: "github.com/x/y"}}) {
+	if safeAlias("/old/Projects/app/sub", self, "/home/me", nil, []locations.Project{{Abs: "/old/Projects/app", GitRemote: "github.com/x/y"}}) {
 		t.Error("alias below another repository accepted")
 	}
 	same := locations.Project{Abs: "/home/me/src/app", GitRemote: "github.com/acme/app", Aliases: []string{"/old/Projects/app"}}
-	if !safeAlias(self.Abs, self, "/home/me", []locations.Project{same}) {
+	if !safeAlias(self.Abs, self, "/home/me", nil, []locations.Project{same}) {
 		t.Error("same repository refused its own alias")
 	}
-	if safeAlias("/home", self, "/home/me", nil) || safeAlias("/home/me", self, "/home/me", nil) {
+	if safeAlias("/home", self, "/home/me", nil, nil) || safeAlias("/home/me", self, "/home/me", nil, nil) {
 		t.Error("home or above accepted")
 	}
-	if !safeAlias("/old/Projects/app", self, "/home/me", nil) {
+	if !safeAlias("/old/Projects/app", self, "/home/me", nil, nil) {
 		t.Error("plain alias refused")
 	}
 	if !locations.Overlaps(`C:\Users\A\x`, "c:/users/a") || locations.Overlaps("/a/bc", "/a/b") {
@@ -579,7 +580,122 @@ func TestHiddenTargetsNeedExplicitConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.ProjectRoot != "" || !res.SourceSkipped || len(res.Missed) != 1 {
-		t.Errorf("hidden project accepted by --accept-matches: %+v", res)
+	// The --workdir-map naming the hidden folder confirms what is under it.
+	if res.ProjectRoot != hiddenApp || res.SourceSkipped || len(res.Missed) != 0 {
+		t.Errorf("project under a mapped hidden work dir not accepted: %+v", res)
+	}
+
+	// Without such a choice, a project found in a hidden folder is not
+	// covered by --accept-matches. Reached only if a hidden work dir target
+	// was not confirmed first, so drive matchAndConfirm directly.
+	_, set3, o3 := matchFixture(t)
+	hiddenWD3 := filepath.Join(o3.Home, ".w")
+	hidden3 := filepath.Join(hiddenWD3, "app")
+	mustMkdirAll(t, filepath.Join(hidden3, ".git"))
+	if err := os.RemoveAll(filepath.Join(o3.Home, "src")); err != nil {
+		t.Fatal(err)
+	}
+	o3.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
+		if dir == hidden3 {
+			return gitid.Repo{Root: dir, Remote: "github.com/acme/app"}, nil
+		}
+		return gitid.Repo{}, gitid.ErrNotRepo
+	}
+	o3.AcceptMatches = true
+	var r3 locationResult
+	if err := matchAndConfirm(context.Background(), set3, "/old/Projects/app", map[string]string{"w1": hiddenWD3}, map[string]bool{}, o3, io.Discard, &r3); err != nil {
+		t.Fatal(err)
+	}
+	if r3.ProjectRoot != "" || len(r3.Missed) != 1 || !r3.SourceSkipped {
+		t.Errorf("hidden project accepted by --accept-matches: %+v", r3)
+	}
+}
+
+// A different path typed at the hidden-folder prompt is saved like an
+// answer to the missing-work-dir question.
+func TestHiddenPromptReplacementIsSaved(t *testing.T) {
+	_, set, o := matchFixture(t)
+	mustMkdirAll(t, filepath.Join(o.Home, ".work", "Projects"))
+	set.WorkDirs[0].HomeRel = ".work/Projects"
+	src := filepath.Join(o.Home, "src")
+	var out bytes.Buffer
+	o.Out, o.Interactive = &out, true
+	o.In = bufio.NewReader(strings.NewReader(src + "\n\n"))
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil || len(res.NewMaps) != 1 || res.NewMaps[0].To != src {
+		t.Fatalf("%+v %v\n%s", res, err, out.String())
+	}
+}
+
+// Two profiles naming the same missing work dir: one question, one entry.
+func TestMissingWorkDirAskedOncePerImport(t *testing.T) {
+	_, set, o := matchFixture(t)
+	set.WorkDirs[0].HomeRel, set.WorkDirs[0].Label = "Code", "Code"
+	var out bytes.Buffer
+	o.Out, o.Interactive, o.Asked = &out, true, newAskMemo()
+	o.In = bufio.NewReader(strings.NewReader("\n")) // skip it, once
+	var all []missedEntry
+	for i := 0; i < 2; i++ {
+		res, err := resolveBundleLocations(context.Background(), set, "", o)
+		if err != nil {
+			t.Fatalf("profile %d: %v\n%s", i+1, err, out.String())
+		}
+		all = append(all, res.Missed...)
+	}
+	if n := strings.Count(out.String(), "was not found here"); n != 1 {
+		t.Errorf("asked %d times", n)
+	}
+	if got := dedupeMissed(all); len(got) != 1 {
+		t.Errorf("summary lists %d entries", len(got))
+	}
+}
+
+func TestShellQuoteHint(t *testing.T) {
+	for in, want := range map[string]string{
+		"/a/b=/c":             "/a/b=/c",
+		"/My Dir=<path here>": "'/My Dir=<path here>'",
+		"/it's=x":             `'/it'\''s=x'`,
+	} {
+		if got := shellQuote(in); got != want {
+			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// A bundle project at the work dir's own path must not become an alias,
+// or every pattern for ~/Projects would follow that one repository.
+func TestWorkDirNeverBecomesAlias(t *testing.T) {
+	app, set, o := matchFixture(t)
+	set.WorkDirs[0].HomeRel = "src"
+	set.Projects[0].Abs, set.Projects[0].Rel = "/old/Projects", "."
+	o.AcceptMatches = true
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil || len(res.Stored.Projects) != 1 {
+		t.Fatalf("%+v %v", res, err)
+	}
+	insts := []agent.InstructionFile{{Name: "a", Scope: agent.InstructionScopeDirectory, DirectoryPattern: "/old/Projects/other"}}
+	id := func(_ context.Context, d string) (gitid.Repo, error) {
+		return gitid.Repo{Root: app, Remote: "github.com/acme/app"}, nil
+	}
+	if got := aliasDirectoryPatterns(insts, res.Stored, app, id); got[0].DirectoryPattern != "/old/Projects/other" {
+		t.Errorf("work dir pattern pulled onto one repository: %q", got[0].DirectoryPattern)
+	}
+}
+
+// Work dir mappings are this machine's; a bundle never carries them.
+func TestExportLeavesOutWorkDirMappings(t *testing.T) {
+	v := vault.New(filepath.Join(t.TempDir(), "vault.enc"))
+	if err := v.Init("pw"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetLocations(locations.Set{
+		Projects:    []locations.Project{{ID: "p1", Abs: "/h/src/app", GitRemote: "github.com/acme/app"}},
+		WorkDirMaps: map[string]string{"/old/Projects": "/h/src"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := captureBundleLocations(nil, v, SetupBundle{}, setupCollectOptions{})
+	if got == nil || len(got.Projects) != 1 || got.WorkDirMaps != nil {
+		t.Errorf("bundle locations %+v", got)
 	}
 }
