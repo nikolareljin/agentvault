@@ -256,7 +256,10 @@ A memory dir key that would collide is still refused and reported.
    the (bundle path, target) pair. A later import whose saved mapping is
    that same pair does not ask again; the row is shown as "work dir, saved
    mapping (hidden, confirmed)" and projects under it count as confirmed.
-   Mapping the path to another target drops the confirmation. Only this
+   Mapping the path to another target drops the confirmation. A work dir
+   row edited in the confirm list is saved as the new mapping; a new target
+   in a hidden folder is asked about first. Skipping a row removes nothing
+   saved. Only this
    machine's answers fill the list: export clears it and import ignores
    one in a bundle.
 2. Azure DevOps remote forms are not unified now.

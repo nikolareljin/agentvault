@@ -446,6 +446,8 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 	// named are theirs and need no confirmation.
 	type rowRef struct {
 		project *locations.Project
+		// proposed is a work dir row's target before the list was shown.
+		proposed string
 	}
 	var rows []locations.Row
 	var refs []rowRef
@@ -466,7 +468,7 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 			}
 		}
 		rows = append(rows, locations.Row{From: w.Abs, To: to, Note: note})
-		refs = append(refs, rowRef{})
+		refs = append(refs, rowRef{proposed: to})
 	}
 	for i := range proposals {
 		p := proposals[i]
@@ -525,6 +527,27 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 				fmt.Fprintf(out, "  skipped %s: ambiguous; pass --map %s=<one of the paths above>\n", printable(r.From), printable(r.From))
 			}
 			continue
+		}
+		// A work dir row edited in the list is the user's mapping: saved
+		// like an answer. A new target in a hidden folder needs its own yes.
+		if refs[i].project == nil && r.To != refs[i].proposed {
+			to := r.To
+			if locations.HiddenBelowHome(to, o.Home) {
+				got, _, err := askHidden(o, r.From, to, out)
+				if err != nil {
+					return fmt.Errorf("import aborted: %w", err)
+				}
+				if got == "" {
+					res.Missed = append(res.Missed, missedEntry{Path: r.From, Reason: "target " + to + " is in a hidden folder and was not confirmed", Hint: flagHint("--workdir-map", r.From)})
+					continue
+				}
+				to = got
+				if locations.HiddenBelowHome(to, o.Home) {
+					res.addConfirmedHidden(r.From, to)
+				}
+			}
+			res.addNewMap(r.From, to)
+			r.To = to
 		}
 		res.Remaps = append(res.Remaps, pathRemap{From: r.From, To: r.To})
 		if p := refs[i].project; p != nil {

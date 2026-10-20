@@ -176,3 +176,76 @@ func TestExportDropsConfirmedHidden(t *testing.T) {
 		t.Fatalf("export carries this machine's answers: %+v", got)
 	}
 }
+
+// confirmedVault is hiddenFixture with the hidden mapping already saved and
+// confirmed in the vault, on a terminal.
+func confirmedVault(t *testing.T) (*locations.Set, locationOptions, *vault.Vault, string) {
+	t.Helper()
+	set, o, v, hiddenWD := hiddenFixture(t)
+	o.Interactive = true
+	importOnce(t, set, &o, v, "y\n\n")
+	if v.Locations().ConfirmedHidden["/old/Projects"] != hiddenWD {
+		t.Fatalf("setup: %+v", v.Locations())
+	}
+	return set, o, v, hiddenWD
+}
+
+// A work dir row edited in the confirm list is saved as the new mapping.
+func TestEditedWorkDirRowSaved(t *testing.T) {
+	_, set, o := matchFixture(t)
+	set.WorkDirs[0].HomeRel, set.WorkDirs[0].Label = "Code", "Code"
+	v := vault.New(filepath.Join(t.TempDir(), "vault.enc"))
+	if err := v.Init("pw"); err != nil {
+		t.Fatal(err)
+	}
+	o.Known.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o.Home, "src")}
+	o.Interactive = true
+	res, out := importOnce(t, set, &o, v, "1\n"+filepath.Join(o.Home, "Projects")+"\n\n")
+	if got := v.Locations().WorkDirMaps["/old/Projects"]; got != filepath.Join(o.Home, "Projects") {
+		t.Fatalf("edited row not saved: %q %+v\n%s", got, res, out)
+	}
+}
+
+// Editing a confirmed hidden row to a non-hidden target drops the old
+// confirmation; to another hidden target asks for it first.
+func TestEditedConfirmedHiddenRow(t *testing.T) {
+	set, o, v, _ := confirmedVault(t)
+	plain := filepath.Join(o.Home, "Projects")
+	mustMkdirAll(t, plain)
+	importOnce(t, set, &o, v, "1\n"+plain+"\n\n")
+	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != plain || len(k.ConfirmedHidden) != 0 {
+		t.Fatalf("edit to plain target: %+v", k)
+	}
+
+	set, o, v, _ = confirmedVault(t)
+	other := filepath.Join(o.Home, ".other")
+	mustMkdirAll(t, other)
+	_, out := importOnce(t, set, &o, v, "1\n"+other+"\n\ny\n")
+	if !strings.Contains(out, other+" is inside a hidden folder") {
+		t.Fatalf("new hidden target not asked:\n%s", out)
+	}
+	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != other || k.ConfirmedHidden["/old/Projects"] != other {
+		t.Fatalf("edit to hidden target: %+v", k)
+	}
+
+	// Declining the new hidden target saves nothing and keeps the old one.
+	set, o, v, hiddenWD := confirmedVault(t)
+	x := filepath.Join(o.Home, ".x")
+	mustMkdirAll(t, x)
+	res, out := importOnce(t, set, &o, v, "1\n"+x+"\n\n\n")
+	if !strings.Contains(out, x+" is inside a hidden folder") || len(res.Missed) != 1 {
+		t.Fatalf("declined hidden edit: %+v\n%s", res, out)
+	}
+	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != hiddenWD || k.ConfirmedHidden["/old/Projects"] != hiddenWD {
+		t.Fatalf("declined edit changed the vault: %+v", k)
+	}
+}
+
+// Skipping a row in the list removes nothing saved.
+func TestSkippedRowKeepsSavedMapping(t *testing.T) {
+	set, o, v, hiddenWD := confirmedVault(t)
+	importOnce(t, set, &o, v, "1\n-\n\n")
+	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != hiddenWD || k.ConfirmedHidden["/old/Projects"] != hiddenWD {
+		t.Fatalf("skip changed the vault: %+v", k)
+	}
+}

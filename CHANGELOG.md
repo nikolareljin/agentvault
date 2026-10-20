@@ -5,7 +5,7 @@
 ### Added
 - `import`: a work dir mapping into a hidden folder, once confirmed, is
   saved as confirmed and not asked again for the same target. Answering
-  `y` now saves the mapping too.
+  `y` and a work dir row edited in the confirm list now save the mapping.
 - Bundles and the vault record projects by work dir and git identity, so
   import finds a project wherever it is checked out here. SSH and HTTPS
   remotes of one repository are one identity; owner and repo case is
