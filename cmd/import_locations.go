@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -102,14 +103,18 @@ func (r *locationResult) addNewMap(from, to string) {
 // flagHint is a flag line to paste into a shell: the bundle path in single
 // quotes, which POSIX shells and PowerShell both take literally ($, `, ",
 // ! included), and the placeholder outside them: '/a b'=<path here>. A
-// path with ' (escaped differently by each shell) or % (expanded by
-// cmd.exe) gets no ready command.
+// path outside hintSafePath gets no ready command.
 func flagHint(flag, from string) string {
-	if strings.ContainsAny(from, "'%") {
-		return "a mapping for " + printable(from) + " with " + flag + " (no ready command: the path holds ' or %)"
+	if !hintSafePath.MatchString(from) {
+		return "map " + printable(from) + " with " + flag + " (no ready command: the path holds characters a shell may interpret)"
 	}
 	return flag + " '" + from + "'=<path here>"
 }
+
+// hintSafePath is what flagHint quotes: ASCII letters, digits, space and
+// / \ . _ : + , @ = -. Anything else (cmd.exe & | ^ < > ( ) ! " %, quotes
+// of any kind, non-ASCII) gets no ready command.
+var hintSafePath = regexp.MustCompile(`^[A-Za-z0-9 /\\._:+,@=-]+$`)
 
 // shellQuote makes s one shell word.
 func shellQuote(s string) string {
@@ -256,6 +261,10 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 	for k, v := range maps {
 		o.workDirs = append(o.workDirs, k, v)
 	}
+	// Local targets too, computed or chosen: an alias may not name one.
+	for _, t := range targets {
+		o.workDirs = append(o.workDirs, t)
+	}
 	if err := matchAndConfirm(ctx, without(set, missed), sourceProject, targets, userChosen, o, out, &res); err != nil {
 		return res, err
 	}
@@ -272,6 +281,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 			}
 			if to != "" {
 				targets[w.ID], userChosen[w.ID] = to, true
+				o.workDirs = append(o.workDirs, to)
 				if !remembered {
 					res.addNewMap(w.Abs, to)
 				}
@@ -291,7 +301,29 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 			}
 		}
 	}
+	pruneAliases(&res, o)
 	return res, nil
+}
+
+// pruneAliases drops stored aliases that equal or contain a work dir known
+// at the end of the run: targets chosen after a project was stored (answers
+// to later questions) apply to its alias too.
+func pruneAliases(res *locationResult, o locationOptions) {
+	for i, p := range res.Stored.Projects {
+		var keep []string
+		for _, a := range p.Aliases {
+			ok := true
+			for _, w := range o.workDirs {
+				if locations.Below(a, w) {
+					ok = false
+				}
+			}
+			if ok {
+				keep = append(keep, a)
+			}
+		}
+		res.Stored.Projects[i].Aliases = keep
+	}
 }
 
 // missedEntry is a work dir or project that could not be placed.
@@ -449,7 +481,7 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 		if p := refs[i].project; p != nil {
 			stored := *p
 			stored.Aliases = nil
-			if safeAlias(p.Abs, *p, o.Home, o.workDirs, o.bundle, o.Known.Projects, res.Stored.Projects) {
+			if safeAlias(p.Abs, *p, r.To, o.Home, o.workDirs, o.bundle, o.Known.Projects, res.Stored.Projects) {
 				stored.Aliases = []string{p.Abs}
 			}
 			stored.Abs = r.To
@@ -564,9 +596,16 @@ func usableLocations(in *locations.Set, out io.Writer) *locations.Set {
 // any path or alias of a project with a different identity, among those
 // the vault knows and those already accepted in this import. Otherwise a
 // directory pattern for that other project would follow this one.
-func safeAlias(alias string, p locations.Project, home string, workDirs []string, bundle *locations.Set, known ...[]locations.Project) bool {
+func safeAlias(alias string, p locations.Project, target, home string, workDirs []string, bundle *locations.Set, known ...[]locations.Project) bool {
 	if home != "" && locations.Below(alias, home) {
 		return false
+	}
+	// A directory that exists here is what it is; a bundle cannot rename
+	// it. Only the project's own matched checkout may carry its path.
+	if info, err := os.Lstat(alias); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || filepath.Clean(alias) != filepath.Clean(target) {
+			return false
+		}
 	}
 	// ~/Projects as the alias of one repository would pull every pattern
 	// for the folder onto it.

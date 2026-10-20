@@ -130,7 +130,8 @@ projects anywhere under the candidate roots.
    however many profiles name the same work dir, and the summary lists each
    path once; its `--workdir-map` line puts the bundle path in single
   quotes (literal in POSIX shells and PowerShell) with the placeholder
-  outside. A path containing `'` or `%` gets no ready command.
+  outside. Only paths of ASCII letters, digits, space and `/\._:+,@=-`
+  get a ready command; any other path is printed with a plain instruction.
 2. Candidates for a project: git checkouts found by a bounded scan (depth 3,
    skip `node_modules`, `vendor`, hidden dirs, never follow symlinks) of the
    matched work dirs and of home. When every bundle project has a remote,
@@ -218,8 +219,10 @@ A memory dir key that would collide is still refused and reported.
   any known work dir or mapped work dir target (so `~/Projects` never
   becomes the alias of one repository). The one exception is a bundle work
   dir at the project's own path that holds only repositories nested inside
-  it, each with an identity; a work dir the vault knows or a mapping names
-  is never an alias.
+  it, each with an identity; a work dir the vault knows, a mapping names or
+  that import placed here (computed or chosen) is never an alias. Nor is any
+  path that exists on this machine (checked with Lstat; a symlink counts),
+  except the project's own matched checkout.
 - Work dir mappings stay in the vault; a bundle never carries them.
 - Bundle paths keep their own OS form (`/home/a` stays forward-slashed on
   Windows), so they still match the text they rewrite.

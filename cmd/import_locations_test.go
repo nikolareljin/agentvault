@@ -291,6 +291,10 @@ func TestImportFindsProjectByRemote(t *testing.T) {
 		t.Fatalf("export: %v\n%s", err, out.String())
 	}
 
+	// Machine A's checkout is not on machine B.
+	if err := os.RemoveAll(srcProject); err != nil {
+		t.Fatal(err)
+	}
 	setTestHomeDir(t, dstHome)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dstHome, ".config"))
 	dstCfg := filepath.Join(dstHome, ".config", config.AppName)
@@ -411,23 +415,23 @@ func TestBundleAliasesNotPersisted(t *testing.T) {
 func TestAliasRejectedWhenItNamesAnotherProject(t *testing.T) {
 	other := locations.Project{Abs: "/elsewhere/lib", GitRemote: "github.com/acme/lib", Aliases: []string{"/old/Projects/app"}}
 	self := locations.Project{Abs: "/old/Projects/app", GitRemote: "github.com/acme/app"}
-	if safeAlias(self.Abs, self, "/home/me", nil, nil, []locations.Project{other}) {
+	if safeAlias(self.Abs, self, "", "/home/me", nil, nil, []locations.Project{other}) {
 		t.Error("alias equal to another repository's alias accepted")
 	}
-	if safeAlias(self.Abs, self, "/home/me", nil, nil, nil, []locations.Project{{Abs: "/old/Projects/app/sub", GitRemote: "github.com/x/y"}}) {
+	if safeAlias(self.Abs, self, "", "/home/me", nil, nil, nil, []locations.Project{{Abs: "/old/Projects/app/sub", GitRemote: "github.com/x/y"}}) {
 		t.Error("alias above a project accepted earlier in this import")
 	}
-	if safeAlias("/old/Projects/app/sub", self, "/home/me", nil, nil, []locations.Project{{Abs: "/old/Projects/app", GitRemote: "github.com/x/y"}}) {
+	if safeAlias("/old/Projects/app/sub", self, "", "/home/me", nil, nil, []locations.Project{{Abs: "/old/Projects/app", GitRemote: "github.com/x/y"}}) {
 		t.Error("alias below another repository accepted")
 	}
 	same := locations.Project{Abs: "/home/me/src/app", GitRemote: "github.com/acme/app", Aliases: []string{"/old/Projects/app"}}
-	if !safeAlias(self.Abs, self, "/home/me", nil, nil, []locations.Project{same}) {
+	if !safeAlias(self.Abs, self, "", "/home/me", nil, nil, []locations.Project{same}) {
 		t.Error("same repository refused its own alias")
 	}
-	if safeAlias("/home", self, "/home/me", nil, nil, nil) || safeAlias("/home/me", self, "/home/me", nil, nil, nil) {
+	if safeAlias("/home", self, "", "/home/me", nil, nil, nil) || safeAlias("/home/me", self, "", "/home/me", nil, nil, nil) {
 		t.Error("home or above accepted")
 	}
-	if !safeAlias("/old/Projects/app", self, "/home/me", nil, nil, nil) {
+	if !safeAlias("/old/Projects/app", self, "", "/home/me", nil, nil, nil) {
 		t.Error("plain alias refused")
 	}
 	if !locations.Overlaps(`C:\Users\A\x`, "c:/users/a") || locations.Overlaps("/a/bc", "/a/b") {
@@ -788,18 +792,19 @@ func TestImportTwoProfilesListMissingWorkDirOnce(t *testing.T) {
 
 func TestFlagHintQuoting(t *testing.T) {
 	for from, want := range map[string]string{
-		"/old/Projects":     "--workdir-map '/old/Projects'=<path here>",
-		"/old/My Projects":  "--workdir-map '/old/My Projects'=<path here>",
-		`C:\Users\a\My Dir`: `--workdir-map 'C:\Users\a\My Dir'=<path here>`,
-		`C:\a$(touch x)\b`:  `--workdir-map 'C:\a$(touch x)\b'=<path here>`,
-		`C:\a"b`:            `--workdir-map 'C:\a"b'=<path here>`,
-		"/a/`id`!":          "--workdir-map '/a/`id`!'=<path here>",
+		"/old/Projects":        "--workdir-map '/old/Projects'=<path here>",
+		"/old/My Projects":     "--workdir-map '/old/My Projects'=<path here>",
+		`C:\Users\a\My Dir`:    `--workdir-map 'C:\Users\a\My Dir'=<path here>`,
+		"/a/b-c_d.e+f,g@h=i:j": "--workdir-map '/a/b-c_d.e+f,g@h=i:j'=<path here>",
 	} {
 		if got := flagHint("--workdir-map", from); got != want {
 			t.Errorf("flagHint(%q) = %s, want %s", from, got, want)
 		}
 	}
-	for _, from := range []string{"/old/it's", `C:\%USERPROFILE%\x`} {
+	for _, from := range []string{
+		"/old/it's", `C:\%USERPROFILE%\x`, `C:\a$(touch x)\b`, `C:\a"b`, "/a/`id`",
+		"/a&b", "/a^b", "/a(b)", "/a|b", "/a<b>", "/a!b", "/a\u2018b\u2019", "/caf\u00e9",
+	} {
 		got := flagHint("--workdir-map", from)
 		if strings.Contains(got, "=<path here>") || !strings.Contains(got, "no ready command") {
 			t.Errorf("flagHint(%q) = %s, want no pasteable command", from, got)
@@ -819,18 +824,18 @@ func TestNestedWorkDirKeepsAlias(t *testing.T) {
 		},
 	}
 	var wds []string // bundle work dirs only; the vault knows none
-	if !safeAlias("/old/Projects/app", bundle.Projects[0], "/home/me", wds, bundle) {
+	if !safeAlias("/old/Projects/app", bundle.Projects[0], "", "/home/me", wds, bundle) {
 		t.Error("nested repository's work dir took the parent project's alias")
 	}
-	if safeAlias("/old/Projects", locations.Project{WorkDir: "w1", Abs: "/old/Projects", GitRemote: "github.com/x/y"}, "/home/me", wds, bundle) {
+	if safeAlias("/old/Projects", locations.Project{WorkDir: "w1", Abs: "/old/Projects", GitRemote: "github.com/x/y"}, "", "/home/me", wds, bundle) {
 		t.Error("~/Projects accepted as an alias")
 	}
-	if safeAlias("/old", bundle.Projects[0], "/home/me", wds, bundle) {
+	if safeAlias("/old", bundle.Projects[0], "", "/home/me", wds, bundle) {
 		t.Error("alias above work dirs accepted")
 	}
 	// A work dir at the project's path that also holds something outside it.
 	bad := &locations.Set{WorkDirs: bundle.WorkDirs, Projects: append(append([]locations.Project{}, bundle.Projects...), locations.Project{WorkDir: "w2", Abs: "/old/Projects/app"})}
-	if safeAlias("/old/Projects/app", bundle.Projects[0], "/home/me", wds, bad) {
+	if safeAlias("/old/Projects/app", bundle.Projects[0], "", "/home/me", wds, bad) {
 		t.Error("work dir holding the project itself accepted")
 	}
 }
@@ -867,16 +872,16 @@ func TestNestedExceptionDoesNotTrustBundle(t *testing.T) {
 		Projects: []locations.Project{p1, {ID: "p2", WorkDir: "w2", Abs: "/home/u/Projects/zz", GitRemote: "github.com/acme/zz"}},
 	}
 	// Vault knows ~/Projects as a work dir: refused even with a nested layout.
-	if safeAlias(p1.Abs, p1, "/other/home", []string{"/home/u/Projects"}, bundle) {
+	if safeAlias(p1.Abs, p1, "", "/other/home", []string{"/home/u/Projects"}, bundle) {
 		t.Error("vault work dir accepted as alias")
 	}
 	// Without the vault entry the nested layout qualifies...
-	if !safeAlias(p1.Abs, p1, "/other/home", nil, bundle) {
+	if !safeAlias(p1.Abs, p1, "", "/other/home", nil, bundle) {
 		t.Error("nested layout refused")
 	}
 	// ...but not when the nested project has no identity.
 	bundle.Projects[1].GitRemote = ""
-	if safeAlias(p1.Abs, p1, "/other/home", nil, bundle) {
+	if safeAlias(p1.Abs, p1, "", "/other/home", nil, bundle) {
 		t.Error("fake no-identity nested project made the alias acceptable")
 	}
 }
@@ -896,5 +901,77 @@ func TestVaultWorkDirRefusedAsAlias(t *testing.T) {
 		if p.GitRemote == "github.com/acme/app" && len(p.Aliases) != 0 {
 			t.Errorf("alias of a vault work dir stored: %+v", p)
 		}
+	}
+}
+
+// The reviewer's repro: a bundle claims <home>/Projects is a project with
+// the remote of the user's checkout, and adds a fake nested project to fit
+// the nested-work-dir exception. Empty vault, --accept-matches.
+func TestProjectsFolderNeverBecomesAliasEndToEnd(t *testing.T) {
+	_, _, o := matchFixture(t)
+	home := o.Home
+	x := filepath.Join(home, "src", "x")
+	mustMkdirAll(t, filepath.Join(x, ".git"))
+	o.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
+		if dir == x {
+			return gitid.Repo{Root: dir, Remote: "github.com/acme/x"}, nil
+		}
+		return gitid.Repo{}, gitid.ErrNotRepo
+	}
+	projects := filepath.Join(home, "Projects")
+	set := &locations.Set{
+		WorkDirs: []locations.WorkDir{{ID: "w0", HomeRel: ".", Abs: home}, {ID: "w1", Label: "Projects", HomeRel: "Projects", Abs: projects}},
+		Projects: []locations.Project{
+			{ID: "p1", WorkDir: "w0", Rel: "Projects", Abs: projects, GitRemote: "github.com/acme/x"},
+			{ID: "p2", WorkDir: "w1", Rel: "zz", Abs: filepath.Join(projects, "zz"), GitRemote: "github.com/acme/x"},
+		},
+	}
+	o.AcceptMatches = true
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range res.Stored.Projects {
+		for _, a := range p.Aliases {
+			if a == projects {
+				t.Errorf("stored alias %s for %s", a, p.Abs)
+			}
+		}
+	}
+}
+
+// An existing local directory, or a symlink, is never an alias, unless it
+// is the project's own matched checkout.
+func TestExistingDirectoryNeverAlias(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "other")
+	mustMkdirAll(t, other)
+	p := locations.Project{Abs: other, GitRemote: "github.com/acme/x"}
+	if safeAlias(other, p, filepath.Join(dir, "x"), "/nonexistent-home", nil, nil) {
+		t.Error("existing directory accepted as alias")
+	}
+	if !safeAlias(other, p, other, "/nonexistent-home", nil, nil) {
+		t.Error("own checkout path refused")
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(other, link); err == nil {
+		if safeAlias(link, p, link, "/nonexistent-home", nil, nil) {
+			t.Error("symlink accepted as alias")
+		}
+	}
+	if !safeAlias(filepath.Join(dir, "gone"), p, other, "/nonexistent-home", nil, nil) {
+		t.Error("missing path (another machine's) refused")
+	}
+}
+
+// A work dir target chosen by an answer later in the run also blocks an
+// alias stored earlier.
+func TestAliasRefusedForLaterChosenTarget(t *testing.T) {
+	var res locationResult
+	res.Stored.Projects = []locations.Project{{Abs: "/h/src/app", Aliases: []string{"/srv/chosen"}}}
+	o := locationOptions{workDirs: []string{"/srv/chosen"}}
+	pruneAliases(&res, o)
+	if len(res.Stored.Projects[0].Aliases) != 0 {
+		t.Errorf("alias equal to a chosen target kept: %v", res.Stored.Projects[0].Aliases)
 	}
 }
