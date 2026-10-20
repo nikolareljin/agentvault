@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +23,16 @@ func hiddenFixture(t *testing.T) (*locations.Set, locationOptions, *vault.Vault,
 	hiddenWD := filepath.Join(o.Home, ".work", "Projects")
 	mustMkdirAll(t, hiddenWD)
 	set.WorkDirs[0].HomeRel = ".work/Projects"
+	// The checkout is in the hidden work dir: a confirmation covers only
+	// projects read from a local checkout there.
+	app := filepath.Join(hiddenWD, "app")
+	mustMkdirAll(t, filepath.Join(app, ".git"))
+	o.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
+		if dir == app {
+			return gitid.Repo{Root: dir, Remote: "github.com/acme/app"}, nil
+		}
+		return gitid.Repo{}, gitid.ErrNotRepo
+	}
 	v := vault.New(filepath.Join(t.TempDir(), "vault.enc"))
 	if err := v.Init("pw"); err != nil {
 		t.Fatal(err)
@@ -65,8 +76,18 @@ func TestHiddenMappingConfirmedOnceNotAskedAgain(t *testing.T) {
 	// Second import without a terminal works with --accept-matches.
 	o.Interactive, o.AcceptMatches = false, true
 	res, out = importOnce(t, set, &o, v, "")
-	if len(res.Missed) != 0 || len(res.Remaps) == 0 || res.Remaps[0].To != hiddenWD {
+	if len(res.Missed) != 0 || len(res.Remaps) != 1 || res.Remaps[0].To != filepath.Join(hiddenWD, "app") {
 		t.Fatalf("non-interactive second import: %+v\n%s", res, out)
+	}
+	// Only the verified project is rewritten: no prefix remap of the work
+	// dir, so other bundle paths under it stay where they are.
+	for _, m := range res.Remaps {
+		if locations.CleanForeign(m.From) == "/old/Projects" {
+			t.Fatalf("whole work dir remapped into the hidden folder: %+v", res.Remaps)
+		}
+	}
+	if !strings.Contains(out, "other paths under it are not rewritten") {
+		t.Fatalf("not reported:\n%s", out)
 	}
 }
 
@@ -207,18 +228,24 @@ func TestEditedWorkDirRowSaved(t *testing.T) {
 	}
 }
 
-// Editing a confirmed hidden row to a non-hidden target drops the old
-// confirmation; to another hidden target asks for it first.
-func TestEditedConfirmedHiddenRow(t *testing.T) {
-	set, o, v, _ := confirmedVault(t)
-	plain := filepath.Join(o.Home, "Projects")
-	mustMkdirAll(t, plain)
-	importOnce(t, set, &o, v, "1\n"+plain+"\n\n\n")
-	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != plain || len(k.ConfirmedHidden) != 0 {
-		t.Fatalf("edit to plain target: %+v", k)
+// A work dir row edited in the list to a hidden folder is asked about
+// first; a yes saves and confirms it, a decline changes nothing saved.
+func TestEditedRowToHiddenTarget(t *testing.T) {
+	setup := func(t *testing.T) (*locations.Set, locationOptions, *vault.Vault, string) {
+		_, set, o := matchFixture(t)
+		set.WorkDirs[0].HomeRel, set.WorkDirs[0].Label = "Code", "Code"
+		v := vault.New(filepath.Join(t.TempDir(), "vault.enc"))
+		if err := v.Init("pw"); err != nil {
+			t.Fatal(err)
+		}
+		src := filepath.Join(o.Home, "src")
+		if err := recordLocations(v, locationResult{NewMaps: []pathRemap{{From: "/old/Projects", To: src}}}, &o); err != nil {
+			t.Fatal(err)
+		}
+		o.Interactive = true
+		return set, o, v, src
 	}
-
-	set, o, v, _ = confirmedVault(t)
+	set, o, v, _ := setup(t)
 	other := filepath.Join(o.Home, ".other")
 	mustMkdirAll(t, other)
 	_, out := importOnce(t, set, &o, v, "1\n"+other+"\n\ny\n\n")
@@ -229,15 +256,14 @@ func TestEditedConfirmedHiddenRow(t *testing.T) {
 		t.Fatalf("edit to hidden target: %+v", k)
 	}
 
-	// Declining the new hidden target saves nothing and keeps the old one.
-	set, o, v, hiddenWD := confirmedVault(t)
+	set, o, v, src := setup(t)
 	x := filepath.Join(o.Home, ".x")
 	mustMkdirAll(t, x)
 	res, out := importOnce(t, set, &o, v, "1\n"+x+"\n\n\n")
 	if !strings.Contains(out, x+" is inside a hidden folder") || len(res.Missed) != 1 {
 		t.Fatalf("declined hidden edit: %+v\n%s", res, out)
 	}
-	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != hiddenWD || k.ConfirmedHidden["/old/Projects"].Target != hiddenWD {
+	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != src || len(k.ConfirmedHidden) != 0 {
 		t.Fatalf("declined edit changed the vault: %+v", k)
 	}
 }
@@ -283,7 +309,17 @@ func TestConfirmedHiddenDoesNotCoverOtherProjects(t *testing.T) {
 		}
 	}
 
-	// On a terminal it is asked; a yes extends the confirmation.
+	// On a terminal it is asked; a yes extends the confirmation to the
+	// projects read from a checkout here.
+	evil := filepath.Join(hiddenWD, "evil")
+	mustMkdirAll(t, filepath.Join(evil, ".git"))
+	base := o.Identify
+	o.Identify = func(ctx context.Context, dir string) (gitid.Repo, error) {
+		if dir == evil {
+			return gitid.Repo{Root: dir, Remote: "github.com/mallory/evil"}, nil
+		}
+		return base(ctx, dir)
+	}
 	o.Interactive, o.AcceptMatches = true, false
 	if _, out = importOnce(t, hostile, &o, v, "y\n\n"); !strings.Contains(out, "inside a hidden folder") {
 		t.Fatalf("not asked:\n%s", out)
@@ -346,5 +382,37 @@ func TestEditedWorkDirRowMovesItsProjects(t *testing.T) {
 		if m.To == oldApp {
 			t.Fatalf("project still remapped to the old target: %+v", res.Remaps)
 		}
+	}
+}
+
+// A confirmation covers a project only through its checkout here: a bundle
+// copying a confirmed remote under another name, or a checkout that is gone,
+// is asked again.
+func TestConfirmedHiddenNeedsLocalCheckout(t *testing.T) {
+	set, o, v, hiddenWD := confirmedVault(t)
+	o.Interactive, o.AcceptMatches = false, true
+	copied := &locations.Set{WorkDirs: set.WorkDirs, Projects: []locations.Project{
+		{ID: "p1", WorkDir: "w1", Rel: "other", Abs: "/old/Projects/other", GitRemote: "github.com/acme/app"},
+	}}
+	if res, out := importOnce(t, copied, &o, v, ""); strings.Contains(out, "(hidden, confirmed)") {
+		t.Fatalf("copied remote used the confirmation: %+v\n%s", res, out)
+	}
+	// Same name, but the checkout here is another repository.
+	o.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
+		return gitid.Repo{Root: dir, Remote: "github.com/someone/else"}, nil
+	}
+	if res, out := importOnce(t, set, &o, v, ""); strings.Contains(out, "(hidden, confirmed)") {
+		t.Fatalf("other local repository used the confirmation: %+v\n%s", res, out)
+	}
+	_ = hiddenWD
+
+	// The checkout is gone.
+	set2, o2, v2, hidden2 := confirmedVault(t)
+	if err := os.RemoveAll(filepath.Join(hidden2, "app")); err != nil {
+		t.Fatal(err)
+	}
+	o2.Interactive, o2.AcceptMatches = false, true
+	if res, out := importOnce(t, set2, &o2, v2, ""); strings.Contains(out, "(hidden, confirmed)") || len(res.Missed) == 0 {
+		t.Fatalf("missing checkout used the confirmation: %+v\n%s", res, out)
 	}
 }

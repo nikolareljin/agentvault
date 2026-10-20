@@ -113,17 +113,6 @@ func ProjectKey(p Project) string {
 	return "rel:" + p.Rel
 }
 
-// WorkDirProjectKeys is the ProjectKey of each project in work dir id.
-func WorkDirProjectKeys(s Set, id string) []string {
-	var out []string
-	for _, p := range s.Projects {
-		if p.WorkDir == id {
-			out = append(out, ProjectKey(p))
-		}
-	}
-	return out
-}
-
 // Empty reports whether the set names nothing.
 func (s *Set) Empty() bool {
 	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0 && len(s.WorkDirMaps) == 0 && len(s.ConfirmedHidden) == 0

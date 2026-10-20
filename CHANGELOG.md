@@ -4,8 +4,9 @@
 
 ### Added
 - `import`: a work dir mapping into a hidden folder, once confirmed, is
-  saved as confirmed and not asked again for the same target and the same
-  projects; a bundle with another project under that path is asked again. Answering
+  saved as confirmed and not asked again for the same target while every
+  bundle project under it is a checkout already there with the same
+  identity; anything else is asked again. Answering
   `y` and a work dir row edited in the confirm list now save the mapping.
 - Bundles and the vault record projects by work dir and git identity, so
   import finds a project wherever it is checked out here. SSH and HTTPS

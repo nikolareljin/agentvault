@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -126,16 +127,65 @@ type confirmedHidden struct {
 	Projects []string
 }
 
-// workDirKeys is the ProjectKey of each project under the bundle work dir
-// at path from.
-func workDirKeys(set *locations.Set, from string) []string {
-	var out []string
+// localHiddenKeys reads, from this machine, the identity of each bundle
+// project under the work dir at path from, at its place under target to.
+// A key is returned only when that checkout exists (no symlink), is its own
+// repository root, has an identity (remote; root commits except on
+// Windows), and the bundle claims the same identity. all is false when any
+// project fails, or there is none: a bundle's claims alone confirm nothing.
+func localHiddenKeys(ctx context.Context, o locationOptions, set *locations.Set, from, to string) (keys []string, all bool) {
+	identify := o.Identify
+	if identify == nil {
+		identify = locations.DefaultIdentifier
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	all = true
 	for _, w := range set.WorkDirs {
-		if locations.CleanForeign(w.Abs) == locations.CleanForeign(from) {
-			out = append(out, locations.WorkDirProjectKeys(*set, w.ID)...)
+		if locations.CleanForeign(w.Abs) != locations.CleanForeign(from) {
+			continue
+		}
+		for _, p := range set.Projects {
+			if p.WorkDir != w.ID {
+				continue
+			}
+			key, ok := localProjectKey(ctx, identify, p, to)
+			if !ok {
+				all = false
+				continue
+			}
+			keys = append(keys, key)
 		}
 	}
-	return out
+	return keys, all && len(keys) > 0
+}
+
+func localProjectKey(ctx context.Context, identify locations.Identifier, p locations.Project, to string) (string, bool) {
+	if p.Rel == "" || p.Rel == "." {
+		return "", false
+	}
+	dir := filepath.Join(to, filepath.FromSlash(p.Rel))
+	if !pathWithin(to, dir) || filepath.Clean(dir) == filepath.Clean(to) {
+		return "", false
+	}
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	r, err := identify(ctx, dir)
+	if err != nil || filepath.Clean(r.Root) != filepath.Clean(dir) {
+		return "", false
+	}
+	local := locations.Project{GitRemote: r.Remote}
+	if runtime.GOOS != "windows" {
+		local.RootCommits = r.RootCommits
+	}
+	key := locations.ProjectKey(local)
+	if strings.HasPrefix(key, "rel:") || key != locations.ProjectKey(p) {
+		return "", false
+	}
+	return key, true
 }
 
 // flagHint is a flag line to paste into a shell: the bundle path in single
@@ -257,7 +307,8 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		maps[k] = v
 		res.addNewMap(k, v)
 		if locations.HiddenBelowHome(v, o.Home) {
-			res.addConfirmedHidden(k, v, workDirKeys(set, k))
+			keys, _ := localHiddenKeys(ctx, o, set, k, v)
+			res.addConfirmedHidden(k, v, keys)
 		}
 	}
 	targets, unmatched := locations.ResolveWorkDirs(*set, o.Home, maps)
@@ -280,7 +331,10 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		}
 		if saved, ok := o.Known.WorkDirMaps[key]; ok && saved == to {
 			c := o.Known.ConfirmedHidden[key]
-			if c.Target != to || !c.Covers(locations.WorkDirProjectKeys(*set, w.ID)) {
+			if c.Target != to {
+				continue
+			}
+			if keys, all := localHiddenKeys(ctx, o, set, w.Abs, to); !all || !c.Covers(keys) {
 				continue
 			}
 			o.confirmedHidden[w.ID] = true
@@ -306,7 +360,8 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 				if !remembered {
 					res.addNewMap(w.Abs, got)
 					if locations.HiddenBelowHome(got, o.Home) {
-						res.addConfirmedHidden(w.Abs, got, workDirKeys(set, w.Abs))
+						keys, _ := localHiddenKeys(ctx, o, set, w.Abs, got)
+						res.addConfirmedHidden(w.Abs, got, keys)
 					}
 				}
 				targets[w.ID], userChosen[w.ID] = got, true
@@ -354,7 +409,8 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 				if !remembered {
 					res.addNewMap(w.Abs, to)
 					if locations.HiddenBelowHome(to, o.Home) {
-						res.addConfirmedHidden(w.Abs, to, workDirKeys(set, w.Abs))
+						keys, _ := localHiddenKeys(ctx, o, set, w.Abs, to)
+						res.addConfirmedHidden(w.Abs, to, keys)
 					}
 				}
 				sub := only(set, w.ID)
@@ -487,12 +543,15 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 			res.Remaps = append(res.Remaps, pathRemap{From: w.Abs, To: to})
 			continue
 		}
+		// A confirmation covers its verified projects, not the folder: no
+		// prefix rewrite, so other bundle paths under it stay as they are.
+		if o.confirmedHidden[w.ID] {
+			fmt.Fprintf(out, "  %s -> %s: saved mapping (hidden, confirmed) for its projects only; other paths under it are not rewritten\n", printable(w.Abs), printable(to))
+			continue
+		}
 		note := "work dir"
 		if _, saved := o.Known.WorkDirMaps[locations.CleanForeign(w.Abs)]; saved {
 			note = "work dir, saved mapping"
-			if o.confirmedHidden[w.ID] {
-				note += " (hidden, confirmed)"
-			}
 		}
 		rows = append(rows, locations.Row{From: w.Abs, To: to, Note: note})
 		refs = append(refs, rowRef{workDir: w.ID, proposed: to})
@@ -582,7 +641,8 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 				}
 				to = got
 				if locations.HiddenBelowHome(to, o.Home) {
-					res.addConfirmedHidden(r.From, to, workDirKeys(set, r.From))
+					keys, _ := localHiddenKeys(ctx, o, set, r.From, to)
+					res.addConfirmedHidden(r.From, to, keys)
 				}
 			}
 			res.addNewMap(r.From, to)

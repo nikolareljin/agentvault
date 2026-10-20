@@ -253,13 +253,18 @@ A memory dir key that would collide is still refused and reported.
    `--accept-matches` does not cover them, `--workdir-map` to that exact
    target does. A work dir confirmation (y, a typed hidden path, or
    `--workdir-map`) is saved in the vault as `confirmed_hidden`, keyed to
-   the (bundle path, target) pair, with the identities (remote, else root
-   commits, else name) of the projects under the work dir at that time. A
-   later import whose saved mapping is that same pair, and whose projects
-   under it are all in that list, does not ask again: a bundle path is only
-   a name another bundle can reuse, so any other project asks again (and
-   without a terminal is missed), and a yes extends the list; the row is shown as "work dir, saved
-   mapping (hidden, confirmed)" and projects under it count as confirmed.
+   the (bundle path, target) pair, with the identities of the projects
+   whose checkout exists under the target at that time, read from that
+   checkout (remote, else root commits; remote only on Windows). A later
+   import does not ask again only when the saved mapping is that same pair
+   and every bundle project under it has a checkout at its place under the
+   target whose local identity is in the list and equals the bundle's
+   claim. A bundle path and a remote are only claims another bundle can
+   copy, so any other project, a project with no identity, or a missing
+   checkout asks again (without a terminal: missed), and a yes extends the
+   list. A confirmed work dir is not remapped as a prefix: only its
+   verified projects' paths are rewritten, and the import says that other
+   paths under it are not.
    Mapping the path to another target drops the confirmation. A work dir
    row edited in the confirm list is saved as the new mapping, and its
    projects are matched again under the new target; a new target in a
