@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,6 +50,13 @@ type locationResult struct {
 	// Stored is what to record in the vault: each accepted project at its
 	// local path, with the bundle path kept as an alias.
 	Stored locations.Set
+	// NewMaps are work dir mappings the user gave (--workdir-map or an
+	// answer); they are saved in the vault for later imports.
+	NewMaps []pathRemap
+	// Missed are the work dirs and projects that could not be placed.
+	Missed []missedEntry
+	// SourceSkipped is set when the bundle's --project is among them.
+	SourceSkipped bool
 }
 
 // parseWorkDirMaps reads --workdir-map OLD=NEW. OLD is the bundle's path;
@@ -86,7 +92,11 @@ func skipGitRunner(context.Context, string, string, ...string) ([]byte, error) {
 }
 
 // resolveBundleLocations matches the bundle's work dirs and projects to this
-// machine. sourceProject is the bundle's --project path.
+// machine. sourceProject is the bundle's --project path. A work dir that
+// cannot be placed does not stop the import: it is recorded in Missed, its
+// projects are left out, and the rest goes on. On a terminal the user is
+// then asked for each missed work dir, and only its projects are matched
+// again.
 func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProject string, o locationOptions) (locationResult, error) {
 	var res locationResult
 	if set.Empty() || o.NoMatch {
@@ -100,41 +110,136 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		out = io.Discard
 	}
 	set = usableLocations(set, out)
-	targets, unmatched := locations.ResolveWorkDirs(*set, o.Home, o.WorkDirMaps)
+	// Saved mappings come from earlier imports; --workdir-map wins over them.
+	maps := map[string]string{}
+	for k, v := range o.Known.WorkDirMaps {
+		maps[k] = v
+	}
+	for k, v := range o.WorkDirMaps {
+		maps[k] = v
+		res.NewMaps = append(res.NewMaps, pathRemap{From: k, To: v})
+	}
+	targets, unmatched := locations.ResolveWorkDirs(*set, o.Home, maps)
 	userChosen := map[string]bool{}
 	for _, w := range set.WorkDirs {
 		if _, ok := o.WorkDirMaps[locations.CleanForeign(w.Abs)]; ok {
 			userChosen[w.ID] = true
 		}
 	}
-	// A work dir that holds no project with an identity has nothing to find.
-	unmatched = needed(*set, unmatched)
-	if len(unmatched) > 0 {
-		if !o.Interactive || o.DryRun {
-			fmt.Fprintln(out, "  Work dirs from the bundle not found here:")
-			for _, w := range unmatched {
-				fmt.Fprintf(out, "    %s  (pass --workdir-map %s=<path here>)\n", printable(w.Abs), printable(w.Abs))
-				for _, s := range locations.Suggest(o.Home, w) {
-					fmt.Fprintf(out, "      maybe: %s\n", printable(s))
-				}
+	missed := map[string]string{} // work dir id -> reason
+	for _, w := range needed(*set, unmatched) {
+		missed[w.ID] = "not found here"
+	}
+	// A computed target in a hidden folder needs its own yes, whatever
+	// --accept-matches says; --workdir-map naming it is that yes.
+	for _, w := range set.WorkDirs {
+		to, ok := targets[w.ID]
+		if !ok || userChosen[w.ID] || !locations.HiddenBelowHome(to, o.Home) {
+			continue
+		}
+		if o.Interactive && !o.DryRun {
+			got, err := locations.ConfirmHidden(w.Abs, to, o.Home, o.In, out)
+			if err != nil {
+				return res, fmt.Errorf("import aborted: %w", err)
 			}
-			if !o.DryRun {
-				return res, errors.New("work dirs not found: pass --workdir-map OLD=NEW for each, or --no-match to keep the bundle's paths")
+			if got != "" {
+				targets[w.ID], userChosen[w.ID] = got, true
+				continue
 			}
-		} else {
-			for _, w := range unmatched {
-				to, err := locations.AskWorkDir(w, locations.Suggest(o.Home, w), o.Home, o.In, out)
-				if err != nil {
-					return res, fmt.Errorf("import aborted: %w", err)
+		}
+		delete(targets, w.ID)
+		if len(needed(*set, []locations.WorkDir{w})) > 0 {
+			missed[w.ID] = "target " + to + " is in a hidden folder and was not confirmed"
+		}
+	}
+
+	if err := matchAndConfirm(ctx, without(set, missed), sourceProject, targets, userChosen, o, out, &res); err != nil {
+		return res, err
+	}
+
+	for _, w := range set.WorkDirs {
+		reason, ok := missed[w.ID]
+		if !ok {
+			continue
+		}
+		if o.Interactive && !o.DryRun {
+			to, err := locations.AskWorkDir(w, locations.Suggest(o.Home, w), o.Home, o.In, out)
+			if err != nil {
+				return res, fmt.Errorf("import aborted: %w", err)
+			}
+			if to != "" {
+				targets[w.ID], userChosen[w.ID] = to, true
+				res.NewMaps = append(res.NewMaps, pathRemap{From: w.Abs, To: to})
+				sub := only(set, w.ID)
+				if err := matchAndConfirm(ctx, sub, sourceProject, map[string]string{w.ID: to}, map[string]bool{w.ID: true}, o, out, &res); err != nil {
+					return res, err
 				}
-				if to != "" {
-					targets[w.ID] = to
-					userChosen[w.ID] = true
+				continue
+			}
+		}
+		res.Missed = append(res.Missed, missedEntry{Path: w.Abs, Reason: reason, Hint: "--workdir-map " + w.Abs + "=<path here>", Suggest: locations.Suggest(o.Home, w)})
+		if sourceProject != "" {
+			for _, p := range set.Projects {
+				if p.WorkDir == w.ID && locations.CleanForeign(p.Abs) == locations.CleanForeign(sourceProject) {
+					res.SourceSkipped = true
 				}
 			}
 		}
 	}
+	return res, nil
+}
 
+// missedEntry is a work dir or project that could not be placed.
+type missedEntry struct {
+	Path, Reason, Hint string
+	Suggest            []string
+}
+
+// without is set minus the projects of the given work dirs.
+func without(set *locations.Set, skip map[string]string) *locations.Set {
+	out := &locations.Set{WorkDirs: set.WorkDirs}
+	for _, p := range set.Projects {
+		if _, ok := skip[p.WorkDir]; !ok {
+			out.Projects = append(out.Projects, p)
+		}
+	}
+	for _, w := range set.WorkDirs {
+		if _, ok := skip[w.ID]; ok {
+			out.WorkDirs = removeWorkDir(out.WorkDirs, w.ID)
+		}
+	}
+	return out
+}
+
+func removeWorkDir(ws []locations.WorkDir, id string) []locations.WorkDir {
+	var out []locations.WorkDir
+	for _, w := range ws {
+		if w.ID != id {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// only is the work dir id and its projects.
+func only(set *locations.Set, id string) *locations.Set {
+	out := &locations.Set{}
+	for _, w := range set.WorkDirs {
+		if w.ID == id {
+			out.WorkDirs = append(out.WorkDirs, w)
+		}
+	}
+	for _, p := range set.Projects {
+		if p.WorkDir == id {
+			out.Projects = append(out.Projects, p)
+		}
+	}
+	return out
+}
+
+// matchAndConfirm scans for set's projects, shows the work dir and project
+// matches as one list and adds what is accepted to res.
+func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject string, targets map[string]string, userChosen map[string]bool, o locationOptions, out io.Writer, res *locationResult) error {
 	identify := o.Identify
 	if identify == nil {
 		identify = locations.DefaultIdentifier
@@ -157,7 +262,6 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 	// Rows: computed work dir matches, then projects. Work dirs the user
 	// named are theirs and need no confirmation.
 	type rowRef struct {
-		workDir string
 		project *locations.Project
 	}
 	var rows []locations.Row
@@ -171,8 +275,12 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 			res.Remaps = append(res.Remaps, pathRemap{From: w.Abs, To: to})
 			continue
 		}
-		rows = append(rows, locations.Row{From: w.Abs, To: to, Note: "work dir"})
-		refs = append(refs, rowRef{workDir: w.ID})
+		note := "work dir"
+		if _, saved := o.Known.WorkDirMaps[locations.CleanForeign(w.Abs)]; saved {
+			note = "work dir, saved mapping"
+		}
+		rows = append(rows, locations.Row{From: w.Abs, To: to, Note: note})
+		refs = append(refs, rowRef{})
 	}
 	for i := range proposals {
 		p := proposals[i]
@@ -182,11 +290,28 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		if p.Target != "" && !allowedTarget(p.Target, o.Home, targets, userChosen) {
 			continue
 		}
+		if p.Target != "" && locations.HiddenBelowHome(p.Target, o.Home) {
+			got := ""
+			if o.Interactive && !o.DryRun {
+				var err error
+				if got, err = locations.ConfirmHidden(p.Project.Abs, p.Target, o.Home, o.In, out); err != nil {
+					return fmt.Errorf("import aborted: %w", err)
+				}
+			}
+			if got == "" {
+				res.Missed = append(res.Missed, missedEntry{Path: p.Project.Abs, Reason: "target " + p.Target + " is in a hidden folder and was not confirmed", Hint: "--map " + p.Project.Abs + "=<path here>, or confirm it on a terminal"})
+				if sourceProject != "" && locations.CleanForeign(sourceProject) == locations.CleanForeign(p.Project.Abs) {
+					res.SourceSkipped = true
+				}
+				continue
+			}
+			p.Target = got
+		}
 		rows = append(rows, locations.Row{From: p.Project.Abs, To: p.Target, Choices: p.Choices, Note: fmt.Sprintf("score %d: %s", p.Score, p.Reason)})
 		refs = append(refs, rowRef{project: &proposals[i].Project})
 	}
 	if len(rows) == 0 {
-		return res, nil
+		return nil
 	}
 
 	switch {
@@ -196,7 +321,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		var err error
 		rows, err = locations.Confirm(rows, o.Home, o.In, out)
 		if err != nil {
-			return res, fmt.Errorf("import aborted: %w", err)
+			return fmt.Errorf("import aborted: %w", err)
 		}
 	case o.AcceptMatches:
 		printRows(out, rows, "accepted by --accept-matches")
@@ -205,7 +330,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		fmt.Fprintln(out, "  Computed matches need confirmation: run on a terminal, pass --accept-matches, or name each path with --map OLD=NEW.")
 		fmt.Fprintln(out, "  Project files are not written and bundle paths are rewritten only by --map and the home directory.")
 		res.Refused = true
-		return res, nil
+		return nil
 	}
 
 	for i, r := range rows {
@@ -231,7 +356,18 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 			}
 		}
 	}
-	return res, nil
+	return nil
+}
+
+// printMissed is the end-of-import list of what could not be placed.
+func printMissed(out io.Writer, missed []missedEntry) {
+	fmt.Fprintf(out, "\nNot imported (%d):\n", len(missed))
+	for _, m := range missed {
+		fmt.Fprintf(out, "  %s: %s\n    pass %s\n", printable(m.Path), printable(m.Reason), printable(m.Hint))
+		for _, s := range m.Suggest {
+			fmt.Fprintf(out, "    maybe: %s\n", printable(s))
+		}
+	}
 }
 
 // usableLocations keeps the work dirs and projects whose bundle path can be

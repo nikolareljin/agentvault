@@ -182,6 +182,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(out, "Dry run: no changes are written.")
 	}
 
+	var allMissed []missedEntry
 	now := time.Now()
 	total := importReport{}
 	for _, profile := range selected {
@@ -207,6 +208,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 		profileOpts.NoProjectWrites = match.Refused
 		if profileOpts.ProjectRoot == "" {
 			profileOpts.ProjectRoot = match.ProjectRoot
+		}
+		allMissed = append(allMissed, match.Missed...)
+		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" && match.SourceSkipped {
+			// Listed in the summary at the end; the rest of the import goes on.
+			profileOpts.ApplyProjects = false
 		}
 		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" {
 			if match.Refused {
@@ -239,11 +245,18 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(out, "\nSummary: %d added, %d updated, %d skipped, %d removed\n",
 		total.Added, total.Updated, total.Skipped, total.Removed)
+	if len(allMissed) > 0 {
+		printMissed(out, allMissed)
+	}
 	if dryRun {
 		fmt.Fprintln(out, "Dry run complete; re-run without --dry-run to apply.")
 		return nil
 	}
 	printInstallGuide(cmd, selected)
+	if len(allMissed) > 0 {
+		// Everything else was imported; the exit status says it was not all.
+		return fmt.Errorf("%d work dir(s) or project(s) not imported; see \"Not imported\" above", len(allMissed))
+	}
 	return nil
 }
 
@@ -874,10 +887,17 @@ func locationOptionsFromFlags(cmd *cobra.Command, interactive, dryRun bool, in *
 // recordLocations stores one profile's accepted projects in the vault and
 // refreshes what the next profile's alias checks see.
 func recordLocations(v *vault.Vault, match locationResult, o *locationOptions) error {
-	if match.Stored.Empty() {
+	add := match.Stored
+	for _, m := range match.NewMaps {
+		if add.WorkDirMaps == nil {
+			add.WorkDirMaps = map[string]string{}
+		}
+		add.WorkDirMaps[locations.CleanForeign(m.From)] = m.To
+	}
+	if add.Empty() {
 		return nil
 	}
-	if err := v.SetLocations(locations.Merge(v.Locations(), match.Stored)); err != nil {
+	if err := v.SetLocations(locations.Merge(v.Locations(), add)); err != nil {
 		return fmt.Errorf("recording project locations: %w", err)
 	}
 	o.Known = v.Locations()

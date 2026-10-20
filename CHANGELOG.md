@@ -7,7 +7,11 @@
   import finds a project wherever it is checked out here. SSH and HTTPS
   remotes of one repository are one identity; owner and repo case is
   ignored on github.com and bitbucket.org only; Windows matches by remote
-  only. Every match is shown and confirmed; rows can be edited. New import
+  only. Every match is shown and confirmed; rows can be edited. A work dir
+  not found here is skipped with its projects, listed at the end (non-zero
+  exit) and asked about on a terminal; mappings are saved in the vault.
+  Targets inside hidden folders are confirmed one by one, even with
+  `--accept-matches`. New import
   flags `--workdir-map`, `--accept-matches`, `--no-match`; new export flag
   `--workdir`. `--apply-projects` no longer needs `--project-root` when the
   bundle's project was matched. `instructions push` applies directory

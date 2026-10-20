@@ -295,3 +295,40 @@ func TestCleanForeign(t *testing.T) {
 		t.Error("Below")
 	}
 }
+
+func TestHiddenBelowHome(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator)+"h", "me")
+	for p, want := range map[string]bool{
+		filepath.Join(home, "src", "app"):                   false,
+		filepath.Join(home, ".config", "app"):               true,
+		filepath.Join(home, "src", ".hidden"):               true,
+		home:                                                false,
+		filepath.Join(string(filepath.Separator)+"h", ".x"): false,
+	} {
+		if got := HiddenBelowHome(p, home); got != want {
+			t.Errorf("HiddenBelowHome(%q) = %v", p, got)
+		}
+	}
+}
+
+func TestConfirmHidden(t *testing.T) {
+	home := t.TempDir()
+	other := filepath.Join(home, "o")
+	mkdirs(t, other)
+	ask := func(in string) (string, error) {
+		var out strings.Builder
+		return ConfirmHidden("/a", "/h/.x", home, bufio.NewReader(strings.NewReader(in)), &out)
+	}
+	if got, err := ask("y\n"); err != nil || got != "/h/.x" {
+		t.Errorf("y: %q %v", got, err)
+	}
+	if got, err := ask("bad\n" + other + "\n"); err != nil || got != other {
+		t.Errorf("path: %q %v", got, err)
+	}
+	if got, err := ask("\n"); err != nil || got != "" {
+		t.Errorf("skip: %q %v", got, err)
+	}
+	if _, err := ask(""); !errors.Is(err, ErrAborted) {
+		t.Errorf("EOF: %v", err)
+	}
+}

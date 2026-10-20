@@ -43,11 +43,14 @@ type Project struct {
 type Set struct {
 	WorkDirs []WorkDir `json:"work_dirs,omitempty"`
 	Projects []Project `json:"projects,omitempty"`
+	// WorkDirMaps are mappings the user chose, bundle work dir path to a
+	// directory here. Only the vault keeps them; later imports reuse them.
+	WorkDirMaps map[string]string `json:"work_dir_maps,omitempty"`
 }
 
 // Empty reports whether the set names nothing.
 func (s *Set) Empty() bool {
-	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0
+	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0 && len(s.WorkDirMaps) == 0
 }
 
 // Identifier is gitid.Identify; tests replace it.
@@ -189,6 +192,14 @@ func Merge(s, other Set) Set {
 		projects[i].ID = fmt.Sprintf("p%d", i+1)
 	}
 	out.Projects = projects
+	for _, m := range []map[string]string{s.WorkDirMaps, other.WorkDirMaps} {
+		for k, v := range m {
+			if out.WorkDirMaps == nil {
+				out.WorkDirMaps = map[string]string{}
+			}
+			out.WorkDirMaps[k] = v
+		}
+	}
 	return out
 }
 
@@ -300,6 +311,24 @@ func Overlaps(a, b string) bool {
 func Below(dir, p string) bool {
 	kd, kp := foreignKey(dir), foreignKey(p)
 	return kd != "" && kp != "" && (kp == kd || strings.HasPrefix(kp, kd+"/"))
+}
+
+// HiddenBelowHome reports whether p is under home and some folder between
+// home and p (or p itself) has a name starting with ".".
+func HiddenBelowHome(p, home string) bool {
+	if home == "" {
+		return false
+	}
+	rel, err := filepath.Rel(home, p)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return false
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
 }
 
 // SameIdentity reports whether two records name one repository: the same

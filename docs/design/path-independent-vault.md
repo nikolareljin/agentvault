@@ -109,11 +109,22 @@ Order: work dirs first, then projects inside the matched work dirs, then
 projects anywhere under the candidate roots.
 
 1. Work dir: a `--workdir-map OLD=NEW` first, else same `home_rel` under this
-   home, else same `label` directly under home. A work dir that holds a
-   project with an identity and is still not found is never guessed: on a
-   terminal the user is asked, with the three closest top-level home folders
-   (by name) offered, and may type a path or skip; without a terminal the
-   import stops and prints the `--workdir-map OLD=<path here>` line to add.
+   home, else a mapping saved in the vault by an earlier import (shown in
+   the confirmation list like a computed match), else same `label` directly
+   under home. A work dir that holds a project with an identity and is still
+   not found is never guessed and does not stop the import: it is recorded,
+   its projects are left out, and everything else is imported. On a
+   terminal the user is then asked for each such work dir, with the three
+   closest top-level home folders offered, and only that work dir's
+   projects are matched again. A mapping the user gives (an answer or
+   `--workdir-map`) is saved in the vault. What is still missing is listed
+   at the end with the `--workdir-map OLD=<path here>` line to add, and the
+   import exits non-zero.
+   A target with a hidden folder (name starting with `.`) below home,
+   work dir or project, needs its own confirmation per entry (y, or a
+   different path), even when it exists and even with `--accept-matches`.
+   `--workdir-map` naming that exact target is the confirmation. Without a
+   terminal an unconfirmed hidden target is treated as missing.
 2. Candidates for a project: git checkouts found by a bounded scan (depth 3,
    skip `node_modules`, `vendor`, hidden dirs, never follow symlinks) of the
    matched work dirs and of home. When every bundle project has a remote,
@@ -217,8 +228,13 @@ A memory dir key that would collide is still refused and reported.
 
 ## Decisions (2026-10-20)
 
-1. No work dir match: ask, offering the closest top-level home folders;
-   never guess. Without a terminal, report and require `--workdir-map`.
+1. No work dir match: never guess, never abort. Record it, skip its
+   projects, import the rest, list it at the end (non-zero exit). On a
+   terminal ask for each (closest home folders offered) and match that work
+   dir again; save the answer and every `--workdir-map` in the vault.
+7. Targets in hidden folders below home are confirmed per entry;
+   `--accept-matches` does not cover them, `--workdir-map` to that exact
+   target does.
 2. Azure DevOps remote forms are not unified now.
 3. Owner/repo case is folded only for github.com and bitbucket.org.
 4. Work dirs and projects are stored in the vault too.

@@ -157,6 +157,33 @@ func AskWorkDir(w WorkDir, suggestions []string, home string, in *bufio.Reader, 
 	}
 }
 
+// ConfirmHidden asks about one target inside a hidden folder: y keeps it,
+// a typed path replaces it, an empty line skips it. It returns "" for skip.
+func ConfirmHidden(from, to, home string, in *bufio.Reader, out io.Writer) (string, error) {
+	for {
+		fmt.Fprintf(out, "%s -> %s is inside a hidden folder.\n", textutil.Printable(from), textutil.Printable(to))
+		fmt.Fprint(out, "Enter y to use it, a different path, empty line to skip, q to abort: ")
+		line, err := readLine(in)
+		if err != nil {
+			return "", err
+		}
+		switch strings.ToLower(line) {
+		case "":
+			return "", nil
+		case "y", "yes":
+			return to, nil
+		case "q", "quit":
+			return "", ErrAborted
+		}
+		p, err := typedDir(line, home)
+		if err != nil {
+			fmt.Fprintf(out, "%v\n", err)
+			continue
+		}
+		return p, nil
+	}
+}
+
 // HomeDir is os.UserHomeDir cleaned, or "".
 func HomeDir() string {
 	h, err := os.UserHomeDir()

@@ -129,9 +129,15 @@ func TestUnmatchedWorkDirNeedsAnswer(t *testing.T) {
 	set.WorkDirs[0].HomeRel, set.WorkDirs[0].Label = "Code", "Code"
 	var out bytes.Buffer
 	o.Out = &out
-	_, err := resolveBundleLocations(context.Background(), set, "", o)
-	if err == nil || !strings.Contains(out.String(), "--workdir-map /old/Projects=") || !strings.Contains(out.String(), "maybe: ") {
-		t.Fatalf("err %v\n%s", err, out.String())
+	// Not found: recorded, not fatal; the work dir's projects are left out.
+	miss, err := resolveBundleLocations(context.Background(), set, "/old/Projects/app", o)
+	if err != nil || len(miss.Missed) != 1 || !miss.SourceSkipped || len(miss.Remaps) != 0 {
+		t.Fatalf("missed: %+v %v", miss, err)
+	}
+	var sum bytes.Buffer
+	printMissed(&sum, miss.Missed)
+	if !strings.Contains(sum.String(), "pass --workdir-map /old/Projects=<path here>") || !strings.Contains(sum.String(), "maybe: ") {
+		t.Errorf("summary:\n%s", sum.String())
 	}
 	o.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o.Home, "src")}
 	o.AcceptMatches = true
@@ -139,11 +145,14 @@ func TestUnmatchedWorkDirNeedsAnswer(t *testing.T) {
 	if err != nil || len(res.Remaps) != 2 {
 		t.Fatalf("with --workdir-map: %+v %v", res, err)
 	}
+	if len(res.NewMaps) != 1 || res.NewMaps[0].To != filepath.Join(o.Home, "src") {
+		t.Errorf("--workdir-map not kept for the vault: %+v", res.NewMaps)
+	}
 	o.WorkDirMaps = nil
 	o.Interactive = true
 	o.In = bufio.NewReader(strings.NewReader("~/src\n\n"))
 	res, err = resolveBundleLocations(context.Background(), set, "", o)
-	if err != nil || len(res.Remaps) != 2 {
+	if err != nil || len(res.Remaps) != 2 || len(res.Missed) != 0 || len(res.NewMaps) != 1 {
 		t.Fatalf("interactive: %+v %v\n%s", res, err, out.String())
 	}
 	if !strings.Contains(out.String(), "was not found here") {
@@ -485,5 +494,92 @@ func TestAliasCheckedAcrossProfiles(t *testing.T) {
 	}
 	if len(res.Stored.Projects) != 1 || len(res.Stored.Projects[0].Aliases) != 0 {
 		t.Errorf("alias under the first profile's project accepted: %+v", res.Stored.Projects)
+	}
+}
+
+// One work dir missing does not hold up another.
+func TestMissingWorkDirSkipsOnlyItsProjects(t *testing.T) {
+	app, set, o := matchFixture(t)
+	set.WorkDirs = append(set.WorkDirs, locations.WorkDir{ID: "w2", Label: "Gone", HomeRel: "Gone", Abs: "/old/Gone"})
+	set.Projects = append(set.Projects, locations.Project{ID: "p2", WorkDir: "w2", Rel: "x", Abs: "/old/Gone/x", GitRemote: "github.com/acme/x"})
+	set.WorkDirs[0].HomeRel = "src"
+	o.AcceptMatches = true
+	res, err := resolveBundleLocations(context.Background(), set, "/old/Projects/app", o)
+	if err != nil || res.ProjectRoot != app || len(res.Missed) != 1 || res.Missed[0].Path != "/old/Gone" || res.SourceSkipped {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+// A mapping saved by an earlier import is reused, and still confirmed.
+func TestSavedWorkDirMappingReusedAndShown(t *testing.T) {
+	_, set, o := matchFixture(t)
+	set.WorkDirs[0].HomeRel, set.WorkDirs[0].Label = "Code", "Code"
+	o.Known.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o.Home, "src")}
+	var out bytes.Buffer
+	o.Out, o.AcceptMatches = &out, true
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil || len(res.Missed) != 0 || len(res.Remaps) != 2 || !strings.Contains(out.String(), "saved mapping") {
+		t.Fatalf("%+v %v\n%s", res, err, out.String())
+	}
+
+	v := vault.New(filepath.Join(t.TempDir(), "vault.enc"))
+	if err := v.Init("pw"); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordLocations(v, locationResult{NewMaps: []pathRemap{{From: "/old/Projects/", To: "/here"}}}, &o); err != nil {
+		t.Fatal(err)
+	}
+	if v.Locations().WorkDirMaps["/old/Projects"] != "/here" || o.Known.WorkDirMaps["/old/Projects"] != "/here" {
+		t.Errorf("mapping not saved: %+v", v.Locations())
+	}
+}
+
+// Targets in hidden folders need their own yes; --accept-matches is not one.
+func TestHiddenTargetsNeedExplicitConfirmation(t *testing.T) {
+	_, set, o := matchFixture(t)
+	hiddenWD := filepath.Join(o.Home, ".work", "Projects")
+	mustMkdirAll(t, hiddenWD)
+	set.WorkDirs[0].HomeRel = ".work/Projects"
+	o.AcceptMatches = true
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil || len(res.Missed) != 1 || !strings.Contains(res.Missed[0].Reason, "hidden") {
+		t.Fatalf("hidden work dir accepted: %+v %v", res, err)
+	}
+
+	// A --workdir-map to the hidden folder is the confirmation.
+	o.WorkDirMaps = map[string]string{"/old/Projects": hiddenWD}
+	if res, err = resolveBundleLocations(context.Background(), set, "", o); err != nil || len(res.Missed) != 0 {
+		t.Fatalf("explicit map refused: %+v %v", res, err)
+	}
+	o.WorkDirMaps = nil
+
+	// On a terminal: y confirms the work dir; then the project list.
+	var out bytes.Buffer
+	o.Out, o.Interactive = &out, true
+	o.In = bufio.NewReader(strings.NewReader("y\n\n"))
+	if res, err = resolveBundleLocations(context.Background(), set, "", o); err != nil || len(res.Missed) != 0 || !strings.Contains(out.String(), "inside a hidden folder") {
+		t.Fatalf("interactive: %+v %v\n%s", res, err, out.String())
+	}
+
+	// A project whose checkout is in a hidden folder.
+	_, set2, o2 := matchFixture(t)
+	hiddenApp := filepath.Join(o2.Home, "src", ".cache", "app")
+	mustMkdirAll(t, filepath.Join(hiddenApp, ".git"))
+	o2.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
+		if dir == hiddenApp {
+			return gitid.Repo{Root: dir, Remote: "github.com/acme/app"}, nil
+		}
+		return gitid.Repo{}, gitid.ErrNotRepo
+	}
+	set2.WorkDirs[0].HomeRel = "src"
+	// Scan skips hidden folders, so name the hidden parent as the work dir.
+	o2.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o2.Home, "src", ".cache")}
+	o2.AcceptMatches = true
+	res, err = resolveBundleLocations(context.Background(), set2, "/old/Projects/app", o2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ProjectRoot != "" || !res.SourceSkipped || len(res.Missed) != 1 {
+		t.Errorf("hidden project accepted by --accept-matches: %+v", res)
 	}
 }
