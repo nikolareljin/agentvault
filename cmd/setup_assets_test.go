@@ -92,23 +92,24 @@ func TestCollectSetupAssets_ProviderFilesRedactSensitiveContentByDefault(t *test
 		t.Fatalf("collectSetupAssets() error = %v", err)
 	}
 
+	// JSON settings travel with their secret values blanked, so hooks,
+	// permissions and plugins arrive without the tokens.
 	settings := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "settings.json")
 	if settings == nil {
 		t.Fatalf("provider files missing claude settings")
 	}
-	if !settings.Sensitive || !settings.Redacted || len(settings.Content) != 0 || settings.SHA256 != "" {
-		t.Fatalf("claude settings asset = %#v, want sensitive redacted metadata", settings)
+	if !settings.Sensitive || settings.Redacted || !settings.ContentPresent ||
+		bytes.Contains(settings.Content, []byte("secret")) || len(settings.RedactedFields) != 1 || settings.RedactedFields[0] != "/apiKey" {
+		t.Fatalf("claude settings asset = %#v, want content with /apiKey blanked", settings)
 	}
 
 	copilotHosts := findAsset(assets.ProviderFiles, setupAssetRootProviderCopilot, "versions.json")
 	if copilotHosts == nil {
 		t.Fatalf("provider files missing copilot config")
 	}
-	if !copilotHosts.Sensitive || !copilotHosts.Redacted || len(copilotHosts.Content) != 0 || copilotHosts.SHA256 != "" {
-		t.Fatalf("copilot config asset = %#v, want sensitive redacted metadata", copilotHosts)
-	}
-	if settings.ContentPresent {
-		t.Fatalf("redacted settings asset should not mark content as present: %#v", settings)
+	if !copilotHosts.Sensitive || bytes.Contains(copilotHosts.Content, []byte("secret")) ||
+		len(copilotHosts.RedactedFields) != 1 || copilotHosts.RedactedFields[0] != "/token" {
+		t.Fatalf("copilot config asset = %#v, want /token blanked", copilotHosts)
 	}
 
 	keybindings := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "keybindings.json")
@@ -1037,11 +1038,11 @@ func TestApplyStagedProjectAssets_RestoresADotDirectory(t *testing.T) {
 	assets := []SetupAsset{{
 		Kind:                setupAssetKindProjectFile,
 		LogicalRoot:         setupAssetRootProject,
-		LogicalPath:         ".claude/settings.json",
-		ProjectRelativePath: ".claude/settings.json",
-		SourcePath:          "/tmp/source/.claude/settings.json",
+		LogicalPath:         ".claude/agents/reviewer.md",
+		ProjectRelativePath: ".claude/agents/reviewer.md",
+		SourcePath:          "/tmp/source/.claude/agents/reviewer.md",
 		ContentPresent:      true,
-		Content:             []byte(`{"model":"opus"}`),
+		Content:             []byte(`reviewer`),
 	}}
 	if _, _, err := stageImportedAssets(configDir, assets); err != nil {
 		t.Fatalf("stageImportedAssets() error = %v", err)
@@ -1049,11 +1050,11 @@ func TestApplyStagedProjectAssets_RestoresADotDirectory(t *testing.T) {
 	if _, err := applyStagedProjectAssets(configDir, targetDir); err != nil {
 		t.Fatalf("applyStagedProjectAssets() error = %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(targetDir, ".claude", "settings.json"))
+	got, err := os.ReadFile(filepath.Join(targetDir, ".claude", "agents", "reviewer.md"))
 	if err != nil {
-		t.Fatalf(".claude/settings.json did not land: %v", err)
+		t.Fatalf(".claude/agents/reviewer.md did not land: %v", err)
 	}
-	if string(got) != `{"model":"opus"}` {
+	if string(got) != `reviewer` {
 		t.Errorf("landed with %q", got)
 	}
 }
@@ -1234,6 +1235,24 @@ func TestDedupeDeclined_KeepsOnePerPathAndCategory(t *testing.T) {
 	}
 }
 
+// A credential by location is redacted whole, not field by field: the
+// secret in .docker/config.json sits under "auth", which no pattern names.
+func TestCollectSetupAssets_SecretBearingJSONRedactedWhole(t *testing.T) {
+	homeDir := t.TempDir()
+	setTestHomeDir(t, homeDir)
+	mustMkdirAll(t, filepath.Join(homeDir, ".codex", "rules", ".docker"))
+	mustWriteFile(t, filepath.Join(homeDir, ".codex", "rules", ".docker", "config.json"), `{"auths":{"r":{"auth":"leak6"}}}`)
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatalf("collectSetupAssets() error = %v", err)
+	}
+	a := findAsset(assets.ProviderFiles, setupAssetRootProviderCodex, "rules/.docker/config.json")
+	if a == nil || !a.Redacted || a.ContentPresent || bytes.Contains(a.Content, []byte("leak6")) {
+		t.Fatalf("docker config asset = %+v, want redacted whole", a)
+	}
+}
+
 // A ~N name is a plain name on every OS. On Windows the writer refuses one
 // that opens another file (see TestWriterRefusesShortNameAlias).
 func TestSanitizeAssetRelativePathAllowsTildeDigit(t *testing.T) {
@@ -1288,5 +1307,36 @@ func TestWindowsNameWarnings(t *testing.T) {
 	got := windowsNameWarnings(c)
 	if len(got) != 2 || !strings.Contains(got[0], "aux.md") || !strings.Contains(got[1], "CON") {
 		t.Errorf("warnings = %q", got)
+	}
+}
+
+// A home under a Windows short name (C:\Users\RUNNER~1) must not force
+// whole-file redaction of every settings file below it.
+func TestCollectSetupAssets_ShortNameHomeStillBlanksFields(t *testing.T) {
+	homeDir := filepath.Join(t.TempDir(), "RUNNER~1")
+	setTestHomeDir(t, homeDir)
+	mustWriteFile(t, filepath.Join(homeDir, ".claude", "settings.json"), `{"apiKey":"secret","model":"m"}`)
+
+	assets, _, err := collectSetupAssets(setupAssetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := findAsset(assets.ProviderFiles, setupAssetRootProviderClaude, "settings.json")
+	if a == nil || a.Redacted || !a.ContentPresent || bytes.Contains(a.Content, []byte("secret")) ||
+		len(a.RedactedFields) != 1 || a.RedactedFields[0] != "/apiKey" {
+		t.Fatalf("settings asset = %#v, want content with /apiKey blanked", a)
+	}
+}
+
+func TestAssetPathTail(t *testing.T) {
+	cases := []struct{ path, logical, want string }{
+		{"/c/Users/RUNNER~1/.claude/settings.json", "settings.json", ".claude/settings.json"},
+		{"/home/u/.aws/sub/config.json", "sub/config.json", ".aws/sub/config.json"},
+		{"settings.json", "settings.json", "settings.json"},
+	}
+	for _, c := range cases {
+		if got := assetPathTail(filepath.FromSlash(c.path), c.logical); got != c.want {
+			t.Errorf("assetPathTail(%q, %q) = %q, want %q", c.path, c.logical, got, c.want)
+		}
 	}
 }

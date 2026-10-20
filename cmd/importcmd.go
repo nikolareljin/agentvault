@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/fsname"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -39,6 +42,11 @@ Conflict handling is chosen with --strategy:
             ends up matching the bundle exactly. Mirrors one profile at a time,
             since mirroring several into one vault would leave only the last.
 
+A local file that differs from the bundle's is backed up and replaced, or
+kept: import asks on a terminal, and --on-conflict backup-replace|keep decides
+without asking. Commands the bundle adds or changes (hooks, statusLine, MCP
+servers) are left out unless --keep-bundle-commands is given.
+
 Use --strategy mirror to make several machines converge on one configuration.
 Mirror deletes data, so it asks for confirmation unless --confirm is given.
 
@@ -52,7 +60,13 @@ Examples:
   agentvault import team.avbundle --strategy mirror
   agentvault import team.avbundle --list
   agentvault import team.avbundle --profile work --dry-run
-  agentvault import team.avbundle --strategy replace --apply-provider-configs`,
+  agentvault import team.avbundle --strategy replace --apply-provider-configs
+  agentvault import team.avbundle --apply-projects --project-root ~/src/app
+  agentvault import team.avbundle --map /mnt/work=/Volumes/work --dry-run
+
+Paths from the exporting machine are rewritten for this one: its home directory
+becomes this home directory, its --project directory becomes --project-root, and
+each --map OLD=NEW is applied first. --dry-run prints every rewrite.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runImport,
 }
@@ -65,6 +79,12 @@ func init() {
 	importCmd.Flags().Bool("dry-run", false, "report what would change without writing to the vault")
 	importCmd.Flags().Bool("apply-provider-configs", false, "apply provider configs and provider asset files to the system after import")
 	importCmd.Flags().Bool("confirm", false, "skip the confirmation prompt for destructive strategies")
+	importCmd.Flags().StringArray("map", nil, "rewrite a path prefix from the exporting machine, OLD=NEW (repeatable); the home directory is rewritten without it")
+	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root")
+	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects")
+	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine and MCP server commands that the bundle adds or changes; left out by default")
+	importCmd.Flags().String("on-conflict", "", "when a local file differs from the bundle: backup-replace or keep (default: ask on a terminal, else backup-replace; --strategy merge means keep)")
+	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
 	importCmd.Flags().Bool("plain", false, "deprecated: the export format is detected automatically")
 	_ = importCmd.Flags().MarkDeprecated("plain", "the export format is detected automatically")
 }
@@ -79,6 +99,12 @@ func runImport(cmd *cobra.Command, args []string) error {
 	applyConfigs, _ := cmd.Flags().GetBool("apply-provider-configs")
 	confirmFlag, _ := cmd.Flags().GetBool("confirm")
 	profileName := mustString(cmd, "profile")
+	assetOpts, err := importAssetOptionsFromFlags(cmd, applyConfigs)
+	if err != nil {
+		return err
+	}
+	assetOpts.Overwrite = strategy != strategyMerge
+	assetOpts.Apply.OnConflict = resolveConflictPolicy(assetOpts.Apply.OnConflict, cmd.Flags().Changed("strategy"), strategy)
 
 	inPath := ""
 	if len(args) == 1 {
@@ -123,11 +149,16 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	interactive := term.IsTerminal(stdinFD())
+	stdin := bufio.NewReader(os.Stdin)
 	if strategy.deletesLocalOnly() && !dryRun {
-		if err := confirmDestructiveImport(confirmFlag, interactive, os.Stdin, cmd.ErrOrStderr(), selected); err != nil {
+		if err := confirmDestructiveImport(confirmFlag, interactive, stdin, cmd.ErrOrStderr(), selected); err != nil {
 			return err
 		}
 	}
+	assetOpts.Apply.Interactive = interactive
+	assetOpts.Apply.In = stdin
+	assetOpts.Apply.Out = cmd.ErrOrStderr()
+	assetOpts.Apply.BundleTime = bundle.CreatedAt
 
 	v, err := openVault()
 	if err != nil {
@@ -157,16 +188,24 @@ func runImport(cmd *cobra.Command, args []string) error {
 		total.Removed += plan.Report.Removed
 
 		if dryRun {
+			previewProfileAssets(cmd, profile.Setup, assetOpts)
 			continue
 		}
 		if err := commitProfileImport(v, plan); err != nil {
 			return err
 		}
-		if err := importProfileAssets(cmd, profile.Setup, applyConfigs); err != nil {
+		if err := importProfileAssets(cmd, profile.Setup, assetOpts); err != nil {
 			return err
 		}
 	}
 
+	printBroadAllowWarning(cmd.ErrOrStderr(), assetOpts.Apply.Broad)
+	if len(assetOpts.Apply.Backups) > 0 {
+		fmt.Fprintln(out, "\nBackups of replaced files:")
+		for _, b := range assetOpts.Apply.Backups {
+			fmt.Fprintf(out, "  %s\n", printable(b))
+		}
+	}
 	fmt.Fprintf(out, "\nSummary: %d added, %d updated, %d skipped, %d removed\n",
 		total.Added, total.Updated, total.Skipped, total.Removed)
 	if dryRun {
@@ -318,7 +357,10 @@ func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w
 	fmt.Fprintf(w, "model capability entries. The shared system prompt and router config are\n")
 	fmt.Fprintf(w, "cleared too when the bundle does not carry them.\n")
 	fmt.Fprint(w, "Type 'mirror' to continue: ")
-	reader := bufio.NewReader(in)
+	reader, ok := in.(*bufio.Reader)
+	if !ok {
+		reader = bufio.NewReader(in)
+	}
 	line, err := reader.ReadString('\n')
 	if err != nil && line == "" {
 		return fmt.Errorf("reading confirmation: %w", err)
@@ -331,7 +373,179 @@ func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w
 
 // importProfileAssets writes the non-vault parts of a profile: workflow
 // templates, staged portable assets, and optionally the live provider configs.
-func importProfileAssets(cmd *cobra.Command, setup SetupBundle, applyConfigs bool) error {
+// importAssetOptions selects what import does with a bundle's files.
+type importAssetOptions struct {
+	ApplyConfigs  bool
+	ApplyProjects bool
+	ProjectRoot   string
+	Maps          []string
+	// Overwrite existing project files that differ. Follows --strategy:
+	// merge keeps what is there; replace and mirror overwrite.
+	Overwrite bool
+	// Apply settles conflicts and records backups for the whole run.
+	Apply *importApplyContext
+}
+
+func importAssetOptionsFromFlags(cmd *cobra.Command, applyConfigs bool) (importAssetOptions, error) {
+	opts := importAssetOptions{ApplyConfigs: applyConfigs, Apply: newImportApplyContext()}
+	opts.Apply.KeepBundleCommands, _ = cmd.Flags().GetBool("keep-bundle-commands")
+	if v := mustString(cmd, "on-conflict"); v != "" {
+		policy, err := parseConflictPolicy(v)
+		if err != nil {
+			return opts, err
+		}
+		opts.Apply.OnConflict = policy
+	}
+	opts.ApplyProjects, _ = cmd.Flags().GetBool("apply-projects")
+	opts.ProjectRoot = mustString(cmd, "project-root")
+	opts.Maps, _ = cmd.Flags().GetStringArray("map")
+	keepInterpreterAllows, _ = cmd.Flags().GetBool("keep-interpreter-allows")
+	if opts.ApplyProjects && strings.TrimSpace(opts.ProjectRoot) == "" {
+		return opts, errors.New("--apply-projects needs --project-root: the directory to write project files into")
+	}
+	if opts.ProjectRoot != "" {
+		root, err := filepath.Abs(expandUserPath(opts.ProjectRoot))
+		if err != nil {
+			return opts, fmt.Errorf("--project-root: %w", err)
+		}
+		info, err := os.Stat(root)
+		if err != nil || !info.IsDir() {
+			return opts, fmt.Errorf("--project-root %s is not a directory", root)
+		}
+		opts.ProjectRoot = root
+	}
+	if _, err := buildPathRemaps("", "", "", "", opts.Maps); err != nil {
+		return opts, err
+	}
+	return opts, nil
+}
+
+// remapProfileAssets rewrites the exporting machine's paths in every file of
+// one profile for this machine, and returns what it changed.
+func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle, []string, error) {
+	targetHome := exportSourceHome()
+	remaps, err := buildPathRemaps(setup.SourceHome, targetHome, setup.SourceProject, opts.ProjectRoot, opts.Maps)
+	if err != nil {
+		return setup, nil, err
+	}
+	var report, r []string
+	setup.ProviderFiles, r = remapAssets(setup.ProviderFiles, remaps, targetHome)
+	report = append(report, r...)
+	setup.ProjectFiles, r = remapAssets(setup.ProjectFiles, remaps, targetHome)
+	report = append(report, r...)
+	setup.SkillAssets, r = remapAssets(setup.SkillAssets, remaps, targetHome)
+	report = append(report, r...)
+	setup.InstructionOverrides, _ = remapAssets(setup.InstructionOverrides, remaps, targetHome)
+	configs, n, err := remapProviderConfigs(setup.ProviderConfigs, remaps)
+	if err != nil {
+		return setup, report, fmt.Errorf("rewriting paths in provider configs: %w", err)
+	}
+	if n > 0 {
+		setup.ProviderConfigs = configs
+		report = append(report, fmt.Sprintf("rewrote %d path(s) in provider configs", n))
+	}
+	return setup, report, nil
+}
+
+// previewProfileAssets is the --dry-run view of importProfileAssets: the
+// path rewrites, and with --apply-projects or --apply-provider-configs each
+// file it would write, replace, keep or leave out. It writes nothing.
+func previewProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) {
+	out := cmd.OutOrStdout()
+	setup, report, err := remapProfileAssets(setup, opts)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(err.Error()))
+		return
+	}
+	for _, line := range report {
+		fmt.Fprintf(out, "  path: %s\n", printable(line))
+	}
+	ctx := opts.applyContext()
+	dry := *ctx
+	dry.DryRun = true
+	if opts.ApplyProjects {
+		for _, line := range previewProjectAssets(setup.ProjectFiles, opts.ProjectRoot, &dry) {
+			fmt.Fprintf(out, "  project: %s\n", printable(line))
+		}
+	}
+	if !opts.ApplyConfigs {
+		return
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not resolve home directory: %v\n", err)
+		return
+	}
+	assets, dropped := providerAssetsToApply(setup, homeDir, ctx.KeepBundleCommands)
+	for _, d := range dropped {
+		fmt.Fprintf(out, "  would: Codex provider config: leave out %s\n", printable(d))
+	}
+	_, lines, err := applyProviderAssetsWith(homeDir, assets, &dry)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(err.Error()))
+	}
+	for _, line := range lines {
+		fmt.Fprintf(out, "  would: %s\n", printable(line))
+	}
+}
+
+// previewProjectAssets says, per project file, what --apply-projects would
+// do in root, without staging or writing anything.
+func previewProjectAssets(files []SetupAsset, root string, ctx *importApplyContext) []string {
+	var out []string
+	for _, asset := range files {
+		if asset.Redacted || asset.Missing || !asset.ContentPresent {
+			continue
+		}
+		rel := asset.ProjectRelativePath
+		if rel == "" {
+			rel = asset.LogicalPath
+		}
+		if reason := projectAssetRefusal(rel); reason != "" {
+			out = append(out, fmt.Sprintf("%s: not written: %s", rel, reason))
+			continue
+		}
+		dest, err := safeJoinUnder(root, rel)
+		if err == nil {
+			err = fsname.CheckBeforeWrite(root, dest)
+		}
+		if err != nil {
+			out = append(out, fmt.Sprintf("%s: not written: %v", rel, err))
+			continue
+		}
+		existing, err := readExistingFile(dest)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			out = append(out, fmt.Sprintf("%s: would write %s", rel, dest))
+		case err != nil:
+			out = append(out, fmt.Sprintf("%s: not written: %v", rel, err))
+		case bytes.Equal(existing, asset.Content):
+		default:
+			out = append(out, fmt.Sprintf("%s: %s", rel, ctx.preview(dest)))
+		}
+	}
+	return out
+}
+
+// providerAssetsToApply are the files --apply-provider-configs writes: the
+// Claude and Codex provider configs as files, then the bundle's provider
+// files and skills. It also returns what it left out of the Codex config.
+func providerAssetsToApply(setup SetupBundle, homeDir string, keepCommands bool) ([]SetupAsset, []string) {
+	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
+	codexAssets, codexDropped := codexConfigAssets(setup.ProviderConfigs.Codex, homeDir, keepCommands)
+	configAssets = append(configAssets, codexAssets...)
+	return append(append(configAssets, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...), codexDropped
+}
+
+func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) error {
+	applyConfigs := opts.ApplyConfigs
+	setup, remapReport, err := remapProfileAssets(setup, opts)
+	if err != nil {
+		return err
+	}
+	for _, line := range remapReport {
+		fmt.Fprintf(cmd.OutOrStdout(), "  path: %s\n", printable(line))
+	}
 	if setup.Templates.SchemaVersion != "" || len(setup.Templates.Assets) > 0 {
 		imported, warnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), setup.Templates)
 		if err != nil {
@@ -341,11 +555,17 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, applyConfigs boo
 			fmt.Fprintf(cmd.OutOrStdout(), "  Imported: workflow templates (%d)\n", imported)
 		}
 		for _, warn := range warnings {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 		}
 	}
 
-	filteredProjectFiles := filterProjectFilesForStaging(setup.ProjectFiles, setup.InstructionOverrides)
+	// An instruction override (the project's AGENTS.md or CLAUDE.md) goes to
+	// the vault and is left out of the stage, except with --apply-projects:
+	// it is the file the user asked to have in the project.
+	filteredProjectFiles := setup.ProjectFiles
+	if !opts.ApplyProjects {
+		filteredProjectFiles = filterProjectFilesForStaging(setup.ProjectFiles, setup.InstructionOverrides)
+	}
 	assets := append(append(append([]SetupAsset{}, setup.ProviderFiles...), filteredProjectFiles...), setup.SkillAssets...)
 	staged, stageWarnings, err := stageImportedAssets(effectiveConfigDir(), assets)
 	if err != nil {
@@ -355,30 +575,45 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, applyConfigs boo
 		fmt.Fprintf(cmd.OutOrStdout(), "  Imported: portable assets (%d staged)\n", staged)
 	}
 	for _, warn := range stageWarnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 	}
 
 	printPluginInstallCommands(cmd.OutOrStdout(), setup.Plugins)
+	if opts.ApplyProjects {
+		// The writer refuses symlinks on the way to a file; the root the user
+		// named may sit under one (/tmp on macOS). Paths in files keep the
+		// spelling the user gave.
+		writeRoot := opts.ProjectRoot
+		if resolved, err := filepath.EvalSymlinks(writeRoot); err == nil {
+			writeRoot = resolved
+		}
+		applied, skipped, err := applyStagedProjectAssetsCtx(effectiveConfigDir(), writeRoot, opts.Overwrite, opts.applyContext())
+		if err != nil {
+			return fmt.Errorf("applying project files: %w", err)
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "  Applied: project files (%d) to %s\n", applied, opts.ProjectRoot)
+		for _, s := range skipped {
+			fmt.Fprintf(cmd.OutOrStdout(), "    not written: %q\n", s)
+		}
+	}
 	if !applyConfigs {
 		return nil
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "  Applying provider configs and assets to system...")
-	if setup.ProviderConfigs.Claude != nil {
-		if err := agent.SaveClaudeConfig(setup.ProviderConfigs.Claude); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not apply Claude config: %v\n", err)
-		}
-	}
-	if setup.ProviderConfigs.Codex != nil {
-		if err := agent.SaveCodexConfig(setup.ProviderConfigs.Codex); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not apply Codex config: %v\n", err)
-		}
-	}
+	ctx := opts.applyContext()
+	// The Claude provider config becomes settings.json and keybindings.json,
+	// applied like the bundle's own files: commands and interpreter allows
+	// checked, secrets kept, local keys kept, the old file backed up.
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not resolve home directory: %v\n", err)
 		return nil
 	}
-	applied, warnings, err := applyProviderAssetsToSystem(homeDir, append(setup.ProviderFiles, providerSkillAssets(setup.SkillAssets)...))
+	providerAssets, codexDropped := providerAssetsToApply(setup, homeDir, ctx.KeepBundleCommands)
+	for _, d := range codexDropped {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: Codex provider config: left out %s (use --keep-bundle-commands to take it)\n", printable(d))
+	}
+	applied, warnings, err := applyProviderAssetsWith(homeDir, providerAssets, ctx)
 	if err != nil {
 		return fmt.Errorf("applying provider assets: %w", err)
 	}
@@ -386,7 +621,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, applyConfigs boo
 		fmt.Fprintf(cmd.OutOrStdout(), "  Applied: provider assets (%d)\n", applied)
 	}
 	for _, warn := range warnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 	}
 	return nil
 }
@@ -480,4 +715,101 @@ func printInstallGuide(cmd *cobra.Command, profiles []PortableProfile) {
 		}
 		return
 	}
+}
+
+// applyContext is the run's context, or a fresh one when the options were
+// built without flags.
+func (o *importAssetOptions) applyContext() *importApplyContext {
+	if o.Apply == nil {
+		o.Apply = newImportApplyContext()
+	}
+	return o.Apply
+}
+
+// resolveConflictPolicy: --on-conflict wins; otherwise an explicit --strategy
+// answers the question (merge keeps what is here, replace and mirror take the
+// bundle's file); otherwise import asks, or backs up and replaces when it
+// cannot ask.
+func resolveConflictPolicy(flag conflictPolicy, strategyGiven bool, strategy importStrategy) conflictPolicy {
+	if flag != conflictAsk || !strategyGiven {
+		return flag
+	}
+	if strategy == strategyMerge {
+		return conflictKeep
+	}
+	return conflictBackupReplace
+}
+
+// claudeConfigAssets are the files SaveClaudeConfig would write for c, as
+// assets, so they go through the same checks as the bundle's own files.
+func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
+	if c == nil {
+		return nil
+	}
+	var out []SetupAsset
+	if data, err := agent.ClaudeSettingsJSON(c); err == nil {
+		out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json", ContentPresent: true, Content: data})
+	}
+	if len(c.Keybindings) > 0 {
+		if data, err := json.MarshalIndent(c.Keybindings, "", "  "); err == nil {
+			out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "keybindings.json", ContentPresent: true, Content: data})
+		}
+	}
+	return out
+}
+
+// codexConfigAssets turns the Codex provider config into the files it
+// would write, so they go through the asset checks (commands, conflicts,
+// backups) instead of SaveCodexConfig, which rewrites config.toml in place
+// and deletes local rules. A trusted project the bundle adds or changes is
+// left out unless keepCommands: trust lets Codex run commands there. A rule
+// whose name is not a plain file name is left out. It returns the assets
+// and what it left out.
+func codexConfigAssets(c *agent.CodexConfig, home string, keepCommands bool) ([]SetupAsset, []string) {
+	if c == nil {
+		return nil, nil
+	}
+	var dropped []string
+	existing, _ := readExistingFile(filepath.Join(home, ".codex", "config.toml"))
+	var local struct {
+		Projects map[string]struct {
+			TrustLevel string `toml:"trust_level"`
+		} `toml:"projects"`
+	}
+	_, _ = toml.Decode(string(existing), &local)
+	projects := map[string]string{}
+	for p, v := range local.Projects {
+		projects[p] = v.TrustLevel
+	}
+	for _, p := range sortedStringKeys(c.TrustedProjects) {
+		level := c.TrustedProjects[p]
+		if cur, ok := projects[p]; ok && cur == level {
+			continue
+		}
+		if !keepCommands {
+			dropped = append(dropped, fmt.Sprintf("trusted project %q (%s)", p, level))
+			continue
+		}
+		projects[p] = level
+	}
+	out := []SetupAsset{{LogicalRoot: setupAssetRootProviderCodex, LogicalPath: "config.toml", ContentPresent: true,
+		Content: []byte(agent.CodexConfigTOML(string(existing), projects))}}
+	for _, name := range sortedStringKeys(c.Rules) {
+		if !agent.ValidRuleName(name) {
+			dropped = append(dropped, fmt.Sprintf("rule %q: not a plain file name", name))
+			continue
+		}
+		out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderCodex, LogicalPath: "rules/" + name + ".md",
+			ContentPresent: true, Content: []byte(c.Rules[name])})
+	}
+	return out, dropped
+}
+
+func sortedStringKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

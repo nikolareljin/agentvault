@@ -3,6 +3,78 @@
 ## [Unreleased]
 
 ### Added
+- `import` rewrites the exporting machine's paths for this one. Its home
+  directory becomes this home directory, its `--project` directory becomes
+  `--project-root`, and each `--map OLD=NEW` is applied first (OLD and NEW
+  must be absolute paths; NEW may start with `~/`). This covers
+  file content (hook commands, MCP server paths, notes) and Claude's
+  per-project memory directory names, and the provider configs that
+  `--apply-provider-configs` writes. A rename that would land on another
+  memory directory in the bundle is not made and is reported. Windows paths match in any case and
+  with either separator (`C:/Users/x`), and
+  a path moved between Windows and POSIX gets the new separators to its end.
+  `--dry-run` prints every rewrite.
+- `import --apply-projects --project-root DIR` writes the bundle's project
+  instructions into DIR. Git internals, CI, hook directories, repository
+  settings, credential files and other non-prose files are not written.
+- JSON settings exported without `--include-secrets` travel with only their
+  secret values blanked (keys with token, secret, password, key and the
+  like, and everything under `env` and `headers`). Import fills each blanked
+  value from the file already on the machine, or leaves it out. A
+  value is restored without asking only into an unchanged definition (for
+  settings.json's own `env`, the rest of `env`; for a top-level key, the
+  rest of the file). For a changed one import shows the old and new fields
+  and asks `restore local secret into changed server? [y/N]`; without a
+  terminal it does not restore it. A secret under a key that `--map` or the
+  home rewrite renamed is restored too. A file
+  with secret-shaped values under neutral keys (`--token x` in `args` or a command,
+  `X-API-Key: x` header arguments, URL credentials, known token prefixes) is
+  redacted whole, and so is a credential file by name or location
+  (`.docker/config.json`, anything under `.aws`).
+- The execute bit travels for a tool's own `hooks/` scripts, so a hook still
+  runs after import. The scripts travel only with `--include-secrets`;
+  without it import names each one it left behind.
+- Import leaves out Claude permissions that let any program run without
+  asking (`Bash(bash:*)`, `Bash(python3:*)`, `Bash(*)` and the like) and
+  names each one. Only a plain command line is kept: literal words, no
+  shell metacharacters, quotes or globs, and a command that is not an
+  interpreter, wrapper (`nice`, `timeout`) or shell keyword.
+  `--keep-interpreter-allows` keeps them all.
+- Import leaves out what runs code that the bundle adds or changes, keeps
+  this machine's value and names each one: `hooks` events, `statusLine`,
+  credential helpers, plugins and marketplaces, MCP servers of any type,
+  code-loading `env` variables (`NODE_OPTIONS`, `LD_PRELOAD` and the like),
+  `env` variables that route requests (`ANTHROPIC_BASE_URL`, `*PROXY*`),
+  provider switches (`CLAUDE_CODE_USE_BEDROCK`), folder trust (Copilot
+  `trusted_folders`, Gemini `trustedFolders.json`, `security.folderTrust`), JSON settings that do not parse as plain JSON,
+  other command fields, trusted Codex projects, and new or changed files
+  that are not prose or settings (hook scripts, extensionless files). A
+  Codex `config.toml` whose parsed `mcp_servers`, `notify`,
+  `model_providers`, `projects`, `approval_policy`, `sandbox_mode`, `hooks`
+  or URL and endpoint keys (`chatgpt_base_url`) differ,
+  or that does not parse, is not applied.
+- The Codex provider config is applied as files through the same checks.
+  `SaveCodexConfig` refuses a rule name that is not a plain file name
+  before writing anything (a name such as `../../.bashrc` wrote outside
+  `~/.codex/rules`), and import no longer deletes local Codex rules.
+  `--keep-bundle-commands` keeps them.
+- `import --dry-run` with `--apply-provider-configs` or `--apply-projects`
+  lists each file it would write, replace, keep or leave out, and writes
+  nothing.
+- Export skips the `.bak-YYYYMMDD-HHMMSS` backups import leaves next to
+  replaced files.
+- Tests run with `HOME` and the config directories pointed at a temp dir.
+- Import keeps broad allow rules such as `Bash(find:*)`, `Bash(git:*)` and
+  `Bash(make:*)`, and prints one WARNING block naming each and why it can
+  run other programs.
+- An existing provider file, Claude project memory file or `--apply-projects`
+  file that differs is backed up to `<file>.bak-YYYYMMDD-HHMMSS` and
+  replaced, or kept: import asks on a terminal (with an apply-to-all
+  answer), and `--on-conflict backup-replace|keep` decides without asking.
+  `--strategy merge` given explicitly means keep. Backups never overwrite a
+  file and are listed at the end. A JSON provider file keeps the keys only
+  this machine has. The Claude provider config goes through the same checks
+  instead of replacing `settings.json` and `keybindings.json` whole.
 - `./dev` (and `./dev.ps1` on Windows) is the entry point for install, build,
   test, lint, format, preflight, doctor, clean and install-bin. The commands
   live in `scripts/project.sh`, and `make` targets are shims onto them.
@@ -35,6 +107,8 @@
   `sync`.
 
 ### Changed
+- New dependency `github.com/BurntSushi/toml` v1.5.0: import parses Codex
+  `config.toml` to compare its commands.
 - `actions/checkout` and `actions/github-script` are pinned to commit SHAs.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key
@@ -64,6 +138,9 @@
   `config.json.`, which Windows writes to `config.json`.
 
 ### Security
+- Asset paths with control characters are refused, so a path printed during
+  import cannot rewrite the terminal. `--apply-projects` also refuses
+  segments Windows reads as another name (`.git.`, `name:stream`).
 - Alternate data streams (`.env::$DATA`) name another file on Windows.
   Import and the reference closure refuse them on every OS.
 - On Windows, every import write checks the name of the file it opened
@@ -76,8 +153,8 @@
   `COM1.txt`) in any path segment: Windows opens them as devices, and
   writing one can block. Other OSes write them, and export warns that
   Windows cannot.
-- A Codex rule name with a path separator or colon (`../x`) is refused
-  instead of written outside `~/.codex/rules`.
+- Codex rule names may contain `~` (`draft~2`); on Windows a rule name that
+  is a device name is refused.
 - A hard link inside a directory an instruction file names is refused, with
   or without `--include-secrets`, as one named directly is. Pipes, sockets
   and unreadable files there are listed as declined instead of ending the

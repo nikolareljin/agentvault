@@ -621,7 +621,7 @@ Windows names:
 - `~N` names (`draft~2.md`) are ordinary names. On Windows, import checks the name of each file it opens and refuses a write whose name differs from the one asked for: an 8.3 short name such as `SETTIN~1.JSO` that opens an existing `settings.json`. A reference spelled as a short name is judged by its long name.
 - Shell and login startup files (`.bashrc`, `.zshrc`, `.profile`, `.config/autostart`, `Library/LaunchAgents`, ...) and any other dotfile at the home root except `~/.claude.json`. Import refuses to write them from a bundle, too.
 
-Settings files that can hold tokens are redacted without `--include-secrets`. So are `~/.claude/hooks/` scripts, files in project rule directories that are neither prose nor TOML, credential-named files in any carried directory, files with a second hard link inside a tool's directory, and referenced files that are not prose, such as scripts and config files; Markdown and text are carried as is.
+Without `--include-secrets`, JSON settings files that can hold tokens (`~/.copilot/config.json` included) travel with their secret values blanked, as described below. Other settings files that can hold tokens are redacted whole. So are `~/.claude/hooks/` scripts, which are code and cannot be blanked field by field, files in project rule directories that are neither prose nor TOML, credential-named files in any carried directory, files with a second hard link inside a tool's directory, and referenced files that are not prose, such as scripts and config files. Import names each redacted file it could not write. Markdown and text are carried as is.
 
 Files referenced outside the tools' own directories are written back on import only when they are prose. They are written 0600 and never executable. `~/.claude.json` only gets its `mcpServers` key merged in. Referenced scripts and config files are staged under `<config dir>/imported-assets/provider/provider_home/` for review, and never written to the home directory: placed on `PATH` or named by a hook, a file from a bundle runs code.
 
@@ -646,9 +646,25 @@ Flags:
 - `--profile <name|all>`: Which bundle profile to import. Required for a multi-profile
   bundle when stdin is not a terminal. `mirror` accepts a single profile only.
 - `--list` (default: `false`): List the profiles in the bundle and exit.
-- `--dry-run` (default: `false`): Report what would change without writing.
+- `--dry-run` (default: `false`): Report what would change without writing. With `--apply-provider-configs` or `--apply-projects` it also lists each file it would write, back up and replace, keep, or leave out, and each command it would leave out. It writes no file, backup or directory, and asks nothing.
 - `--apply-provider-configs` (default: `false`): Write provider configs and provider asset
   files back to the system after import.
+- `--apply-projects` (default: `false`): Write the bundle's project files into `--project-root`.
+- `--project-root <dir>`: Where `--apply-projects` writes. The exporting machine's `--project` directory is rewritten to it in every file.
+- `--map OLD=NEW` (repeatable): Rewrite another path prefix from the exporting machine. OLD and NEW must be absolute paths; NEW may start with `~/`.
+- `--keep-interpreter-allows` (default: `false`): Keep Claude permissions such as `Bash(bash:*)`, `Bash(python3:*)` or `Bash(*)`. By default they are left out on import and each one is reported. A Bash rule is kept only when it is a plain command line: literal words (letters, digits and `._/@%+,-`) separated by single spaces, an optional trailing `:*` or ` *`, and a command that is not an interpreter, wrapper or shell keyword. Any other Bash rule counts as a blanket grant: on the other machine such a rule lets any program run without asking, and nobody there granted it.
+- `--keep-bundle-commands` (default: `false`): Keep the commands the bundle adds or changes. By default import keeps this machine's value, and names each one left out, for:
+  - each `hooks` event, `statusLine`, `fileSuggestion`, credential helpers (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `otelHeadersHelper`), `enabledPlugins` and `extraKnownMarketplaces`;
+  - each MCP server (`mcpServers`, `servers`), of any type, that is new or differs in anything but its blanked secrets;
+  - code-loading variables in an `env` map (`NODE_OPTIONS`, `LD_PRELOAD`, `PYTHONSTARTUP`, `BASH_ENV`, `PATH` and the like), and variables that send requests elsewhere (any name containing `_URL`, `ENDPOINT` or `PROXY`, or ending in `_HOST`, such as `ANTHROPIC_BASE_URL` or `AWS_ENDPOINT_URL_BEDROCK_RUNTIME`; provider switches `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_FOUNDRY_RESOURCE`; CA bundle settings such as `NODE_EXTRA_CA_CERTS`);
+  - folder trust: Copilot `trusted_folders`, Gemini `security.folderTrust`, and Gemini `trustedFolders.json` (kept whole);
+  - a JSON settings file that does not parse as a plain JSON object (comments, trailing data) and differs: it is not applied. When this machine's copy is the one that does not parse, it is kept as it is;
+  - any other top-level key under which a `command`, `args`, `*Command` or `*Helper` field differs (Gemini `tools.discoveryCommand`, `tools.callCommand`);
+  - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
+  - trusted projects from the Codex provider config that are new or changed.
+
+  A Codex `config.toml` is compared after parsing: if its `mcp_servers`, `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, or it does not parse, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
+- `--on-conflict <backup-replace|keep>`: What to do with a provider file, Claude project memory file or `--apply-projects` file that already exists and differs. Without it, import asks on a terminal and backs up and replaces otherwise; `--strategy merge` given explicitly means `keep`, `replace` and `mirror` mean `backup-replace`.
 - `--confirm` (default: `false`): Skip the confirmation prompt that guards `mirror`.
 
 Environment:
@@ -657,4 +673,36 @@ Environment:
 
 Mirror deletes vault items that are not in the bundle. It asks for confirmation on a
 terminal and refuses to run non-interactively without `--confirm`.
+
+#### Files that already exist
+
+A provider file, Claude project memory file or `--apply-projects` file that exists and differs from the bundle's is a conflict. On a terminal import asks:
+
+```
+in /home/alex/.claude: local settings.json (changed 2026-10-18 09:12), bundle (changed 2026-10-19 14:30)
+[b]ackup + replace / [k]eep existing (ba, ka: same for all remaining) [b]:
+```
+
+Without a terminal, or with `--on-conflict backup-replace`, the file is backed up and replaced. A backup is the file as it was before the import, at `<file>.bak-YYYYMMDD-HHMMSS` (with `-1`, `-2` added if that name exists; an existing file is never overwritten). Import lists every backup at the end. Export does not carry these backups.
+
+A JSON provider file is merged by top-level key: the bundle's keys overwrite, keys only this machine has stay. A key only this machine has that holds a secret stays only when the bundle changes nothing else in the file, or on a yes to the prompt above.
+
+Claude allow rules such as `Bash(find:*)`, `Bash(git:*)`, `Bash(make:*)`, `Bash(sed:*)`, `Bash(tar:*)`, `Bash(ssh:*)`, `Bash(docker:*)` and `Bash(kubectl:*)` are common and are kept, but import prints one WARNING block naming each with the reason: `find -exec`, `git -c core.pager=...`, `make` running any Makefile, `sed`'s `e` command and so on.
+
+#### Moving to a machine with a different home directory
+
+The bundle records the exporting machine's home directory and `--project` directory. On import, every text file is rewritten:
+- each `--map` first;
+- then the project directory to `--project-root`;
+- then the old home to this machine's home.
+
+Rewrites match whole path segments, so `/home/alex` does not rewrite `/home/alexandra` or `/srv/home/alex`. Each spot is rewritten once, and a Windows path also matches its JSON spelling (`C:\\Users\\alex`), its forward-slash spelling (`C:/Users/alex`) and any letter case. A path moved between Windows and POSIX gets the new separators up to its end (`C:\Users\alex\bin\x` becomes `/home/alex/bin/x`). In a JSON file the path runs to the closing quote, spaces included, or to a space before a flag, a drive or another absolute path; in other text it ends at the first whitespace, so `My Docs\x` there keeps its backslash. Claude's per-project memory directories (`~/.claude/projects/-home-alex-...`) are renamed the same way, unless the new name is already taken by another directory in the bundle. Provider configs applied with `--apply-provider-configs` are rewritten too. A home path that no rewrite covers is reported with the `--map` to add. `--dry-run` prints every rewrite and changes nothing.
+
+Secret values in JSON settings files are blanked on export without `--include-secrets`; the rest of the file travels. On import each blanked value is taken from the same file already on this machine. A value this machine does not have is left out and reported, never written as an empty string. A value is restored without asking only into the same definition. If the bundle changed the definition (an MCP server's URL or command, which also needs `--keep-bundle-commands`, the rest of `env` for a key in `env`, or any other field of the file for a top-level secret such as `apiKeyHelper`), import shows the old and new fields, with secrets masked, and asks once per definition: `restore local secret into changed server? [y/N]`. Without a terminal the answer is no, and the warning names the backup that holds the old value. Only listed fields under a secret key, `env` or `headers` count as secrets; any other field the bundle lists must still match. A file whose secrets sit under keys that do not say so is redacted whole, as before. That covers `args` such as `--token x` or `-H "X-API-Key: x"`, a command string with `--token x` in it, credentials in a URL, and known token prefixes. A JSON file that is a credential by name or location, such as `.docker/config.json` or anything under `.aws`, is redacted whole too.
+
+`--apply-projects` writes prose and the files agent tools read as instructions, the project's own `AGENTS.md` or `CLAUDE.md` included:
+- Never written: `.git/`, `.githooks/`, `.husky/`, `.github/workflows/`, repository settings and credential files.
+- Other non-prose files, such as scripts, stay staged in `<config dir>/imported-assets/project/`.
+- An existing file that differs is settled by `--on-conflict` (see below).
+- Nothing is written executable. The execute bit is kept only for a tool's own `hooks/` scripts.
 

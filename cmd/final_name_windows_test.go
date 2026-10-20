@@ -110,3 +110,25 @@ func TestHomeReferenceShortNameJudgedByLongName(t *testing.T) {
 		t.Errorf("%s: not refused: %+v", raw, r)
 	}
 }
+
+// --apply-projects refuses a short name for an existing file before it reads
+// or backs it up.
+func TestApplyProjectsRefusesShortNameAlias(t *testing.T) {
+	cfg := t.TempDir()
+	project := t.TempDir()
+	long := filepath.Join(project, "settings-long-name.json")
+	mustWriteFile(t, long, "orig")
+	alias := shortBase(t, long)
+	mustWriteFile(t, filepath.Join(cfg, setupImportedAssetsDirName, "project", alias), "evil")
+	applied, skipped, err := applyStagedProjectAssetsWith(cfg, project, true)
+	if err != nil || applied != 0 || len(skipped) != 1 {
+		t.Errorf("applied %d, skipped %v, err %v", applied, skipped, err)
+	}
+	if got, _ := os.ReadFile(long); string(got) != "orig" {
+		t.Errorf("long file changed: %q", got)
+	}
+	matches, _ := filepath.Glob(filepath.Join(project, "*.bak-*"))
+	if len(matches) != 0 {
+		t.Errorf("backups written: %v", matches)
+	}
+}
