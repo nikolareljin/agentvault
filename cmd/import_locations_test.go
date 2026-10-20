@@ -15,6 +15,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/gitid"
 	"github.com/nikolareljin/agentvault/internal/locations"
+	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/pflag"
 )
 
@@ -444,5 +445,45 @@ func TestAliasCheckedAgainstThisImport(t *testing.T) {
 	}
 	if len(res.Stored.Projects) != 2 || len(res.Stored.Projects[0].Aliases) != 1 || len(res.Stored.Projects[1].Aliases) != 0 {
 		t.Errorf("stored %+v", res.Stored.Projects)
+	}
+}
+
+// Profile 1 records app with alias /old/Projects/app. Profile 2 claims a
+// different repository at /old/Projects/app/lib: its alias would sit under
+// app's, so the second profile must see what the first one recorded.
+func TestAliasCheckedAcrossProfiles(t *testing.T) {
+	v := vault.New(filepath.Join(t.TempDir(), "vault.enc"))
+	if err := v.Init("pw"); err != nil {
+		t.Fatal(err)
+	}
+	_, set, o := matchFixture(t)
+	o.AcceptMatches = true
+	first, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil || len(first.Stored.Projects) != 1 {
+		t.Fatalf("%+v %v", first, err)
+	}
+	if err := recordLocations(v, first, &o); err != nil {
+		t.Fatal(err)
+	}
+
+	lib := filepath.Join(o.Home, "src", "lib")
+	mustMkdirAll(t, filepath.Join(lib, ".git"))
+	inner := o.Identify
+	o.Identify = func(ctx context.Context, dir string) (gitid.Repo, error) {
+		if dir == lib {
+			return gitid.Repo{Root: lib, Remote: "github.com/acme/lib"}, nil
+		}
+		return inner(ctx, dir)
+	}
+	second := &locations.Set{
+		WorkDirs: set.WorkDirs,
+		Projects: []locations.Project{{ID: "p1", WorkDir: "w1", Rel: "app/lib", Abs: "/old/Projects/app/lib", GitRemote: "github.com/acme/lib"}},
+	}
+	res, err := resolveBundleLocations(context.Background(), second, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Stored.Projects) != 1 || len(res.Stored.Projects[0].Aliases) != 0 {
+		t.Errorf("alias under the first profile's project accepted: %+v", res.Stored.Projects)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/fsname"
 	"github.com/nikolareljin/agentvault/internal/locations"
+	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -224,11 +225,8 @@ func runImport(cmd *cobra.Command, args []string) error {
 		if err := importProfileAssets(cmd, profile.Setup, profileOpts); err != nil {
 			return err
 		}
-		if !match.Stored.Empty() {
-			if err := v.SetLocations(locations.Merge(v.Locations(), match.Stored)); err != nil {
-				return fmt.Errorf("recording project locations: %w", err)
-			}
-			locOpts.Known = v.Locations()
+		if err := recordLocations(v, match, &locOpts); err != nil {
+			return err
 		}
 	}
 
@@ -871,4 +869,17 @@ func locationOptionsFromFlags(cmd *cobra.Command, interactive, dryRun bool, in *
 	}
 	o.UserMaps = userMaps
 	return o, nil
+}
+
+// recordLocations stores one profile's accepted projects in the vault and
+// refreshes what the next profile's alias checks see.
+func recordLocations(v *vault.Vault, match locationResult, o *locationOptions) error {
+	if match.Stored.Empty() {
+		return nil
+	}
+	if err := v.SetLocations(locations.Merge(v.Locations(), match.Stored)); err != nil {
+		return fmt.Errorf("recording project locations: %w", err)
+	}
+	o.Known = v.Locations()
+	return nil
 }
