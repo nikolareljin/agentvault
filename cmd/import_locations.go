@@ -472,8 +472,9 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 	// named are theirs and need no confirmation.
 	type rowRef struct {
 		project *locations.Project
-		// proposed is a work dir row's target before the list was shown.
-		proposed string
+		// workDir and proposed are a work dir row's id and its target before
+		// the list was shown.
+		workDir, proposed string
 	}
 	var rows []locations.Row
 	var refs []rowRef
@@ -494,7 +495,7 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 			}
 		}
 		rows = append(rows, locations.Row{From: w.Abs, To: to, Note: note})
-		refs = append(refs, rowRef{proposed: to})
+		refs = append(refs, rowRef{workDir: w.ID, proposed: to})
 	}
 	for i := range proposals {
 		p := proposals[i]
@@ -547,7 +548,17 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 		return nil
 	}
 
+	// edited are the work dirs whose row the user changed, id to the new
+	// target ("" when a new hidden target was declined). Their project rows
+	// were matched against the old target, so they are matched again below.
+	edited := map[string]string{}
+	var editedOrder []string
 	for i, r := range rows {
+		if p := refs[i].project; p != nil {
+			if _, ok := edited[p.WorkDir]; ok {
+				continue
+			}
+		}
 		if r.To == "" {
 			if len(r.Choices) > 0 {
 				fmt.Fprintf(out, "  skipped %s: ambiguous; pass --map %s=<one of the paths above>\n", printable(r.From), printable(r.From))
@@ -565,6 +576,8 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 				}
 				if got == "" {
 					res.Missed = append(res.Missed, missedEntry{Path: r.From, Reason: "target " + to + " is in a hidden folder and was not confirmed", Hint: flagHint("--workdir-map", r.From)})
+					edited[refs[i].workDir] = ""
+					editedOrder = append(editedOrder, refs[i].workDir)
 					continue
 				}
 				to = got
@@ -574,6 +587,8 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 			}
 			res.addNewMap(r.From, to)
 			r.To = to
+			edited[refs[i].workDir] = to
+			editedOrder = append(editedOrder, refs[i].workDir)
 		}
 		res.Remaps = append(res.Remaps, pathRemap{From: r.From, To: r.To})
 		if p := refs[i].project; p != nil {
@@ -589,6 +604,21 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 			if sourceProject != "" && locations.CleanForeign(sourceProject) == locations.CleanForeign(p.Abs) {
 				res.ProjectRoot = r.To
 			}
+		}
+	}
+	for _, id := range editedOrder {
+		to := edited[id]
+		if to == "" {
+			for _, p := range set.Projects {
+				if p.WorkDir == id && sourceProject != "" && locations.CleanForeign(sourceProject) == locations.CleanForeign(p.Abs) {
+					res.SourceSkipped = true
+				}
+			}
+			continue
+		}
+		o.workDirs = append(o.workDirs, to)
+		if err := matchAndConfirm(ctx, only(set, id), sourceProject, map[string]string{id: to}, map[string]bool{id: true}, o, out, res); err != nil {
+			return err
 		}
 	}
 	return nil

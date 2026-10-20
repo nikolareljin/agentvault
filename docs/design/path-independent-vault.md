@@ -253,12 +253,17 @@ A memory dir key that would collide is still refused and reported.
    `--accept-matches` does not cover them, `--workdir-map` to that exact
    target does. A work dir confirmation (y, a typed hidden path, or
    `--workdir-map`) is saved in the vault as `confirmed_hidden`, keyed to
-   the (bundle path, target) pair. A later import whose saved mapping is
-   that same pair does not ask again; the row is shown as "work dir, saved
+   the (bundle path, target) pair, with the identities (remote, else root
+   commits, else name) of the projects under the work dir at that time. A
+   later import whose saved mapping is that same pair, and whose projects
+   under it are all in that list, does not ask again: a bundle path is only
+   a name another bundle can reuse, so any other project asks again (and
+   without a terminal is missed), and a yes extends the list; the row is shown as "work dir, saved
    mapping (hidden, confirmed)" and projects under it count as confirmed.
    Mapping the path to another target drops the confirmation. A work dir
-   row edited in the confirm list is saved as the new mapping; a new target
-   in a hidden folder is asked about first. Skipping a row removes nothing
+   row edited in the confirm list is saved as the new mapping, and its
+   projects are matched again under the new target; a new target in a
+   hidden folder is asked about first. Skipping a row removes nothing
    saved. Only this
    machine's answers fill the list: export clears it and import ignores
    one in a bundle.

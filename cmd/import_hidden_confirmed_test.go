@@ -201,7 +201,7 @@ func TestEditedWorkDirRowSaved(t *testing.T) {
 	}
 	o.Known.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o.Home, "src")}
 	o.Interactive = true
-	res, out := importOnce(t, set, &o, v, "1\n"+filepath.Join(o.Home, "Projects")+"\n\n")
+	res, out := importOnce(t, set, &o, v, "1\n"+filepath.Join(o.Home, "Projects")+"\n\n\n")
 	if got := v.Locations().WorkDirMaps["/old/Projects"]; got != filepath.Join(o.Home, "Projects") {
 		t.Fatalf("edited row not saved: %q %+v\n%s", got, res, out)
 	}
@@ -213,7 +213,7 @@ func TestEditedConfirmedHiddenRow(t *testing.T) {
 	set, o, v, _ := confirmedVault(t)
 	plain := filepath.Join(o.Home, "Projects")
 	mustMkdirAll(t, plain)
-	importOnce(t, set, &o, v, "1\n"+plain+"\n\n")
+	importOnce(t, set, &o, v, "1\n"+plain+"\n\n\n")
 	if k := v.Locations(); k.WorkDirMaps["/old/Projects"] != plain || len(k.ConfirmedHidden) != 0 {
 		t.Fatalf("edit to plain target: %+v", k)
 	}
@@ -221,7 +221,7 @@ func TestEditedConfirmedHiddenRow(t *testing.T) {
 	set, o, v, _ = confirmedVault(t)
 	other := filepath.Join(o.Home, ".other")
 	mustMkdirAll(t, other)
-	_, out := importOnce(t, set, &o, v, "1\n"+other+"\n\ny\n")
+	_, out := importOnce(t, set, &o, v, "1\n"+other+"\n\ny\n\n")
 	if !strings.Contains(out, other+" is inside a hidden folder") {
 		t.Fatalf("new hidden target not asked:\n%s", out)
 	}
@@ -317,4 +317,34 @@ func TestOldConfirmedHiddenFormAsksAgain(t *testing.T) {
 func strconvQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// Projects under an edited work dir row are matched again under the new
+// target, so this import and the saved mapping agree.
+func TestEditedWorkDirRowMovesItsProjects(t *testing.T) {
+	oldApp, set, o := matchFixture(t)
+	newApp := filepath.Join(o.Home, "Projects", "app")
+	mustMkdirAll(t, filepath.Join(newApp, ".git"))
+	o.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
+		if dir == oldApp || dir == newApp {
+			return gitid.Repo{Root: dir, Remote: "github.com/acme/app"}, nil
+		}
+		return gitid.Repo{}, gitid.ErrNotRepo
+	}
+	set.WorkDirs[0].HomeRel, set.WorkDirs[0].Label = "Code", "Code"
+	v := vault.New(filepath.Join(t.TempDir(), "vault.enc"))
+	if err := v.Init("pw"); err != nil {
+		t.Fatal(err)
+	}
+	o.Known.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o.Home, "src")}
+	o.Interactive = true
+	res, out := importOnce(t, set, &o, v, "1\n"+filepath.Join(o.Home, "Projects")+"\n\n\n")
+	if len(res.Stored.Projects) != 1 || res.Stored.Projects[0].Abs != newApp {
+		t.Fatalf("project not moved with its work dir: %+v\n%s", res, out)
+	}
+	for _, m := range res.Remaps {
+		if m.To == oldApp {
+			t.Fatalf("project still remapped to the old target: %+v", res.Remaps)
+		}
+	}
 }
