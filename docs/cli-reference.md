@@ -618,7 +618,7 @@ Never carried:
 
 Windows names:
 - Device names (`CON`, `aux.md`, `COM1.txt`) are carried, with an export warning that Windows cannot write them. Import on Windows refuses them; other platforms write them.
-- `~N` names (`draft~2.md`) are ordinary names. On Windows, import checks the name of each file it opens and refuses a write whose name differs from the one asked for: an 8.3 short name such as `SETTIN~1.JSO` that opens an existing `settings.json`, or a trailing dot or space that Windows drops. A reference spelled as a short name is judged by its long name.
+- `~N` names (`draft~2.md`) are ordinary names. On Windows, import checks the name of each file it opens and refuses a write whose name differs from the one asked for: an 8.3 short name such as `SETTIN~1.JSO` that opens an existing `settings.json`. A reference spelled as a short name is judged by its long name.
 - Shell and login startup files (`.bashrc`, `.zshrc`, `.profile`, `.config/autostart`, `Library/LaunchAgents`, ...) and any other dotfile at the home root except `~/.claude.json`. Import refuses to write them from a bundle, too.
 
 Settings files that can hold tokens are redacted without `--include-secrets`. So are `~/.claude/hooks/` scripts, files in project rule directories that are neither prose nor TOML, credential-named files in any carried directory, files with a second hard link inside a tool's directory, and referenced files that are not prose, such as scripts and config files; Markdown and text are carried as is.

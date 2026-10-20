@@ -69,7 +69,7 @@
 - On Windows, every import write checks the name of the file it opened
   (`GetFinalPathNameByHandle`) and refuses one that differs from the name
   asked for: an 8.3 short name (`SETTIN~1.JSO`) aliasing a long-named file
-  or directory, or a trailing dot or space Windows drops. Names with `~N`
+  or directory. Names with `~N`
   (`draft~2.md`) are otherwise ordinary names on every OS, and a reference
   spelled as a short name is judged by its long name.
 - Import on Windows refuses Windows device names (`CON`, `NUL`, `aux.md`,

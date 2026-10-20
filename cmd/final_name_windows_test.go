@@ -81,14 +81,15 @@ func TestWriterRefusesShortNameDirectory(t *testing.T) {
 	}
 }
 
-// Windows stores "notes." as notes: the writer refuses and removes it.
-func TestWriterRefusesTrailingDot(t *testing.T) {
+// Windows stores "notes." as notes. That is the same name to every name
+// check, so it is not refused as an alias.
+func TestWriterAcceptsTrailingDotAsSameName(t *testing.T) {
 	root := t.TempDir()
-	if err := fsname.WriteFile(root, filepath.Join(root, "notes."), []byte("x"), 0o700, 0o600); err == nil {
-		t.Error("notes. accepted")
+	if err := fsname.WriteFile(root, filepath.Join(root, "notes."), []byte("x"), 0o700, 0o600); err != nil {
+		t.Fatalf("notes.: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "notes")); err == nil {
-		t.Error("notes left behind")
+	if got, err := os.ReadFile(filepath.Join(root, "notes")); err != nil || string(got) != "x" {
+		t.Errorf("notes = %q, %v", got, err)
 	}
 }
 

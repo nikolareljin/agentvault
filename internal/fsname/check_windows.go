@@ -12,10 +12,14 @@ import (
 )
 
 // Check refuses p when the file Windows opened for it is not the one
-// named: an 8.3 short name (SETTIN~1.JSO) opens settings.json, and "notes."
-// opens notes. Only the segments below root are compared; root itself may be
+// named: an 8.3 short name (SETTIN~1.JSO) opens settings.json. Only the segments below root are compared; root itself may be
 // spelled with short names (C:\Users\RUNNER~1\...).
 func Check(root, p string) error {
+	// A link resolves to its target by design; callers refuse links with
+	// their own error, so this check leaves them alone.
+	if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
 	f, err := os.Open(p)
 	if err != nil {
 		return err
@@ -36,8 +40,10 @@ func Check(root, p string) error {
 	}
 	got = got[len(got)-len(want):]
 	for i := range want {
-		if !strings.EqualFold(want[i], got[i]) {
-			return fmt.Errorf("%q opens %q on Windows (a short name or a dropped trailing dot or space); refused", p, final)
+		// Windows drops trailing dots and spaces ("config.json." is
+		// config.json); the name checks fold them the same way.
+		if !strings.EqualFold(strings.TrimRight(want[i], ". "), got[i]) {
+			return fmt.Errorf("%q opens %q on Windows (a short name for another file); refused", p, final)
 		}
 	}
 	return nil

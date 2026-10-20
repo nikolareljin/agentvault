@@ -28,8 +28,8 @@ func CheckBeforeWrite(root, p string) error {
 	}
 }
 
-// CheckAfterWrite runs Check on the file just written and
-// removes it when Windows stored it under another name ("notes." as notes).
+// CheckAfterWrite runs Check on the file just written and removes it when
+// Windows stored it under another name.
 func CheckAfterWrite(root, p string) error {
 	if err := Check(root, p); err != nil {
 		_ = os.Remove(p)
