@@ -138,7 +138,7 @@ func TestUnmatchedWorkDirNeedsAnswer(t *testing.T) {
 	}
 	var sum bytes.Buffer
 	printMissed(&sum, miss.Missed)
-	if !strings.Contains(sum.String(), "pass --workdir-map /old/Projects=<path here>") || !strings.Contains(sum.String(), "maybe: ") {
+	if !strings.Contains(sum.String(), "pass --workdir-map '/old/Projects'=<path here>") || !strings.Contains(sum.String(), "maybe: ") {
 		t.Errorf("summary:\n%s", sum.String())
 	}
 	o.WorkDirMaps = map[string]string{"/old/Projects": filepath.Join(o.Home, "src")}
@@ -303,7 +303,7 @@ func TestImportFindsProjectByRemote(t *testing.T) {
 	withFlags(t, importCmd, map[string]string{"apply-projects": "true"})
 
 	// Projects/ does not exist here: without --workdir-map nothing is written.
-	if err := runImport(importCmd, []string{bundlePath}); err == nil || !strings.Contains(in.String(), "--workdir-map "+filepath.Join(srcHome, "Projects")+"=") {
+	if err := runImport(importCmd, []string{bundlePath}); err == nil || !strings.Contains(in.String(), "--workdir-map '"+filepath.Join(srcHome, "Projects")+"'=") {
 		t.Fatalf("missing work dir not reported: %v\n%s", err, in.String())
 	}
 	setStringArray(t, importCmd.Flags(), "workdir-map", []string{filepath.Join(srcHome, "Projects") + "=" + filepath.Join(dstHome, "code")})
@@ -775,7 +775,7 @@ func TestImportTwoProfilesListMissingWorkDirOnce(t *testing.T) {
 	if !strings.Contains(in.String(), "Not imported (1):") {
 		t.Errorf("summary count:\n%s", in.String())
 	}
-	if n := strings.Count(in.String(), "pass --workdir-map "+filepath.Join(srcHome, "Projects")+"="); n != 1 {
+	if n := strings.Count(in.String(), "pass --workdir-map '"+filepath.Join(srcHome, "Projects")+"'="); n != 1 {
 		t.Errorf("work dir listed %d times:\n%s", n, in.String())
 	}
 	if strings.Contains(in.String(), "was not found here") {
@@ -788,14 +788,21 @@ func TestImportTwoProfilesListMissingWorkDirOnce(t *testing.T) {
 
 func TestFlagHintQuoting(t *testing.T) {
 	for from, want := range map[string]string{
-		"/old/Projects":     "--workdir-map /old/Projects=<path here>",
+		"/old/Projects":     "--workdir-map '/old/Projects'=<path here>",
 		"/old/My Projects":  "--workdir-map '/old/My Projects'=<path here>",
-		"/old/it's":         `--workdir-map '/old/it'\''s'=<path here>`,
-		`C:\Users\a\My Dir`: `--workdir-map "C:\Users\a\My Dir"=<path here>`,
-		`C:\Users\a\src`:    `--workdir-map "C:\Users\a\src"=<path here>`,
+		`C:\Users\a\My Dir`: `--workdir-map 'C:\Users\a\My Dir'=<path here>`,
+		`C:\a$(touch x)\b`:  `--workdir-map 'C:\a$(touch x)\b'=<path here>`,
+		`C:\a"b`:            `--workdir-map 'C:\a"b'=<path here>`,
+		"/a/`id`!":          "--workdir-map '/a/`id`!'=<path here>",
 	} {
 		if got := flagHint("--workdir-map", from); got != want {
 			t.Errorf("flagHint(%q) = %s, want %s", from, got, want)
+		}
+	}
+	for _, from := range []string{"/old/it's", `C:\%USERPROFILE%\x`} {
+		got := flagHint("--workdir-map", from)
+		if strings.Contains(got, "=<path here>") || !strings.Contains(got, "no ready command") {
+			t.Errorf("flagHint(%q) = %s, want no pasteable command", from, got)
 		}
 	}
 }
@@ -811,7 +818,7 @@ func TestNestedWorkDirKeepsAlias(t *testing.T) {
 			{ID: "p3", WorkDir: "w1", Abs: "/old/Projects/other", GitRemote: "github.com/acme/other"},
 		},
 	}
-	wds := []string{"/old/Projects", "/old/Projects/app"}
+	var wds []string // bundle work dirs only; the vault knows none
 	if !safeAlias("/old/Projects/app", bundle.Projects[0], "/home/me", wds, bundle) {
 		t.Error("nested repository's work dir took the parent project's alias")
 	}
@@ -848,5 +855,46 @@ func TestRememberedAnswerSavedOnce(t *testing.T) {
 	r.addNewMap("/a", "/y")
 	if len(r.NewMaps) != 1 || r.NewMaps[0].To != "/y" {
 		t.Errorf("addNewMap: %+v", r.NewMaps)
+	}
+}
+
+// The nested exception only covers the bundle's own work dirs, and only
+// when every project in them has an identity.
+func TestNestedExceptionDoesNotTrustBundle(t *testing.T) {
+	p1 := locations.Project{ID: "p1", WorkDir: "w1", Abs: "/home/u/Projects", GitRemote: "github.com/acme/app"}
+	bundle := &locations.Set{
+		WorkDirs: []locations.WorkDir{{ID: "w1", Abs: "/home/u"}, {ID: "w2", Abs: "/home/u/Projects"}},
+		Projects: []locations.Project{p1, {ID: "p2", WorkDir: "w2", Abs: "/home/u/Projects/zz", GitRemote: "github.com/acme/zz"}},
+	}
+	// Vault knows ~/Projects as a work dir: refused even with a nested layout.
+	if safeAlias(p1.Abs, p1, "/other/home", []string{"/home/u/Projects"}, bundle) {
+		t.Error("vault work dir accepted as alias")
+	}
+	// Without the vault entry the nested layout qualifies...
+	if !safeAlias(p1.Abs, p1, "/other/home", nil, bundle) {
+		t.Error("nested layout refused")
+	}
+	// ...but not when the nested project has no identity.
+	bundle.Projects[1].GitRemote = ""
+	if safeAlias(p1.Abs, p1, "/other/home", nil, bundle) {
+		t.Error("fake no-identity nested project made the alias acceptable")
+	}
+}
+
+// Through resolveBundleLocations: a vault-known work dir is passed to safeAlias.
+func TestVaultWorkDirRefusedAsAlias(t *testing.T) {
+	_, set, o := matchFixture(t)
+	set.WorkDirs = append(set.WorkDirs, locations.WorkDir{ID: "w2", Abs: "/old/Projects/app"})
+	set.Projects = append(set.Projects, locations.Project{ID: "p2", WorkDir: "w2", Abs: "/old/Projects/app/lib", GitRemote: "github.com/acme/lib"})
+	o.AcceptMatches = true
+	o.Known.WorkDirs = []locations.WorkDir{{ID: "w1", Abs: "/old/Projects/app"}}
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range res.Stored.Projects {
+		if p.GitRemote == "github.com/acme/app" && len(p.Aliases) != 0 {
+			t.Errorf("alias of a vault work dir stored: %+v", p)
+		}
 	}
 }

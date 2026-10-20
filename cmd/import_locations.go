@@ -99,15 +99,16 @@ func (r *locationResult) addNewMap(from, to string) {
 	r.NewMaps = append(r.NewMaps, pathRemap{From: from, To: to})
 }
 
-// flagHint is a flag line to paste into a shell: the bundle path quoted
-// (double quotes for a Windows path, single quotes otherwise) and the
-// placeholder outside the quotes, for example '/a b'=<path here>.
+// flagHint is a flag line to paste into a shell: the bundle path in single
+// quotes, which POSIX shells and PowerShell both take literally ($, `, ",
+// ! included), and the placeholder outside them: '/a b'=<path here>. A
+// path with ' (escaped differently by each shell) or % (expanded by
+// cmd.exe) gets no ready command.
 func flagHint(flag, from string) string {
-	q := shellQuote(from)
-	if windowsStylePath(from) && q != from {
-		q = `"` + from + `"`
+	if strings.ContainsAny(from, "'%") {
+		return "a mapping for " + printable(from) + " with " + flag + " (no ready command: the path holds ' or %)"
 	}
-	return flag + " " + q + "=<path here>"
+	return flag + " '" + from + "'=<path here>"
 }
 
 // shellQuote makes s one shell word.
@@ -244,19 +245,16 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		}
 	}
 
+	// Work dirs this machine vouches for (vault, saved and given mappings)
+	// never become an alias; the bundle's own work dirs may, only for a
+	// repository nested in the project (see nestedWorkDir).
 	o.workDirs = nil
 	o.bundle = set
-	for _, w := range set.WorkDirs {
-		o.workDirs = append(o.workDirs, w.Abs)
-	}
 	for _, w := range o.Known.WorkDirs {
 		o.workDirs = append(o.workDirs, w.Abs)
 	}
 	for k, v := range maps {
 		o.workDirs = append(o.workDirs, k, v)
-	}
-	for _, t := range targets {
-		o.workDirs = append(o.workDirs, t)
 	}
 	if err := matchAndConfirm(ctx, without(set, missed), sourceProject, targets, userChosen, o, out, &res); err != nil {
 		return res, err
@@ -495,7 +493,8 @@ func nestedWorkDir(alias string, p locations.Project, bundle *locations.Set) boo
 			return false
 		}
 		for _, q := range bundle.Projects {
-			if q.WorkDir == w.ID && (!locations.Below(alias, q.Abs) || locations.Below(q.Abs, alias)) {
+			// A project with no identity proves nothing about the layout.
+			if q.WorkDir == w.ID && (!locations.Below(alias, q.Abs) || locations.Below(q.Abs, alias) || q.GitRemote == "" && len(q.RootCommits) == 0) {
 				return false
 			}
 		}
@@ -572,11 +571,18 @@ func safeAlias(alias string, p locations.Project, home string, workDirs []string
 	// ~/Projects as the alias of one repository would pull every pattern
 	// for the folder onto it.
 	for _, w := range workDirs {
-		if !locations.Below(alias, w) {
-			continue
-		}
-		if !locations.Below(w, alias) || !nestedWorkDir(alias, p, bundle) {
+		if locations.Below(alias, w) {
 			return false
+		}
+	}
+	if bundle != nil {
+		for _, w := range bundle.WorkDirs {
+			if !locations.Below(alias, w.Abs) {
+				continue
+			}
+			if !locations.Below(w.Abs, alias) || !nestedWorkDir(alias, p, bundle) {
+				return false
+			}
 		}
 	}
 	for _, set := range known {
