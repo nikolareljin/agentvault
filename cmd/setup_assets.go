@@ -1507,18 +1507,20 @@ func writeRegularFileAtomic(root string, destPath string, content []byte, perm o
 	if err := ensureNoSymlinkBelow(root, destDir); err != nil {
 		return err
 	}
+	// Seen before the name check, so a file that appears after it (an 8.3
+	// alias) is never replaced: see finalRename.
+	_, statErr := os.Lstat(destPath)
+	existed := statErr == nil
 	if err := fsname.CheckBeforeWrite(root, destPath); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
-	existed := false
 	if info, err := os.Lstat(destPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("destination path is a symlink and is not allowed: %q", destPath)
 		}
-		existed = true
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -1569,18 +1571,20 @@ func copyRegularFile(srcPath string, root string, destPath string, perm os.FileM
 	if err := ensureNoSymlinkBelow(root, destDir); err != nil {
 		return err
 	}
+	// Seen before the name check, so a file that appears after it (an 8.3
+	// alias) is never replaced: see finalRename.
+	_, statErr := os.Lstat(destPath)
+	existed := statErr == nil
 	if err := fsname.CheckBeforeWrite(root, destPath); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
-	existed := false
 	if info, err := os.Lstat(destPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("destination path is a symlink and is not allowed: %q", destPath)
 		}
-		existed = true
 	} else if !os.IsNotExist(err) {
 		return err
 	}

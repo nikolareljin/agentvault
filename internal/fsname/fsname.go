@@ -41,6 +41,9 @@ func CheckAfterWrite(root, p string) error {
 
 // WriteFile is os.WriteFile with the final-name checks on both sides.
 func WriteFile(root, p string, data []byte, dirPerm, perm os.FileMode) error {
+	// Seen before the check: a file that appears after it is never trusted.
+	_, statErr := os.Lstat(p)
+	absent := os.IsNotExist(statErr)
 	if err := CheckBeforeWrite(root, p); err != nil {
 		return err
 	}
@@ -51,7 +54,7 @@ func WriteFile(root, p string, data []byte, dirPerm, perm os.FileMode) error {
 	if runtime.GOOS == "windows" {
 		// Absent at the check: create only, so an alias that appears
 		// meanwhile fails the open instead of being overwritten.
-		if _, err := os.Lstat(p); os.IsNotExist(err) {
+		if absent {
 			flag = os.O_WRONLY | os.O_CREATE | os.O_EXCL
 		}
 	}
