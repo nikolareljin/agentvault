@@ -1481,6 +1481,23 @@ func replaceRegularFile(tmpPath string, destPath string) error {
 	return nil
 }
 
+// beforeFinalRename is a test hook run between the name checks and the
+// rename that publishes the file.
+var beforeFinalRename func(destPath string)
+
+// finalRename moves tmpPath to destPath. On Windows a destination that was
+// absent at the check is created only, never replaced: an 8.3 alias that
+// appeared since (SETTIN~1.JSO for settings.json) makes the rename fail
+// instead of overwriting the long-named file. A destination that existed
+// was checked to be its own long name, so replacing it is safe.
+func finalRename(tmpPath, destPath string, existed bool) error {
+	if beforeFinalRename != nil {
+		beforeFinalRename(destPath)
+	}
+	_ = existed
+	return replaceRegularFile(tmpPath, destPath)
+}
+
 // writeRegularFileAtomic writes destPath, refusing symlinks in the path below
 // root. root and its ancestors are trusted (macOS /var -> /private/var).
 func writeRegularFileAtomic(root string, destPath string, content []byte, perm os.FileMode) error {
@@ -1494,10 +1511,12 @@ func writeRegularFileAtomic(root string, destPath string, content []byte, perm o
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
+	existed := false
 	if info, err := os.Lstat(destPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("destination path is a symlink and is not allowed: %q", destPath)
 		}
+		existed = true
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -1522,7 +1541,7 @@ func writeRegularFileAtomic(root string, destPath string, content []byte, perm o
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	if err := replaceRegularFile(tmpPath, destPath); err != nil {
+	if err := finalRename(tmpPath, destPath, existed); err != nil {
 		return err
 	}
 	tmpPath = ""
@@ -1554,10 +1573,12 @@ func copyRegularFile(srcPath string, root string, destPath string, perm os.FileM
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return err
 	}
+	existed := false
 	if info, err := os.Lstat(destPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("destination path is a symlink and is not allowed: %q", destPath)
 		}
+		existed = true
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -1582,7 +1603,7 @@ func copyRegularFile(srcPath string, root string, destPath string, perm os.FileM
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	if err := replaceRegularFile(tmpPath, destPath); err != nil {
+	if err := finalRename(tmpPath, destPath, existed); err != nil {
 		return err
 	}
 	tmpPath = ""

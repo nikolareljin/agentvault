@@ -136,3 +136,64 @@ func TestApplyProjectsRefusesShortNameAlias(t *testing.T) {
 		t.Errorf("backups written: %v", matches)
 	}
 }
+
+// An alias that appears between the name check and the rename (another
+// process creates the long file) must fail the rename, not replace the
+// long file, and nothing may be removed afterwards.
+func TestWritersDoNotReplaceAliasCreatedAfterCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(root, dest string) error
+	}{
+		{"atomic", func(root, dest string) error {
+			return writeRegularFileAtomic(root, dest, []byte("evil"), 0o600)
+		}},
+		{"copy", func(root, dest string) error {
+			src := filepath.Join(t.TempDir(), "src")
+			mustWriteFile(t, src, "evil")
+			return copyRegularFile(src, root, dest, 0o600)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			long := filepath.Join(root, "settings-long-name.json")
+			mustWriteFile(t, long, "orig")
+			alias := filepath.Join(root, shortBase(t, long))
+			if err := os.Remove(long); err != nil {
+				t.Fatal(err)
+			}
+			beforeFinalRename = func(string) { mustWriteFile(t, long, "orig") }
+			defer func() { beforeFinalRename = nil }()
+			if _, err := os.Lstat(alias); err == nil {
+				t.Fatalf("%s exists before the write", alias)
+			}
+
+			err := tc.write(root, alias)
+			got, rerr := os.ReadFile(long)
+			if rerr != nil {
+				t.Fatalf("long-named file lost: %v (write err %v)", rerr, err)
+			}
+			if string(got) != "orig" {
+				t.Fatalf("long-named file = %q, want orig (write err %v)", got, err)
+			}
+			if err == nil {
+				t.Fatal("write through a fresh alias succeeded")
+			}
+		})
+	}
+}
+
+// CheckAfterWrite reports an alias and leaves the long file in place.
+func TestCheckAfterWriteKeepsAliasedFile(t *testing.T) {
+	root := t.TempDir()
+	long := filepath.Join(root, "settings-long-name.json")
+	mustWriteFile(t, long, "orig")
+	alias := filepath.Join(root, shortBase(t, long))
+	err := fsname.CheckAfterWrite(root, alias)
+	if err == nil {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(long); err != nil {
+		t.Fatalf("long-named file removed: %v", err)
+	}
+}
