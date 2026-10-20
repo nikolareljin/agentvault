@@ -131,9 +131,12 @@ func NormalizeRemote(raw string) (string, bool) {
 	return host + "/" + strings.Join(segs, "/"), true
 }
 
-// Runner runs git against one repository directory and returns its stdout.
-// Tests replace it.
-type Runner func(ctx context.Context, gitDir string, args ...string) ([]byte, error)
+// Runner runs git against one repository (its git dir and common dir, both
+// already owner-checked) and returns its stdout. Tests replace it.
+type Runner func(ctx context.Context, gitDir, commonDir string, args ...string) ([]byte, error)
+
+// ownerCheck is ownedByCurrentUser; tests replace it.
+var ownerCheck = ownedByCurrentUser
 
 // gitTimeout bounds one git call; a hung git must not hang an export.
 const gitTimeout = 5 * time.Second
@@ -143,10 +146,10 @@ const gitTimeout = 5 * time.Second
 // from a promisor remote, no protocol allowed), no global or system config,
 // no prompt. It names the repository with --git-dir so git does not search
 // parents. Identify calls it only for a repository owned by this user.
-func ExecGit(ctx context.Context, gitDir string, args ...string) ([]byte, error) {
+func ExecGit(ctx context.Context, gitDir, commonDir string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	full, env := gitInvocation(gitDir, args...)
+	full, env := gitInvocation(gitDir, commonDir, args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
 	cmd.Env = env
 	var stderr bytes.Buffer
@@ -159,7 +162,9 @@ func ExecGit(ctx context.Context, gitDir string, args ...string) ([]byte, error)
 }
 
 // gitInvocation is the argument list and environment ExecGit uses.
-func gitInvocation(gitDir string, args ...string) ([]string, []string) {
+// GIT_COMMON_DIR pins the common dir to the one that was checked, so git
+// does not re-read commondir itself.
+func gitInvocation(gitDir, commonDir string, args ...string) ([]string, []string) {
 	full := []string{
 		"--git-dir=" + gitDir,
 		"-c", "core.hooksPath=" + os.DevNull,
@@ -172,6 +177,7 @@ func gitInvocation(gitDir string, args ...string) ([]string, []string) {
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
 		"GIT_TERMINAL_PROMPT=0",
+		"GIT_COMMON_DIR="+commonDir,
 	)
 	return append(full, args...), env
 }
@@ -200,11 +206,17 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 	}
 	common := gitDir
 	if b, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
-		c := strings.TrimSpace(string(b))
-		if !filepath.IsAbs(c) {
-			c = filepath.Join(gitDir, c)
+		common = parseCommonDir(gitDir, b)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Repo{}, err
+	}
+	// Resolve links once; every later read, check and git call uses these.
+	for _, p := range []*string{&root, &gitDir, &common} {
+		if rp, err := filepath.EvalSymlinks(*p); err == nil {
+			*p = rp
+		} else {
+			return Repo{}, err
 		}
-		common = filepath.Clean(c)
 	}
 	r := Repo{Root: root, GitDir: gitDir, CommonDir: common}
 	if b, err := os.ReadFile(filepath.Join(common, "config")); err == nil {
@@ -219,11 +231,11 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 	if !born {
 		return r, nil
 	}
-	if !ownedByCurrentUser(common) {
+	if !ownedPaths(root, gitDir, common) {
 		r.RootSkipped = "repository not owned by the current user"
 		return r, nil
 	}
-	out, err := run(ctx, gitDir, "rev-list", "--max-parents=0", "HEAD")
+	out, err := run(ctx, gitDir, common, "rev-list", "--max-parents=0", "HEAD")
 	if err != nil {
 		return Repo{}, err
 	}
@@ -235,6 +247,33 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 	}
 	sort.Strings(r.RootCommits)
 	return r, nil
+}
+
+// parseCommonDir reads a commondir file the way git does: only trailing
+// CR and LF are removed, and a relative path is relative to gitDir.
+func parseCommonDir(gitDir string, b []byte) string {
+	c := strings.TrimRight(string(b), "\r\n")
+	if !filepath.IsAbs(c) {
+		c = filepath.Join(gitDir, c)
+	}
+	return filepath.Clean(c)
+}
+
+// ownedPaths reports whether the work tree, both git dirs and every config
+// file git would load from them belong to this user. A missing config file
+// is fine; a foreign one is not.
+func ownedPaths(root, gitDir, common string) bool {
+	for _, p := range []string{root, gitDir, common} {
+		if !ownerCheck(p) {
+			return false
+		}
+	}
+	for _, p := range []string{filepath.Join(common, "config"), filepath.Join(gitDir, "config.worktree")} {
+		if _, err := os.Lstat(p); err == nil && !ownerCheck(p) {
+			return false
+		}
+	}
+	return true
 }
 
 // findGitDir walks up from dir to the first directory holding .git and
@@ -295,7 +334,7 @@ func headBorn(gitDir, common string) (bool, error) {
 		return false, nil
 	}
 	for _, d := range []string{gitDir, common} {
-		if _, err := os.Stat(filepath.Join(d, filepath.FromSlash(ref))); err == nil {
+		if _, err := os.Stat(filepath.Join(d, filepath.FromSlash(ref))); err == nil { // #nosec G703 -- ref is checked by filepath.IsLocal above
 			return true, nil
 		}
 	}

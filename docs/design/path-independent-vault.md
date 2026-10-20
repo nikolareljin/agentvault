@@ -50,10 +50,14 @@ Project { id, work_dir, rel, abs, git_remote, root_commits[], namespace }
   (`NUL` on Windows), `core.fsmonitor=false`, `protocol.allow=never`,
   `remote.origin.promisor=false`, env `GIT_NO_LAZY_FETCH=1`,
   `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
-  `GIT_TERMINAL_PROMPT=0`, other `GIT_*` removed, 5 s timeout. It runs only
-  when the repository dir is owned by the current user (Unix uid check;
-  on Windows git's own safe.directory check, with no global config, refuses
-  a foreign owner). Unborn HEAD, or a HEAD ref outside `refs/`, is detected
+  `GIT_TERMINAL_PROMPT=0`, `GIT_COMMON_DIR` set to the checked common dir,
+  other `GIT_*` removed, 5 s timeout. `commondir` is parsed as git does
+  (trailing CR/LF only, relative to the git dir) and all paths are resolved
+  through symlinks first. Git runs only when the work tree, git dir, common
+  dir, `config` and `config.worktree` are all owned by the current user
+  (Unix uid). On Windows the check fails closed: no git, root commits
+  empty, `RootSkipped` set; an owner-SID check is future work.
+  Unborn HEAD, or a HEAD ref outside `refs/`, is detected
   from files and skips git. No git binary: project keeps path only.
 - Normalized remotes never hold `@` or `:` in a path segment; scp-like
   `user:token@host:path` drops everything up to the last `@` before the
@@ -141,3 +145,5 @@ A memory dir key that would collide is still refused and reported.
    github.com, bitbucket.org (GitLab paths are case-sensitive)?
 4. Record work dirs in the vault itself (for `instructions push`), or only in
    export bundles for now?
+5. Windows: add an owner-SID check (x/sys/windows) so local-only repos can
+   match by root commit there, or accept remote-only matching on Windows?

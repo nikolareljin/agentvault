@@ -2,6 +2,6 @@
 
 package gitid
 
-// ownedByCurrentUser on Windows defers to git's own safe.directory owner
-// check, which refuses a repository owned by another user.
-func ownedByCurrentUser(string) bool { return true }
+// ownedByCurrentUser fails closed on Windows: without an owner SID check,
+// git is not run and root commits are not read.
+func ownedByCurrentUser(string) bool { return false }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -146,6 +147,7 @@ func needGit(t *testing.T) {
 
 func newRepo(t *testing.T, remote string) (string, string) {
 	t.Helper()
+	trustOwnerOnWindows(t)
 	dir := t.TempDir()
 	git(t, dir, "init", "-q")
 	if remote != "" {
@@ -175,7 +177,7 @@ func TestIdentifyRepoAndSubdir(t *testing.T) {
 		if len(r.RootCommits) != 1 || r.RootCommits[0] != root {
 			t.Errorf("%s: roots %v, want [%s]", d, r.RootCommits, root)
 		}
-		if r.Root != dir {
+		if !sameFile(r.Root, dir) {
 			t.Errorf("%s: root %q, want %q", d, r.Root, dir)
 		}
 	}
@@ -186,7 +188,7 @@ func TestIdentifyNoCommitsDoesNotRunGit(t *testing.T) {
 	dir := t.TempDir()
 	git(t, dir, "init", "-q")
 	called := false
-	r, err := Identify(context.Background(), dir, func(context.Context, string, ...string) ([]byte, error) {
+	r, err := Identify(context.Background(), dir, func(context.Context, string, string, ...string) ([]byte, error) {
 		called = true
 		return nil, errors.New("must not run")
 	})
@@ -216,7 +218,7 @@ func TestIdentifyWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Root != wt || r.Remote != "gitlab.com/g/sub/r" || len(r.RootCommits) != 1 || r.RootCommits[0] != root {
+	if !sameFile(r.Root, wt) || r.Remote != "gitlab.com/g/sub/r" || len(r.RootCommits) != 1 || r.RootCommits[0] != root {
 		t.Fatalf("got %+v", r)
 	}
 	if !sameFile(r.CommonDir, filepath.Join(dir, ".git")) || sameFile(r.GitDir, r.CommonDir) {
@@ -295,7 +297,7 @@ func TestIdentifyRejectsHeadRefOutsideRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := false
-	r, err := Identify(context.Background(), dir, func(context.Context, string, ...string) ([]byte, error) {
+	r, err := Identify(context.Background(), dir, func(context.Context, string, string, ...string) ([]byte, error) {
 		called = true
 		return nil, nil
 	})
@@ -305,7 +307,7 @@ func TestIdentifyRejectsHeadRefOutsideRefs(t *testing.T) {
 }
 
 func TestExecGitHardening(t *testing.T) {
-	args, env := gitInvocation("/x/.git", "rev-list")
+	args, env := gitInvocation("/x/.git", "/x/common", "rev-list")
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"--git-dir=/x/.git", "core.hooksPath=" + os.DevNull, "core.fsmonitor=false", "protocol.allow=never", "remote.origin.promisor=false"} {
 		if !strings.Contains(joined, want) {
@@ -313,7 +315,7 @@ func TestExecGitHardening(t *testing.T) {
 		}
 	}
 	envs := strings.Join(env, "\n")
-	for _, want := range []string{"GIT_NO_LAZY_FETCH=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0"} {
+	for _, want := range []string{"GIT_NO_LAZY_FETCH=1", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_COMMON_DIR=/x/common"} {
 		if !strings.Contains(envs, want) {
 			t.Errorf("env lacks %q", want)
 		}
@@ -340,7 +342,7 @@ func TestIdentifyBadGitFile(t *testing.T) {
 func TestIdentifyRejectsBadRunnerOutput(t *testing.T) {
 	needGit(t)
 	dir, _ := newRepo(t, "")
-	_, err := Identify(context.Background(), dir, func(context.Context, string, ...string) ([]byte, error) {
+	_, err := Identify(context.Background(), dir, func(context.Context, string, string, ...string) ([]byte, error) {
 		return []byte("not-a-hash\n"), nil
 	})
 	if err == nil {
@@ -351,10 +353,74 @@ func TestIdentifyRejectsBadRunnerOutput(t *testing.T) {
 func TestIdentifyRunnerErrorPropagates(t *testing.T) {
 	needGit(t)
 	dir, _ := newRepo(t, "")
-	_, err := Identify(context.Background(), dir, func(context.Context, string, ...string) ([]byte, error) {
+	_, err := Identify(context.Background(), dir, func(context.Context, string, string, ...string) ([]byte, error) {
 		return nil, errors.New("boom")
 	})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// trustOwnerOnWindows lets the tests that read root commits run on Windows,
+// where the real owner check fails closed.
+func trustOwnerOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	old := ownerCheck
+	ownerCheck = func(string) bool { return true }
+	t.Cleanup(func() { ownerCheck = old })
+}
+
+func TestParseCommonDir(t *testing.T) {
+	g := filepath.Join(string(filepath.Separator)+"r", ".git", "worktrees", "w")
+	cases := []struct{ content, want string }{
+		{"../..\n", filepath.Join(g, "..", "..")},
+		{"../..\r\n", filepath.Join(g, "..", "..")},
+		{"../.. \n", filepath.Join(g, "..", ".. ")},
+		{" x\n", filepath.Join(g, " x")},
+	}
+	for _, c := range cases {
+		if got := parseCommonDir(g, []byte(c.content)); got != c.want {
+			t.Errorf("parseCommonDir(%q) = %q, want %q", c.content, got, c.want)
+		}
+	}
+}
+
+func TestIdentifyChecksOwnerOfEveryPathGitLoads(t *testing.T) {
+	needGit(t)
+	dir, _ := newRepo(t, "")
+	wt := filepath.Join(t.TempDir(), "wt")
+	git(t, dir, "worktree", "add", "-q", "-b", "side", wt)
+	git(t, wt, "config", "extensions.worktreeConfig", "true")
+	git(t, wt, "config", "--worktree", "x.y", "z")
+	var seen []string
+	old := ownerCheck
+	t.Cleanup(func() { ownerCheck = old })
+	ownerCheck = func(p string) bool { seen = append(seen, p); return true }
+	r, err := Identify(context.Background(), wt, nil)
+	if err != nil || len(r.RootCommits) != 1 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	for _, want := range []string{r.Root, r.GitDir, r.CommonDir, filepath.Join(r.CommonDir, "config"), filepath.Join(r.GitDir, "config.worktree")} {
+		found := false
+		for _, p := range seen {
+			found = found || p == want
+		}
+		if !found {
+			t.Errorf("owner of %q not checked; checked %v", want, seen)
+		}
+	}
+	// Any one foreign path skips git.
+	for _, bad := range []string{filepath.Join(r.CommonDir, "config"), filepath.Join(r.GitDir, "config.worktree"), r.Root} {
+		ownerCheck = func(p string) bool { return p != bad }
+		called := false
+		r2, err := Identify(context.Background(), wt, func(context.Context, string, string, ...string) ([]byte, error) {
+			called = true
+			return nil, nil
+		})
+		if err != nil || called || r2.RootSkipped == "" || len(r2.RootCommits) != 0 {
+			t.Errorf("foreign %s: %+v %v called=%v", bad, r2, err, called)
+		}
 	}
 }
