@@ -120,7 +120,7 @@ func TestHomeReferenceShortNameJudgedByLongName(t *testing.T) {
 func TestApplyProjectsRefusesShortNameAlias(t *testing.T) {
 	cfg := t.TempDir()
 	project := t.TempDir()
-	long := filepath.Join(project, "settings-long-name.json")
+	long := filepath.Join(project, "notes-long-name.md")
 	mustWriteFile(t, long, "orig")
 	alias := shortBase(t, long)
 	mustWriteFile(t, filepath.Join(cfg, setupImportedAssetsDirName, "project", alias), "evil")
