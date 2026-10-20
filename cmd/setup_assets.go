@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -1156,10 +1157,15 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		original, _ := ctx.original(dest)
 		current, _ := readExistingFile(dest)
 		desc := describeSetupAsset(asset)
+		if !ctx.KeepBundleCommands && scriptAsset(asset) && !bytes.Equal(original, content) {
+			// A kept hook command would run whatever script is here.
+			warnings = append(warnings, fmt.Sprintf("provider asset %s: left out script, which the bundle adds or changes; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+			continue
+		}
 		if !ctx.KeepBundleCommands {
 			if asset.LogicalRoot == setupAssetRootProviderCodex && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.toml") {
 				if codexCommandsChanged(content, original) {
-					warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, it adds or changes mcp_servers or notify commands; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+					warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, it adds or changes mcp_servers, notify, model_providers or another command, or does not parse; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 					continue
 				}
 			} else {

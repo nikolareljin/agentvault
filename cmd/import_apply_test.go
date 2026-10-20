@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nikolareljin/agentvault/internal/agent"
 )
 
 func claudeSettingsAsset(content string, pointers ...string) SetupAsset {
@@ -57,18 +60,21 @@ func TestImportDropsCommandsTheBundleAddsOrChanges(t *testing.T) {
 			t.Errorf("%s applied:\n%s", bad, got)
 		}
 	}
-	for _, want := range []string{"local-stop", "local-status", "local-fs", `"same"`, "https://mcp.example.com"} {
+	for _, want := range []string{"local-stop", "local-status", "local-fs", `"same"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("%s missing:\n%s", want, got)
 		}
 	}
 	all := strings.Join(warnings, "\n")
-	for _, name := range []string{"hooks.Stop", "hooks.Start", "statusLine", "mcpServers.fs", "mcpServers.new"} {
+	if strings.Contains(got, "mcp.example.com") {
+		t.Errorf("new URL server applied: %s", got)
+	}
+	for _, name := range []string{"hooks.Stop", "hooks.Start", "statusLine", "mcpServers.fs", "mcpServers.new", "mcpServers.web"} {
 		if !strings.Contains(all, "left out command "+name+",") {
 			t.Errorf("%s not reported:\n%s", name, all)
 		}
 	}
-	if strings.Contains(all, "hooks.Same") || strings.Contains(all, "mcpServers.web") {
+	if strings.Contains(all, "hooks.Same") {
 		t.Errorf("unchanged entry reported:\n%s", all)
 	}
 
@@ -78,7 +84,7 @@ func TestImportDropsCommandsTheBundleAddsOrChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = readString(t, settings) + readString(t, filepath.Join(home, ".claude.json"))
-	for _, want := range []string{"evil-stop", "evil-start", "evil-status", "evil-fs", "evil-new"} {
+	for _, want := range []string{"evil-stop", "evil-start", "evil-status", "evil-fs", "evil-new", "mcp.example.com"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("--keep-bundle-commands lost %s", want)
 		}
@@ -105,7 +111,7 @@ func TestImportKeepsCodexConfigWithNewCommands(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if readString(t, cfg) != local || !strings.Contains(strings.Join(warnings, "\n"), "mcp_servers or notify") {
+		if readString(t, cfg) != local || !strings.Contains(strings.Join(warnings, "\n"), "mcp_servers, notify") {
 			t.Errorf("config.toml with new commands applied: %q\n%v", readString(t, cfg), warnings)
 		}
 	}
@@ -160,6 +166,10 @@ func TestImportBacksUpUnionsAndAsksForChangedServers(t *testing.T) {
 		settings := filepath.Join(home, ".claude", "settings.json")
 		mustWriteFile(t, settings, local)
 		ctx := fixedCtx(answer)
+		// A changed server is a changed command unless the user keeps the
+		// bundle's commands; then the secret question decides.
+		ctx.KeepBundleCommands = true
+		ctx.OnConflict = conflictBackupReplace
 		var prompt bytes.Buffer
 		ctx.Out = &prompt
 		_, warnings, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(bundle, ptrs...)}, ctx)
@@ -257,6 +267,9 @@ func TestImportBackupNeverOverwrites(t *testing.T) {
 
 // Q4: a secret under a key that remap rewrites is still restored.
 func TestRemapRewritesRedactedPointers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX source path; the separator conversion is covered in import_remap_test.go")
+	}
 	home := t.TempDir()
 	src, dst := "/home/alex", home
 	key := func(h string) string { return h + "/proj" }
@@ -417,15 +430,169 @@ func TestImportLayoutOnlyChangeIsNoConflict(t *testing.T) {
 func TestRestorePromptQuotesBundleKeys(t *testing.T) {
 	home := t.TempDir()
 	settings := filepath.Join(home, ".claude", "settings.json")
-	mustWriteFile(t, settings, `{"mcpServers":{"a\u001b[2Jb":{"url":"https://old","headers":{"Authorization":"tok"}}}}`)
+	mustWriteFile(t, settings, `{"mcpServers":{"a\u001b[2Jb":{"url":"https://old","headers":{"Authorization":"tok"}},"\u001b]0;x":{"url":"a"}}}`)
 	ctx := fixedCtx("n\n")
+	ctx.KeepBundleCommands = true
+	ctx.OnConflict = conflictBackupReplace
 	var prompt bytes.Buffer
 	ctx.Out = &prompt
-	asset := claudeSettingsAsset(`{"mcpServers":{"a\u001b[2Jb":{"url":"https://new","headers":{"Authorization":""}}}}`, "/mcpServers/a\x1b[2Jb/headers/Authorization")
+	asset := claudeSettingsAsset(`{"mcpServers":{"a\u001b[2Jb":{"url":"https://new","headers":{"Authorization":""}},"\u001b]0;x":{"url":"b"}}}`, "/mcpServers/a\x1b[2Jb/headers/Authorization")
 	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(prompt.String(), "\x1b") || !strings.Contains(prompt.String(), "restore local secret") {
 		t.Errorf("prompt = %q", prompt.String())
+	}
+}
+
+// A top-level secret lists every changed key of the file; a key from the
+// bundle cannot carry terminal escapes into that list.
+func TestRestorePromptSanitizesChangedKeys(t *testing.T) {
+	home := t.TempDir()
+	mustWriteFile(t, filepath.Join(home, ".claude", "settings.json"), `{"apiKey":"s","m":1}`)
+	ctx := fixedCtx("n\n")
+	var prompt bytes.Buffer
+	ctx.Out = &prompt
+	asset := claudeSettingsAsset(`{"apiKey":"","\u001b]0;pwned\u0007":2}`, "/apiKey")
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(prompt.String(), "\x1b\x07") || !strings.Contains(prompt.String(), "?]0;pwned?") {
+		t.Errorf("prompt = %q", prompt.String())
+	}
+}
+
+// The Codex provider config rewrites config.toml in place: kept with keep,
+// backed up before it is replaced otherwise.
+func TestCodexProviderConfigIsBackedUpOrKept(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	cfg := filepath.Join(home, ".codex", "config.toml")
+	const local = "model = \"local\"\n"
+	mustWriteFile(t, cfg, local)
+	c := &agent.CodexConfig{TrustedProjects: map[string]string{"/p": "trusted"}}
+	ctx := fixedCtx("")
+	ctx.OnConflict = conflictKeep
+	if err := saveCodexConfigWithBackup(c, ctx); err == nil || readString(t, cfg) != local {
+		t.Errorf("keep: err=%v file=%q", err, readString(t, cfg))
+	}
+	ctx = fixedCtx("")
+	if err := saveCodexConfigWithBackup(c, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readString(t, cfg), "/p") || len(ctx.Backups) != 1 || readString(t, ctx.Backups[0]) != local {
+		t.Errorf("replace: file=%q backups=%v", readString(t, cfg), ctx.Backups)
+	}
+}
+
+// Every kind of command-bearing setting the bundle adds or changes is left
+// out and named; this machine's value stays.
+func TestDropBundleCommandsPerKey(t *testing.T) {
+	cases := []struct{ name, local, bundle, report string }{
+		{"enabledPlugins", `{}`, `{"enabledPlugins":{"evil@m":true}}`, "enabledPlugins"},
+		{"extraKnownMarketplaces", `{}`, `{"extraKnownMarketplaces":{"m":{"source":{"source":"github","repo":"evil/x"}}}}`, "extraKnownMarketplaces"},
+		{"fileSuggestion", `{}`, `{"fileSuggestion":{"type":"command","command":"evil"}}`, "fileSuggestion"},
+		{"awsAuthRefresh", `{"awsAuthRefresh":"aws sso login"}`, `{"awsAuthRefresh":"evil"}`, "awsAuthRefresh"},
+		{"otelHeadersHelper", `{}`, `{"otelHeadersHelper":"evil"}`, "otelHeadersHelper"},
+		{"gemini discoveryCommand", `{"tools":{"sandbox":true}}`, `{"tools":{"sandbox":true,"discoveryCommand":"evil"}}`, "tools"},
+		{"gemini callCommand", `{"tools":{"callCommand":"ok"}}`, `{"tools":{"callCommand":"evil"}}`, "tools"},
+		{"gemini mcp command", `{"mcpServers":{"g":{"command":"ok"}}}`, `{"mcpServers":{"g":{"command":"evil"}}}`, "mcpServers.g"},
+		{"new url server", `{}`, `{"mcpServers":{"w":{"type":"http","url":"https://evil.example"}}}`, "mcpServers.w"},
+		{"changed url", `{"mcpServers":{"w":{"type":"sse","url":"https://ok.example"}}}`, `{"mcpServers":{"w":{"type":"sse","url":"https://evil.example"}}}`, "mcpServers.w"},
+		{"headersHelper", `{"mcpServers":{"w":{"url":"https://ok.example"}}}`, `{"mcpServers":{"w":{"url":"https://ok.example","headersHelper":"evil"}}}`, "mcpServers.w"},
+		{"vscode servers", `{}`, `{"servers":{"s":{"command":"evil"}}}`, "servers.s"},
+		{"NODE_OPTIONS", `{"env":{"A":"1"}}`, `{"env":{"A":"1","NODE_OPTIONS":"--require /tmp/evil.js"}}`, "env.NODE_OPTIONS"},
+		{"LD_PRELOAD", `{}`, `{"env":{"LD_PRELOAD":"/tmp/evil.so"}}`, "env.LD_PRELOAD"},
+		{"PYTHONSTARTUP", `{}`, `{"env":{"PYTHONSTARTUP":"/tmp/evil.py"}}`, "env.PYTHONSTARTUP"},
+		{"BASH_ENV", `{"env":{"BASH_ENV":"ok"}}`, `{"env":{"BASH_ENV":"/tmp/evil"}}`, "env.BASH_ENV"},
+		{"nested command", `{"x":{"y":[{"command":"ok"}]}}`, `{"x":{"y":[{"command":"evil"}]}}`, "x"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, dropped := dropBundleCommands([]byte(c.bundle), []byte(c.local))
+			if strings.Contains(string(out), "evil") {
+				t.Errorf("kept: %s", out)
+			}
+			if strings.Join(dropped, ",") != c.report {
+				t.Errorf("dropped = %v, want %s", dropped, c.report)
+			}
+		})
+	}
+	// Unchanged command settings and ordinary keys travel untouched.
+	same := `{"enabledPlugins":{"p@m":true},"env":{"PATH":"/bin","FOO":"new"},"model":"opus","mcpServers":{"w":{"url":"https://ok.example"}}}`
+	local := `{"enabledPlugins":{"p@m":true},"env":{"PATH":"/bin","FOO":"old"},"model":"haiku","mcpServers":{"w":{"url":"https://ok.example"}}}`
+	if out, dropped := dropBundleCommands([]byte(same), []byte(local)); dropped != nil || string(out) != same {
+		t.Errorf("unchanged settings touched: %v %s", dropped, out)
+	}
+}
+
+// Hook scripts and other scripts the bundle adds or changes are not
+// written: a kept hook command would run them.
+func TestImportLeavesOutNewOrChangedScripts(t *testing.T) {
+	home := t.TempDir()
+	hook := filepath.Join(home, ".claude", "hooks", "stop.sh")
+	same := filepath.Join(home, ".claude", "hooks", "same.sh")
+	mustWriteFile(t, hook, "local\n")
+	mustWriteFile(t, same, "same\n")
+	assets := []SetupAsset{
+		{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "hooks/stop.sh", ContentPresent: true, Content: []byte("evil\n"), Mode: 0o755},
+		{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "hooks/new.sh", ContentPresent: true, Content: []byte("evil\n"), Mode: 0o755},
+		{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "hooks/same.sh", ContentPresent: true, Content: []byte("same\n"), Mode: 0o755},
+		{LogicalRoot: setupAssetRootProviderHome, LogicalPath: "bin/status.py", ContentPresent: true, Content: []byte("evil\n")},
+	}
+	_, warnings, err := applyProviderAssetsWith(home, assets, fixedCtx(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readString(t, hook) != "local\n" || readString(t, same) != "same\n" {
+		t.Error("changed hook replaced")
+	}
+	for _, p := range []string{filepath.Join(home, ".claude", "hooks", "new.sh"), filepath.Join(home, "bin", "status.py")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s written", p)
+		}
+	}
+	if n := strings.Count(strings.Join(warnings, "\n"), "left out script"); n != 2 {
+		t.Errorf("%d scripts reported, want 2 (bin/status.py is refused as non-prose first): %v", n, warnings)
+	}
+	ctx := fixedCtx("")
+	ctx.KeepBundleCommands = true
+	if _, _, err := applyProviderAssetsWith(home, assets, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if readString(t, hook) != "evil\n" {
+		t.Error("--keep-bundle-commands did not take the script")
+	}
+}
+
+// Codex config.toml is compared decoded: no spelling of a command key gets
+// past, and a file that does not parse is not applied.
+func TestCodexCommandsChangedBypassSpellings(t *testing.T) {
+	local := "model = \"a\"\n[mcp_servers.fs]\ncommand = \"fs\"\n"
+	for _, evil := range []string{
+		"mcp_servers.x.command = \"evil\"\n[mcp_servers.fs]\ncommand = \"fs\"\n",
+		"mcp_servers = { fs = { command = \"fs\" }, x = { command = \"evil\" } }\n",
+		"[\"mcp_servers\".fs]\ncommand = \"fs\"\n[\"mcp_servers\".x]\ncommand = \"evil\"\n",
+		"[\"mcp\\u005fservers\".x]\ncommand = \"evil\"\n[mcp_servers.fs]\ncommand = \"fs\"\n",
+		"notify = [\"evil\"]\n[mcp_servers.fs]\ncommand = \"fs\"\n",
+		"[mcp_servers.fs]\ncommand = \"fs\"\n[profiles.p.mcp_servers.x]\ncommand = \"evil\"\n",
+		"[mcp_servers.fs]\ncommand = \"fs\"\n[model_providers.x]\nbase_url = \"https://evil.example\"\n",
+		"[mcp_servers.fs]\ncommand = \"fs\"\nenv = { NODE_OPTIONS = \"x\" }\n",
+		"[mcp_servers.fs]\ncommand = \"fs\"\n[tools.x]\nhelper_command = \"evil\"\n",
+		"[mcp_servers.fs\ncommand = \"fs\"\n",
+	} {
+		if !codexCommandsChanged([]byte(evil), []byte(local)) {
+			t.Errorf("not caught:\n%s", evil)
+		}
+	}
+	if codexCommandsChanged([]byte("model = \"b\"\n[mcp_servers]\nfs = { command = \"fs\" }\n"), []byte(local)) {
+		t.Error("same server in another spelling counted as changed")
+	}
+}
+
+// Text from the bundle is printed without control characters.
+func TestPrintableStripsControlCharacters(t *testing.T) {
+	if got := printable("a\x1b[2Jb\x07c\u009bd\te"); got != "a?[2Jb?c?d?e" {
+		t.Errorf("printable = %q", got)
 	}
 }

@@ -40,10 +40,13 @@
   shell metacharacters, quotes or globs, and a command that is not an
   interpreter, wrapper (`nice`, `timeout`) or shell keyword.
   `--keep-interpreter-allows` keeps them all.
-- Import leaves out `hooks` events, `statusLine`, credential helpers and MCP
-  servers whose command or args the bundle adds or changes, keeps this
-  machine's value and names each one. A Codex `config.toml` with changed
-  `mcp_servers` or `notify` sections is not applied.
+- Import leaves out what runs code that the bundle adds or changes, keeps
+  this machine's value and names each one: `hooks` events, `statusLine`,
+  credential helpers, plugins and marketplaces, MCP servers of any type,
+  code-loading `env` variables (`NODE_OPTIONS`, `LD_PRELOAD` and the like),
+  other command fields, and new or changed hook scripts. A Codex
+  `config.toml` whose parsed `mcp_servers`, `notify` or `model_providers`
+  differ, or that does not parse, is not applied.
   `--keep-bundle-commands` keeps them.
 - Import keeps broad allow rules such as `Bash(find:*)`, `Bash(git:*)` and
   `Bash(make:*)`, and prints one WARNING block naming each and why it can
@@ -88,6 +91,8 @@
   `sync`.
 
 ### Changed
+- New dependency `github.com/BurntSushi/toml` v1.5.0: import parses Codex
+  `config.toml` to compare its commands.
 - `actions/checkout` and `actions/github-script` are pinned to commit SHAs.
 - The Homebrew formula is committed to the tap by ci-helpers
   `homebrew-tap-publish.yml` with the tap's deploy key

@@ -9,11 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 // conflictPolicy says what import does with a local file that differs from
@@ -162,7 +163,7 @@ func (c *importApplyContext) decide(dest string) (bool, error) {
 	if !c.BundleTime.IsZero() {
 		bundle = c.BundleTime.Format("2006-01-02 15:04")
 	}
-	fmt.Fprintf(c.Out, "in %s: local %s (changed %s), bundle (changed %s)\n", filepath.Dir(dest), filepath.Base(dest), local, bundle)
+	fmt.Fprintf(c.Out, "in %s: local %s (changed %s), bundle (changed %s)\n", printable(filepath.Dir(dest)), printable(filepath.Base(dest)), local, bundle)
 	for {
 		fmt.Fprint(c.Out, "[b]ackup + replace / [k]eep existing (ba, ka: same for all remaining) [b]: ")
 		line, err := c.In.ReadString('\n')
@@ -203,7 +204,7 @@ func (c *importApplyContext) restoreAsker(file string) func(owner string, local,
 		if owner == "" {
 			name = "the file"
 		}
-		fmt.Fprintf(c.Out, "%s: %s changed since this machine's copy:\n", file, name)
+		fmt.Fprintf(c.Out, "%s: %s changed since this machine's copy:\n", printable(file), name)
 		for _, line := range describeDefinitionChange(local, bundle) {
 			fmt.Fprintf(c.Out, "  %s\n", line)
 		}
@@ -243,7 +244,7 @@ func describeDefinitionChange(local, bundle any) []string {
 		if bytes.Equal(a, b) {
 			continue
 		}
-		out = append(out, fmt.Sprintf("%s: %s -> %s", k, clip(string(a)), clip(string(b))))
+		out = append(out, fmt.Sprintf("%s: %s -> %s", printable(k), clip(string(a)), clip(string(b))))
 	}
 	if len(out) == 0 {
 		out = append(out, "(secret fields only)")
@@ -305,17 +306,40 @@ func jsonEqual(a, b any) bool {
 	return bytes.Equal(ja, jb)
 }
 
-// bundleCommandKeys are top-level settings whose value is a command a tool
-// runs on its own: hooks, the status line, credential helpers.
-var bundleCommandKeys = []string{"hooks", "statusLine", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "otelHeadersHelper"}
+// bundleCommandKeys are top-level settings that run code or load it: hooks,
+// the status line, credential helpers, plugins and their marketplaces.
+var bundleCommandKeys = []string{"hooks", "statusLine", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport",
+	"otelHeadersHelper", "enabledPlugins", "extraKnownMarketplaces", "plugins", "marketplaces", "fileSuggestion"}
+
+// codeLoadingEnv are environment variables that make another program load
+// or run code.
+var codeLoadingEnv = map[string]bool{
+	"NODE_OPTIONS": true, "NODE_PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true, "LD_AUDIT": true,
+	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true, "DYLD_FRAMEWORK_PATH": true, "PYTHONSTARTUP": true,
+	"PYTHONPATH": true, "PYTHONHOME": true, "BASH_ENV": true, "ENV": true, "ZDOTDIR": true, "PROMPT_COMMAND": true,
+	"PERL5OPT": true, "PERL5LIB": true, "RUBYOPT": true, "RUBYLIB": true, "JAVA_TOOL_OPTIONS": true,
+	"_JAVA_OPTIONS": true, "JDK_JAVA_OPTIONS": true, "GIT_SSH_COMMAND": true, "GIT_SSH": true, "GIT_EXEC_PATH": true,
+	"GIT_PAGER": true, "PAGER": true, "EDITOR": true, "VISUAL": true, "SHELL": true, "PATH": true,
+	"GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_SYSTEM": true, "NPM_CONFIG_PREFIX": true, "CLAUDE_CODE_SHELL_PREFIX": true,
+}
+
+// commandField is a key whose value is a program to run: command, args, and
+// any *Command or *Helper (Gemini's tools.discoveryCommand, headersHelper).
+func commandField(k string) bool {
+	l := strings.ToLower(k)
+	return l == "command" || l == "args" || l == "cmd" || strings.HasSuffix(l, "command") || strings.HasSuffix(l, "helper")
+}
 
 // dropBundleCommands keeps every command the bundle adds or changes out of a
-// JSON settings file: hooks, statusLine and credential helpers per top-level
-// key (hooks per event), and each MCP server, wherever an mcpServers map
-// sits, whose command or args differ. Each one is replaced by this machine's
-// value, or removed when this machine has none. A value the bundle blanked as
-// a secret is left to the secret restore. It returns the names of what it
-// replaced.
+// JSON settings file, and puts this machine's value back (or nothing):
+//   - each MCP server, wherever an mcpServers map sits, that is new or
+//     differs in anything but its blanked secrets, whatever its type;
+//   - each hooks event, and the other bundleCommandKeys whole;
+//   - each code-loading variable in any env map outside an MCP server;
+//   - any other top-level key under which a command field differs.
+//
+// A value the bundle blanked as a secret is left to the secret restore. It
+// returns the names of what it replaced.
 func dropBundleCommands(content, local []byte) ([]byte, []string) {
 	doc, ok := decodeSettingsObject(content)
 	if !ok {
@@ -385,42 +409,67 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 			if path != "" {
 				name = path + "." + k
 			}
-			if k != "mcpServers" {
+			switch {
+			case k == "mcpServers" || k == "mcp_servers" || k == "servers":
+				servers, ok := bm[k].(map[string]any)
+				if !ok {
+					// Not a map of servers: the whole value is this
+					// machine's, or nothing.
+					if lv, lok := lm[k]; !lok || !jsonEqual(bm[k], lv) {
+						put(bm, k, lv, lok)
+						dropped = append(dropped, name)
+					}
+					continue
+				}
+				localServers, _ := lm[k].(map[string]any)
+				for _, s := range sortedKeys(servers) {
+					srv, _ := servers[s].(map[string]any)
+					lsrv, lok := localServers[s].(map[string]any)
+					if srv != nil && lok && sameServerApartFromBlanks(srv, lsrv) {
+						continue
+					}
+					if lok {
+						servers[s] = lsrv
+					} else {
+						delete(servers, s)
+					}
+					dropped = append(dropped, name+"."+s)
+				}
+			case strings.EqualFold(k, "env"):
+				env, ok := bm[k].(map[string]any)
+				if !ok {
+					continue
+				}
+				localEnv, _ := lm[k].(map[string]any)
+				for _, v := range sortedKeys(env) {
+					if !codeLoadingEnv[strings.ToUpper(v)] {
+						continue
+					}
+					lv, lok := localEnv[v]
+					if lok && jsonEqual(env[v], lv) {
+						continue
+					}
+					put(env, v, lv, lok)
+					dropped = append(dropped, name+"."+v)
+				}
+			default:
 				walk(bm[k], lm[k], name)
-				continue
-			}
-			servers, ok := bm[k].(map[string]any)
-			if !ok {
-				continue
-			}
-			localServers, _ := lm[k].(map[string]any)
-			for _, s := range sortedKeys(servers) {
-				srv, _ := servers[s].(map[string]any)
-				lsrv, lok := localServers[s].(map[string]any)
-				if srv == nil {
-					continue
-				}
-				_, hasCmd := srv["command"]
-				_, hasArgs := srv["args"]
-				if !hasCmd && !hasArgs {
-					continue
-				}
-				// A server that runs a command is the same only when
-				// everything but its blanked secrets matches: env or cwd
-				// change what the same command does.
-				if lok && sameServerApartFromBlanks(srv, lsrv) {
-					continue
-				}
-				if lok {
-					servers[s] = lsrv
-				} else {
-					delete(servers, s)
-				}
-				dropped = append(dropped, name+"."+s)
 			}
 		}
 	}
 	walk(doc, have, "")
+	// Anything else: a top-level key under which a command field is new or
+	// differs is this machine's.
+	for _, k := range sortedKeys(doc) {
+		lv, lok := have[k]
+		if lok && jsonEqual(doc[k], lv) {
+			continue
+		}
+		if commandFieldsDiffer(doc[k], lv) {
+			put(doc, k, lv, lok)
+			dropped = append(dropped, k)
+		}
+	}
 	if len(dropped) == 0 {
 		return content, nil
 	}
@@ -429,6 +478,38 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 		return content, nil
 	}
 	return out, dropped
+}
+
+// commandFieldsDiffer is whether b holds a command field, at any depth,
+// that l does not hold with the same value at the same place.
+func commandFieldsDiffer(b, l any) bool {
+	switch t := b.(type) {
+	case map[string]any:
+		lm, _ := l.(map[string]any)
+		for k, v := range t {
+			if commandField(k) && v != "" {
+				if lv, ok := lm[k]; !ok || !jsonEqual(v, lv) {
+					return true
+				}
+				continue
+			}
+			if commandFieldsDiffer(v, lm[k]) {
+				return true
+			}
+		}
+	case []any:
+		la, _ := l.([]any)
+		for i, v := range t {
+			var lv any
+			if i < len(la) {
+				lv = la[i]
+			}
+			if commandFieldsDiffer(v, lv) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func sortedKeys(m map[string]any) []string {
@@ -440,48 +521,82 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-var (
-	tomlHeader     = regexp.MustCompile(`^\s*\[`)
-	tomlCommandKey = regexp.MustCompile(`(?im)mcp_servers|^\s*["']?notify["']?\s*[.=]|\\[uU]`)
-)
+// codexCommandKeys are Codex config.toml keys that run programs or choose
+// where requests go; at the top level and under each profile.
+var codexCommandKeys = []string{"mcp_servers", "notify", "model_providers", "shell_environment_policy"}
 
-// codexCommandSections are the sections of a Codex config.toml that carry
-// commands (mcp_servers tables, the notify key), as text. A section is a
-// header line and what follows it up to the next one; the root is the text
-// before the first header. Any section mentioning mcp_servers or a notify
-// key, or holding a \u escape that could spell one, counts.
-func codexCommandSections(text string) []string {
-	var sections []string
-	var cur []string
-	flush := func() {
-		block := strings.Join(cur, "\n")
-		if tomlCommandKey.MatchString(block) {
-			sections = append(sections, strings.TrimSpace(block))
+// codexCommandView is the part of a decoded Codex config that runs or loads
+// code: codexCommandKeys at the top level and under profiles, and any
+// command field anywhere else, by path.
+func codexCommandView(doc map[string]any) map[string]any {
+	view := map[string]any{}
+	var walk func(v any, path string)
+	walk = func(v any, path string) {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return
 		}
-		cur = nil
-	}
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		if tomlHeader.MatchString(line) {
-			flush()
+		for k, inner := range m {
+			p := path + "/" + escapePointer(k)
+			if commandField(k) || codexCommandKey(k) {
+				view[p] = inner
+				continue
+			}
+			walk(inner, p)
 		}
-		cur = append(cur, line)
 	}
-	flush()
-	sort.Strings(sections)
-	return sections
+	walk(doc, "")
+	return view
 }
 
-// codexCommandsChanged is whether the bundle's config.toml has a command
-// section this machine's copy does not have, byte for byte.
-func codexCommandsChanged(content, local []byte) bool {
-	have := map[string]bool{}
-	for _, s := range codexCommandSections(string(local)) {
-		have[s] = true
-	}
-	for _, s := range codexCommandSections(string(content)) {
-		if !have[s] {
+func codexCommandKey(k string) bool {
+	for _, c := range codexCommandKeys {
+		if k == c {
 			return true
 		}
+	}
+	return false
+}
+
+// codexCommandsChanged is whether the bundle's config.toml runs or loads
+// anything this machine's copy does not, compared after decoding, so key
+// spelling (dotted, quoted, escaped, inline tables) does not matter. A file
+// that does not parse counts as changed.
+func codexCommandsChanged(content, local []byte) bool {
+	var in map[string]any
+	if _, err := toml.Decode(string(content), &in); err != nil {
+		return true
+	}
+	var have map[string]any
+	if len(bytes.TrimSpace(local)) > 0 {
+		if _, err := toml.Decode(string(local), &have); err != nil {
+			have = nil
+		}
+	}
+	bv, lv := codexCommandView(in), codexCommandView(have)
+	for p, v := range bv {
+		if l, ok := lv[p]; !ok || !jsonEqual(v, l) {
+			return true
+		}
+	}
+	return false
+}
+
+// scriptAsset is a provider file that runs as a program: one in a hooks
+// directory or one with a script extension. (The execute bit is kept only
+// in a hooks directory, so it adds nothing here.)
+func scriptAsset(asset SetupAsset) bool {
+	if execAllowed(asset) {
+		return true
+	}
+	p := strings.ToLower(strings.ReplaceAll(asset.LogicalPath, `\`, "/"))
+	if strings.HasPrefix(p, "hooks/") || strings.Contains(p, "/hooks/") {
+		return true
+	}
+	switch strings.ToLower(filepath.Ext(p)) {
+	case ".sh", ".bash", ".zsh", ".fish", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".php",
+		".ps1", ".psm1", ".bat", ".cmd", ".exe", ".lua", ".jar":
+		return true
 	}
 	return false
 }
@@ -544,7 +659,7 @@ func printBroadAllowWarning(w io.Writer, rules []string) {
 	fmt.Fprintln(w, "WARNING: these Claude allow rules were imported. They are common, but each lets")
 	fmt.Fprintln(w, "a command run with any arguments, and these commands can run other programs:")
 	for _, r := range rules {
-		fmt.Fprintf(w, "  %s\n", r)
+		fmt.Fprintf(w, "  %s\n", printable(r))
 	}
 	fmt.Fprintln(w, "Narrow them (for example Bash(git status:*)) if this machine does not need them.")
 }
@@ -648,4 +763,15 @@ func deepCopyJSON(m map[string]any) map[string]any {
 		out = map[string]any{}
 	}
 	return out
+}
+
+// printable replaces control characters, which a name from the bundle could
+// use to rewrite the terminal around a question, with '?'.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || (r >= 0x7f && r < 0xa0) {
+			return '?'
+		}
+		return r
+	}, s)
 }

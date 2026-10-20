@@ -90,6 +90,8 @@ func TestApplyKeepsExecOnlyForToolHooks(t *testing.T) {
 		t.Skip("no execute bit on Windows")
 	}
 	home := t.TempDir()
+	keepBundleCommands = true
+	t.Cleanup(func() { keepBundleCommands = false })
 	assets := []SetupAsset{
 		{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "hooks/guard.sh", ContentPresent: true, Content: []byte("#!/bin/sh\n"), Mode: 0o755},
 		{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "agents/a.md", ContentPresent: true, Content: []byte("a"), Mode: 0o755},

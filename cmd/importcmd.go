@@ -200,7 +200,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if len(assetOpts.Apply.Backups) > 0 {
 		fmt.Fprintln(out, "\nBackups of replaced files:")
 		for _, b := range assetOpts.Apply.Backups {
-			fmt.Fprintf(out, "  %s\n", b)
+			fmt.Fprintf(out, "  %s\n", printable(b))
 		}
 	}
 	fmt.Fprintf(out, "\nSummary: %d added, %d updated, %d skipped, %d removed\n",
@@ -448,11 +448,11 @@ func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle
 func printAssetRemaps(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) {
 	_, report, err := remapProfileAssets(setup, opts)
 	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", err)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(err.Error()))
 		return
 	}
 	for _, line := range report {
-		fmt.Fprintf(cmd.OutOrStdout(), "  path: %s\n", line)
+		fmt.Fprintf(cmd.OutOrStdout(), "  path: %s\n", printable(line))
 	}
 }
 
@@ -463,7 +463,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		return err
 	}
 	for _, line := range remapReport {
-		fmt.Fprintf(cmd.OutOrStdout(), "  path: %s\n", line)
+		fmt.Fprintf(cmd.OutOrStdout(), "  path: %s\n", printable(line))
 	}
 	if setup.Templates.SchemaVersion != "" || len(setup.Templates.Assets) > 0 {
 		imported, warnings, err := workflowtemplates.ImportBundle(resolveConfigDir(), setup.Templates)
@@ -474,7 +474,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 			fmt.Fprintf(cmd.OutOrStdout(), "  Imported: workflow templates (%d)\n", imported)
 		}
 		for _, warn := range warnings {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 		}
 	}
 
@@ -494,7 +494,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		fmt.Fprintf(cmd.OutOrStdout(), "  Imported: portable assets (%d staged)\n", staged)
 	}
 	for _, warn := range stageWarnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 	}
 
 	printPluginInstallCommands(cmd.OutOrStdout(), setup.Plugins)
@@ -525,12 +525,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 	// checked, secrets kept, local keys kept, the old file backed up.
 	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
 	if setup.ProviderConfigs.Codex != nil {
-		if home, err := os.UserHomeDir(); err == nil {
-			if _, err := ctx.backup(filepath.Join(home, ".codex", "config.toml")); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", err)
-			}
-		}
-		if err := agent.SaveCodexConfig(setup.ProviderConfigs.Codex); err != nil {
+		if err := saveCodexConfigWithBackup(setup.ProviderConfigs.Codex, ctx); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not apply Codex config: %v\n", err)
 		}
 	}
@@ -548,7 +543,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		fmt.Fprintf(cmd.OutOrStdout(), "  Applied: provider assets (%d)\n", applied)
 	}
 	for _, warn := range warnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 	}
 	return nil
 }
@@ -683,4 +678,28 @@ func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
 		}
 	}
 	return out
+}
+
+// saveCodexConfigWithBackup writes the Codex provider config. SaveCodexConfig
+// rewrites ~/.codex/config.toml in place, so an existing file is a conflict:
+// kept, or backed up first. A file that cannot be backed up is kept.
+func saveCodexConfigWithBackup(c *agent.CodexConfig, ctx *importApplyContext) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dest := filepath.Join(home, ".codex", "config.toml")
+	if _, err := os.Lstat(dest); err == nil {
+		replace, err := ctx.decide(dest)
+		if err != nil {
+			return err
+		}
+		if !replace {
+			return fmt.Errorf("kept this machine's %s", dest)
+		}
+		if _, err := ctx.backup(dest); err != nil {
+			return err
+		}
+	}
+	return agent.SaveCodexConfig(c)
 }
