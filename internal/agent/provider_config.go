@@ -238,6 +238,14 @@ func LoadCodexConfig() (*CodexConfig, error) {
 
 // SaveCodexConfig writes Codex configuration to ~/.codex/
 func SaveCodexConfig(config *CodexConfig) error {
+	// A rule name comes from the vault, which a bundle fills: "../x" would
+	// land outside rules/. Checked before anything is written or removed.
+	for name := range config.Rules {
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\:`) ||
+			(runtime.GOOS == "windows" && fsname.IsWindowsDeviceName(name)) {
+			return fmt.Errorf("codex rule name %q is not a plain file name", name)
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -304,12 +312,6 @@ func SaveCodexConfig(config *CodexConfig) error {
 	}
 	sort.Strings(ruleNames)
 	for _, name := range ruleNames {
-		// A rule name comes from the vault, which a bundle fills: "../x"
-		// would land outside rulesDir.
-		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\:`) ||
-			(runtime.GOOS == "windows" && fsname.IsWindowsDeviceName(name)) {
-			return fmt.Errorf("codex rule name %q is not a plain file name", name)
-		}
 		rulePath := filepath.Join(rulesDir, name+".md")
 		if err := fsname.WriteFile(rulesDir, rulePath, []byte(config.Rules[name]), 0700, 0600); err != nil {
 			return err
