@@ -1126,8 +1126,9 @@ func applyProviderAssetsToSystem(homeDir string, assets []SetupAsset) (int, []st
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", describeSetupAsset(asset), err))
 				continue
 			}
+			secretCount := countSecretPointers(content, asset.RedactedFields)
 			content = filled
-			if left := len(asset.RedactedFields) - restored; left > 0 {
+			if left := secretCount - restored; left > 0 {
 				warnings = append(warnings, fmt.Sprintf("provider asset %s: %d secret value(s) were not in the bundle and are not on this machine; set them by hand", describeSetupAsset(asset), left))
 			}
 		}

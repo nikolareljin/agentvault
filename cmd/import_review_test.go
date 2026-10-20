@@ -142,3 +142,11 @@ func TestRestoreDecidesBeforeMutating(t *testing.T) {
 		}
 	}
 }
+
+func TestCountSecretPointersIgnoresListedNonSecrets(t *testing.T) {
+	doc := []byte(`{"mcpServers":{"x":{"url":"https://a","env":{"TOKEN":""}}}}`)
+	ptrs := []string{"/mcpServers/x/url", "/mcpServers/x/env/TOKEN", "/mcpServers/x/command"}
+	if n := countSecretPointers(doc, ptrs); n != 1 {
+		t.Errorf("counted %d secrets, want 1", n)
+	}
+}

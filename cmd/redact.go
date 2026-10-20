@@ -138,12 +138,7 @@ func restoreRedactedFields(incoming []byte, pointers []string, existing []byte) 
 	// The pointer list comes from the bundle. Only a pointer that names a
 	// blanked value under a secret key counts as a secret; any other listed
 	// field is part of the definition and must match.
-	var secrets []string
-	for _, p := range pointers {
-		if v, ok := pointerGet(doc, p); ok && v == "" && secretPointer(p) {
-			secrets = append(secrets, p)
-		}
-	}
+	secrets := secretPointers(doc, pointers)
 	// Decide every restore against the document as the bundle has it, then
 	// change it. A listed field that is not a secret is left as it is, so it
 	// still has to match.
@@ -167,6 +162,28 @@ func restoreRedactedFields(incoming []byte, pointers []string, existing []byte) 
 	restored := len(restore)
 	out, err := json.MarshalIndent(doc, "", "  ")
 	return out, restored, err
+}
+
+// secretPointers are the listed pointers that name a blanked value under a
+// secret key. Other listed fields are part of the definition.
+func secretPointers(doc map[string]any, pointers []string) []string {
+	var secrets []string
+	for _, p := range pointers {
+		if v, ok := pointerGet(doc, p); ok && v == "" && secretPointer(p) {
+			secrets = append(secrets, p)
+		}
+	}
+	return secrets
+}
+
+// countSecretPointers is how many listed pointers restore would treat as
+// secrets in content, so a tampered list does not inflate the warning.
+func countSecretPointers(content []byte, pointers []string) int {
+	var doc map[string]any
+	if json.Unmarshal(content, &doc) != nil {
+		return 0
+	}
+	return len(secretPointers(doc, pointers))
 }
 
 func escapePointer(k string) string {
