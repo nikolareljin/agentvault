@@ -328,7 +328,7 @@ func unofferableReason(v any, zed bool) string {
 		ev, _ := getPath(m, loc)
 		env, _ := ev.(map[string]any)
 		for k, v := range env {
-			if gatedEnv(k) && anySecretString(v) {
+			if gatedEnv(strings.TrimSpace(k)) && anySecretString(v) {
 				return whySecretShaped
 			}
 		}
@@ -365,6 +365,21 @@ var envRefPattern = regexp.MustCompile(`\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%
 // machine's environment even when no name can be parsed from it.
 var envRefMarker = regexp.MustCompile(`\$|%[^%\s]+%`)
 
+// percentEscape is a URL %XX escape.
+var percentEscape = regexp.MustCompile(`%[0-9A-Fa-f]{2}`)
+
+// withoutURLEscapes drops %XX escapes from a clean http(s) URL (no
+// whitespace or shell characters, printed back unchanged), so %3A%2F is
+// not read as a %VAR% reference. Any other string is returned as is.
+func withoutURLEscapes(s string) string {
+	u, err := url.Parse(s)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.String() != s ||
+		strings.ContainsAny(s, " \t\r\n;|`$'\"<>") {
+		return s
+	}
+	return percentEscape.ReplaceAllString(s, "")
+}
+
 // mcpEnvRefs are the names of this machine's environment variables a
 // server reads into its definition: references in any string, and the
 // Codex fields that name a variable (bearer_token_env_var, env_vars,
@@ -375,9 +390,9 @@ func mcpEnvRefs(v any) []string {
 	walk = func(key string, v any) {
 		switch t := v.(type) {
 		case string:
-			if envRefMarker.MatchString(t) {
+			if scan := withoutURLEscapes(t); envRefMarker.MatchString(scan) {
 				found := false
-				for _, m := range envRefPattern.FindAllStringSubmatch(t, -1) {
+				for _, m := range envRefPattern.FindAllStringSubmatch(scan, -1) {
 					seen[m[1]+m[2]] = true
 					found = true
 				}
@@ -747,8 +762,9 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, why string) {
 					}
 					continue
 				}
-				if gatedEnv(strings.TrimSpace(k)) {
+				if tk := strings.TrimSpace(k); envNameShape(tk) && gatedEnv(tk) {
 					// A gated name outside a gateable env object: fail closed.
+					// Lower-case keys (api_url, proxy) are ordinary settings.
 					why = whyGatedName
 					return
 				}
@@ -794,6 +810,20 @@ func plainPath(parts []string) string {
 		out[i] = p
 	}
 	return strings.Join(out, ".")
+}
+
+// envNameShape is a key spelled like an environment variable: upper-case
+// letters, digits and underscores.
+func envNameShape(k string) bool {
+	if k == "" {
+		return false
+	}
+	for _, r := range k {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // nonASCIILetter is whether s holds a letter outside ASCII.
@@ -856,7 +886,7 @@ func (c *importApplyContext) gateEnvAt(file, name string, loc []string, merged, 
 	lenv, _ := lev.(map[string]any)
 	var gated []string
 	for _, k := range sortedKeys(env) {
-		if gatedEnv(k) {
+		if gatedEnv(strings.TrimSpace(k)) {
 			if lv, ok := lenv[k]; !ok || !jsonEqual(lv, env[k]) {
 				gated = append(gated, k)
 			}

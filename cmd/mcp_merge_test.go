@@ -825,6 +825,7 @@ func TestImportZedSettingsUngateableEnvRefused(t *testing.T) {
 		{`{"env":{"N\u041eDE_OPTIONS":"x"}}`, whyUngateable},
 		{`{"vars":{"NODE_OPTIONS":"x"}}`, whyGatedName},
 		{`{"a":{"b":{"LD_PRELOAD":"x"}}}`, whyGatedName},
+		{`{"x":{"API_URL":"https://x"}}`, whyGatedName},
 		{deep, whyTooDeep},
 	} {
 		home := t.TempDir()
@@ -863,5 +864,48 @@ func TestImportZedSettingsUngateableEnvRefused(t *testing.T) {
 func TestPathLabelQuotesParts(t *testing.T) {
 	if got := pathLabel([]string{"a.b", "c\x1b"}); got != `"a.b"."c\x1b"` {
 		t.Errorf("got %s", got)
+	}
+}
+
+// Lower-case settings keys are ordinary settings; a clean URL's %XX escapes
+// are not %VAR% references.
+func TestImportZedOrdinarySettingsOffered(t *testing.T) {
+	for _, settings := range []string{
+		`{"api_url":"https://a","base_url":"https://b"}`,
+		`{"proxy":"http://p"}`,
+		`{"cb":"https://x/cb?redirect_url=https%3A%2F%2Fx"}`,
+	} {
+		home := t.TempDir()
+		f := filepath.Join(home, ".claude", "settings.json")
+		mustWriteFile(t, f, `{}`)
+		ctx := fixedCtx("")
+		ctx.MCPServers, _ = parseMCPSelection("z")
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(`{"context_servers":{"z":{"source":"extension","settings":` + settings + `}}}`)}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := readString(t, f); !strings.Contains(got, `"z"`) {
+			t.Errorf("%s: not offered: %v", settings, ctx.MCPReport)
+		}
+	}
+	if refs := mcpEnvRefs(map[string]any{"u": "https://x/?a=%HOME%"}); len(refs) != 1 || refs[0] != "HOME" {
+		t.Errorf("%%HOME%% in a URL: %v", refs)
+	}
+}
+
+// Padded names inside an env object still get the separate question.
+func TestImportZedPaddedEnvNamesGated(t *testing.T) {
+	for _, k := range []string{` NODE_OPTIONS`, `NODE_OPTIONS\t`} {
+		home := t.TempDir()
+		f := filepath.Join(home, ".claude", "settings.json")
+		mustWriteFile(t, f, `{}`)
+		ctx := fixedCtx("")
+		ctx.MCPServers, _ = parseMCPSelection("z")
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(`{"context_servers":{"z":{"source":"extension","settings":{"env":{"` + k + `":"--require /e.js","PLAIN":"1"}}}}}`)}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		got := readString(t, f)
+		if strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, "PLAIN") {
+			t.Errorf("%q: %s %v", k, got, ctx.MCPReport)
+		}
 	}
 }
