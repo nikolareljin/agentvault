@@ -76,6 +76,10 @@ type SetupBundle struct {
 	// Locations names the projects by work dir and git identity, so import
 	// can find them where they are checked out on this machine.
 	Locations *locations.Set `json:"locations,omitempty"`
+	// VaultBlanks are the vault values an export without --include-secrets
+	// blanked or dropped where a blank cannot be told from no value, so
+	// import can name each one it does not fill.
+	VaultBlanks []VaultBlank `json:"vault_blanks,omitempty"`
 }
 
 // MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.

@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -316,9 +318,25 @@ func redactSensitiveValue(v any) (any, bool) {
 		return redactSensitiveSlice(tv), true
 	case string:
 		return tv, !secretString(tv)
-	default:
-		return v, true
 	}
+	// A typed list or map ([]map[string]any from a TOML array of tables) is
+	// read as JSON, so its strings are checked too. One that cannot be read
+	// is dropped.
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer, reflect.Interface:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, false
+		}
+		var generic any
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		if dec.Decode(&generic) != nil {
+			return nil, false
+		}
+		return redactSensitiveValue(generic)
+	}
+	return v, true
 }
 
 // redactSensitiveSlice drops the secret elements of a list and keeps the

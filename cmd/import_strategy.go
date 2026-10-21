@@ -186,9 +186,16 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 		rep.record("Removed", "shared system prompt (not in bundle)")
 	}
 
+	var routerLeft []string
+	incomingShared.Router, routerLeft = restoreRouterSecrets(incomingShared.Router, shared.Router)
+	routerApplied := false
 	if !incomingShared.Router.IsZero() && (shared.Router.IsZero() || strategy.incomingWins()) {
+		routerApplied = true
 		shared.Router = incomingShared.Router
 		rep.Lines = append(rep.Lines, "  Applied: shared router config")
+		for _, f := range routerLeft {
+			rep.record("Left out", "shared router config %s: blank in the bundle, and the router differs from this machine's", f)
+		}
 	} else if strategy.deletesLocalOnly() && incomingShared.Router.IsZero() && !shared.Router.IsZero() {
 		shared.Router = agent.RouterConfig{}
 		rep.record("Removed", "shared router config (not in bundle)")
@@ -224,7 +231,9 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	plan.Shared = shared
 	plan.SharedChanged = !reflect.DeepEqual(v.SharedConfig(), shared)
 
-	plan.ProviderConfigs, plan.ProviderChanged = planProviderConfigs(v.ProviderConfigs(), setup.ProviderConfigs, strategy, rep)
+	localProviders := v.ProviderConfigs()
+	plan.ProviderConfigs, plan.ProviderChanged = planProviderConfigs(localProviders, setup.ProviderConfigs, strategy, rep)
+	reportVaultBlanks(&plan, setup.VaultBlanks, localProviders, routerApplied, rep)
 
 	// Normalize empty-but-allocated slices to nil first: mergeKeyed yields nil for
 	// an empty result, and an unchanged section must compare deep-equal.
@@ -561,4 +570,98 @@ func commitProfileImport(v *vault.Vault, plan profileImportPlan) error {
 		}
 	}
 	return nil
+}
+
+// reportVaultBlanks names each value the bundle's export blanked that the
+// plan still leaves blank, unless a Left out line names it already, and
+// drops a blank agent extra so no tool reads "" as its value. Only what the
+// plan writes counts: an agent, router or provider config kept local is
+// not reported.
+func reportVaultBlanks(plan *profileImportPlan, blanks []VaultBlank, local agent.ProviderConfig, routerApplied bool, rep *importReport) {
+	for _, b := range blanks {
+		subject := b.subject()
+		named := false
+		for _, l := range rep.Lines {
+			if strings.HasPrefix(l, "  Left out: "+subject+":") {
+				named = true
+				break
+			}
+		}
+		if named || !planLeavesBlank(plan, b, local, routerApplied) {
+			continue
+		}
+		rep.record("Left out", "%s: blank in the bundle, and not filled from this machine", subject)
+	}
+}
+
+func planLeavesBlank(plan *profileImportPlan, b VaultBlank, local agent.ProviderConfig, routerApplied bool) bool {
+	switch b.Section {
+	case blankAgent:
+		for i := range plan.AgentOps {
+			op := &plan.AgentOps[i]
+			if op.Kind == "remove" || op.Agent.Name != b.Name {
+				continue
+			}
+			if b.Field == "base_url" {
+				return op.Agent.BaseURL == ""
+			}
+			k := strings.TrimPrefix(b.Field, "provider_meta.extra.")
+			if op.Agent.ProviderMeta == nil {
+				return true
+			}
+			v, ok := op.Agent.ProviderMeta.Extra[k]
+			if ok && v == "" {
+				meta := *op.Agent.ProviderMeta
+				meta.Extra = make(map[string]string, len(op.Agent.ProviderMeta.Extra))
+				for ek, ev := range op.Agent.ProviderMeta.Extra {
+					if ek != k {
+						meta.Extra[ek] = ev
+					}
+				}
+				op.Agent.ProviderMeta = &meta
+			}
+			return v == ""
+		}
+	case blankRouter:
+		if !routerApplied {
+			return false
+		}
+		r := plan.Shared.Router
+		for _, f := range routerSecretFields(&r) {
+			if f.Name == b.Field {
+				return *f.Value == ""
+			}
+		}
+	case blankProvider:
+		var got, have map[string]any
+		switch b.Name {
+		case "Ollama":
+			o := plan.ProviderConfigs.Ollama
+			if o == nil || o == local.Ollama {
+				return false
+			}
+			if b.Field == "base_url" {
+				return o.BaseURL == ""
+			}
+			got = o.CustomSettings
+			if local.Ollama != nil {
+				have = local.Ollama.CustomSettings
+			}
+		case "Codex":
+			c := plan.ProviderConfigs.Codex
+			if c == nil || c == local.Codex {
+				return false
+			}
+			got = c.CustomSettings
+			if local.Codex != nil {
+				have = local.Codex.CustomSettings
+			}
+		default:
+			return false
+		}
+		k := strings.TrimPrefix(b.Field, "customSettings.")
+		hv, ok := have[k]
+		return !ok || !jsonEqual(got[k], hv)
+	}
+	return false
 }

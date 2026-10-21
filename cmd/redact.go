@@ -25,7 +25,9 @@ var secretKeyParts = []string{
 }
 
 // secretKeys are short keys that are secrets by themselves.
-var secretKeys = map[string]bool{"key": true, "auth": true, "pat": true, "pass": true, "pin": true}
+// sig and signature are signed-URL secrets (Azure SAS ?sig=).
+var secretKeys = map[string]bool{"key": true, "auth": true, "pat": true, "pass": true, "pin": true,
+	"sig": true, "signature": true}
 
 // secretContainers hold values that are commonly secrets: an MCP server's env
 // and an HTTP server's headers (Codex: http_headers). Every string under them
@@ -337,7 +339,10 @@ func secretPointer(p string) bool {
 var (
 	// Credentials in a URL, a credential query parameter, or a well-known
 	// token prefix.
-	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|[?&](token|key|api_key|apikey|secret|password|sig|signature|access_token)=|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\bbearer\s+[A-Za-z0-9._~+/=-]{8,}|\bbasic\s+[A-Za-z0-9+/=]{8,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
+	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\bbearer\s+[A-Za-z0-9._~+/=-]{8,}|\bbasic\s+[A-Za-z0-9+/=]{8,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
+	// A query or fragment parameter: ?client_secret=x, #access_token=x.
+	// Its name decides, by the key rules.
+	queryParam = regexp.MustCompile(`[?&#]([^=&#\s]+)=[^&#\s]`)
 	// A flag whose next argument is a secret.
 	secretFlag = regexp.MustCompile(`(?i)^--?(` + secretFlagNames + `)(=.+)?$`)
 	// The same flag with its value inside one string: a command line.
@@ -346,7 +351,8 @@ var (
 	headerArg = regexp.MustCompile(`^\s*([A-Za-z0-9_-]+)\s*:\s*\S`)
 	// An environment assignment passed as an argument or inside a command
 	// line: docker run -e GITHUB_TOKEN=x.
-	envAssign = regexp.MustCompile(`(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=\S`)
+	// A header passed the same way: X-Api-Key=x.
+	envAssign = regexp.MustCompile(`(?:^|\s)([A-Za-z_][A-Za-z0-9_-]*)=\S`)
 )
 
 const secretFlagNames = `[a-z]*[-_]?(token|secret|password|api[-_]?key)|key|pat|pass|passwd|auth|bearer|access[-_]?key|private[-_]?key|client[-_]?secret|credentials?|cookie` // #nosec G101 -- a regexp of flag names, not a credential
@@ -358,6 +364,11 @@ func secretString(s string) bool {
 	}
 	if secretValueShapes.MatchString(s) || secretFlagInline.MatchString(s) {
 		return true
+	}
+	for _, q := range queryParam.FindAllStringSubmatch(s, -1) {
+		if isSecretKey(q[1]) {
+			return true
+		}
 	}
 	for _, a := range envAssign.FindAllStringSubmatch(s, -1) {
 		if isSecretKey(a[1]) && !settingLikeKey(a[1]) {

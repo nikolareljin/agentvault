@@ -19,18 +19,31 @@ import (
 // redactVaultSecrets blanks the secret values in the vault-derived parts of
 // b. It copies what it changes, so the vault's own values are not touched.
 func redactVaultSecrets(b *SetupBundle) {
+	var blanks []VaultBlank
 	b.SharedConfig.MCPServers = blankMCPServerSecrets(b.SharedConfig.MCPServers)
+	router := b.SharedConfig.Router
+	b.SharedConfig.Router = redactRouter(router)
+	for _, f := range routerSecretFields(&router) {
+		if *f.Value != "" && secretString(*f.Value) {
+			blanks = append(blanks, VaultBlank{Section: blankRouter, Field: f.Name})
+		}
+	}
 	agents := make([]agent.Agent, len(b.Agents))
 	for i, a := range b.Agents {
 		a.MCPServers = blankMCPServerSecrets(a.MCPServers)
 		if secretString(a.BaseURL) {
 			a.BaseURL = ""
+			blanks = append(blanks, VaultBlank{Section: blankAgent, Name: a.Name, Field: "base_url"})
 		}
 		if a.ProviderMeta != nil && len(a.ProviderMeta.Extra) > 0 {
 			meta := *a.ProviderMeta
 			meta.Extra = make(map[string]string, len(a.ProviderMeta.Extra))
-			for k, val := range a.ProviderMeta.Extra {
+			for _, k := range sortedStringKeys(a.ProviderMeta.Extra) {
+				val := a.ProviderMeta.Extra[k]
 				if exportBlanksExtra(k, val) {
+					if val != "" {
+						blanks = append(blanks, VaultBlank{Section: blankAgent, Name: a.Name, Field: "provider_meta.extra." + k})
+					}
 					val = ""
 				}
 				meta.Extra[k] = val
@@ -44,24 +57,110 @@ func redactVaultSecrets(b *SetupBundle) {
 	if c := b.ProviderConfigs.Codex; c != nil && len(c.CustomSettings) > 0 {
 		cp := *c
 		cp.CustomSettings = redactSensitiveMap(c.CustomSettings)
+		blanks = append(blanks, droppedSettings("Codex", c.CustomSettings, cp.CustomSettings)...)
 		b.ProviderConfigs.Codex = &cp
 	}
 	if c := b.ProviderConfigs.Ollama; c != nil {
 		cp := *c
 		if secretString(cp.BaseURL) {
 			cp.BaseURL = ""
+			blanks = append(blanks, VaultBlank{Section: blankProvider, Name: "Ollama", Field: "base_url"})
 		}
 		if len(c.CustomSettings) > 0 {
 			cp.CustomSettings = redactSensitiveMap(c.CustomSettings)
+			blanks = append(blanks, droppedSettings("Ollama", c.CustomSettings, cp.CustomSettings)...)
 		}
 		b.ProviderConfigs.Ollama = &cp
 	}
+	b.VaultBlanks = blanks
+}
+
+// VaultBlank is one value an export blanked or dropped from the vault's
+// copies: an agent's base URL or extra, a router setting, or a provider
+// config's base URL or top-level custom setting.
+type VaultBlank struct {
+	Section string `json:"section"`
+	Name    string `json:"name,omitempty"`
+	Field   string `json:"field"`
+}
+
+const (
+	blankAgent    = "agent"
+	blankRouter   = "router"
+	blankProvider = "provider"
+)
+
+// subject is how the import report names b, as its Left out lines do.
+func (b VaultBlank) subject() string {
+	switch b.Section {
+	case blankAgent:
+		return "agent " + b.Name + " " + b.Field
+	case blankRouter:
+		return "shared router config " + b.Field
+	default:
+		return b.Name + " provider config " + b.Field
+	}
+}
+
+// droppedSettings names the top-level custom settings redaction changed.
+func droppedSettings(provider string, orig, redacted map[string]any) []VaultBlank {
+	var out []VaultBlank
+	for _, k := range sortedKeys(orig) {
+		if r, ok := redacted[k]; !ok || !jsonEqual(r, orig[k]) {
+			out = append(out, VaultBlank{Section: blankProvider, Name: provider, Field: "customSettings." + k})
+		}
+	}
+	return out
 }
 
 // exportBlanksExtra reports whether export blanks the agent provider extra
 // k=v. Import fills a blank extra only where this says export made it.
 func exportBlanksExtra(k, v string) bool {
-	return isSecretKey(k) || secretString(v)
+	return isSecretKey(k) || secretContainers[strings.ToLower(k)] || secretString(v)
+}
+
+// routerSecretFields are the router settings that can carry a credential:
+// a command line and two URLs.
+func routerSecretFields(r *agent.RouterConfig) []struct {
+	Name  string
+	Value *string
+} {
+	return []struct {
+		Name  string
+		Value *string
+	}{
+		{"langgraph_command", &r.LangGraphCmd},
+		{"llm_router_url", &r.LLMRouterURL},
+		{"local_ai_ollama_url", &r.LocalAIOllamaURL},
+	}
+}
+
+// redactRouter blanks each router setting that carries a secret.
+func redactRouter(r agent.RouterConfig) agent.RouterConfig {
+	for _, f := range routerSecretFields(&r) {
+		if secretString(*f.Value) {
+			*f.Value = ""
+		}
+	}
+	return r
+}
+
+// restoreRouterSecrets returns this machine's router when incoming is
+// exactly what export makes of it. Otherwise incoming stays as it is and
+// left names each blank this machine had a secret for.
+func restoreRouterSecrets(incoming, existing agent.RouterConfig) (agent.RouterConfig, []string) {
+	if redactRouter(existing) == incoming {
+		return existing, nil
+	}
+	var left []string
+	in := incoming
+	have := routerSecretFields(&existing)
+	for i, f := range routerSecretFields(&in) {
+		if *f.Value == "" && secretString(*have[i].Value) {
+			left = append(left, f.Name)
+		}
+	}
+	return incoming, left
 }
 
 // blankMCPServerSecrets returns copies of servers with every env value, every
