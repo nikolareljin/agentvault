@@ -366,12 +366,37 @@ func anySecretString(v any) bool {
 // ${VAR:-x}, $env:VAR and %VAR% references.
 var envRefPattern = regexp.MustCompile(`\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%`)
 
-// envRefMarker is any construct that may expand a variable: a '$'
-// anywhere, a %...% pair whose name starts with a letter or '_' (a URL
-// escape such as %3A starts with a digit), or %25, an escaped '%' that may
-// decode to one. Fail closed: a string with one counts as reading this
-// machine's environment even when no name can be parsed from it.
-var envRefMarker = regexp.MustCompile(`\$|%25|%[A-Za-z_][^%\s]*%`)
+// percentRef is a %...% pair, anything inside: %1%, %0VAR%, %PROGRAM FILES%.
+var percentRef = regexp.MustCompile(`%[^%]+%`)
+
+// hexEscape is a URL %XX escape.
+var hexEscape = regexp.MustCompile(`%[0-9A-Fa-f]{2}`)
+
+// mayExpand is whether s may expand a variable: a '$' anywhere, or a %...%
+// pair. Fail closed: such a string counts as reading this machine's
+// environment even when no name can be parsed from it. The one exception is
+// a clean http(s) URL (no whitespace or shell characters, printed back
+// unchanged) whose every '%' starts a %XX escape and none is %25: its
+// escapes (caf%C3%A9) are not references.
+func mayExpand(s string) bool {
+	if strings.Contains(s, "$") {
+		return true
+	}
+	if !strings.Contains(s, "%") {
+		return false
+	}
+	if cleanHTTPURL(s) && !strings.Contains(s, "%25") &&
+		strings.Count(s, "%") == len(hexEscape.FindAllString(s, -1)) {
+		return false
+	}
+	return percentRef.MatchString(s)
+}
+
+func cleanHTTPURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.String() == s &&
+		!strings.ContainsAny(s, " \t\r\n;|`$'\"<>")
+}
 
 // badURLQuery is whether s is an http(s) URL whose query does not parse.
 func badURLQuery(s string) bool {
@@ -393,7 +418,7 @@ func mcpEnvRefs(v any) []string {
 	walk = func(key string, v any) {
 		switch t := v.(type) {
 		case string:
-			if envRefMarker.MatchString(t) {
+			if mayExpand(t) {
 				found := false
 				for _, m := range envRefPattern.FindAllStringSubmatch(t, -1) {
 					seen[m[1]+m[2]] = true

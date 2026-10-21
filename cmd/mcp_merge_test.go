@@ -915,12 +915,15 @@ func TestImportZedPaddedEnvNamesGated(t *testing.T) {
 
 // %NAME% is read on the original string; crafted escapes cannot hide one.
 func TestMCPEnvRefsPercentForms(t *testing.T) {
-	for _, in := range []string{"https://x/?a=%2525HOME%25", "https://x/?a=%4%HOME%", "%ABC%", "x %ProgramFiles(x86)% y"} {
+	for _, in := range []string{"https://x/?a=%2525HOME%25", "https://x/?a=%4%HOME%", "%ABC%", "x %ProgramFiles(x86)% y",
+		"a %MY VAR% b", "%1%", "x%0VAR%y", "%PROGRAM FILES%", "https://x/?a=%HOME%"} {
 		if refs := mcpEnvRefs(map[string]any{"u": in}); len(refs) == 0 {
 			t.Errorf("%q: no reference", in)
 		}
 	}
-	if refs := mcpEnvRefs(map[string]any{"u": "https://x/cb?redirect_url=https%3A%2F%2Fx"}); len(refs) != 0 {
-		t.Errorf("URL escapes read as references: %v", refs)
+	for _, in := range []string{"https://x/cb?redirect_url=https%3A%2F%2Fx", "https://x/caf%C3%A9"} {
+		if refs := mcpEnvRefs(map[string]any{"u": in}); len(refs) != 0 {
+			t.Errorf("%q: URL escapes read as references: %v", in, refs)
+		}
 	}
 }
