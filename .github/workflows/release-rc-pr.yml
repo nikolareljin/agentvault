@@ -33,9 +33,19 @@ jobs:
               core.info(`PR already exists for ${head} -> ${base}`);
               return;
             }
-            await github.rest.pulls.create({
-              owner, repo, head, base,
-              title: `Release: ${head}`,
-              body: `Auto-created PR for release branch \`${head}\` into \`${base}\`.`,
-            });
+            try {
+              await github.rest.pulls.create({
+                owner, repo, head, base,
+                title: `Release: ${head}`,
+                body: `Auto-created PR for release branch \`${head}\` into \`${base}\`.`,
+              });
+            } catch (err) {
+              // 403 when "Allow GitHub Actions to create and approve pull
+              // requests" is off (Settings > Actions > General). Open it by
+              // hand instead. Any other 403 (rate limit, token scope) fails.
+              const msg = `${err.message || ''} ${err.response?.data?.message || ''}`;
+              if (err.status !== 403 || !/not permitted to create or approve pull requests/i.test(msg)) throw err;
+              core.warning(`Actions may not create pull requests here; open it by hand: https://github.com/${owner}/${repo}/compare/${base}...${head}?expand=1`);
+              return;
+            }
             core.info(`Created PR ${head} -> ${base}`);
