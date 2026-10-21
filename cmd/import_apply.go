@@ -56,7 +56,13 @@ type importApplyContext struct {
 	BundleTime  time.Time
 	Now         func() time.Time
 
+	// MCPServers is --mcp-servers; nil when not given.
+	MCPServers *mcpSelection
+	// MCPReport is one line per file whose MCP servers were merged.
+	MCPReport []string
+
 	all       conflictPolicy
+	mcpAll    conflictPolicy
 	originals map[string][]byte
 	seen      map[string]bool
 	backedUp  map[string]string
@@ -394,6 +400,12 @@ func commandField(k string) bool {
 // A value the bundle blanked as a secret is left to the secret restore. It
 // returns the names of what it replaced.
 func dropBundleCommands(content, local []byte) ([]byte, []string) {
+	return dropBundleCommandsExcept(content, local, nil)
+}
+
+// dropBundleCommandsExcept is dropBundleCommands, except that the servers in
+// consent (top-level key -> server names) are the user's picks and pass.
+func dropBundleCommandsExcept(content, local []byte, consent map[string]map[string]bool) ([]byte, []string) {
 	doc, ok := decodeSettingsObject(content)
 	if !ok {
 		return content, nil
@@ -489,7 +501,7 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 				name = path + "." + k
 			}
 			switch {
-			case k == "mcpServers" || k == "mcp_servers" || k == "servers":
+			case k == "mcpServers" || k == "mcp_servers" || k == "servers" || k == "context_servers":
 				servers, ok := bm[k].(map[string]any)
 				if !ok {
 					// Not a map of servers: the whole value is this
@@ -505,6 +517,9 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 					srv, _ := servers[s].(map[string]any)
 					lsrv, lok := localServers[s].(map[string]any)
 					if srv != nil && lok && sameServerApartFromBlanks(srv, lsrv) {
+						continue
+					}
+					if consent[name][s] {
 						continue
 					}
 					if lok {
@@ -544,7 +559,15 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 		if lok && jsonEqual(doc[k], lv) {
 			continue
 		}
-		if commandFieldsDiffer(doc[k], lv) {
+		bk, lk := doc[k], lv
+		for p, picked := range consent {
+			// The picked servers were consented to one by one above.
+			parts := strings.Split(p, ".")
+			if parts[0] == k && len(picked) > 0 {
+				bk, lk = withoutServersAt(bk, parts[1:], picked), withoutServersAt(lk, parts[1:], picked)
+			}
+		}
+		if commandFieldsDiffer(bk, lk) {
 			put(doc, k, lv, lok)
 			dropped = append(dropped, k)
 		}
@@ -557,6 +580,39 @@ func dropBundleCommands(content, local []byte) ([]byte, []string) {
 		return content, nil
 	}
 	return out, dropped
+}
+
+// withoutServersAt is v with the named servers left out of the server map
+// at rest below it.
+func withoutServersAt(v any, rest []string, names map[string]bool) any {
+	if len(rest) == 0 {
+		return withoutServers(v, names)
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	out := make(map[string]any, len(m))
+	for k, inner := range m {
+		out[k] = inner
+	}
+	out[rest[0]] = withoutServersAt(m[rest[0]], rest[1:], names)
+	return out
+}
+
+// withoutServers is a server map with the named servers left out.
+func withoutServers(v any, names map[string]bool) any {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	out := make(map[string]any, len(m))
+	for k, inner := range m {
+		if !names[k] {
+			out[k] = inner
+		}
+	}
+	return out
 }
 
 // commandFieldsDiffer is whether b holds a command field, at any depth,

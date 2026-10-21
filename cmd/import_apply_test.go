@@ -50,7 +50,8 @@ func TestImportDropsCommandsTheBundleAddsOrChanges(t *testing.T) {
 		claudeSettingsAsset(bundleSettings),
 		{LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true, Content: []byte(bundleClaudeJSON)},
 	}
-	_, warnings, err := applyProviderAssetsWith(home, assets, fixedCtx(""))
+	first := fixedCtx("")
+	_, warnings, err := applyProviderAssetsWith(home, assets, first)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,10 +70,14 @@ func TestImportDropsCommandsTheBundleAddsOrChanges(t *testing.T) {
 	if strings.Contains(got, "mcp.example.com") {
 		t.Errorf("new URL server applied: %s", got)
 	}
-	for _, name := range []string{"hooks.Stop", "hooks.Start", "statusLine", "mcpServers.fs", "mcpServers.new", "mcpServers.web"} {
+	for _, name := range []string{"hooks.Stop", "hooks.Start", "statusLine"} {
 		if !strings.Contains(all, "left out command "+name+",") {
 			t.Errorf("%s not reported:\n%s", name, all)
 		}
+	}
+	// MCP servers are settled one by one and reported per file.
+	if r := strings.Join(first.MCPReport, "\n"); !strings.Contains(r, `kept local "fs"; left out "new", "web"`) {
+		t.Errorf("server report = %s", r)
 	}
 	if strings.Contains(all, "hooks.Same") {
 		t.Errorf("unchanged entry reported:\n%s", all)
@@ -91,8 +96,10 @@ func TestImportDropsCommandsTheBundleAddsOrChanges(t *testing.T) {
 	}
 }
 
-// Q1: a Codex config.toml that adds an MCP server or notify command is not
-// applied; one whose command sections match this machine's is.
+// Q1: a Codex config.toml is merged per MCP server: a changed or new server
+// is not taken without a pick, the rest of the file still travels unless it
+// changes another command, and a layout the merge cannot edit falls back to
+// keeping the whole file.
 func TestImportKeepsCodexConfigWithNewCommands(t *testing.T) {
 	home := t.TempDir()
 	cfg := filepath.Join(home, ".codex", "config.toml")
@@ -100,19 +107,24 @@ func TestImportKeepsCodexConfigWithNewCommands(t *testing.T) {
 	asset := func(body string) []SetupAsset {
 		return []SetupAsset{{LogicalRoot: setupAssetRootProviderCodex, LogicalPath: "config.toml", ContentPresent: true, Content: []byte(body)}}
 	}
-	for _, evil := range []string{
-		"model = \"b\"\n\n[mcp_servers.fs]\ncommand = \"evil\"\n",
-		"model = \"b\"\nnotify = [\"evil\"]\n\n[mcp_servers.fs]\ncommand = \"fs\"\n",
-		"model = \"b\"\nmcp_servers.x.command = \"evil\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n",
-		"model = \"b\"\n\n[\"mcp\\u005fservers\".x]\ncommand = \"evil\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n",
+	for _, tc := range []struct{ bundle, want, warn string }{
+		// Changed server: kept local, the model travels.
+		{"model = \"b\"\n\n[mcp_servers.fs]\ncommand = \"evil\"\n", "model = \"b\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n", ""},
+		// Another command changed: the rest is this machine's.
+		{"model = \"b\"\nnotify = [\"evil\"]\n\n[mcp_servers.fs]\ncommand = \"fs\"\n", local, "notify, model_providers"},
+		// A dotted server the text edit cannot remove: whole file kept.
+		{"model = \"b\"\nmcp_servers.x.command = \"evil\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n", local, "mcp_servers, notify"},
+		// A quoted, escaped table name is still the server x: left out.
+		{"model = \"b\"\n\n[\"mcp\\u005fservers\".x]\ncommand = \"evil\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n", "model = \"b\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n", ""},
 	} {
 		mustWriteFile(t, cfg, local)
-		_, warnings, err := applyProviderAssetsWith(home, asset(evil), fixedCtx(""))
+		_, warnings, err := applyProviderAssetsWith(home, asset(tc.bundle), fixedCtx(""))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if readString(t, cfg) != local || !strings.Contains(strings.Join(warnings, "\n"), "mcp_servers, notify") {
-			t.Errorf("config.toml with new commands applied: %q\n%v", readString(t, cfg), warnings)
+		got := readString(t, cfg)
+		if got != tc.want || strings.Contains(got, "evil") || (tc.warn != "" && !strings.Contains(strings.Join(warnings, "\n"), tc.warn)) {
+			t.Errorf("bundle %q: got %q\n%v", tc.bundle, got, warnings)
 		}
 	}
 	ok := "model = \"b\"\n\n[mcp_servers.fs]\ncommand = \"fs\"\n"
@@ -397,17 +409,17 @@ func TestImportDropsServerWithChangedEnv(t *testing.T) {
 	bundle := `{"mcpServers":{"x":{"command":"npx","args":["a"],"env":{"TOKEN":"","NODE_OPTIONS":"--require /tmp/e.js"}},"y":{"command":"npx","args":["b"],"env":{"TOKEN":""}}}}`
 	asset := SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true, Content: []byte(bundle),
 		RedactedFields: []string{"/mcpServers/x/env/TOKEN", "/mcpServers/y/env/TOKEN"}}
-	_, warnings, err := applyProviderAssetsWith(home, []SetupAsset{asset}, fixedCtx(""))
-	if err != nil {
+	ctx := fixedCtx("")
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
 		t.Fatal(err)
 	}
 	got := readString(t, cj)
 	if strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"TOKEN": "t"`) || !strings.Contains(got, `"TOKEN": "ty"`) {
 		t.Errorf("got %s", got)
 	}
-	all := strings.Join(warnings, "\n")
-	if !strings.Contains(all, "mcpServers.x") || strings.Contains(all, "mcpServers.y") {
-		t.Errorf("warnings = %s", all)
+	all := strings.Join(ctx.MCPReport, "\n")
+	if !strings.Contains(all, `kept local "x"`) || strings.Contains(all, `"y"`) {
+		t.Errorf("report = %s", all)
 	}
 }
 

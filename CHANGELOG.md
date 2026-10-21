@@ -3,6 +3,23 @@
 ## [Unreleased]
 
 ### Added
+- Import merges MCP servers one by one (https://github.com/nikolareljin/agentvault/issues/72):
+  servers only this machine has stay, new servers are picked from a list,
+  changed ones are asked about with the masked difference, and
+  `--mcp-servers a,b|all|none` decides without a terminal. Picking a server
+  is consent for its command, args and URL only: a server that reads this
+  machine's environment variables, and code-loading or routing env
+  variables, need a separate yes. A server with an unknown field or a
+  secret-shaped value where it runs or sends is not offered.
+  Changed servers show the masked difference of the changed fields and the
+  bundle's definition verbatim. VS Code `mcp.servers` and Zed
+  `context_servers` are merged the same way. An unknown `--mcp-servers`
+  name is warned about. Without a pick nothing new is added and
+  changed servers stay as they are. Covers `~/.claude.json`, JSON settings
+  (`mcpServers`, `servers`) and Codex `config.toml`, whose tables are edited
+  in place. Import prints what it added, replaced, kept and left out per
+  file. JSON files keep this machine's key and server order. `generate mcp`
+  keeps servers only the target file has.
 - `import`: a work dir mapping into a hidden folder, once confirmed, is
   saved as confirmed and not asked again for the same target while every
   bundle project under it is a checkout already there with the same

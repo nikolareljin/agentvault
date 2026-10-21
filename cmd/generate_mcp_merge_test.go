@@ -13,10 +13,10 @@ import (
 // survive a regeneration of mcpServers.
 func TestMergeMCPServersKeepsOtherKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claude_desktop_config.json")
-	if err := os.WriteFile(path, []byte(`{"globalShortcut":"Ctrl+Space","mcpServers":{"old":{"command":"x"}}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"globalShortcut":"Ctrl+Space","mcpServers":{"old":{"command":"x"},"both":{"command":"local"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	out, err := mergeMCPServersIntoFile(path, []byte(`{"mcpServers":{"new":{"command":"y"}}}`))
+	out, err := mergeMCPServersIntoFile(path, []byte(`{"mcpServers":{"new":{"command":"y"},"both":{"command":"gen"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,8 +33,10 @@ func TestMergeMCPServersKeepsOtherKeys(t *testing.T) {
 	if err := json.Unmarshal(out, &servers); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := servers.MCPServers["new"]; !ok || len(servers.MCPServers) != 1 {
-		t.Fatalf("mcpServers = %v, want only the generated set", servers.MCPServers)
+	// A server only the file has stays; a generated one wins.
+	both, _ := servers.MCPServers["both"].(map[string]any)
+	if _, ok := servers.MCPServers["new"]; !ok || servers.MCPServers["old"] == nil || both["command"] != "gen" || len(servers.MCPServers) != 3 {
+		t.Fatalf("mcpServers = %v, want old kept, new added, both generated", servers.MCPServers)
 	}
 }
 
@@ -317,7 +319,7 @@ func TestMergeMCPServersKeepsOrderAndNumbers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "{\n  \"z\": 2,\n  \"mcpServers\": {\n    \"n\": {\n      \"command\": \"y\"\n    }\n  },\n  \"a\": 12345678901234567890\n}"
+	want := "{\n  \"z\": 2,\n  \"mcpServers\": {\n    \"old\": {},\n    \"n\": {\n      \"command\": \"y\"\n    }\n  },\n  \"a\": 12345678901234567890\n}"
 	if string(out) != want {
 		t.Fatalf("got\n%s\nwant\n%s", out, want)
 	}

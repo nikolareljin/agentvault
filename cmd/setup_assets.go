@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -1190,9 +1191,32 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, the bundle adds or changes trusted folders; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 			continue
 		}
+		codexConfig := asset.LogicalRoot == setupAssetRootProviderCodex && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.toml")
+		var mcpRep mcpMergeReport
+		codexServersOnly := false
+		codexMerged := false
+		if codexConfig {
+			m, err := ctx.mergeCodexConfig(dest, content, original)
+			if err != nil {
+				return applied, warnings, err
+			}
+			if !m.OK && m.Report.changed() {
+				names := append(append([]string(nil), m.Report.Added...), m.Report.Replaced...)
+				for i, n := range names {
+					names[i] = strconv.Quote(n)
+				}
+				ctx.MCPReport = append(ctx.MCPReport, printable(dest)+": not applied per server, could not edit the [mcp_servers] tables (unusual layout); the whole-file rule decides: "+strings.Join(names, ", "))
+			}
+			if m.OK {
+				content, mcpRep, codexServersOnly, codexMerged = m.Content, m.Report, m.LocalBase, true
+				if m.RestDropped {
+					warnings = append(warnings, fmt.Sprintf("provider asset %s: left out the bundle's other settings, which add or change notify, model_providers or another command; kept this machine's apart from the MCP servers (use --keep-bundle-commands to take them)", desc))
+				}
+			}
+		}
 		if !ctx.KeepBundleCommands {
-			if asset.LogicalRoot == setupAssetRootProviderCodex && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.toml") {
-				if codexCommandsChanged(content, original) {
+			if codexConfig {
+				if !codexMerged && codexCommandsChanged(content, original) {
 					warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, it adds or changes mcp_servers, notify, model_providers or another command, or does not parse; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 					continue
 				}
@@ -1212,10 +1236,24 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 						continue
 					}
 				}
+				var consent map[string]map[string]bool
+				var err error
+				content, consent, mcpRep, err = ctx.mergeMCPKeysJSON(dest, content, original, mergeKeys)
+				if err != nil {
+					return applied, warnings, err
+				}
 				var dropped []string
-				content, dropped = dropBundleCommands(content, original)
+				content, dropped = dropBundleCommandsExcept(content, original, consent)
 				for _, d := range dropped {
 					warnings = append(warnings, fmt.Sprintf("provider asset %s: left out command %s, which the bundle adds or changes; kept this machine's value (use --keep-bundle-commands to take it)", desc, d))
+				}
+			}
+		} else if !codexConfig && jsonSettingsAsset(asset) {
+			if _, ok := decodeSettingsObject(original); ok || len(bytes.TrimSpace(original)) == 0 {
+				var err error
+				content, _, mcpRep, err = ctx.mergeMCPKeysJSON(dest, content, original, mergeKeys)
+				if err != nil {
+					return applied, warnings, err
 				}
 			}
 		}
@@ -1258,12 +1296,13 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", desc, err))
 				continue
 			}
-			content = merged
+			// This machine's key and server order; new ones in the bundle's.
+			content = orderLikeLocal(merged, current, asset.Content)
 		} else if len(current) > 0 {
 			// The local file's own keys stay; the bundle's overwrite.
 			merged, n, ok := unionWithLocal(content, current, secrets, removed, ctx.restoreAsker(dest))
 			if ok {
-				content = merged
+				content = orderLikeLocal(merged, current, asset.Content)
 				declined += n
 			}
 		}
@@ -1273,6 +1312,9 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		_, statErr := os.Lstat(dest)
 		exists := statErr == nil
 		if ctx.DryRun {
+			if line := formatMCPReport(dest, mcpRep, true); line != "" {
+				ctx.MCPReport = append(ctx.MCPReport, line)
+			}
 			switch {
 			case !exists:
 				warnings = append(warnings, fmt.Sprintf("provider asset %s: would write %s", desc, dest))
@@ -1282,13 +1324,22 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			}
 			continue
 		}
+		// Only servers the user already settled differ: no second question.
+		serversOnly := mcpRep.changed() && (codexServersOnly || (!codexConfig && sameApartFromMCP(current, content)))
 		if exists && !sameFileBytes(current, content) {
-			replace, err := ctx.decide(dest)
-			if err != nil {
-				return applied, warnings, err
+			replace := true
+			if !serversOnly {
+				var err error
+				replace, err = ctx.decide(dest)
+				if err != nil {
+					return applied, warnings, err
+				}
 			}
 			if !replace {
 				warnings = append(warnings, fmt.Sprintf("provider asset %s: kept this machine's %s, which differs from the bundle", desc, dest))
+				if !mcpRep.empty() {
+					ctx.MCPReport = append(ctx.MCPReport, printable(dest)+": file kept, no MCP server changed")
+				}
 				continue
 			}
 			if _, err := ctx.backup(dest); err != nil {
@@ -1308,6 +1359,9 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		}
 		if err := writeRegularFileAtomic(homeDir, dest, content, perm); err != nil {
 			return applied, warnings, fmt.Errorf("writing provider asset %q: %w", dest, err)
+		}
+		if line := formatMCPReport(dest, mcpRep, false); line != "" {
+			ctx.MCPReport = append(ctx.MCPReport, line)
 		}
 		applied++
 	}
