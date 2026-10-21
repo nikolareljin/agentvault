@@ -876,7 +876,6 @@ func TestImportZedOrdinarySettingsOffered(t *testing.T) {
 	for _, settings := range []string{
 		`{"api_url":"https://a","base_url":"https://b"}`,
 		`{"proxy":"http://p"}`,
-		`{"cb":"https://x/cb?redirect_url=https%3A%2F%2Fx"}`,
 	} {
 		home := t.TempDir()
 		f := filepath.Join(home, ".claude", "settings.json")
@@ -889,6 +888,10 @@ func TestImportZedOrdinarySettingsOffered(t *testing.T) {
 		if got := readString(t, f); !strings.Contains(got, `"z"`) {
 			t.Errorf("%s: not offered: %v", settings, ctx.MCPReport)
 		}
+	}
+	// Settings values are never exempt: a URL escape there needs the yes.
+	if refs := mcpEnvRefs(map[string]any{"settings": map[string]any{"cb": "https://x/cb?redirect_url=https%3A%2F%2Fx"}}); len(refs) == 0 {
+		t.Errorf("settings URL escape exempted")
 	}
 	if refs := mcpEnvRefs(map[string]any{"u": "https://x/?a=%HOME%"}); len(refs) != 1 || refs[0] != "HOME" {
 		t.Errorf("%%HOME%% in a URL: %v", refs)
@@ -922,8 +925,27 @@ func TestMCPEnvRefsPercentForms(t *testing.T) {
 		}
 	}
 	for _, in := range []string{"https://x/cb?redirect_url=https%3A%2F%2Fx", "https://x/caf%C3%A9"} {
-		if refs := mcpEnvRefs(map[string]any{"u": in}); len(refs) != 0 {
+		if refs := mcpEnvRefs(map[string]any{"url": in}); len(refs) != 0 {
 			t.Errorf("%q: URL escapes read as references: %v", in, refs)
+		}
+	}
+}
+
+// The URL exception holds only for the server's own url and httpUrl.
+func TestMCPEnvRefsURLExceptionOnlyInURLFields(t *testing.T) {
+	for _, srv := range []map[string]any{
+		{"command": "x", "args": []any{"https://x/%CD%"}},
+		{"url": "https://u", "headers": map[string]any{"A": "https://x/%CD%"}},
+		{"settings": map[string]any{"url": "https://x/%CD%"}},
+		{"command": "https://x/%CD%"},
+	} {
+		if refs := mcpEnvRefs(srv); len(refs) == 0 {
+			t.Errorf("%v: no reference", srv)
+		}
+	}
+	for _, srv := range []map[string]any{{"url": "https://x/caf%C3%A9"}, {"httpUrl": "https://x/caf%C3%A9"}} {
+		if refs := mcpEnvRefs(srv); len(refs) != 0 {
+			t.Errorf("%v: %v", srv, refs)
 		}
 	}
 }

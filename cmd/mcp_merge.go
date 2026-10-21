@@ -392,6 +392,13 @@ func mayExpand(s string) bool {
 	return percentRef.MatchString(s)
 }
 
+// mayExpandStrict is mayExpand without the URL exception: for command,
+// args, env values, headers and settings, where %CD% in a URL-looking
+// string is still a cmd.exe variable.
+func mayExpandStrict(s string) bool {
+	return strings.Contains(s, "$") || percentRef.MatchString(s)
+}
+
 func cleanHTTPURL(s string) bool {
 	u, err := url.Parse(s)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.String() == s &&
@@ -414,11 +421,14 @@ func badURLQuery(s string) bool {
 // env_http_headers values).
 func mcpEnvRefs(v any) []string {
 	seen := map[string]bool{}
-	var walk func(key string, v any)
-	walk = func(key string, v any) {
+	var walk func(key string, v any, top bool)
+	walk = func(key string, v any, top bool) {
 		switch t := v.(type) {
 		case string:
-			if mayExpand(t) {
+			// Only the server's own url and httpUrl are never expanded by a
+			// shell: there a clean URL's %XX escapes are not references.
+			urlField := top && (key == "url" || key == "httpUrl")
+			if (urlField && mayExpand(t)) || (!urlField && mayExpandStrict(t)) {
 				found := false
 				for _, m := range envRefPattern.FindAllStringSubmatch(t, -1) {
 					seen[m[1]+m[2]] = true
@@ -433,19 +443,19 @@ func mcpEnvRefs(v any) []string {
 			}
 		case []any:
 			for _, x := range t {
-				walk(key, x)
+				walk(key, x, false)
 			}
 		case map[string]any:
 			for k, x := range t {
 				if key == "env_http_headers" {
-					walk(key, x)
+					walk(key, x, false)
 					continue
 				}
-				walk(k, x)
+				walk(k, x, key == "")
 			}
 		}
 	}
-	walk("", v)
+	walk("", v, false)
 	out := make([]string, 0, len(seen))
 	for k := range seen {
 		if k != "" {
