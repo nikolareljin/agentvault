@@ -43,7 +43,8 @@ jobs:
               // 403 when the repo does not let Actions create pull requests
               // (Settings > Actions > General). Open it by hand instead. Any
               // other 403 (rate limit, token scope) still fails.
-              if (err.status !== 403 || !/not permitted to create or approve pull requests/i.test(err.message || '')) throw err;
+              const msg = `${err.message || ''} ${err.response?.data?.message || ''}`;
+              if (err.status !== 403 || !/not permitted to create or approve pull requests/i.test(msg)) throw err;
               core.warning(`Actions may not create pull requests here; open it by hand: https://github.com/${owner}/${repo}/compare/${base}...${head}?expand=1`);
               return;
             }
