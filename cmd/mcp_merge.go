@@ -241,11 +241,17 @@ type ctxChooser struct {
 	c    *importApplyContext
 	file string
 	ask  []string
+	// zed: the servers are Zed context_servers.
+	zed bool
 }
 
 func (ch *ctxChooser) refuse(_ string, bundle any) bool {
-	return !ch.c.KeepBundleCommands && !offerableServer(bundle)
+	return !ch.c.KeepBundleCommands && !offerableServer(bundle, ch.zed)
 }
+
+// zedServerFields are the extra fields of a Zed context_servers entry:
+// source ("custom" or "extension") and the extension's settings.
+var zedServerFields = map[string]bool{"source": true, "settings": true}
 
 // mcpServerFields are the fields a server definition from a bundle may have
 // to be offered: Claude, Gemini, Copilot, Cursor and Windsurf (type,
@@ -269,15 +275,18 @@ var mcpSendFields = []string{"command", "args", "url", "httpUrl", "headers", "ht
 // offerableServer is whether a bundle server may be shown for consent:
 // only known fields, and no secret-shaped value where it runs or sends, or
 // in a gated env variable.
-func offerableServer(v any) bool {
+func offerableServer(v any, zed bool) bool {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return false
 	}
 	for k := range m {
-		if !mcpServerFields[k] {
+		if !mcpServerFields[k] && !(zed && zedServerFields[k]) {
 			return false
 		}
+	}
+	if zed && anySecretString(m["settings"]) {
+		return false
 	}
 	for _, k := range mcpSendFields {
 		if anySecretString(m[k]) {
@@ -694,7 +703,7 @@ func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte
 			ls = map[string]any{}
 		}
 		c.noteBundleServers(bs)
-		ch := &ctxChooser{c: c, file: dest}
+		ch := &ctxChooser{c: c, file: dest, zed: key == "context_servers"}
 		merged, r, err := mergeMCPServers(ls, bs, ch)
 		if err != nil {
 			return content, nil, rep, err

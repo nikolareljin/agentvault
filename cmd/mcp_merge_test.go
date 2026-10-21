@@ -682,3 +682,33 @@ func TestImportZedCommandEnvGated(t *testing.T) {
 		t.Errorf("yes: %s\n%s", got, out.String())
 	}
 }
+
+// A Zed entry with source and settings is offered; settings are shown and
+// checked like other fields; the same fields elsewhere are unknown.
+func TestImportZedSourceAndSettings(t *testing.T) {
+	run := func(bundle string) (string, string) {
+		home := t.TempDir()
+		settings := filepath.Join(home, ".claude", "settings.json")
+		mustWriteFile(t, settings, `{}`)
+		ctx := fixedCtx("1\n\n")
+		out := &bytes.Buffer{}
+		ctx.Out = out
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(bundle)}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		return readString(t, settings), out.String()
+	}
+	got, out := run(`{"context_servers":{"z":{"source":"custom","command":"z","args":[],"env":{},"settings":{"level":"x"}}}}`)
+	if !strings.Contains(got, `"source": "custom"`) || !strings.Contains(out, `settings: {"level":"x"}`) {
+		t.Errorf("zed entry: %s\n%s", got, out)
+	}
+	if got, _ := run(`{"context_servers":{"z":{"source":"extension","settings":{"key":"ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}`); strings.Contains(got, `"z"`) {
+		t.Errorf("secret-shaped settings offered: %s", got)
+	}
+	if got, _ := run(`{"context_servers":{"z":{"source":"extension","settings":{"u":"${TOKEN}"}}}}`); strings.Contains(got, `"z"`) {
+		t.Errorf("env reference in settings taken without a yes: %s", got)
+	}
+	if got, _ := run(`{"mcpServers":{"z":{"command":"z","settings":{}}}}`); strings.Contains(got, `"z"`) {
+		t.Errorf("settings outside Zed offered: %s", got)
+	}
+}
