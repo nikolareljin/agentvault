@@ -1,12 +1,81 @@
 name: Deb
 
+# Called by release.yml after the release exists (a tag pushed by the
+# auto-tag workflow triggers no workflow on its own). By hand, dispatch it on
+# the tag itself: gh workflow run deb.yml --ref 0.15.0 -f release_tag=0.15.0
 on:
-  push:
-    tags:
-      - "*.*.*"
+  workflow_call:
+    inputs:
+      release_tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to package, for example 0.15.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
+  # deb-build checks out github.ref and takes the version from VERSION, so
+  # the run must be on the tag, and the tag must match VERSION.
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 @ 2026-09-10
+        with:
+          persist-credentials: false
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.+-]+)?$ ]]
+          [[ "$GITHUB_REF" == "refs/tags/$RELEASE_TAG" ]] \
+            || { echo "::error::run on the tag: --ref $RELEASE_TAG (got $GITHUB_REF)"; exit 1; }
+          [[ "$(tr -d '[:space:]' < VERSION)" == "$RELEASE_TAG" ]] \
+            || { echo "::error::VERSION is not $RELEASE_TAG"; exit 1; }
+
   deb:
+    needs: check
+    permissions:
+      contents: read
     uses: nikolareljin/ci-helpers/.github/workflows/deb-build.yml@production
     with:
-      prebuild_command: "make build"
+      # Static like the release binaries, so the .deb needs no Depends. The
+      # bootstrap step makes vendor/, which would put go in vendor mode.
+      prebuild_command: "CGO_ENABLED=0 GOFLAGS=-mod=readonly make build"
+      build_command: "bash scripts/package_deb.sh"
+      artifact_name: "agentvault-deb"
+      # deb-build's own release upload also rewrites the release body from
+      # CHANGELOG.md, which drops the "Download Binaries" table go-release
+      # wrote. The upload job below attaches the file and leaves the body.
+      upload_to_release: "false"
+
+  upload:
+    needs: deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2 @ 2026-10-16
+        with:
+          name: agentvault-deb
+          path: debs
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(debs/*.deb)
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::no .deb built"; exit 1; }
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber -R "$GITHUB_REPOSITORY"

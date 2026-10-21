@@ -37,3 +37,20 @@ jobs:
     with:
       release_tag: ${{ github.event.inputs.release_tag || github.ref_name }}
     secrets: inherit
+
+  # Packages are built from the tag and attached to this release.
+  deb:
+    needs: release
+    uses: ./.github/workflows/deb.yml
+    permissions:
+      contents: write
+    with:
+      release_tag: ${{ github.event.inputs.release_tag || github.ref_name }}
+
+  rpm:
+    needs: release
+    uses: ./.github/workflows/rpm.yml
+    permissions:
+      contents: write
+    with:
+      release_tag: ${{ github.event.inputs.release_tag || github.ref_name }}
