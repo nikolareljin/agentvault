@@ -298,19 +298,23 @@
   values into the bundle: every `env` value, `apiKeyHelper` and MCP
   `headers` of `~/.claude/settings.json` (in `detected_agents` with
   `--detect`, and in `provider_configs` after `setup pull`),
-  and the `env` values and `--token x` args of vault MCP servers. The
-  flag has left them in since it was added in 0.7.0; earlier releases
-  had no way to leave them out. They are now blanked as in provider
-  files and filled on import from this machine's vault when the
-  definition is unchanged. Claude settings with a secret under a neutral
-  key are left out, and import keeps this machine's. The summary keeps
-  ordinary settings such as `includeCoAuthoredBy`, and the other entries
-  of a list that holds a secret.
+  the `env` values and `--token x` args of vault MCP servers,
+  secret-shaped agent and Ollama base URLs, agent provider extras, and
+  secret keys of Codex and Ollama custom settings. The flag has left
+  them in since it was added in 0.7.0; earlier releases had no way to
+  leave them out. They are now blanked as in provider files and filled
+  on import from this machine's vault when the definition is unchanged:
+  for an MCP server the same command, args and `env` names. A blank that
+  is not filled is named as `Left out`. Claude settings with a secret
+  under a neutral key are left out, and import keeps this machine's. The
+  summary keeps ordinary settings such as `includeCoAuthoredBy`, and the
+  other entries of a list that holds a secret.
 - Import fills an agent's blank API key, base URL or provider extras from
   this machine's agent only when the bundle's agent has the same provider,
-  backend, base URL and provider settings; otherwise the value is left out
-  and named. Since 0.13.0 a bundle exported without keys could point an
-  agent at another base URL and receive this machine's API key.
+  backend, base URL and provider settings, with the same extras names; a
+  blank matches only a value export blanks. Otherwise the value is left
+  out and named. Since 0.13.0 a bundle exported without keys could point
+  an agent at another base URL and receive this machine's API key.
 
 ### Fixed
 - Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first
