@@ -76,7 +76,8 @@ type mcpChooser interface {
 	// sides have, and that differs, replaces this machine's.
 	replaceChanged(name string, local, bundle any) (bool, error)
 	// refuse is whether a server may not be offered at all.
-	refuse(name string, bundle any) bool
+	// refuse is why a server may not be offered at all, or "".
+	refuse(name string, bundle any) string
 }
 
 // mcpMergeReport says what happened to each server that was not the same on
@@ -89,6 +90,8 @@ type mcpMergeReport struct {
 	// Refused are servers not offered: their command, args or URL hold a
 	// secret-shaped value that would be hidden in the question.
 	Refused []string
+	// RefusedWhy is the reason per refused server.
+	RefusedWhy map[string]string
 	// EnvRefused are servers not taken: they read this machine's
 	// environment variables and that was not approved.
 	EnvRefused []string
@@ -131,9 +134,9 @@ func mergeMCPServers(local, bundle map[string]any, ch mcpChooser) (map[string]an
 		bv := bundle[name]
 		lv, ok := local[name]
 		if !ok {
-			if ch.refuse(name, bv) {
+			if why := ch.refuse(name, bv); why != "" {
 				rep.LeftOut = append(rep.LeftOut, name)
-				rep.Refused = append(rep.Refused, name)
+				rep.refuse(name, why)
 				continue
 			}
 			fresh = append(fresh, name)
@@ -144,9 +147,9 @@ func mergeMCPServers(local, bundle map[string]any, ch mcpChooser) (map[string]an
 		if (bIsMap && lIsMap && sameServerApartFromBlanks(bm, lm)) || jsonEqual(bv, lv) {
 			continue
 		}
-		if ch.refuse(name, bv) {
+		if why := ch.refuse(name, bv); why != "" {
 			rep.KeptLocal = append(rep.KeptLocal, name)
-			rep.Refused = append(rep.Refused, name)
+			rep.refuse(name, why)
 			continue
 		}
 		replace, err := ch.replaceChanged(name, lv, bv)
@@ -245,9 +248,29 @@ type ctxChooser struct {
 	zed bool
 }
 
-func (ch *ctxChooser) refuse(_ string, bundle any) bool {
-	return !ch.c.KeepBundleCommands && !offerableServer(bundle, ch.zed)
+func (ch *ctxChooser) refuse(_ string, bundle any) string {
+	if ch.c.KeepBundleCommands {
+		return ""
+	}
+	return unofferableReason(bundle, ch.zed)
 }
+
+func (r *mcpMergeReport) refuse(name, why string) {
+	r.Refused = append(r.Refused, name)
+	if r.RefusedWhy == nil {
+		r.RefusedWhy = map[string]string{}
+	}
+	r.RefusedWhy[name] = why
+}
+
+// Reasons a server is not offered.
+const (
+	whyUnknownField = "an unknown field"
+	whySecretShaped = "a secret-shaped value where it runs or sends"
+	whyUngateable   = "environment settings that cannot be gated"
+	whyGatedName    = "a gated variable name outside an env object"
+	whyTooDeep      = "settings nested deeper than 64 levels"
+)
 
 // zedServerFields are the extra fields of a Zed context_servers entry:
 // source ("custom" or "extension") and the extension's settings.
@@ -272,41 +295,42 @@ var mcpServerFields = map[string]bool{
 // in one is never shown for consent, so the server is not offered.
 var mcpSendFields = []string{"command", "args", "url", "httpUrl", "headers", "http_headers"}
 
-// offerableServer is whether a bundle server may be shown for consent:
-// only known fields, and no secret-shaped value where it runs or sends, or
-// in a gated env variable.
-func offerableServer(v any, zed bool) bool {
+// unofferableReason is why a bundle server may not be shown for consent, or
+// "" when it may: only known fields, no secret-shaped value where it runs
+// or sends or in a gated env variable, and settings the env gate can
+// follow.
+func unofferableReason(v any, zed bool) string {
 	m, ok := v.(map[string]any)
 	if !ok {
-		return false
+		return whyUnknownField
 	}
 	for k := range m {
 		if !mcpServerFields[k] && !(zed && zedServerFields[k]) {
-			return false
+			return whyUnknownField
 		}
 	}
 	if zed && anySecretString(m["settings"]) {
-		return false
+		return whySecretShaped
 	}
 	for _, k := range mcpSendFields {
 		if anySecretString(m[k]) {
-			return false
+			return whySecretShaped
 		}
 	}
-	locs, unsafe := mcpEnvLocations(m)
-	if unsafe {
-		return false
+	locs, why := mcpEnvLocations(m)
+	if why != "" {
+		return why
 	}
 	for _, loc := range locs {
 		ev, _ := getPath(m, loc)
 		env, _ := ev.(map[string]any)
 		for k, v := range env {
 			if gatedEnv(k) && anySecretString(v) {
-				return false
+				return whySecretShaped
 			}
 		}
 	}
-	return true
+	return ""
 }
 
 func anySecretString(v any) bool {
@@ -618,7 +642,9 @@ func envLikeKey(k string) bool {
 }
 
 // gatedAssign finds NAME=value with a gated NAME in a string.
-var gatedAssign = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)=`)
+// Upper-case names only, at the start or after whitespace: not the
+// redirect_url= of a URL query.
+var gatedAssign = regexp.MustCompile(`(?:^|\s)([A-Z_][A-Z0-9_]*)=`)
 
 // mcpEnvLocations are where a server keeps its environment: env, Zed's
 // command.env, and every env-like object at any depth under Zed's
@@ -626,15 +652,15 @@ var gatedAssign = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)=`)
 // cannot be gated by path: an env-like key under an array or whose value is
 // not an object, or a NAME=value string naming a gated variable. Such a
 // server is not offered.
-func mcpEnvLocations(srv map[string]any) (locs [][]string, unsafe bool) {
+func mcpEnvLocations(srv map[string]any) (locs [][]string, why string) {
 	locs = [][]string{{"env"}, {"command", "env"}}
 	var walk func(v any, path []string, underArray bool)
 	walk = func(v any, path []string, underArray bool) {
-		if unsafe {
+		if why != "" {
 			return
 		}
 		if len(path) > mcpSettingsMaxDepth {
-			unsafe = true
+			why = whyTooDeep
 			return
 		}
 		switch t := v.(type) {
@@ -645,13 +671,33 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, unsafe bool) {
 					m, ok := t[k].(map[string]any)
 					switch {
 					case !ok || underArray:
-						unsafe = true
+						why = whyUngateable
+						return
 					case !strings.EqualFold(k, "env") && hasGatedName(m):
 						// Not a key the tools document: fail closed.
-						unsafe = true
-					default:
-						locs = append(locs, p)
+						why = whyUngateable
+						return
 					}
+					// An env object holds plain values only; its gated names
+					// get the separate question.
+					for _, ev := range m {
+						switch ev.(type) {
+						case string, json.Number, float64, bool, nil:
+						default:
+							why = whyUngateable
+							return
+						}
+					}
+					locs = append(locs, p)
+					for _, ev := range m {
+						walk(ev, p, underArray)
+					}
+					continue
+				}
+				if gatedEnv(k) {
+					// A gated name outside a gateable env object: fail closed.
+					why = whyGatedName
+					return
 				}
 				walk(t[k], p, underArray)
 			}
@@ -662,13 +708,14 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, unsafe bool) {
 		case string:
 			for _, m := range gatedAssign.FindAllStringSubmatch(t, -1) {
 				if gatedEnv(m[1]) {
-					unsafe = true
+					why = whyGatedName
+					return
 				}
 			}
 		}
 	}
 	walk(srv["settings"], []string{"settings"}, false)
-	return locs, unsafe
+	return locs, why
 }
 
 // mcpSettingsMaxDepth caps the walk of Zed settings; deeper settings are
@@ -682,6 +729,20 @@ func hasGatedName(m map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// plainPath joins a path with dots, quoting only a part that holds a dot,
+// a quote or a character that is not printable; the report quotes the
+// whole once.
+func plainPath(parts []string) string {
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		if p == "" || strings.ContainsAny(p, ".\"\\") || printable(p) != p {
+			p = strconv.Quote(p)
+		}
+		out[i] = p
+	}
+	return strings.Join(out, ".")
 }
 
 // pathLabel prints a path from the bundle with each part quoted, so a dot
@@ -770,7 +831,7 @@ func (c *importApplyContext) gateEnvAt(file, name string, loc []string, merged, 
 		} else {
 			delete(ne, k)
 		}
-		rep.EnvLeftOut = append(rep.EnvLeftOut, name+" "+label+" "+strconv.Quote(k))
+		rep.EnvLeftOut = append(rep.EnvLeftOut, plainPath(append(append([]string{name}, loc...), k)))
 	}
 	setPath(ns, loc, ne)
 	merged[name] = ns
@@ -838,7 +899,9 @@ func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte
 		rep.Replaced = append(rep.Replaced, r.Replaced...)
 		rep.KeptLocal = append(rep.KeptLocal, r.KeptLocal...)
 		rep.LeftOut = append(rep.LeftOut, r.LeftOut...)
-		rep.Refused = append(rep.Refused, r.Refused...)
+		for _, n := range r.Refused {
+			rep.refuse(n, r.RefusedWhy[n])
+		}
 		rep.Ask = append(rep.Ask, r.Ask...)
 	}
 	if !touched {
@@ -882,13 +945,23 @@ func formatMCPReport(file string, rep mcpMergeReport, dry bool) string {
 		}
 		parts = append(parts, label+" "+strings.Join(q, ", "))
 	}
+	refused := func(label string) {
+		if len(rep.Refused) == 0 {
+			return
+		}
+		q := make([]string, len(rep.Refused))
+		for i, n := range rep.Refused {
+			q[i] = strconv.Quote(n) + " (" + rep.RefusedWhy[n] + ")"
+		}
+		parts = append(parts, label+" "+strings.Join(q, ", "))
+	}
 	if dry {
 		add("would add", rep.Added)
 		add("would replace", rep.Replaced)
 		add("would keep local", rep.KeptLocal)
 		add("would leave out", rep.LeftOut)
 		add("would leave out variables", rep.EnvLeftOut)
-		add("would not offer, an unknown field or a secret-shaped value (review the bundle)", rep.Refused)
+		refused("would not offer")
 		add("would not take, reads this machine's variables", rep.EnvRefused)
 		add("would ask about", rep.Ask)
 	} else {
@@ -897,7 +970,7 @@ func formatMCPReport(file string, rep mcpMergeReport, dry bool) string {
 		add("kept local", rep.KeptLocal)
 		add("left out", rep.LeftOut)
 		add("left out variables", rep.EnvLeftOut)
-		add("not offered, an unknown field or a secret-shaped value (review the bundle)", rep.Refused)
+		refused("not offered (review the bundle)")
 		add("not taken, reads this machine's variables (approve on a terminal or use --keep-bundle-commands)", rep.EnvRefused)
 	}
 	return printable(file) + ": " + strings.Join(parts, "; ")

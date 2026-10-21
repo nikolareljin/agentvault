@@ -23,7 +23,7 @@ func (f *fakeChooser) pickNew(names []string, _ map[string]any) (map[string]bool
 	return f.pick, nil
 }
 
-func (f *fakeChooser) refuse(string, any) bool { return false }
+func (f *fakeChooser) refuse(string, any) string { return "" }
 
 func (f *fakeChooser) replaceChanged(name string, _, _ any) (bool, error) {
 	return f.replace[name], nil
@@ -399,7 +399,7 @@ func TestImportPickedServerKeepsEnvGate(t *testing.T) {
 	if strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"PLAIN": "1"`) || !strings.Contains(got, `"command": "n"`) {
 		t.Errorf("flag: %s", got)
 	}
-	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `left out variables "n \"env\" \"NODE_OPTIONS\""`) {
+	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `left out variables "n.env.NODE_OPTIONS"`) {
 		t.Errorf("report = %s", r)
 	}
 	// On a terminal: picked, then a separate question; no keeps it out.
@@ -453,7 +453,7 @@ func TestImportRefusesSecretShapedCommand(t *testing.T) {
 	if strings.Contains(got, "evil") || !strings.Contains(got, `"ok"`) || strings.Contains(out.String(), "evil") {
 		t.Errorf("got %s\n%s", got, out.String())
 	}
-	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `not offered, an unknown field or a secret-shaped value`) {
+	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `not offered (review the bundle)`) {
 		t.Errorf("report = %s", r)
 	}
 }
@@ -484,7 +484,7 @@ func TestImportRefusesUnknownServerFields(t *testing.T) {
 		ctx := fixedCtx("a\n\ny\ny\n")
 		ctx.Out = &bytes.Buffer{}
 		got, r := applyClaudeJSON(t, ctx, `{"mcpServers":{"n":`+srv+`}}`)
-		if strings.Contains(got, `"n"`) || !strings.Contains(r, `not offered, an unknown field or a secret-shaped value`) {
+		if strings.Contains(got, `"n"`) || !strings.Contains(r, `not offered (review the bundle)`) {
 			t.Errorf("%s: got %s\nreport %s", srv, got, r)
 		}
 		if strings.Contains(ctx.Out.(*bytes.Buffer).String(), "ghp_") {
@@ -674,7 +674,7 @@ func TestImportZedCommandEnvGated(t *testing.T) {
 	}
 	ctx := fixedCtx("")
 	ctx.MCPServers, _ = parseMCPSelection("z")
-	if got := run(ctx); strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"PLAIN": "1"`) || !strings.Contains(strings.Join(ctx.MCPReport, ""), `z \"command\".\"env\" \"NODE_OPTIONS\"`) {
+	if got := run(ctx); strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"PLAIN": "1"`) || !strings.Contains(strings.Join(ctx.MCPReport, ""), `"z.command.env.NODE_OPTIONS"`) {
 		t.Errorf("flag: %s\n%v", got, ctx.MCPReport)
 	}
 	ctx = fixedCtx("1\n\ny\n")
@@ -794,15 +794,20 @@ func TestHiddenConfirmedWorkDirAndMCPPickInOneRun(t *testing.T) {
 // settings deeper than the walk cap, mean the server is not offered.
 func TestImportZedSettingsUngateableEnvRefused(t *testing.T) {
 	deep := strings.Repeat(`{"a":`, 5000) + `1` + strings.Repeat(`}`, 5000)
-	for _, settings := range []string{
-		`{"env":"NODE_OPTIONS=--require /tmp/e.js"}`,
-		`{"env":["NODE_OPTIONS=--require /tmp/e.js"]}`,
-		`{"environment":{"NODE_OPTIONS":"--require /tmp/e.js"}}`,
-		`{"envVars":{"LD_PRELOAD":"/e.so"}}`,
-		`{"env_vars":"x"}`,
-		`{"args":["--opt","NODE_OPTIONS=--require /tmp/e.js"]}`,
-		`{"x":{"y":"LD_PRELOAD=/e.so"}}`,
-		deep,
+	for _, tc := range []struct{ settings, why string }{
+		{`{"env":"NODE_OPTIONS=--require /tmp/e.js"}`, whyUngateable},
+		{`{"env":["NODE_OPTIONS=--require /tmp/e.js"]}`, whyUngateable},
+		{`{"environment":{"NODE_OPTIONS":"--require /tmp/e.js"}}`, whyUngateable},
+		{`{"envVars":{"LD_PRELOAD":"/e.so"}}`, whyUngateable},
+		{`{"env_vars":"x"}`, whyUngateable},
+		{`{"env":{"X":{"NODE_OPTIONS":"y"}}}`, whyUngateable},
+		{`{"env":{"X":["y"]}}`, whyUngateable},
+		{`{"args":["--opt","NODE_OPTIONS=--require /tmp/e.js"]}`, whyGatedName},
+		{`{"x":{"y":"LD_PRELOAD=/e.so"}}`, whyGatedName},
+		{`{"x":"set PATH=/usr/bin first"}`, whyGatedName},
+		{`{"vars":{"NODE_OPTIONS":"x"}}`, whyGatedName},
+		{`{"a":{"b":{"LD_PRELOAD":"x"}}}`, whyGatedName},
+		{deep, whyTooDeep},
 	} {
 		home := t.TempDir()
 		f := filepath.Join(home, ".claude", "settings.json")
@@ -810,18 +815,30 @@ func TestImportZedSettingsUngateableEnvRefused(t *testing.T) {
 		ctx := fixedCtx("")
 		ctx.MCPServers, _ = parseMCPSelection("z")
 		start := time.Now()
-		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(`{"context_servers":{"z":{"source":"extension","settings":` + settings + `}}}`)}, ctx); err != nil {
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(`{"context_servers":{"z":{"source":"extension","settings":` + tc.settings + `}}}`)}, ctx); err != nil {
 			t.Fatal(err)
 		}
 		if d := time.Since(start); d > 5*time.Second {
 			t.Errorf("took %v", d)
 		}
 		if got := readString(t, f); strings.Contains(got, `"z"`) {
-			t.Errorf("%.60s: offered: %.200s", settings, got)
+			t.Errorf("%.60s: offered: %.200s", tc.settings, got)
 		}
-		if r := strings.Join(ctx.MCPReport, ""); !strings.Contains(r, "not offered") {
-			t.Errorf("%.60s: not named: %s", settings, r)
+		if r := strings.Join(ctx.MCPReport, ""); !strings.Contains(r, `"z" (`+tc.why+`)`) {
+			t.Errorf("%.60s: reason: %s", tc.settings, r)
 		}
+	}
+	// A URL query is not an assignment.
+	home := t.TempDir()
+	f := filepath.Join(home, ".claude", "settings.json")
+	mustWriteFile(t, f, `{}`)
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("z")
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(`{"context_servers":{"z":{"source":"extension","settings":{"cb":"https://x/cb?redirect_url=https://x"}}}}`)}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := readString(t, f); !strings.Contains(got, "redirect_url") {
+		t.Errorf("URL query refused: %s %v", got, ctx.MCPReport)
 	}
 }
 
