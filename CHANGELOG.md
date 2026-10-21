@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-20
+
 ### Added
 - Import merges MCP servers one by one (https://github.com/nikolareljin/agentvault/issues/72):
   servers only this machine has stay, new servers are picked from a list,
@@ -140,6 +142,10 @@
   installs nothing.
 - `GEMINI.md` is a well-known instruction file for `instructions pull` and
   `sync`.
+- macOS install with Homebrew: `brew install nikolareljin/tap/agentvault`.
+  Each release builds an arm64 and amd64 formula from the release asset
+  digests and checks it with `brew style`, `brew test` and
+  `agentvault version` before it is published to the tap.
 
 ### Changed
 - New dependency `github.com/BurntSushi/toml` v1.5.0: import parses Codex
