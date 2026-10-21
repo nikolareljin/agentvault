@@ -58,19 +58,18 @@
   instructions into DIR. Git internals, CI, hook directories, repository
   settings, credential files and other non-prose files are not written.
 - JSON settings exported without `--include-secrets` travel with only their
-  secret values blanked (keys with token, secret, password, key and the
-  like, and everything under `env` and `headers`). Import fills each blanked
-  value from the file already on the machine, or leaves it out. A
-  value is restored without asking only into an unchanged definition (for
-  settings.json's own `env`, the rest of `env`; for a top-level key, the
-  rest of the file). For a changed one import shows the old and new fields
-  and asks `restore local secret into changed server? [y/N]`; without a
-  terminal it does not restore it. A secret under a key that `--map` or the
-  home rewrite renamed is restored too. A file with secret-shaped values
-  under neutral keys (`--token x` in `args` or a command, `X-API-Key: x`
-  header arguments, URL credentials, known token prefixes) is
-  redacted whole, and so is a credential file by name or location
-  (`.docker/config.json`, anything under `.aws`).
+  secret values blanked (keys with token, secret, password, key and the like,
+  and everything under `env`, `headers` and `http_headers`). Import fills each
+  blanked value from the file already on the machine, or leaves it out. A value
+  is restored without asking only into an unchanged definition (for
+  settings.json's own `env`, the rest of `env`; for a top-level key, the rest
+  of the file). For a changed one import shows the old and new fields and asks
+  `restore local secret into changed server? [y/N]`; without a terminal it does
+  not restore it. A secret under a key that `--map` or the home rewrite renamed
+  is restored too. A file with secret-shaped values under neutral keys
+  (`--token x` in `args` or a command, `X-API-Key: x` header arguments, URL
+  credentials, known token prefixes) is redacted whole, and so is a credential
+  file by name or location (`.docker/config.json`, anything under `.aws`).
 - The execute bit travels for a tool's own `hooks/` scripts, so a hook still
   runs after import. The scripts travel only with `--include-secrets`;
   without it import names each one it left behind. Import writes a new or
@@ -294,21 +293,20 @@
   spelling.
 - A file whose hard link count cannot be read is treated as hard-linked.
   The export warning for a hard-linked file says why it was redacted.
-- `export` without `--include-secrets` no longer writes these secret
-  values into the bundle: every `env` value, `apiKeyHelper` and MCP
-  `headers` of `~/.claude/settings.json` (in `detected_agents` with
-  `--detect`, and in `provider_configs` after `setup pull`),
-  the `env` values and `--token x` args of vault MCP servers,
-  secret-shaped agent and Ollama base URLs, agent provider extras, and
-  secret keys of Codex and Ollama custom settings. The flag has left
-  them in since it was added in 0.7.0; earlier releases had no way to
-  leave them out. They are now blanked as in provider files and filled
-  on import from this machine's vault when the definition is unchanged:
-  for an MCP server the same command, args and `env` names. A blank that
-  is not filled is named as `Left out`. Claude settings with a secret
-  under a neutral key are left out, and import keeps this machine's. The
-  summary keeps ordinary settings such as `includeCoAuthoredBy`, and the
-  other entries of a list that holds a secret.
+- `export` without `--include-secrets` no longer writes these secret values
+  into the bundle: every `env` value, `apiKeyHelper` and MCP `headers` of
+  `~/.claude/settings.json` (in `detected_agents` with `--detect`, and in
+  `provider_configs` after `setup pull`), the `env` values and `--token x` args
+  of vault MCP servers, secret-shaped agent and Ollama base URLs, agent
+  provider extras, and secret keys and `http_headers` of Codex and Ollama
+  custom settings. The flag has left them in since it was added in 0.7.0;
+  earlier releases had no way to leave them out. They are now blanked as in
+  provider files and filled on import from this machine's vault when the
+  definition is unchanged: for an MCP server the same command, args and `env`
+  names. A blank that is not filled is named as `Left out`. Claude settings
+  with a secret under a neutral key are left out, and import keeps this
+  machine's. The summary keeps ordinary settings such as `includeCoAuthoredBy`,
+  and the other entries of a list that holds a secret.
 - Import fills an agent's blank API key, base URL or provider extras from
   this machine's agent only when the bundle's agent has the same provider,
   backend, base URL and provider settings, with the same extras names; a

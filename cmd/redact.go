@@ -28,8 +28,9 @@ var secretKeyParts = []string{
 var secretKeys = map[string]bool{"key": true, "auth": true, "pat": true, "pass": true, "pin": true}
 
 // secretContainers hold values that are commonly secrets: an MCP server's env
-// and an HTTP server's headers. Every string under them is blanked.
-var secretContainers = map[string]bool{"env": true, "headers": true}
+// and an HTTP server's headers (Codex: http_headers). Every string under them
+// is blanked.
+var secretContainers = map[string]bool{"env": true, "headers": true, "http_headers": true}
 
 func isSecretKey(k string) bool {
 	lower := strings.ToLower(k)
