@@ -242,8 +242,14 @@ func anySecretString(v any) bool {
 	return false
 }
 
-// envRefPattern finds $VAR, ${VAR} and $env:VAR references in a value.
-var envRefPattern = regexp.MustCompile(`\$(?:env:)?\{?([A-Za-z_][A-Za-z0-9_]*)`)
+// envRefPattern finds variable names in $VAR, ${VAR}, ${env:VAR},
+// ${VAR:-x}, $env:VAR and %VAR% references.
+var envRefPattern = regexp.MustCompile(`\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%`)
+
+// envRefMarker is any construct that may expand a variable: a '$' anywhere,
+// or a %...% pair. Fail closed: a string with one counts as reading this
+// machine's environment even when no name can be parsed from it.
+var envRefMarker = regexp.MustCompile(`\$|%[^%\s]+%`)
 
 // mcpEnvRefs are the names of this machine's environment variables a
 // server reads into its definition: references in any string, and the
@@ -255,8 +261,15 @@ func mcpEnvRefs(v any) []string {
 	walk = func(key string, v any) {
 		switch t := v.(type) {
 		case string:
-			for _, m := range envRefPattern.FindAllStringSubmatch(t, -1) {
-				seen[m[1]] = true
+			if envRefMarker.MatchString(t) {
+				found := false
+				for _, m := range envRefPattern.FindAllStringSubmatch(t, -1) {
+					seen[m[1]+m[2]] = true
+					found = true
+				}
+				if !found {
+					seen["(unparsed) "+t] = true
+				}
 			}
 			if strings.HasSuffix(key, "_env_var") || key == "env_vars" || key == "env_http_headers" {
 				seen[t] = true
@@ -463,10 +476,8 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 	sort.Strings(taken)
 	for _, name := range taken {
 		refs := mcpEnvRefs(merged[name])
-		if lrefs := mcpEnvRefs(local[name]); len(refs) > 0 && jsonEqual(refs, lrefs) && len(lrefs) > 0 {
-			// This machine's definition already reads the same variables.
-			refs = nil
-		}
+		// Taken servers are new or changed: a changed URL or header could
+		// send the same variables elsewhere, so this is always asked.
 		if len(refs) == 0 {
 			continue
 		}
