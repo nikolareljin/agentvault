@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeChooser answers from fixed sets.
@@ -398,14 +399,14 @@ func TestImportPickedServerKeepsEnvGate(t *testing.T) {
 	if strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"PLAIN": "1"`) || !strings.Contains(got, `"command": "n"`) {
 		t.Errorf("flag: %s", got)
 	}
-	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `left out variables "n.NODE_OPTIONS"`) {
+	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `left out variables "n \"env\" \"NODE_OPTIONS\""`) {
 		t.Errorf("report = %s", r)
 	}
 	// On a terminal: picked, then a separate question; no keeps it out.
 	ctx = fixedCtx("1\n\nn\n")
 	var out bytes.Buffer
 	ctx.Out = &out
-	if got := run(ctx); strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(out.String(), `env NODE_OPTIONS = "--require /tmp/e.js"`) {
+	if got := run(ctx); strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(out.String(), `"env" "NODE_OPTIONS" = "--require /tmp/e.js"`) {
 		t.Errorf("no: %s\n%s", got, out.String())
 	}
 	if got := run(fixedCtx("1\n\ny\n")); !strings.Contains(got, "NODE_OPTIONS") {
@@ -673,13 +674,13 @@ func TestImportZedCommandEnvGated(t *testing.T) {
 	}
 	ctx := fixedCtx("")
 	ctx.MCPServers, _ = parseMCPSelection("z")
-	if got := run(ctx); strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"PLAIN": "1"`) || !strings.Contains(strings.Join(ctx.MCPReport, ""), `"z.NODE_OPTIONS"`) {
+	if got := run(ctx); strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"PLAIN": "1"`) || !strings.Contains(strings.Join(ctx.MCPReport, ""), `z \"command\".\"env\" \"NODE_OPTIONS\"`) {
 		t.Errorf("flag: %s\n%v", got, ctx.MCPReport)
 	}
 	ctx = fixedCtx("1\n\ny\n")
 	out := &bytes.Buffer{}
 	ctx.Out = out
-	if got := run(ctx); !strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(out.String(), "command.env NODE_OPTIONS") {
+	if got := run(ctx); !strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(out.String(), `"command"."env" "NODE_OPTIONS"`) {
 		t.Errorf("yes: %s\n%s", got, out.String())
 	}
 }
@@ -739,8 +740,8 @@ func TestImportZedSettingsEnvGated(t *testing.T) {
 	ctx.Out = out
 	got = run(ctx, bundle)
 	if strings.Contains(got, "NODE_OPTIONS") || strings.Contains(got, "LD_PRELOAD") ||
-		!strings.Contains(out.String(), "settings.env NODE_OPTIONS") || !strings.Contains(out.String(), "settings.inner.deep.env LD_PRELOAD") ||
-		!strings.Contains(out.String(), `      settings.inner.command: "evil-helper"`) {
+		!strings.Contains(out.String(), `"settings"."env" "NODE_OPTIONS"`) || !strings.Contains(out.String(), `"settings"."inner"."deep"."env" "LD_PRELOAD"`) ||
+		!strings.Contains(out.String(), `      "settings"."inner"."command": "evil-helper"`) {
 		t.Errorf("terminal no: %s\n%s", got, out.String())
 	}
 	ctx = fixedCtx("1\n\ny\ny\n")
@@ -786,5 +787,46 @@ func TestHiddenConfirmedWorkDirAndMCPPickInOneRun(t *testing.T) {
 	got := readString(t, cj)
 	if !strings.Contains(got, `"n2"`) || strings.Contains(got, `"n1"`) || !strings.Contains(got, "local1") {
 		t.Errorf("MCP pick: %s\n%s", got, out.String())
+	}
+}
+
+// Environment under Zed settings in a form that cannot be gated by path, or
+// settings deeper than the walk cap, mean the server is not offered.
+func TestImportZedSettingsUngateableEnvRefused(t *testing.T) {
+	deep := strings.Repeat(`{"a":`, 5000) + `1` + strings.Repeat(`}`, 5000)
+	for _, settings := range []string{
+		`{"env":"NODE_OPTIONS=--require /tmp/e.js"}`,
+		`{"env":["NODE_OPTIONS=--require /tmp/e.js"]}`,
+		`{"environment":{"NODE_OPTIONS":"--require /tmp/e.js"}}`,
+		`{"envVars":{"LD_PRELOAD":"/e.so"}}`,
+		`{"env_vars":"x"}`,
+		`{"args":["--opt","NODE_OPTIONS=--require /tmp/e.js"]}`,
+		`{"x":{"y":"LD_PRELOAD=/e.so"}}`,
+		deep,
+	} {
+		home := t.TempDir()
+		f := filepath.Join(home, ".claude", "settings.json")
+		mustWriteFile(t, f, `{}`)
+		ctx := fixedCtx("")
+		ctx.MCPServers, _ = parseMCPSelection("z")
+		start := time.Now()
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(`{"context_servers":{"z":{"source":"extension","settings":` + settings + `}}}`)}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("took %v", d)
+		}
+		if got := readString(t, f); strings.Contains(got, `"z"`) {
+			t.Errorf("%.60s: offered: %.200s", settings, got)
+		}
+		if r := strings.Join(ctx.MCPReport, ""); !strings.Contains(r, "not offered") {
+			t.Errorf("%.60s: not named: %s", settings, r)
+		}
+	}
+}
+
+func TestPathLabelQuotesParts(t *testing.T) {
+	if got := pathLabel([]string{"a.b", "c\x1b"}); got != `"a.b"."c\x1b"` {
+		t.Errorf("got %s", got)
 	}
 }

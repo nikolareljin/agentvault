@@ -293,8 +293,8 @@ func offerableServer(v any, zed bool) bool {
 			return false
 		}
 	}
-	locs, inArray := mcpEnvLocations(m)
-	if inArray {
+	locs, unsafe := mcpEnvLocations(m)
+	if unsafe {
 		return false
 	}
 	for _, loc := range locs {
@@ -527,7 +527,7 @@ func describeMCPServer(name string, v any) string {
 		}
 	}
 	for _, c := range settingsCommands(m) {
-		lines = append(lines, "      "+printable(c[0])+": "+c[1])
+		lines = append(lines, "      "+c[0]+": "+c[1])
 	}
 	if refs := mcpEnvRefs(m); len(refs) > 0 {
 		lines = append(lines, "      reads this machine's variables: "+printable(strings.Join(refs, ", ")))
@@ -608,22 +608,48 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 	return nil
 }
 
+// envLikeKey is a key that may hold environment variables.
+func envLikeKey(k string) bool {
+	switch strings.ToLower(k) {
+	case "env", "environment", "env_vars", "envvars":
+		return true
+	}
+	return false
+}
+
+// gatedAssign finds NAME=value with a gated NAME in a string.
+var gatedAssign = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)=`)
+
 // mcpEnvLocations are where a server keeps its environment: env, Zed's
-// command.env, and every env object at any depth under Zed's settings.
-// inArray is true when an env sits under an array there, where it cannot
-// be gated by path: such a server is not offered.
-func mcpEnvLocations(srv map[string]any) (locs [][]string, inArray bool) {
+// command.env, and every env-like object at any depth under Zed's
+// settings. unsafe is true when settings hold environment in a form that
+// cannot be gated by path: an env-like key under an array or whose value is
+// not an object, or a NAME=value string naming a gated variable. Such a
+// server is not offered.
+func mcpEnvLocations(srv map[string]any) (locs [][]string, unsafe bool) {
 	locs = [][]string{{"env"}, {"command", "env"}}
 	var walk func(v any, path []string, underArray bool)
 	walk = func(v any, path []string, underArray bool) {
+		if unsafe {
+			return
+		}
+		if len(path) > mcpSettingsMaxDepth {
+			unsafe = true
+			return
+		}
 		switch t := v.(type) {
 		case map[string]any:
 			for _, k := range sortedKeys(t) {
 				p := append(append([]string(nil), path...), k)
-				if strings.EqualFold(k, "env") {
-					if underArray {
-						inArray = true
-					} else if _, ok := t[k].(map[string]any); ok {
+				if envLikeKey(k) {
+					m, ok := t[k].(map[string]any)
+					switch {
+					case !ok || underArray:
+						unsafe = true
+					case !strings.EqualFold(k, "env") && hasGatedName(m):
+						// Not a key the tools document: fail closed.
+						unsafe = true
+					default:
 						locs = append(locs, p)
 					}
 				}
@@ -633,35 +659,64 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, inArray bool) {
 			for _, x := range t {
 				walk(x, path, true)
 			}
+		case string:
+			for _, m := range gatedAssign.FindAllStringSubmatch(t, -1) {
+				if gatedEnv(m[1]) {
+					unsafe = true
+				}
+			}
 		}
 	}
 	walk(srv["settings"], []string{"settings"}, false)
-	return locs, inArray
+	return locs, unsafe
+}
+
+// mcpSettingsMaxDepth caps the walk of Zed settings; deeper settings are
+// not offered.
+const mcpSettingsMaxDepth = 64
+
+func hasGatedName(m map[string]any) bool {
+	for k := range m {
+		if gatedEnv(k) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathLabel prints a path from the bundle with each part quoted, so a dot
+// or escape in a key cannot pass for structure.
+func pathLabel(parts []string) string {
+	q := make([]string, len(parts))
+	for i, p := range parts {
+		q[i] = printable(strconv.Quote(p))
+	}
+	return strings.Join(q, ".")
 }
 
 // settingsCommands are the command fields at any depth under Zed's
 // settings, as "settings.a.command" -> value.
 func settingsCommands(srv map[string]any) [][2]string {
 	var out [][2]string
-	var walk func(v any, path string)
-	walk = func(v any, path string) {
+	var walk func(v any, path []string)
+	walk = func(v any, path []string) {
 		switch t := v.(type) {
 		case map[string]any:
 			for _, k := range sortedKeys(t) {
-				p := path + "." + k
+				p := append(append([]string(nil), path...), k)
 				if commandField(k) {
-					out = append(out, [2]string{p, showValue(t[k])})
+					out = append(out, [2]string{pathLabel(p), showValue(t[k])})
 					continue
 				}
 				walk(t[k], p)
 			}
 		case []any:
 			for i, x := range t {
-				walk(x, fmt.Sprintf("%s[%d]", path, i))
+				walk(x, append(append([]string(nil), path...), strconv.Itoa(i)))
 			}
 		}
 	}
-	walk(srv["settings"], "settings")
+	walk(srv["settings"], []string{"settings"})
 	return out
 }
 
@@ -688,12 +743,12 @@ func (c *importApplyContext) gateEnvAt(file, name string, loc []string, merged, 
 	if len(gated) == 0 {
 		return nil
 	}
-	label := strings.Join(loc, ".")
+	label := pathLabel(loc)
 	yes := false
 	if asked {
 		fmt.Fprintf(c.Out, "%s: MCP server %s sets variables that load code or send requests elsewhere:\n", printable(file), strconv.Quote(name))
 		for _, k := range gated {
-			fmt.Fprintf(c.Out, "  %s %s = %s\n", label, printable(k), showValue(env[k]))
+			fmt.Fprintf(c.Out, "  %s %s = %s\n", label, printable(strconv.Quote(k)), showValue(env[k]))
 		}
 		var err error
 		if yes, err = askBool(c.Out, c.In, "keep these", false); err != nil {
@@ -715,7 +770,7 @@ func (c *importApplyContext) gateEnvAt(file, name string, loc []string, merged, 
 		} else {
 			delete(ne, k)
 		}
-		rep.EnvLeftOut = append(rep.EnvLeftOut, name+"."+k)
+		rep.EnvLeftOut = append(rep.EnvLeftOut, name+" "+label+" "+strconv.Quote(k))
 	}
 	setPath(ns, loc, ne)
 	merged[name] = ns
