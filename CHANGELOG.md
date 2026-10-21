@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.15.0] - 2026-10-20
+## [0.15.0] - 2026-10-21
 
 ### Added
 - Import merges MCP servers one by one (https://github.com/nikolareljin/agentvault/issues/72):
@@ -89,18 +89,17 @@
   Codex `config.toml` whose parsed `mcp_servers`, `notify`,
   `model_providers`, `projects`, `approval_policy`, `sandbox_mode`, `hooks`
   or URL and endpoint keys (`chatgpt_base_url`) differ,
-  or that does not parse, is not applied.
+  or that does not parse, is not applied. `--keep-bundle-commands` keeps
+  the hook, `statusLine` and MCP server commands.
 - The Codex provider config is applied as files through the same checks.
   `SaveCodexConfig` refuses a rule name that is not a plain file name
   before writing anything (a name such as `../../.bashrc` wrote outside
   `~/.codex/rules`), and import no longer deletes local Codex rules.
-  `--keep-bundle-commands` keeps them.
 - `import --dry-run` with `--apply-provider-configs` or `--apply-projects`
   lists each file it would write, replace, keep or leave out, and writes
   nothing.
 - Export skips the `.bak-YYYYMMDD-HHMMSS` backups import leaves next to
   replaced files.
-- Tests run with `HOME` and the config directories pointed at a temp dir.
 - Import keeps broad allow rules such as `Bash(find:*)`, `Bash(git:*)` and
   `Bash(make:*)`, and prints one WARNING block naming each and why it can
   run other programs.
@@ -302,8 +301,6 @@
   object or a path under a symlink to a missing directory. With no home
   directory it fails instead of writing a relative path into the working
   directory.
-- `export --help`, the README and the CLI reference name
-  `~/.config/github-copilot`, the directory export reads, not `~/.copilot`.
 - `import --apply-provider-configs` and `setup apply` work when the home or
   target directory sits under a symlink, as `/var` and `/tmp` do on macOS.
   Symlinks are still refused below the home or target directory. Before,
