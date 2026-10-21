@@ -287,9 +287,9 @@
 
 ### Fixed
 - `release-rc-pr.yml` no longer fails when the repository does not let
-  Actions create pull requests (HTTP 403 with that message). It prints a
-  warning with the
-  compare link to open the release PR by hand; other errors still fail.
+  Actions create pull requests (HTTP 403 "not permitted to create or approve
+  pull requests"). It prints a warning with the compare link to open the
+  release PR by hand; any other error, another 403 included, still fails.
 - `generate mcp` writes by default to Claude Desktop's config for the OS:
   `~/Library/Application Support/Claude/` on macOS and `%APPDATA%\Claude\` on
   Windows. Before, it wrote `~/.config/claude/` everywhere, which Claude
