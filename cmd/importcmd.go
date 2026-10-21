@@ -693,7 +693,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 	}
 	providerAssets, codexDropped := providerAssetsToApply(setup, homeDir, ctx.KeepBundleCommands)
 	for _, d := range codexDropped {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: Codex provider config: left out %s (use --keep-bundle-commands to take it)\n", printable(d))
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: Codex provider config: left out %s\n", printable(d))
 	}
 	applied, warnings, err := applyProviderAssetsWith(homeDir, providerAssets, ctx)
 	if err != nil {
@@ -849,8 +849,8 @@ func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
 // backups) instead of SaveCodexConfig, which rewrites config.toml in place
 // and deletes local rules. A trusted project the bundle adds or changes is
 // left out unless keepCommands: trust lets Codex run commands there. A rule
-// whose name is not a plain file name is left out. It returns the assets
-// and what it left out.
+// whose name is not a plain file name is left out, flag or not. It returns
+// the assets and what it left out; only a trusted project names the flag.
 func codexConfigAssets(c *agent.CodexConfig, home string, keepCommands bool) ([]SetupAsset, []string) {
 	if c == nil {
 		return nil, nil
@@ -873,7 +873,7 @@ func codexConfigAssets(c *agent.CodexConfig, home string, keepCommands bool) ([]
 			continue
 		}
 		if !keepCommands {
-			dropped = append(dropped, fmt.Sprintf("trusted project %q (%s)", p, level))
+			dropped = append(dropped, fmt.Sprintf("trusted project %q (%s) (use --keep-bundle-commands to take it)", p, level))
 			continue
 		}
 		projects[p] = level

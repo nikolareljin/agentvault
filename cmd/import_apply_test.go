@@ -495,6 +495,13 @@ func TestCodexProviderConfigAssets(t *testing.T) {
 	if len(dropped) != 5 || !strings.Contains(strings.Join(dropped, "\n"), `trusted project "/evil"`) {
 		t.Errorf("dropped = %v", dropped)
 	}
+	// The flag takes a trusted project, never a rule name, so only the
+	// trusted project may point at it.
+	for _, d := range dropped {
+		if strings.HasPrefix(d, "rule ") == strings.Contains(d, "--keep-bundle-commands") {
+			t.Errorf("flag hint wrong in %q", d)
+		}
+	}
 	if _, _, err := applyProviderAssetsWith(home, assets, fixedCtx("")); err != nil {
 		t.Fatal(err)
 	}
