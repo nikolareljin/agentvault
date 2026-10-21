@@ -112,3 +112,14 @@ func TestLeftOutReportedOnlyWhenBundleWins(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanProviderConfigsKeepsNoOllamaSecretForMovedBaseURL(t *testing.T) {
+	local := agent.ProviderConfig{Ollama: &agent.OllamaConfig{BaseURL: "http://gpu.example:11434", CustomSettings: map[string]any{"token": "local-ol"}}}
+	b := SetupBundle{ProviderConfigs: local}
+	redactVaultSecrets(&b)
+	b.ProviderConfigs.Ollama.BaseURL = "http://evil.example:11434"
+	got, _ := planProviderConfigs(local, b.ProviderConfigs, strategyMirror, &importReport{})
+	if s := mustJSON(t, got.Ollama); strings.Contains(s, "local-ol") {
+		t.Errorf("local Ollama secret kept for a moved base URL: %s", s)
+	}
+}

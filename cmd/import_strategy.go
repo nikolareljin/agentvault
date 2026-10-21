@@ -201,7 +201,7 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 		localMCP[s.Name] = true
 	}
 	for _, l := range mcpLeft {
-		// A changed server merge keeps local takes nothing from the bundle.
+		// Under merge a changed local server stays as it is: nothing left out.
 		if localMCP[l.Server] && !strategy.incomingWins() {
 			continue
 		}
@@ -344,7 +344,8 @@ func planProviderConfigs(existing agent.ProviderConfig, incoming agent.ProviderC
 		cp.CustomSettings = restoreCustomSettings(c.CustomSettings, existing.Codex.CustomSettings)
 		incoming.Codex = &cp
 	}
-	if o := incoming.Ollama; o != nil && existing.Ollama != nil {
+	// Ollama's custom settings go to its base URL: a moved one gets none.
+	if o := incoming.Ollama; o != nil && existing.Ollama != nil && o.BaseURL == existing.Ollama.BaseURL {
 		cp := *o
 		cp.CustomSettings = restoreCustomSettings(o.CustomSettings, existing.Ollama.CustomSettings)
 		incoming.Ollama = &cp
