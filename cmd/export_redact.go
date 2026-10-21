@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -235,25 +236,62 @@ func sameMCPApartFromBlanks(in, have agent.MCPServer) bool {
 	return true
 }
 
-// restoreAgentSecrets fills an agent's blanked base URL, provider extras and
-// MCP server values from the local agent of the same name. Only a local value
-// that is itself secret-shaped fills a blank, so an empty value the bundle
-// meant stays empty.
-func restoreAgentSecrets(in, have agent.Agent) agent.Agent {
+// restoreAgentSecrets fills an agent's blanked base URL and provider extras
+// from the local agent of the same name, only when the bundle's agent points
+// at the same place: same provider, backend and provider settings, and every
+// value it kept equal to the local one. Otherwise a blank is dropped and
+// named in left, so a bundle cannot send this machine's key elsewhere.
+func restoreAgentSecrets(in, have agent.Agent, exists bool) (agent.Agent, []string) {
+	var left []string
+	same := exists && sameAgentEndpoint(in, have)
 	if in.BaseURL == "" && secretString(have.BaseURL) {
-		in.BaseURL = have.BaseURL
+		if same {
+			in.BaseURL = have.BaseURL
+		} else if exists {
+			left = append(left, "base_url")
+		}
 	}
-	if in.ProviderMeta != nil && len(in.ProviderMeta.Extra) > 0 && have.ProviderMeta != nil {
+	if in.ProviderMeta != nil && len(in.ProviderMeta.Extra) > 0 {
 		meta := *in.ProviderMeta
 		meta.Extra = make(map[string]string, len(in.ProviderMeta.Extra))
-		for k, val := range in.ProviderMeta.Extra {
-			if local := have.ProviderMeta.Extra[k]; val == "" && (isSecretKey(k) || secretString(local)) {
-				val = local
+		for _, k := range sortedStringKeys(in.ProviderMeta.Extra) {
+			val := in.ProviderMeta.Extra[k]
+			if val == "" && (isSecretKey(k) || (exists && have.ProviderMeta != nil && secretString(have.ProviderMeta.Extra[k]))) {
+				if !same || have.ProviderMeta == nil || have.ProviderMeta.Extra[k] == "" {
+					left = append(left, "provider_meta.extra."+k)
+					continue
+				}
+				val = have.ProviderMeta.Extra[k]
 			}
 			meta.Extra[k] = val
 		}
 		in.ProviderMeta = &meta
 	}
 	in.MCPServers = restoreMCPServerSecrets(in.MCPServers, have.MCPServers)
-	return in
+	return in, left
+}
+
+// sameAgentEndpoint compares what decides where an agent's key is sent,
+// with the bundle's blanks ignored.
+func sameAgentEndpoint(in, have agent.Agent) bool {
+	if in.Provider != have.Provider || in.Backend != have.Backend {
+		return false
+	}
+	if in.BaseURL != "" && in.BaseURL != have.BaseURL {
+		return false
+	}
+	var im, hm agent.AgentProviderMeta
+	if in.ProviderMeta != nil {
+		im = *in.ProviderMeta
+	}
+	if have.ProviderMeta != nil {
+		hm = *have.ProviderMeta
+	}
+	for k, v := range im.Extra {
+		if v != "" && hm.Extra[k] != v {
+			return false
+		}
+	}
+	im.Extra, hm.Extra = nil, nil
+	return reflect.DeepEqual(im, hm)
 }

@@ -306,6 +306,11 @@
   key are left out, and import keeps this machine's. The summary keeps
   ordinary settings such as `includeCoAuthoredBy`, and the other entries
   of a list that holds a secret.
+- Import fills an agent's blank API key, base URL or provider extras from
+  this machine's agent only when the bundle's agent has the same provider,
+  backend, base URL and provider settings; otherwise the value is left out
+  and named. Since 0.13.0 a bundle exported without keys could point an
+  agent at another base URL and receive this machine's API key.
 
 ### Fixed
 - Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first

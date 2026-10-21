@@ -263,7 +263,10 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 		current, exists := byName[a.Name]
 		// Values an export without --include-secrets blanked come back from
 		// the local agent, or are dropped.
-		a = restoreAgentSecrets(a, current)
+		a, left := restoreAgentSecrets(a, current, exists)
+		for _, f := range left {
+			rep.record("Left out", "agent %s %s: blank in the bundle, and the agent points elsewhere than this machine's", a.Name, f)
+		}
 		if !exists {
 			a.CreatedAt = now
 			a.UpdatedAt = now
@@ -275,9 +278,14 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 			rep.record("Skipped", "agent %s (kept local)", a.Name)
 			continue
 		}
-		// An empty key in the bundle must not wipe a working local credential.
-		if a.APIKey == "" {
-			a.APIKey = current.APIKey
+		// An empty key in the bundle must not wipe a working local credential,
+		// and must not follow an agent the bundle points elsewhere.
+		if a.APIKey == "" && current.APIKey != "" {
+			if sameAgentEndpoint(a, current) {
+				a.APIKey = current.APIKey
+			} else {
+				rep.record("Left out", "agent %s api_key: blank in the bundle, and the agent points elsewhere than this machine's", a.Name)
+			}
 		}
 		a.CreatedAt = current.CreatedAt
 		// Compare against the stored agent ignoring UpdatedAt, so re-running an

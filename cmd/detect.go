@@ -285,10 +285,13 @@ func redactSensitiveMap(in map[string]any) map[string]any {
 		if secretContainers[strings.ToLower(k)] {
 			continue
 		}
-		if isSecretKey(k) {
-			// maxTokens: 4096 is a setting; a string under it may not be.
+		if isSensitiveKey(k) || isSecretKey(k) {
+			// A boolean holds no secret (includeCoAuthoredBy: false), and a
+			// number is kept only under a count or limit (maxTokens: 4096).
 			switch v.(type) {
-			case float64, bool, json.Number:
+			case bool:
+				out[k] = v
+			case float64, json.Number:
 				if settingLikeKey(k) {
 					out[k] = v
 				}
@@ -335,6 +338,18 @@ func redactSensitiveSlice(in []any) []any {
 		}
 	}
 	return out
+}
+
+// isSensitiveKey is the broad key test of the settings summary: any key
+// containing key, token, secret, password, credential or auth.
+func isSensitiveKey(key string) bool {
+	k := strings.ToLower(key)
+	for _, part := range []string{"key", "token", "secret", "password", "credential", "auth"} {
+		if strings.Contains(k, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func detectCodex() DetectedAgent {

@@ -64,3 +64,11 @@ func TestRedactSensitiveMapKeepsOrdinarySettings(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactSensitiveMapDropsBroadSecretKeys(t *testing.T) {
+	in := map[string]any{"githubAuth": "canary-a", "deployKeyPath": "canary-b", "pin": float64(1234), "includeCoAuthoredBy": true}
+	got := redactSensitiveMap(in)
+	if len(got) != 1 || got["includeCoAuthoredBy"] != true {
+		t.Errorf("want only includeCoAuthoredBy, got %v", got)
+	}
+}

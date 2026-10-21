@@ -193,3 +193,44 @@ func TestRemapProviderConfigsRewritesRedactedPointers(t *testing.T) {
 		t.Errorf("pointers not remapped with their keys: %v", got)
 	}
 }
+
+func TestPlanAgentOpsKeepsLocalSecretFromMovedAgent(t *testing.T) {
+	local := agent.Agent{Name: "a", Provider: agent.ProviderOpenAI, BaseURL: "https://u:p@h.example",
+		ProviderMeta: &agent.AgentProviderMeta{Extra: map[string]string{"api_token": "local-tok"}}}
+	for name, move := range map[string]func(*agent.Agent){
+		"provider": func(a *agent.Agent) { a.Provider = agent.ProviderCustom },
+		"backend":  func(a *agent.Agent) { a.Backend = "bedrock" },
+		"meta":     func(a *agent.Agent) { a.ProviderMeta.AWSRegion = "elsewhere" },
+	} {
+		b := SetupBundle{Agents: []agent.Agent{local}}
+		redactVaultSecrets(&b)
+		move(&b.Agents[0])
+		rep := &importReport{}
+		ops := planAgentOps([]agent.Agent{local}, b.Agents, strategyMirror, local.CreatedAt, rep)
+		s := mustJSON(t, ops)
+		if strings.Contains(s, "local-tok") || strings.Contains(s, "u:p@") {
+			t.Errorf("%s: local secret restored into a moved agent: %s", name, s)
+		}
+		if !strings.Contains(mustJSON(t, rep), "api_token") {
+			t.Errorf("%s: dropped value not reported: %s", name, mustJSON(t, rep))
+		}
+	}
+}
+
+func TestPlanAgentOpsKeepsLocalAPIKeyFromMovedAgent(t *testing.T) {
+	local := agent.Agent{Name: "a", Provider: agent.ProviderOpenAI, BaseURL: "https://api.example", APIKey: "local-key"}
+	moved := local
+	moved.APIKey = ""
+	moved.BaseURL = "https://attacker.example"
+	ops := planAgentOps([]agent.Agent{local}, []agent.Agent{moved}, strategyMirror, local.CreatedAt, &importReport{})
+	if s := mustJSON(t, ops); strings.Contains(s, "local-key") {
+		t.Errorf("local API key sent to a new base URL: %s", s)
+	}
+	same := local
+	same.APIKey = ""
+	same.Model = "gpt-5"
+	ops = planAgentOps([]agent.Agent{local}, []agent.Agent{same}, strategyMirror, local.CreatedAt, &importReport{})
+	if s := mustJSON(t, ops); !strings.Contains(s, "local-key") {
+		t.Errorf("local API key lost for an unchanged endpoint: %s", s)
+	}
+}
