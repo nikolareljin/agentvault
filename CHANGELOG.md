@@ -96,9 +96,10 @@
   the hook, `statusLine` and MCP server commands, hook scripts and Gemini
   `trustedFolders.json`.
 - The Codex provider config is applied as files through the same checks,
-  and import no longer deletes local Codex rules. `generate codex` refuses
-  a rule name that is not a plain file name before writing anything (a
-  name such as `../../.bashrc` wrote outside `~/.codex/rules`).
+  and import no longer deletes local Codex rules. A rule name that is not
+  a plain file name is left out and named by import, and refused by
+  `generate codex` and `generate all` before any Codex file is written.
+  Before, a name such as `../../.bashrc` wrote outside `~/.codex/rules`.
 - `import --dry-run` with `--apply-provider-configs` or `--apply-projects`
   lists each file it would write, replace, keep or leave out, and writes
   nothing.
