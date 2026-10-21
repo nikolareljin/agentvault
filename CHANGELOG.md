@@ -20,8 +20,10 @@
   name is warned about. Without a pick nothing new is added and
   changed servers stay as they are. Covers `~/.claude.json`, JSON settings
   (`mcpServers`, `servers`) and Codex `config.toml`, whose tables are edited
-  in place. Import prints what it added, replaced, kept and left out per
-  file. JSON files keep this machine's key and server order. `generate mcp`
+  in place. Import prints per file the servers it added, replaced, left
+  out or did not offer, and as `kept local` a changed server it did not
+  replace; a server only this machine has is kept and not printed. JSON
+  files keep this machine's key and server order. `generate mcp`
   keeps servers only the target file has.
 - `import`: a work dir mapping into a hidden folder, once confirmed, is
   saved as confirmed and not asked again for the same target while every
@@ -292,10 +294,18 @@
   spelling.
 - A file whose hard link count cannot be read is treated as hard-linked.
   The export warning for a hard-linked file says why it was redacted.
-- The detected Claude settings summary in a bundle no longer carries `env`
-  or `headers` values, or values shaped like secrets (`--token x` args,
-  known token prefixes). Before, `export` without `--include-secrets`
-  still wrote every `env` value of `~/.claude/settings.json` there.
+- `export` without `--include-secrets` no longer writes these secret
+  values into the bundle: every `env` value, `apiKeyHelper` and MCP
+  `headers` of `~/.claude/settings.json` (in `detected_agents` with
+  `--detect`, and in `provider_configs` after `setup pull`),
+  and the `env` values and `--token x` args of vault MCP servers. The
+  flag has left them in since it was added in 0.7.0; earlier releases
+  had no way to leave them out. They are now blanked as in provider
+  files and filled on import from this machine's vault when the
+  definition is unchanged. Claude settings with a secret under a neutral
+  key are left out, and import keeps this machine's. The summary keeps
+  ordinary settings such as `includeCoAuthoredBy`, and the other entries
+  of a list that holds a secret.
 
 ### Fixed
 - Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first
