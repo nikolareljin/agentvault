@@ -44,7 +44,7 @@ jobs:
   deb:
     needs: check
     permissions:
-      contents: write # the reusable workflow's release job uploads the .deb
+      contents: read
     uses: nikolareljin/ci-helpers/.github/workflows/deb-build.yml@production
     with:
       # Static like the release binaries, so the .deb needs no Depends. The
@@ -52,5 +52,30 @@ jobs:
       prebuild_command: "CGO_ENABLED=0 GOFLAGS=-mod=readonly make build"
       build_command: "bash scripts/package_deb.sh"
       artifact_name: "agentvault-deb"
-      upload_to_release: "true"
-      release_tag: ${{ inputs.release_tag }}
+      # deb-build's own release upload also rewrites the release body from
+      # CHANGELOG.md, which drops the "Download Binaries" table go-release
+      # wrote. The upload job below attaches the file and leaves the body.
+      upload_to_release: "false"
+
+  upload:
+    needs: deb
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2 @ 2026-10-16
+        with:
+          name: agentvault-deb
+          path: debs
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(debs/*.deb)
+          [ "${#files[@]}" -gt 0 ] || { echo "::error::no .deb built"; exit 1; }
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber -R "$GITHUB_REPOSITORY"
