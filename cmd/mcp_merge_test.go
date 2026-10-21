@@ -116,7 +116,7 @@ func TestPickMCPServersPrompt(t *testing.T) {
 }
 
 func TestParseMCPSelection(t *testing.T) {
-	for _, bad := range []string{"", " ", ",,"} {
+	for _, bad := range []string{"", " ", ",,", "all,new1", "new1, None", "ALL,all"} {
 		if _, err := parseMCPSelection(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -285,6 +285,44 @@ func TestImportMCPDryRun(t *testing.T) {
 		t.Errorf("dry run asked or wrote: %q", out.String())
 	}
 	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `would ask about "shared", "new1", "new2"`) {
+		t.Errorf("report = %s", r)
+	}
+}
+
+// A dry run on a terminal says it would ask about a taken server that reads
+// this machine's variables or sets a gated one; the real run asks.
+func TestImportMCPDryRunReportsGateQuestions(t *testing.T) {
+	home := t.TempDir()
+	cj := filepath.Join(home, ".claude.json")
+	const local = `{"mcpServers":{}}`
+	mustWriteFile(t, cj, local)
+	asset := SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true,
+		Content: []byte(`{"mcpServers":{"envy":{"command":"e","args":["$HOME/x"]},"nodey":{"command":"n","env":{"NODE_OPTIONS":"--require x"}}}}`)}
+	ctx := fixedCtx("y\ny\n")
+	ctx.DryRun = true
+	ctx.MCPServers, _ = parseMCPSelection("all")
+	var out bytes.Buffer
+	ctx.Out = &out
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() > 0 || readString(t, cj) != local {
+		t.Errorf("dry run asked or wrote: %q", out.String())
+	}
+	r := strings.Join(ctx.MCPReport, "\n")
+	if !strings.Contains(r, `would ask about "envy", "nodey"`) || strings.Contains(r, "would not take") || strings.Contains(r, "would leave out variables") {
+		t.Errorf("report = %s", r)
+	}
+
+	// Without a terminal the dry run reports what the real run does.
+	ctx = fixedCtx("")
+	ctx.DryRun = true
+	ctx.MCPServers, _ = parseMCPSelection("all")
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	r = strings.Join(ctx.MCPReport, "\n")
+	if !strings.Contains(r, `would not take, reads this machine's variables "envy"`) || !strings.Contains(r, `would leave out variables "nodey.env.NODE_OPTIONS"`) {
 		t.Errorf("report = %s", r)
 	}
 }

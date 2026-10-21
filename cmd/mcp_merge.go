@@ -226,6 +226,10 @@ func parseMCPSelection(v string) (*mcpSelection, error) {
 	sel := &mcpSelection{names: map[string]bool{}}
 	for _, n := range strings.Split(v, ",") {
 		if n = strings.TrimSpace(n); n != "" {
+			if l := strings.ToLower(n); l == "all" || l == "none" {
+				// all,new1 would otherwise look for a server named "all".
+				return nil, fmt.Errorf("--mcp-servers: %s cannot be combined with server names", l)
+			}
 			sel.names[n] = true
 		}
 	}
@@ -640,6 +644,13 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 		return nil
 	}
 	asked := c.Interactive && c.In != nil && !c.DryRun
+	// A dry run on a terminal reports the question the real run would ask.
+	wouldAsk := c.Interactive && c.In != nil && c.DryRun
+	askLater := func(name string) {
+		if !containsString(rep.Ask, name) {
+			rep.Ask = append(rep.Ask, name)
+		}
+	}
 	untake := func(name string) {
 		if lv, ok := local[name]; ok {
 			merged[name] = lv
@@ -658,6 +669,10 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 		// Taken servers are new or changed: a changed URL or header could
 		// send the same variables elsewhere, so this is always asked.
 		if len(refs) == 0 {
+			continue
+		}
+		if wouldAsk {
+			askLater(name)
 			continue
 		}
 		yes := false
@@ -680,6 +695,12 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 		srv, _ := merged[name].(map[string]any)
 		locs, _ := mcpEnvLocations(srv)
 		for _, loc := range locs {
+			if wouldAsk {
+				if len(gatedEnvChanges(srv, local[name], loc)) > 0 {
+					askLater(name)
+				}
+				continue
+			}
 			if err := c.gateEnvAt(file, name, loc, merged, local, rep, asked); err != nil {
 				return err
 			}
@@ -927,14 +948,7 @@ func (c *importApplyContext) gateEnvAt(file, name string, loc []string, merged, 
 	lsrv, _ := local[name].(map[string]any)
 	lev, _ := getPath(lsrv, loc)
 	lenv, _ := lev.(map[string]any)
-	var gated []string
-	for _, k := range sortedKeys(env) {
-		if gatedEnv(strings.TrimSpace(k)) {
-			if lv, ok := lenv[k]; !ok || !jsonEqual(lv, env[k]) {
-				gated = append(gated, k)
-			}
-		}
-	}
+	gated := gatedEnvChanges(srv, local[name], loc)
 	if len(gated) == 0 {
 		return nil
 	}
@@ -970,6 +984,25 @@ func (c *importApplyContext) gateEnvAt(file, name string, loc []string, merged, 
 	setPath(ns, loc, ne)
 	merged[name] = ns
 	return nil
+}
+
+// gatedEnvChanges are the gated variables of the env map at loc in srv
+// that this machine's server (local) does not have with the same value.
+func gatedEnvChanges(srv map[string]any, local any, loc []string) []string {
+	ev, _ := getPath(srv, loc)
+	env, _ := ev.(map[string]any)
+	lsrv, _ := local.(map[string]any)
+	lev, _ := getPath(lsrv, loc)
+	lenv, _ := lev.(map[string]any)
+	var gated []string
+	for _, k := range sortedKeys(env) {
+		if gatedEnv(strings.TrimSpace(k)) {
+			if lv, ok := lenv[k]; !ok || !jsonEqual(lv, env[k]) {
+				gated = append(gated, k)
+			}
+		}
+	}
+	return gated
 }
 
 func removeString(list []string, s string) []string {
