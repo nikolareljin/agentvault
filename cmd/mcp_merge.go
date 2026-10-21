@@ -273,6 +273,7 @@ const (
 	whyGatedName    = "a gated variable name outside an env object"
 	whyTooDeep      = "settings nested deeper than 64 levels"
 	whyNonASCIIKey  = "a settings key with non-ASCII letters"
+	whyBadQuery     = "a URL whose query does not parse"
 )
 
 // zedServerFields are the extra fields of a Zed context_servers entry:
@@ -320,6 +321,11 @@ func unofferableReason(v any, zed bool) string {
 			return whySecretShaped
 		}
 	}
+	for _, k := range []string{"url", "httpUrl"} {
+		if u, ok := m[k].(string); ok && badURLQuery(u) {
+			return whyBadQuery
+		}
+	}
 	locs, why := mcpEnvLocations(m)
 	if why != "" {
 		return why
@@ -360,24 +366,21 @@ func anySecretString(v any) bool {
 // ${VAR:-x}, $env:VAR and %VAR% references.
 var envRefPattern = regexp.MustCompile(`\$\{?(?:env:)?([A-Za-z_][A-Za-z0-9_]*)|%([A-Za-z_][A-Za-z0-9_]*)%`)
 
-// envRefMarker is any construct that may expand a variable: a '$' anywhere,
-// or a %...% pair. Fail closed: a string with one counts as reading this
+// envRefMarker is any construct that may expand a variable: a '$'
+// anywhere, a %...% pair whose name starts with a letter or '_' (a URL
+// escape such as %3A starts with a digit), or %25, an escaped '%' that may
+// decode to one. Fail closed: a string with one counts as reading this
 // machine's environment even when no name can be parsed from it.
-var envRefMarker = regexp.MustCompile(`\$|%[^%\s]+%`)
+var envRefMarker = regexp.MustCompile(`\$|%25|%[A-Za-z_][^%\s]*%`)
 
-// percentEscape is a URL %XX escape.
-var percentEscape = regexp.MustCompile(`%[0-9A-Fa-f]{2}`)
-
-// withoutURLEscapes drops %XX escapes from a clean http(s) URL (no
-// whitespace or shell characters, printed back unchanged), so %3A%2F is
-// not read as a %VAR% reference. Any other string is returned as is.
-func withoutURLEscapes(s string) string {
+// badURLQuery is whether s is an http(s) URL whose query does not parse.
+func badURLQuery(s string) bool {
 	u, err := url.Parse(s)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.String() != s ||
-		strings.ContainsAny(s, " \t\r\n;|`$'\"<>") {
-		return s
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
 	}
-	return percentEscape.ReplaceAllString(s, "")
+	_, err = url.ParseQuery(u.RawQuery)
+	return err != nil
 }
 
 // mcpEnvRefs are the names of this machine's environment variables a
@@ -390,9 +393,9 @@ func mcpEnvRefs(v any) []string {
 	walk = func(key string, v any) {
 		switch t := v.(type) {
 		case string:
-			if scan := withoutURLEscapes(t); envRefMarker.MatchString(scan) {
+			if envRefMarker.MatchString(t) {
 				found := false
-				for _, m := range envRefPattern.FindAllStringSubmatch(scan, -1) {
+				for _, m := range envRefPattern.FindAllStringSubmatch(t, -1) {
 					seen[m[1]+m[2]] = true
 					found = true
 				}
@@ -762,7 +765,8 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, why string) {
 					}
 					continue
 				}
-				if tk := strings.TrimSpace(k); envNameShape(tk) && gatedEnv(tk) {
+				tk := strings.TrimSpace(k)
+				if up := strings.ToUpper(tk); codeLoadingEnv[up] || routingEnv[up] || (envNameShape(tk) && gatedEnv(tk)) {
 					// A gated name outside a gateable env object: fail closed.
 					// Lower-case keys (api_url, proxy) are ordinary settings.
 					why = whyGatedName
@@ -777,6 +781,10 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, why string) {
 		case string:
 			if gatedAssignIn(t) {
 				why = whyGatedName
+				return
+			}
+			if badURLQuery(t) {
+				why = whyBadQuery
 				return
 			}
 		}

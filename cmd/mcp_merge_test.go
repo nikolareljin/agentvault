@@ -826,6 +826,9 @@ func TestImportZedSettingsUngateableEnvRefused(t *testing.T) {
 		{`{"vars":{"NODE_OPTIONS":"x"}}`, whyGatedName},
 		{`{"a":{"b":{"LD_PRELOAD":"x"}}}`, whyGatedName},
 		{`{"x":{"API_URL":"https://x"}}`, whyGatedName},
+		{`{"Node_Options":"x"}`, whyGatedName},
+		{`{"m":{"nODE_OPTIONS":"x"}}`, whyGatedName},
+		{`{"u":"https://x/?a=%zz"}`, whyBadQuery},
 		{deep, whyTooDeep},
 	} {
 		home := t.TempDir()
@@ -907,5 +910,17 @@ func TestImportZedPaddedEnvNamesGated(t *testing.T) {
 		if strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, "PLAIN") {
 			t.Errorf("%q: %s %v", k, got, ctx.MCPReport)
 		}
+	}
+}
+
+// %NAME% is read on the original string; crafted escapes cannot hide one.
+func TestMCPEnvRefsPercentForms(t *testing.T) {
+	for _, in := range []string{"https://x/?a=%2525HOME%25", "https://x/?a=%4%HOME%", "%ABC%", "x %ProgramFiles(x86)% y"} {
+		if refs := mcpEnvRefs(map[string]any{"u": in}); len(refs) == 0 {
+			t.Errorf("%q: no reference", in)
+		}
+	}
+	if refs := mcpEnvRefs(map[string]any{"u": "https://x/cb?redirect_url=https%3A%2F%2Fx"}); len(refs) != 0 {
+		t.Errorf("URL escapes read as references: %v", refs)
 	}
 }
