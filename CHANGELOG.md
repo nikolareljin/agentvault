@@ -5,9 +5,10 @@
 ## [0.15.0] - 2026-10-21
 
 ### Added
-- Import merges MCP servers one by one (https://github.com/nikolareljin/agentvault/issues/72):
-  servers only this machine has stay, new servers are picked from a list,
-  changed ones are asked about with the masked difference, and
+- Import merges MCP servers one by one
+  (https://github.com/nikolareljin/agentvault/issues/72): servers only
+  this machine has stay, new servers are picked from a list, changed ones
+  are asked about with the masked difference, and
   `--mcp-servers a,b|all|none` decides without a terminal. Picking a server
   is consent for its command, args and URL only: a server that reads this
   machine's environment variables, and code-loading or routing env
@@ -47,9 +48,9 @@
   file content (hook commands, MCP server paths, notes) and Claude's
   per-project memory directory names, and the provider configs that
   `--apply-provider-configs` writes. A rename that would land on another
-  memory directory in the bundle is not made and is reported. Windows paths match in any case and
-  with either separator (`C:/Users/x`), and
-  a path moved between Windows and POSIX gets the new separators to its end.
+  memory directory in the bundle is not made and is reported. Windows
+  paths match in any case and with either separator (`C:/Users/x`), and a
+  path moved between Windows and POSIX gets the new separators to its end.
   `--dry-run` prints every rewrite.
 - `import --apply-projects --project-root DIR` writes the bundle's project
   instructions into DIR. Git internals, CI, hook directories, repository
@@ -63,14 +64,15 @@
   rest of the file). For a changed one import shows the old and new fields
   and asks `restore local secret into changed server? [y/N]`; without a
   terminal it does not restore it. A secret under a key that `--map` or the
-  home rewrite renamed is restored too. A file
-  with secret-shaped values under neutral keys (`--token x` in `args` or a command,
-  `X-API-Key: x` header arguments, URL credentials, known token prefixes) is
+  home rewrite renamed is restored too. A file with secret-shaped values
+  under neutral keys (`--token x` in `args` or a command, `X-API-Key: x`
+  header arguments, URL credentials, known token prefixes) is
   redacted whole, and so is a credential file by name or location
   (`.docker/config.json`, anything under `.aws`).
 - The execute bit travels for a tool's own `hooks/` scripts, so a hook still
   runs after import. The scripts travel only with `--include-secrets`;
-  without it import names each one it left behind.
+  without it import names each one it left behind. Import writes a new or
+  changed script only with `--keep-bundle-commands`.
 - Import leaves out Claude permissions that let any program run without
   asking (`Bash(bash:*)`, `Bash(python3:*)`, `Bash(*)` and the like) and
   names each one. Only a plain command line is kept: literal words, no
@@ -83,18 +85,20 @@
   code-loading `env` variables (`NODE_OPTIONS`, `LD_PRELOAD` and the like),
   `env` variables that route requests (`ANTHROPIC_BASE_URL`, `*PROXY*`),
   provider switches (`CLAUDE_CODE_USE_BEDROCK`), folder trust (Copilot
-  `trusted_folders`, Gemini `trustedFolders.json`, `security.folderTrust`), JSON settings that do not parse as plain JSON,
-  other command fields, trusted Codex projects, and new or changed files
-  that are not prose or settings (hook scripts, extensionless files). A
+  `trusted_folders`, Gemini `trustedFolders.json`, `security.folderTrust`),
+  JSON settings that do not parse as plain JSON, other command fields,
+  trusted Codex projects, and new or changed files that are not prose or
+  settings (hook scripts, extensionless files). A
   Codex `config.toml` whose parsed `mcp_servers`, `notify`,
   `model_providers`, `projects`, `approval_policy`, `sandbox_mode`, `hooks`
   or URL and endpoint keys (`chatgpt_base_url`) differ,
   or that does not parse, is not applied. `--keep-bundle-commands` keeps
-  the hook, `statusLine` and MCP server commands.
-- The Codex provider config is applied as files through the same checks.
-  `SaveCodexConfig` refuses a rule name that is not a plain file name
-  before writing anything (a name such as `../../.bashrc` wrote outside
-  `~/.codex/rules`), and import no longer deletes local Codex rules.
+  the hook, `statusLine` and MCP server commands, hook scripts and Gemini
+  `trustedFolders.json`.
+- The Codex provider config is applied as files through the same checks,
+  and import no longer deletes local Codex rules. `generate codex` refuses
+  a rule name that is not a plain file name before writing anything (a
+  name such as `../../.bashrc` wrote outside `~/.codex/rules`).
 - `import --dry-run` with `--apply-provider-configs` or `--apply-projects`
   lists each file it would write, replace, keep or leave out, and writes
   nothing.
@@ -121,17 +125,18 @@
 - `tests/machine/install_check.sh`: installs into a scratch `GOBIN` and runs
   the installed binary.
 - `export` carries the user-level setup of Gemini CLI (`~/.gemini`), the
-  GitHub Copilot CLI (`~/.copilot`), Cursor and Windsurf MCP configs, Claude's
-  user MCP servers from `~/.claude.json` (only `mcpServers`; import merges
-  that key and keeps the rest of the file), Claude output styles and hooks,
-  and Codex's global `AGENTS.md` and prompts.
+  GitHub Copilot CLI (`~/.copilot`), Cursor and Windsurf MCP configs,
+  Claude's user MCP servers from `~/.claude.json` (only `mcpServers`;
+  import merges that key and keeps the rest of the file), Claude output
+  styles and hooks, and Codex's global `AGENTS.md` and prompts.
 - Files named by user-level instruction files (backticks, markdown links,
   `@path` imports) are carried, followed up to 10 hops, anywhere under the
   home directory. So are the scripts `settings.json` runs from `hooks` and
   `statusLine`.
 - With `--project`, every file and directory the instruction files name is
-  carried. Before, the export only recorded what it could not take. Also new
-  with `--project`: `GEMINI.md`, `CONVENTIONS.md`, `.github/instructions/`,
+  carried (up to 200 files per named directory). Before, the export only
+  recorded what it could not take. Also new with `--project`: `GEMINI.md`,
+  `CONVENTIONS.md`, `.github/instructions/`,
   `.github/prompts/`, `.cursor/rules/`, `.windsurf/rules/`,
   `.gemini/commands/` and `.clinerules`.
 - `--include-memory` carries Claude project memory and Codex memories. It is
@@ -142,8 +147,8 @@
 - `GEMINI.md` is a well-known instruction file for `instructions pull` and
   `sync`.
 - macOS install with Homebrew: `brew install nikolareljin/tap/agentvault`.
-  Each release builds an arm64 and amd64 formula from the release asset
-  digests and checks it with `brew style`, `brew test` and
+  Each release builds one formula for arm64 and amd64 from the release
+  asset digests and checks it with `brew style`, `brew test` and
   `agentvault version` before ci-helpers `homebrew-tap-publish.yml` commits
   it to the tap with the tap's deploy key (`HOMEBREW_TAP_DEPLOY_KEY`,
   `HOMEBREW_TAP_REPO` secrets).
