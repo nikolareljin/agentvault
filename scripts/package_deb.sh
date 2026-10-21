@@ -5,7 +5,8 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version="$(tr -d '[:space:]' < "$repo/VERSION")"
+# "-" as "~", so a pre-release such as 0.15.0~rc1 sorts before 0.15.0.
+version="$(tr -d '[:space:]' < "$repo/VERSION" | tr '-' '~')"
 arch="$(dpkg --print-architecture)"
 bin="$repo/agentvault"
 out="$(dirname "$repo")/agentvault_${version}_${arch}.deb"

@@ -1,7 +1,8 @@
 # Built by script-helpers build_rpm_artifacts.sh with no prebuild, so Source0
 # is `git archive HEAD` and %build compiles it; Go must be on PATH.
 # _sourcedir is <repo>/packaging/rpm/build/SOURCES.
-%global av_version %(tr -d '[:space:]' < %{_sourcedir}/../../../../VERSION)
+# "-" becomes "~", as in packaging.env.
+%global av_version %(tr -d '[:space:]' < %{_sourcedir}/../../../../VERSION | tr '-' '~')
 %global debug_package %{nil}
 
 Name:           agentvault
@@ -21,7 +22,7 @@ instruction files in one vault.
 
 %build
 CGO_ENABLED=0 go build -trimpath -mod=readonly \
-  -ldflags "-s -w -X github.com/nikolareljin/agentvault/cmd.Version=%{version}" \
+  -ldflags "-s -w -X github.com/nikolareljin/agentvault/cmd.Version=$(tr -d '[:space:]' < VERSION)" \
   -o agentvault .
 
 %install
