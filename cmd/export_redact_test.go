@@ -102,15 +102,15 @@ func TestRestoreClaudeConfigFillsOnlyUnchangedDefinition(t *testing.T) {
 	if assets := claudeConfigAssets(exported); len(assets) == 0 || len(assets[0].RedactedFields) == 0 {
 		t.Fatalf("settings.json asset lost its redacted pointers: %+v", assets)
 	}
-	got := restoreClaudeConfig(exported, local)
+	got, _ := restoreClaudeConfig(exported, local)
 	if s := mustJSON(t, got); !strings.Contains(s, "secret-v") || !strings.Contains(s, "Bearer local") || got.RedactedFields != nil {
 		t.Errorf("unchanged config not restored: %s", s)
 	}
 	// The bundle points the server elsewhere: the local header stays here.
 	moved := redactClaudeConfig(claudeConfigFrom(t, `{"model":"opus","env":{"K":"x"},
 		"mcpServers":{"s":{"command":"other","headers":{"Authorization":"Bearer x"}}}}`))
-	if s := mustJSON(t, restoreClaudeConfig(moved, local)); strings.Contains(s, "Bearer local") {
-		t.Errorf("local header restored into a changed server: %s", s)
+	if got, _ := restoreClaudeConfig(moved, local); strings.Contains(mustJSON(t, got), "Bearer local") {
+		t.Errorf("local header restored into a changed server: %s", mustJSON(t, got))
 	}
 }
 
@@ -166,7 +166,7 @@ func TestPlanProfileImportRestoresSharedMCPSecrets(t *testing.T) {
 
 func TestRestoreClaudeConfigOnFreshMachineKeepsSettings(t *testing.T) {
 	exported := redactClaudeConfig(claudeConfigFrom(t, `{"model":"opus","env":{"K":"v"}}`))
-	got := restoreClaudeConfig(exported, nil)
+	got, _ := restoreClaudeConfig(exported, nil)
 	s := mustJSON(t, got)
 	if got.CustomSettings["model"] != "opus" || strings.Contains(s, `"K"`) {
 		t.Errorf("want model kept and the blank env value left out: %s", s)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -29,7 +30,7 @@ func redactVaultSecrets(b *SetupBundle) {
 			meta := *a.ProviderMeta
 			meta.Extra = make(map[string]string, len(a.ProviderMeta.Extra))
 			for k, val := range a.ProviderMeta.Extra {
-				if isSecretKey(k) || secretString(val) {
+				if exportBlanksExtra(k, val) {
 					val = ""
 				}
 				meta.Extra[k] = val
@@ -55,6 +56,12 @@ func redactVaultSecrets(b *SetupBundle) {
 		}
 		b.ProviderConfigs.Ollama = &cp
 	}
+}
+
+// exportBlanksExtra reports whether export blanks the agent provider extra
+// k=v. Import fills a blank extra only where this says export made it.
+func exportBlanksExtra(k, v string) bool {
+	return isSecretKey(k) || secretString(v)
 }
 
 // blankMCPServerSecrets returns copies of servers with every env value, every
@@ -134,9 +141,10 @@ func redactClaudeConfig(c *agent.ClaudeConfig) *agent.ClaudeConfig {
 // restoreClaudeConfig fills the secrets an export blanked in incoming from
 // existing, this machine's vault copy, under the rules provider files use.
 // A config exported without its settings keeps this machine's settings.
-func restoreClaudeConfig(incoming, existing *agent.ClaudeConfig) *agent.ClaudeConfig {
+// left names each blank that was not filled.
+func restoreClaudeConfig(incoming, existing *agent.ClaudeConfig) (*agent.ClaudeConfig, []string) {
 	if incoming == nil || (!incoming.SettingsRedacted && len(incoming.RedactedFields) == 0) {
-		return incoming
+		return incoming, nil
 	}
 	out := &agent.ClaudeConfig{
 		EnabledPlugins: map[string]bool{},
@@ -147,25 +155,27 @@ func restoreClaudeConfig(incoming, existing *agent.ClaudeConfig) *agent.ClaudeCo
 		if existing != nil {
 			cp := *existing
 			cp.Keybindings = incoming.Keybindings
-			return &cp
+			return &cp, nil
 		}
-		return out
+		return out, []string{"settings"}
 	}
 	in, err := agent.ClaudeSettingsJSON(incoming)
 	if err != nil {
-		return out
+		return out, []string{"settings"}
 	}
 	var have []byte
 	if existing != nil {
 		have, _ = agent.ClaudeSettingsJSON(existing)
 	}
-	restored, _, err := restoreRedactedFields(in, incoming.RedactedFields, have)
+	res, err := restoreRedactedFieldsWith(in, incoming.RedactedFields, have, nil)
 	var settings map[string]any
-	if err != nil || json.Unmarshal(restored, &settings) != nil {
-		return out
+	if err != nil || json.Unmarshal(res.Content, &settings) != nil {
+		return out, []string{"settings"}
 	}
 	agent.ApplyClaudeSettings(out, settings)
-	return out
+	left := append([]string(nil), res.Removed...)
+	sort.Strings(left)
+	return out, left
 }
 
 // restoreMCPServerSecrets fills the values an export blanked in incoming from
@@ -271,13 +281,17 @@ func restoreAgentSecrets(in, have agent.Agent, exists bool) (agent.Agent, []stri
 			left = append(left, "base_url")
 		}
 	}
+	var haveExtra map[string]string
+	if exists && have.ProviderMeta != nil {
+		haveExtra = have.ProviderMeta.Extra
+	}
 	if in.ProviderMeta != nil && len(in.ProviderMeta.Extra) > 0 {
 		meta := *in.ProviderMeta
 		meta.Extra = make(map[string]string, len(in.ProviderMeta.Extra))
 		for _, k := range sortedStringKeys(in.ProviderMeta.Extra) {
 			val := in.ProviderMeta.Extra[k]
-			if val == "" && (isSecretKey(k) || (exists && have.ProviderMeta != nil && secretString(have.ProviderMeta.Extra[k]))) {
-				if !same || have.ProviderMeta == nil || have.ProviderMeta.Extra[k] == "" {
+			if val == "" && exportBlanksExtra(k, haveExtra[k]) {
+				if !same || haveExtra[k] == "" {
 					left = append(left, "provider_meta.extra."+k)
 					continue
 				}
@@ -318,7 +332,7 @@ func sameAgentEndpoint(in, have agent.Agent) bool {
 	}
 	for k, v := range im.Extra {
 		hv, ok := hm.Extra[k]
-		if !ok || (v != hv && (v != "" || !(isSecretKey(k) || secretString(hv)))) {
+		if !ok || (v != hv && (v != "" || !exportBlanksExtra(k, hv))) {
 			return false
 		}
 	}
@@ -327,19 +341,33 @@ func sameAgentEndpoint(in, have agent.Agent) bool {
 }
 
 // restoreCustomSettings returns this machine's settings when incoming is
-// exactly what export makes of them, so the secret keys export dropped stay.
-// Settings that differ in any other way are taken as the bundle has them.
-func restoreCustomSettings(incoming, existing map[string]any) map[string]any {
+// exactly what export makes of them and allowed is true, so the secret keys
+// export dropped stay. Settings that differ in any other way are taken as
+// the bundle has them, and left names the top-level keys of existing whose
+// secrets that loses: those where the bundle holds no secret of its own.
+func restoreCustomSettings(incoming, existing map[string]any, allowed bool) (map[string]any, []string) {
 	if len(existing) == 0 {
-		return incoming
+		return incoming, nil
 	}
-	want, err1 := json.Marshal(redactSensitiveMap(existing))
+	redacted := redactSensitiveMap(existing)
+	want, err1 := json.Marshal(redacted)
 	got, err2 := json.Marshal(incoming)
 	if len(incoming) == 0 {
 		got = []byte("{}")
 	}
-	if err1 != nil || err2 != nil || string(want) != string(got) {
-		return incoming
+	if allowed && err1 == nil && err2 == nil && string(want) == string(got) {
+		return existing, nil
 	}
-	return existing
+	var left []string
+	inRedacted := redactSensitiveMap(incoming)
+	for _, k := range sortedKeys(existing) {
+		if r, ok := redacted[k]; ok && jsonEqual(r, existing[k]) {
+			continue // no secret here on this machine
+		}
+		if iv, ok := incoming[k]; ok && !jsonEqual(inRedacted[k], iv) {
+			continue // the bundle carries its own secret
+		}
+		left = append(left, "customSettings."+k)
+	}
+	return incoming, left
 }

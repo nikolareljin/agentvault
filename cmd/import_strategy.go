@@ -333,7 +333,11 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 func planProviderConfigs(existing agent.ProviderConfig, incoming agent.ProviderConfig, strategy importStrategy, rep *importReport) (agent.ProviderConfig, bool) {
 	result := existing
 	changed := false
-	incoming.Claude = restoreClaudeConfig(incoming.Claude, existing.Claude)
+	// left: per provider, the secrets the bundle blanked or dropped that
+	// this machine's values do not fill; named only if the bundle's config
+	// replaces this machine's.
+	left := map[string][]string{}
+	incoming.Claude, left["Claude"] = restoreClaudeConfig(incoming.Claude, existing.Claude)
 	if o := incoming.Ollama; o != nil && o.BaseURL == "" && existing.Ollama != nil && secretString(existing.Ollama.BaseURL) {
 		cp := *o
 		cp.BaseURL = existing.Ollama.BaseURL
@@ -341,13 +345,13 @@ func planProviderConfigs(existing agent.ProviderConfig, incoming agent.ProviderC
 	}
 	if c := incoming.Codex; c != nil && existing.Codex != nil {
 		cp := *c
-		cp.CustomSettings = restoreCustomSettings(c.CustomSettings, existing.Codex.CustomSettings)
+		cp.CustomSettings, left["Codex"] = restoreCustomSettings(c.CustomSettings, existing.Codex.CustomSettings, true)
 		incoming.Codex = &cp
 	}
 	// Ollama's custom settings go to its base URL: a moved one gets none.
-	if o := incoming.Ollama; o != nil && existing.Ollama != nil && o.BaseURL == existing.Ollama.BaseURL {
+	if o := incoming.Ollama; o != nil && existing.Ollama != nil {
 		cp := *o
-		cp.CustomSettings = restoreCustomSettings(o.CustomSettings, existing.Ollama.CustomSettings)
+		cp.CustomSettings, left["Ollama"] = restoreCustomSettings(o.CustomSettings, existing.Ollama.CustomSettings, o.BaseURL == existing.Ollama.BaseURL)
 		incoming.Ollama = &cp
 	}
 
@@ -359,6 +363,9 @@ func planProviderConfigs(existing agent.ProviderConfig, incoming agent.ProviderC
 			set()
 			changed = true
 			rep.Lines = append(rep.Lines, fmt.Sprintf("  Applied: %s provider config", name))
+			for _, f := range left[name] {
+				rep.record("Left out", "%s provider config %s: secret not in the bundle, and not filled from this machine's settings", name, f)
+			}
 		case !incPresent && curPresent && strategy.deletesLocalOnly():
 			set()
 			changed = true
