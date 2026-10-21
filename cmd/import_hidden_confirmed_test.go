@@ -28,7 +28,7 @@ func hiddenFixture(t *testing.T) (*locations.Set, locationOptions, *vault.Vault,
 	app := filepath.Join(hiddenWD, "app")
 	mustMkdirAll(t, filepath.Join(app, ".git"))
 	o.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
-		if dir == app {
+		if sameDirT(dir, app) {
 			return gitid.Repo{Root: dir, Remote: "github.com/acme/app"}, nil
 		}
 		return gitid.Repo{}, gitid.ErrNotRepo
@@ -166,7 +166,7 @@ func TestProjectUnderConfirmedHiddenWorkDir(t *testing.T) {
 	app := filepath.Join(hiddenWD, "app")
 	mustMkdirAll(t, filepath.Join(app, ".git"))
 	o.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
-		if dir == app {
+		if sameDirT(dir, app) {
 			return gitid.Repo{Root: dir, Remote: "github.com/acme/app"}, nil
 		}
 		return gitid.Repo{}, gitid.ErrNotRepo
@@ -315,7 +315,7 @@ func TestConfirmedHiddenDoesNotCoverOtherProjects(t *testing.T) {
 	mustMkdirAll(t, filepath.Join(evil, ".git"))
 	base := o.Identify
 	o.Identify = func(ctx context.Context, dir string) (gitid.Repo, error) {
-		if dir == evil {
+		if sameDirT(dir, evil) {
 			return gitid.Repo{Root: dir, Remote: "github.com/mallory/evil"}, nil
 		}
 		return base(ctx, dir)
@@ -425,7 +425,7 @@ func TestConfirmedHiddenCoversOnlyVerifiedCheckouts(t *testing.T) {
 	app := filepath.Join(hiddenWD, "app")
 	mustMkdirAll(t, filepath.Join(app, ".git"))
 	o.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
-		if dir == app {
+		if sameDirT(dir, app) {
 			return gitid.Repo{Root: dir, Remote: "github.com/acme/app"}, nil
 		}
 		return gitid.Repo{}, gitid.ErrNotRepo
@@ -508,4 +508,15 @@ func TestLocalCheckoutUnderSymlinkedHome(t *testing.T) {
 	if !verify(t, "app", filepath.Join(home, ".work")) {
 		t.Fatal("checkout under a symlinked home not verified")
 	}
+}
+
+// sameDirT compares two paths after resolving symlinks and short names
+// (macOS /var, Windows 8.3 temp paths), as verification resolves them.
+func sameDirT(a, b string) bool {
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	if err1 != nil || err2 != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ra == rb
 }
