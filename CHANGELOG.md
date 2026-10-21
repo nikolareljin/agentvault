@@ -286,6 +286,9 @@
   The export warning for a hard-linked file says why it was redacted.
 
 ### Fixed
+- `release-rc-pr.yml` no longer fails when the repository does not let
+  Actions create pull requests (HTTP 403). It prints a warning with the
+  compare link to open the release PR by hand; other errors still fail.
 - `generate mcp` writes by default to Claude Desktop's config for the OS:
   `~/Library/Application Support/Claude/` on macOS and `%APPDATA%\Claude\` on
   Windows. Before, it wrote `~/.config/claude/` everywhere, which Claude

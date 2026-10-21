@@ -33,9 +33,17 @@ jobs:
               core.info(`PR already exists for ${head} -> ${base}`);
               return;
             }
-            await github.rest.pulls.create({
-              owner, repo, head, base,
-              title: `Release: ${head}`,
-              body: `Auto-created PR for release branch \`${head}\` into \`${base}\`.`,
-            });
+            try {
+              await github.rest.pulls.create({
+                owner, repo, head, base,
+                title: `Release: ${head}`,
+                body: `Auto-created PR for release branch \`${head}\` into \`${base}\`.`,
+              });
+            } catch (err) {
+              // 403 when the repo does not let Actions create pull requests
+              // (Settings > Actions > General). Open it by hand instead.
+              if (err.status !== 403) throw err;
+              core.warning(`Actions may not create pull requests here; open it by hand: https://github.com/${owner}/${repo}/compare/${base}...${head}?expand=1`);
+              return;
+            }
             core.info(`Created PR ${head} -> ${base}`);
