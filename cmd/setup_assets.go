@@ -1296,12 +1296,13 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 				warnings = append(warnings, fmt.Sprintf("provider asset %s cannot be applied: %v", desc, err))
 				continue
 			}
-			content = merged
+			// This machine's key and server order; new ones in the bundle's.
+			content = orderLikeLocal(merged, current, asset.Content)
 		} else if len(current) > 0 {
 			// The local file's own keys stay; the bundle's overwrite.
 			merged, n, ok := unionWithLocal(content, current, secrets, removed, ctx.restoreAsker(dest))
 			if ok {
-				content = merged
+				content = orderLikeLocal(merged, current, asset.Content)
 				declined += n
 			}
 		}

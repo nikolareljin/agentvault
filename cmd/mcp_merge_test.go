@@ -1038,3 +1038,74 @@ func TestImportNestedURLRefsGated(t *testing.T) {
 		}
 	}
 }
+
+// inOrder fails unless each of parts appears in s after the one before.
+func inOrder(t *testing.T, s string, parts ...string) {
+	t.Helper()
+	at := 0
+	for _, p := range parts {
+		i := strings.Index(s[at:], p)
+		if i < 0 {
+			t.Fatalf("%s missing or out of order in:\n%s", p, s)
+		}
+		at += i + len(p)
+	}
+}
+
+// ~/.claude.json and JSON settings keep this machine's key and server
+// order; new keys follow in the bundle's order; numbers keep their digits.
+func TestImportKeepsLocalKeyOrder(t *testing.T) {
+	home := t.TempDir()
+	cj := filepath.Join(home, ".claude.json")
+	mustWriteFile(t, cj, `{"zeta":1,"oauthAccount":{"email":"b@y"},"big":12345678901234567890123,"f":1.50,"mcpServers":{"z":{"command":"z"},"a":{"command":"a"}},"projects":{"/q":{}}}`)
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("new")
+	asset := SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true,
+		Content: []byte(`{"mcpServers":{"z":{"command":"z"},"new":{"command":"n"},"a":{"command":"a"}}}`)}
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	inOrder(t, readString(t, cj), `"zeta"`, `"oauthAccount"`, `"big": 12345678901234567890123`, `"f": 1.50`,
+		`"mcpServers"`, `"z"`, `"a"`, `"new"`, `"projects"`)
+
+	gs := filepath.Join(home, ".gemini", "settings.json")
+	mustWriteFile(t, gs, `{"theme":"y","b":1,"mcpServers":{"z":{"command":"z"},"a":{"command":"a"}}}`)
+	ctx = fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("new")
+	asset = SetupAsset{LogicalRoot: setupAssetRootProviderGemini, LogicalPath: "settings.json", ContentPresent: true,
+		Content: []byte(`{"theme":"x","q":2,"p":3,"mcpServers":{"new":{"command":"n"},"z":{"command":"z"}}}`)}
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	inOrder(t, readString(t, gs), `"theme": "x"`, `"b": 1`, `"mcpServers"`, `"z"`, `"a"`, `"new"`, `"q": 2`, `"p": 3`)
+}
+
+// A server that is not offered, or not taken for its variables, is
+// reported once, with why; new or changed alike.
+func TestRefusedNewServerReportedOnce(t *testing.T) {
+	home := t.TempDir()
+	cj := filepath.Join(home, ".claude.json")
+	const local = `{"mcpServers":{"odd2":{"command":"y"},"envy2":{"command":"y"}}}`
+	mustWriteFile(t, cj, local)
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("all")
+	asset := SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true,
+		Content: []byte(`{"mcpServers":{"odd":{"command":"x","cwd":"/tmp"},"odd2":{"command":"x","cwd":"/tmp"},` +
+			`"envy":{"command":"$HOME/e"},"envy2":{"command":"$HOME/e"}}}`)}
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := strings.Join(ctx.MCPReport, "\n")
+	for _, n := range []string{`"odd"`, `"odd2"`, `"envy"`, `"envy2"`} {
+		if strings.Count(r, n) != 1 {
+			t.Errorf("%s named %d times: %s", n, strings.Count(r, n), r)
+		}
+	}
+	if !strings.Contains(r, `not offered (review the bundle) "odd" (an unknown field), "odd2" (an unknown field)`) ||
+		!strings.Contains(r, `reads this machine's variables (approve on a terminal or use --keep-bundle-commands) "envy", "envy2"`) {
+		t.Errorf("report = %s", r)
+	}
+	if got := readString(t, cj); !sameFileBytes([]byte(got), []byte(local)) {
+		t.Errorf("file changed: %s", got)
+	}
+}

@@ -137,7 +137,7 @@ func mergeMCPServers(local, bundle map[string]any, ch mcpChooser) (map[string]an
 		lv, ok := local[name]
 		if !ok {
 			if why := ch.refuse(name, bv); why != "" {
-				rep.LeftOut = append(rep.LeftOut, name)
+				// Reported once, as not offered, with the reason.
 				rep.refuse(name, why)
 				continue
 			}
@@ -150,7 +150,7 @@ func mergeMCPServers(local, bundle map[string]any, ch mcpChooser) (map[string]an
 			continue
 		}
 		if why := ch.refuse(name, bv); why != "" {
-			rep.KeptLocal = append(rep.KeptLocal, name)
+			// This machine's stays; reported once, as not offered.
 			rep.refuse(name, why)
 			continue
 		}
@@ -651,15 +651,14 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 			rep.Ask = append(rep.Ask, name)
 		}
 	}
+	// The report names an untaken server once, under EnvRefused.
 	untake := func(name string) {
 		if lv, ok := local[name]; ok {
 			merged[name] = lv
 			rep.Replaced = removeString(rep.Replaced, name)
-			rep.KeptLocal = append(rep.KeptLocal, name)
 		} else {
 			delete(merged, name)
 			rep.Added = removeString(rep.Added, name)
-			rep.LeftOut = append(rep.LeftOut, name)
 		}
 	}
 	taken := append(append([]string(nil), rep.Added...), rep.Replaced...)

@@ -18,7 +18,8 @@
   changed servers stay as they are. Covers `~/.claude.json`, JSON settings
   (`mcpServers`, `servers`) and Codex `config.toml`, whose tables are edited
   in place. Import prints what it added, replaced, kept and left out per
-  file. `generate mcp` keeps servers only the target file has.
+  file. JSON files keep this machine's key and server order. `generate mcp`
+  keeps servers only the target file has.
 - `import`: a work dir mapping into a hidden folder, once confirmed, is
   saved as confirmed and not asked again for the same target while every
   bundle project under it is a checkout already there with the same
