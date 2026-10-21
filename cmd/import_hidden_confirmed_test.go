@@ -416,3 +416,38 @@ func TestConfirmedHiddenNeedsLocalCheckout(t *testing.T) {
 		t.Fatalf("missing checkout used the confirmation: %+v\n%s", res, out)
 	}
 }
+
+// A confirmed hidden work dir does not cover a folder: a project whose
+// target there is not its verified checkout is asked about (missed here).
+func TestConfirmedHiddenCoversOnlyVerifiedCheckouts(t *testing.T) {
+	_, set, o := matchFixture(t)
+	hiddenWD := filepath.Join(o.Home, ".work")
+	app := filepath.Join(hiddenWD, "app")
+	mustMkdirAll(t, filepath.Join(app, ".git"))
+	o.Identify = func(_ context.Context, dir string) (gitid.Repo, error) {
+		if dir == app {
+			return gitid.Repo{Root: dir, Remote: "github.com/acme/app"}, nil
+		}
+		return gitid.Repo{}, gitid.ErrNotRepo
+	}
+	o.AcceptMatches = true
+	o.confirmedHidden = map[string]bool{"w1": true}
+	o.verifiedHidden = map[string]string{}
+	var out bytes.Buffer
+	var res locationResult
+	if err := matchAndConfirm(context.Background(), set, "", map[string]string{"w1": hiddenWD}, map[string]bool{}, o, &out, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Missed) != 1 || len(res.Stored.Projects) != 0 {
+		t.Fatalf("unverified project under a confirmed hidden work dir accepted: %+v\n%s", res, out.String())
+	}
+	// The verified checkout itself passes.
+	o.verifiedHidden = map[string]string{"/old/Projects/app": app}
+	res = locationResult{}
+	if err := matchAndConfirm(context.Background(), set, "", map[string]string{"w1": hiddenWD}, map[string]bool{}, o, &out, &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Missed) != 0 || len(res.Stored.Projects) != 1 {
+		t.Fatalf("verified checkout refused: %+v\n%s", res, out.String())
+	}
+}

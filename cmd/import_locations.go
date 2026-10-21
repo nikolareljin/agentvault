@@ -48,6 +48,10 @@ type locationOptions struct {
 	// confirmedHidden are the work dir ids whose saved hidden mapping was
 	// confirmed on an earlier import (locations.Set.ConfirmedHidden).
 	confirmedHidden map[string]bool
+	// verifiedHidden are the bundle projects (path) under a confirmed hidden
+	// work dir and the local checkout each was verified at. Only that exact
+	// target skips the hidden question.
+	verifiedHidden map[string]string
 }
 
 // askMemo holds the answers given during one import.
@@ -134,6 +138,14 @@ type confirmedHidden struct {
 // Windows), and the bundle claims the same identity. all is false when any
 // project fails, or there is none: a bundle's claims alone confirm nothing.
 func localHiddenKeys(ctx context.Context, o locationOptions, set *locations.Set, from, to string) (keys []string, all bool) {
+	keys, _, all = localHiddenCheckouts(ctx, o, set, from, to)
+	return keys, all
+}
+
+// localHiddenCheckouts is localHiddenKeys with the verified checkout of
+// each project, bundle path to local directory.
+func localHiddenCheckouts(ctx context.Context, o locationOptions, set *locations.Set, from, to string) (keys []string, dirs map[string]string, all bool) {
+	dirs = map[string]string{}
 	identify := o.Identify
 	if identify == nil {
 		identify = locations.DefaultIdentifier
@@ -156,9 +168,10 @@ func localHiddenKeys(ctx context.Context, o locationOptions, set *locations.Set,
 				continue
 			}
 			keys = append(keys, key)
+			dirs[locations.CleanForeign(p.Abs)] = filepath.Clean(filepath.Join(to, filepath.FromSlash(p.Rel)))
 		}
 	}
-	return keys, all && len(keys) > 0
+	return keys, dirs, all && len(keys) > 0
 }
 
 func localProjectKey(ctx context.Context, identify locations.Identifier, p locations.Project, to string) (string, bool) {
@@ -323,6 +336,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 	// asked again. Only the vault (o.Known) is read: a bundle cannot confirm
 	// anything, and a bundle reusing the path with other projects is asked.
 	o.confirmedHidden = map[string]bool{}
+	o.verifiedHidden = map[string]string{}
 	for _, w := range set.WorkDirs {
 		key := locations.CleanForeign(w.Abs)
 		to, ok := targets[w.ID]
@@ -334,8 +348,12 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 			if c.Target != to {
 				continue
 			}
-			if keys, all := localHiddenKeys(ctx, o, set, w.Abs, to); !all || !c.Covers(keys) {
+			keys, dirs, all := localHiddenCheckouts(ctx, o, set, w.Abs, to)
+			if !all || !c.Covers(keys) {
 				continue
+			}
+			for k, d := range dirs {
+				o.verifiedHidden[k] = d
 			}
 			o.confirmedHidden[w.ID] = true
 		}
@@ -564,7 +582,7 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 		if p.Target != "" && !allowedTarget(p.Target, o.Home, targets, userChosen) {
 			continue
 		}
-		if p.Target != "" && locations.HiddenBelowHome(p.Target, o.Home) && !underChosen(p.Target, targets, userChosen) && !underChosen(p.Target, targets, o.confirmedHidden) {
+		if p.Target != "" && locations.HiddenBelowHome(p.Target, o.Home) && !underChosen(p.Target, targets, userChosen) && o.verifiedHidden[locations.CleanForeign(p.Project.Abs)] != filepath.Clean(p.Target) {
 			got := ""
 			if o.Interactive && !o.DryRun {
 				var err error
