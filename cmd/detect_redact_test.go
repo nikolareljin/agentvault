@@ -36,3 +36,31 @@ func TestRedactSensitiveMapDropsEnvHeadersAndSecretShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactSensitiveMapKeepsOrdinarySettings(t *testing.T) {
+	in := map[string]any{
+		"includeCoAuthoredBy": false,
+		"maxTokens":           float64(4096),
+		"permissions": map[string]any{"allow": []any{
+			"Bash(ls)", "Bash(gh --token *)", "Read(~/notes)",
+		}},
+		"mcpServers": map[string]any{"s": map[string]any{
+			"args": []any{"-y", "--api-key", "canary-a", "--port=1", "--token=canary-b", "--verbose"},
+		}},
+	}
+	out, err := json.Marshal(redactSensitiveMap(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	for _, keep := range []string{`"includeCoAuthoredBy":false`, `"maxTokens":4096`, "Bash(ls)", "Read(~/notes)", `"-y"`, `"--port=1"`, `"--verbose"`} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("settings_safe lost %s: %s", keep, got)
+		}
+	}
+	for _, leak := range []string{"canary-", "--api-key", "gh --token"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("settings_safe carries %q: %s", leak, got)
+		}
+	}
+}

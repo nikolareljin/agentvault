@@ -39,6 +39,13 @@ type ClaudeConfig struct {
 	AutoApprove    []string          `json:"autoApprove,omitempty"`
 	MCPServers     map[string]any    `json:"mcpServers,omitempty"`
 	CustomSettings map[string]any    `json:"customSettings,omitempty"`
+	// RedactedFields are the JSON Pointers, into the settings.json this
+	// config writes, of secret values an export blanked. Import fills them
+	// from this machine's copy.
+	RedactedFields []string `json:"redactedFields,omitempty"`
+	// SettingsRedacted marks a config exported without its settings: they
+	// held a secret that could not be blanked field by field.
+	SettingsRedacted bool `json:"settingsRedacted,omitempty"`
 }
 
 // CodexConfig holds Codex CLI specific settings.
@@ -77,31 +84,7 @@ func LoadClaudeConfig() (*ClaudeConfig, error) {
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		var settings map[string]any
 		if json.Unmarshal(data, &settings) == nil {
-			if plugins, ok := settings["enabledPlugins"].(map[string]any); ok {
-				for name, enabled := range plugins {
-					if e, ok := enabled.(bool); ok {
-						config.EnabledPlugins[name] = e
-					}
-				}
-			}
-			if model, ok := settings["defaultModel"].(string); ok {
-				config.DefaultModel = model
-			}
-			if autoApprove, ok := anyToStringSlice(settings["autoApprove"]); ok {
-				config.AutoApprove = autoApprove
-			}
-			if mcpServers, ok := settings["mcpServers"].(map[string]any); ok {
-				config.MCPServers = make(map[string]any, len(mcpServers))
-				for name, server := range mcpServers {
-					config.MCPServers[name] = server
-				}
-			}
-			// Store all other settings
-			for k, v := range settings {
-				if k != "enabledPlugins" && k != "defaultModel" && k != "autoApprove" && k != "mcpServers" {
-					config.CustomSettings[k] = v
-				}
-			}
+			ApplyClaudeSettings(config, settings)
 		}
 	}
 
@@ -112,6 +95,36 @@ func LoadClaudeConfig() (*ClaudeConfig, error) {
 	}
 
 	return config, nil
+}
+
+// ApplyClaudeSettings sets config's settings fields from a parsed
+// settings.json, the way LoadClaudeConfig reads it.
+func ApplyClaudeSettings(config *ClaudeConfig, settings map[string]any) {
+	if plugins, ok := settings["enabledPlugins"].(map[string]any); ok {
+		for name, enabled := range plugins {
+			if e, ok := enabled.(bool); ok {
+				config.EnabledPlugins[name] = e
+			}
+		}
+	}
+	if model, ok := settings["defaultModel"].(string); ok {
+		config.DefaultModel = model
+	}
+	if autoApprove, ok := anyToStringSlice(settings["autoApprove"]); ok {
+		config.AutoApprove = autoApprove
+	}
+	if mcpServers, ok := settings["mcpServers"].(map[string]any); ok {
+		config.MCPServers = make(map[string]any, len(mcpServers))
+		for name, server := range mcpServers {
+			config.MCPServers[name] = server
+		}
+	}
+	// Store all other settings
+	for k, v := range settings {
+		if k != "enabledPlugins" && k != "defaultModel" && k != "autoApprove" && k != "mcpServers" {
+			config.CustomSettings[k] = v
+		}
+	}
 }
 
 // ClaudeSettingsJSON is the settings.json SaveClaudeConfig writes for config.

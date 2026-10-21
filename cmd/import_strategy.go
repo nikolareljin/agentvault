@@ -194,6 +194,7 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 		rep.record("Removed", "shared router config (not in bundle)")
 	}
 
+	incomingShared.MCPServers = restoreMCPServerSecrets(incomingShared.MCPServers, shared.MCPServers)
 	shared.MCPServers = mergeKeyed(shared.MCPServers, incomingShared.MCPServers,
 		func(s agent.MCPServer) string { return s.Name }, strategy, "MCP server", rep)
 	// Stamp override-derived instructions with the bundle's own creation time, not
@@ -260,6 +261,9 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 	for _, a := range incoming {
 		incomingNames[a.Name] = struct{}{}
 		current, exists := byName[a.Name]
+		// Values an export without --include-secrets blanked come back from
+		// the local agent, or are dropped.
+		a = restoreAgentSecrets(a, current)
 		if !exists {
 			a.CreatedAt = now
 			a.UpdatedAt = now
@@ -306,6 +310,12 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 func planProviderConfigs(existing agent.ProviderConfig, incoming agent.ProviderConfig, strategy importStrategy, rep *importReport) (agent.ProviderConfig, bool) {
 	result := existing
 	changed := false
+	incoming.Claude = restoreClaudeConfig(incoming.Claude, existing.Claude)
+	if o := incoming.Ollama; o != nil && o.BaseURL == "" && existing.Ollama != nil && secretString(existing.Ollama.BaseURL) {
+		cp := *o
+		cp.BaseURL = existing.Ollama.BaseURL
+		incoming.Ollama = &cp
+	}
 
 	apply := func(name string, cur any, inc any, set func()) {
 		incPresent := !isNilProviderConfig(inc)

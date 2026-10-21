@@ -562,6 +562,10 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 		}
 	}
 
+	if !opts.IncludeSecrets {
+		redactVaultSecrets(&bundle)
+	}
+
 	bundle.ModelCapabilities = v.ListCapabilities()
 
 	if opts.IncludeDetected {

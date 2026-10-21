@@ -833,8 +833,9 @@ func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
 		return nil
 	}
 	var out []SetupAsset
-	if data, err := agent.ClaudeSettingsJSON(c); err == nil {
-		out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json", ContentPresent: true, Content: data})
+	// Exported without its settings: this machine's settings.json stays.
+	if data, err := agent.ClaudeSettingsJSON(c); err == nil && !c.SettingsRedacted {
+		out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json", ContentPresent: true, Content: data, RedactedFields: c.RedactedFields})
 	}
 	if len(c.Keybindings) > 0 {
 		if data, err := json.MarshalIndent(c.Keybindings, "", "  "); err == nil {

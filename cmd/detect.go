@@ -276,62 +276,65 @@ func detectClaude() DetectedAgent {
 	return a
 }
 
+// redactSensitiveMap is the settings summary export carries even without
+// --include-secrets: secret keys, env and headers are dropped, and so is any
+// string shaped like a secret, alone or as a flag and its value in a list.
 func redactSensitiveMap(in map[string]any) map[string]any {
 	out := make(map[string]any)
 	for k, v := range in {
-		// env and headers hold secrets under any name; export carries this
-		// map in the bundle even without --include-secrets.
-		if isSensitiveKey(k) || secretContainers[strings.ToLower(k)] {
+		if secretContainers[strings.ToLower(k)] {
 			continue
 		}
-		switch tv := v.(type) {
-		case map[string]any:
-			nested := redactSensitiveMap(tv)
-			if len(nested) > 0 {
-				out[k] = nested
+		if isSecretKey(k) {
+			// maxTokens: 4096 is a setting; a string under it may not be.
+			switch v.(type) {
+			case float64, bool, json.Number:
+				if settingLikeKey(k) {
+					out[k] = v
+				}
 			}
-		case []any:
-			if containsSecretShape(tv) {
-				continue
-			}
-			out[k] = redactSensitiveSlice(tv)
-		case string:
-			if !secretString(tv) {
-				out[k] = tv
-			}
-		default:
-			out[k] = v
+			continue
+		}
+		if r, keep := redactSensitiveValue(v); keep {
+			out[k] = r
 		}
 	}
 	return out
 }
 
+// redactSensitiveValue returns v without secrets, and false when nothing of
+// it is left to show.
+func redactSensitiveValue(v any) (any, bool) {
+	switch tv := v.(type) {
+	case map[string]any:
+		nested := redactSensitiveMap(tv)
+		return nested, len(nested) > 0
+	case []any:
+		return redactSensitiveSlice(tv), true
+	case string:
+		return tv, !secretString(tv)
+	default:
+		return v, true
+	}
+}
+
+// redactSensitiveSlice drops the secret elements of a list and keeps the
+// rest: a "--token" flag takes its next element with it, so an args list
+// keeps "--verbose" and a permissions list keeps "Bash(ls)".
 func redactSensitiveSlice(in []any) []any {
 	out := make([]any, 0, len(in))
-	for _, v := range in {
-		switch tv := v.(type) {
-		case map[string]any:
-			nested := redactSensitiveMap(tv)
-			if len(nested) > 0 {
-				out = append(out, nested)
+	for i := 0; i < len(in); i++ {
+		if s, ok := in[i].(string); ok && secretFlag.MatchString(s) {
+			if !strings.Contains(s, "=") {
+				i++
 			}
-		case []any:
-			out = append(out, redactSensitiveSlice(tv))
-		default:
-			out = append(out, v)
+			continue
+		}
+		if r, keep := redactSensitiveValue(in[i]); keep {
+			out = append(out, r)
 		}
 	}
 	return out
-}
-
-func isSensitiveKey(key string) bool {
-	k := strings.ToLower(key)
-	return strings.Contains(k, "key") ||
-		strings.Contains(k, "token") ||
-		strings.Contains(k, "secret") ||
-		strings.Contains(k, "password") ||
-		strings.Contains(k, "credential") ||
-		strings.Contains(k, "auth")
 }
 
 func detectCodex() DetectedAgent {
