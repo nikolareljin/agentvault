@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 )
@@ -270,6 +272,7 @@ const (
 	whyUngateable   = "environment settings that cannot be gated"
 	whyGatedName    = "a gated variable name outside an env object"
 	whyTooDeep      = "settings nested deeper than 64 levels"
+	whyNonASCIIKey  = "a settings key with non-ASCII letters"
 )
 
 // zedServerFields are the extra fields of a Zed context_servers entry:
@@ -642,9 +645,43 @@ func envLikeKey(k string) bool {
 }
 
 // gatedAssign finds NAME=value with a gated NAME in a string.
-// Upper-case names only, at the start or after whitespace: not the
-// redirect_url= of a URL query.
-var gatedAssign = regexp.MustCompile(`(?:^|\s)([A-Z_][A-Z0-9_]*)=`)
+// gatedAssign finds NAME= after the start of a string or any character
+// that cannot be part of a name (;NODE_OPTIONS=, 'LD_PRELOAD=,
+// x,node_options=), in any case.
+var gatedAssign = regexp.MustCompile(`(?:^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)=`)
+
+// gatedAssignIn is whether s sets a gated variable as NAME=. In the query
+// of an absolute http(s) URL, a parameter whose name is gated only by its
+// shape (redirect_url=) is not an assignment; a known code-loading or
+// routing name (NODE_OPTIONS=) is refused there too.
+func gatedAssignIn(s string) bool {
+	// A known name glued to a prefix (-eNODE_OPTIONS=) is not split out by
+	// the pattern: look for each one directly, URL or not.
+	up := strings.ToUpper(s)
+	for _, names := range []map[string]bool{codeLoadingEnv, routingEnv} {
+		for n := range names {
+			if strings.Contains(up, n+"=") {
+				return true
+			}
+		}
+	}
+	u, err := url.Parse(s)
+	isURL := err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+	for _, m := range gatedAssign.FindAllStringSubmatchIndex(s, -1) {
+		name := s[m[2]:m[3]]
+		if !gatedEnv(name) {
+			continue
+		}
+		if isURL && m[2] > 0 && (s[m[2]-1] == '?' || s[m[2]-1] == '&') {
+			up := strings.ToUpper(name)
+			if !codeLoadingEnv[up] && !routingEnv[up] {
+				continue
+			}
+		}
+		return true
+	}
+	return false
+}
 
 // mcpEnvLocations are where a server keeps its environment: env, Zed's
 // command.env, and every env-like object at any depth under Zed's
@@ -667,20 +704,29 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, why string) {
 		case map[string]any:
 			for _, k := range sortedKeys(t) {
 				p := append(append([]string(nil), path...), k)
-				if envLikeKey(k) {
+				if nonASCIILetter(k) {
+					// A look-alike of a gated name (Cyrillic O): fail closed.
+					why = whyNonASCIIKey
+					return
+				}
+				if envLikeKey(strings.TrimSpace(k)) {
 					m, ok := t[k].(map[string]any)
 					switch {
 					case !ok || underArray:
 						why = whyUngateable
 						return
-					case !strings.EqualFold(k, "env") && hasGatedName(m):
+					case !strings.EqualFold(strings.TrimSpace(k), "env") && hasGatedName(m):
 						// Not a key the tools document: fail closed.
 						why = whyUngateable
 						return
 					}
 					// An env object holds plain values only; its gated names
 					// get the separate question.
-					for _, ev := range m {
+					for ek, ev := range m {
+						if nonASCIILetter(ek) {
+							why = whyUngateable
+							return
+						}
 						switch ev.(type) {
 						case string, json.Number, float64, bool, nil:
 						default:
@@ -694,7 +740,7 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, why string) {
 					}
 					continue
 				}
-				if gatedEnv(k) {
+				if gatedEnv(strings.TrimSpace(k)) {
 					// A gated name outside a gateable env object: fail closed.
 					why = whyGatedName
 					return
@@ -706,11 +752,9 @@ func mcpEnvLocations(srv map[string]any) (locs [][]string, why string) {
 				walk(x, path, true)
 			}
 		case string:
-			for _, m := range gatedAssign.FindAllStringSubmatch(t, -1) {
-				if gatedEnv(m[1]) {
-					why = whyGatedName
-					return
-				}
+			if gatedAssignIn(t) {
+				why = whyGatedName
+				return
 			}
 		}
 	}
@@ -724,7 +768,7 @@ const mcpSettingsMaxDepth = 64
 
 func hasGatedName(m map[string]any) bool {
 	for k := range m {
-		if gatedEnv(k) {
+		if gatedEnv(strings.TrimSpace(k)) || nonASCIILetter(k) {
 			return true
 		}
 	}
@@ -743,6 +787,16 @@ func plainPath(parts []string) string {
 		out[i] = p
 	}
 	return strings.Join(out, ".")
+}
+
+// nonASCIILetter is whether s holds a letter outside ASCII.
+func nonASCIILetter(s string) bool {
+	for _, r := range s {
+		if r > 0x7f && unicode.IsLetter(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // pathLabel prints a path from the bundle with each part quoted, so a dot
