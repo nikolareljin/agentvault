@@ -178,16 +178,35 @@ func localProjectKey(ctx context.Context, identify locations.Identifier, p locat
 	if p.Rel == "" || p.Rel == "." {
 		return "", false
 	}
-	dir := filepath.Join(to, filepath.FromSlash(p.Rel))
-	if !pathWithin(to, dir) || filepath.Clean(dir) == filepath.Clean(to) {
+	// Symlinks in the target the user chose (home, the target itself) are
+	// resolved; none is followed at or below the target, so the checkout is
+	// where the bundle says, and git's resolved root compares equal.
+	base, err := filepath.EvalSymlinks(to)
+	if err != nil {
 		return "", false
 	}
-	info, err := os.Lstat(dir)
-	if err != nil || !info.IsDir() {
+	dir := filepath.Join(base, filepath.FromSlash(p.Rel))
+	if !pathWithin(base, dir) || filepath.Clean(dir) == filepath.Clean(base) {
 		return "", false
 	}
+	cur := base
+	for _, seg := range strings.Split(filepath.ToSlash(filepath.Clean(filepath.FromSlash(p.Rel))), "/") {
+		cur = filepath.Join(cur, seg)
+		info, err := os.Lstat(cur)
+		if err != nil || !info.IsDir() {
+			return "", false
+		}
+	}
+	// It must be its own repository, not a folder inside another one.
 	r, err := identify(ctx, dir)
-	if err != nil || filepath.Clean(r.Root) != filepath.Clean(dir) {
+	if err != nil {
+		return "", false
+	}
+	root := filepath.Clean(r.Root)
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	if root != filepath.Clean(dir) {
 		return "", false
 	}
 	local := locations.Project{GitRemote: r.Remote}

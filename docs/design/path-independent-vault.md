@@ -258,8 +258,9 @@ A memory dir key that would collide is still refused and reported.
    checkout (remote, else root commits; remote only on Windows). A later
    import does not ask again only when the saved mapping is that same pair
    and every bundle project under it has a checkout at its place under the
-   target whose local identity is in the list and equals the bundle's
-   claim. A bundle path and a remote are only claims another bundle can
+   target (its own repository root, no symlink at or below the target;
+   symlinks above it, such as a linked home, are resolved) whose local
+   identity is in the list and equals the bundle's claim. A bundle path and a remote are only claims another bundle can
    copy, so any other project, a project with no identity, or a missing
    checkout asks again (without a terminal: missed), and a yes extends the
    list. A confirmed work dir is not remapped as a prefix: only its

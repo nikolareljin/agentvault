@@ -451,3 +451,61 @@ func TestConfirmedHiddenCoversOnlyVerifiedCheckouts(t *testing.T) {
 		t.Fatalf("verified checkout refused: %+v\n%s", res, out.String())
 	}
 }
+
+// gitRepoAt makes dir a repository with remote github.com/acme/<name>.
+func gitRepoAt(t *testing.T, dir, name string) {
+	t.Helper()
+	mustMkdirAll(t, dir)
+	gitOrSkip(t, dir, "init", "-q")
+	gitOrSkip(t, dir, "remote", "add", "origin", "https://github.com/acme/"+name+".git")
+}
+
+func verify(t *testing.T, rel, to string) bool {
+	t.Helper()
+	_, ok := localProjectKey(context.Background(), locations.DefaultIdentifier, locations.Project{Rel: rel, GitRemote: "github.com/acme/x"}, to)
+	return ok
+}
+
+// A folder inside another repository is not that repository's checkout.
+func TestLocalCheckoutMustBeItsOwnRoot(t *testing.T) {
+	to := t.TempDir()
+	gitRepoAt(t, filepath.Join(to, "repo"), "x")
+	mustMkdirAll(t, filepath.Join(to, "repo", "sub"))
+	if verify(t, "repo/sub", to) {
+		t.Fatal("subfolder of a repository verified as its checkout")
+	}
+	if !verify(t, "repo", to) {
+		t.Fatal("the repository itself not verified")
+	}
+}
+
+// No symlink is followed at or below the target.
+func TestLocalCheckoutRefusesSymlinkBelowTarget(t *testing.T) {
+	to, elsewhere := t.TempDir(), t.TempDir()
+	gitRepoAt(t, filepath.Join(elsewhere, "proj"), "x")
+	if err := os.Symlink(elsewhere, filepath.Join(to, "a")); err != nil {
+		t.Skip("symlinks not available:", err)
+	}
+	if verify(t, "a/proj", to) {
+		t.Fatal("checkout through a symlinked parent verified")
+	}
+	if err := os.Symlink(filepath.Join(elsewhere, "proj"), filepath.Join(to, "proj")); err != nil {
+		t.Fatal(err)
+	}
+	if verify(t, "proj", to) {
+		t.Fatal("symlinked checkout verified")
+	}
+}
+
+// A symlink above the target (a symlinked home) does not stop verification.
+func TestLocalCheckoutUnderSymlinkedHome(t *testing.T) {
+	real, links := t.TempDir(), t.TempDir()
+	home := filepath.Join(links, "home")
+	if err := os.Symlink(real, home); err != nil {
+		t.Skip("symlinks not available:", err)
+	}
+	gitRepoAt(t, filepath.Join(real, ".work", "app"), "x")
+	if !verify(t, "app", filepath.Join(home, ".work")) {
+		t.Fatal("checkout under a symlinked home not verified")
+	}
+}
