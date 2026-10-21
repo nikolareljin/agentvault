@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -710,5 +711,80 @@ func TestImportZedSourceAndSettings(t *testing.T) {
 	}
 	if got, _ := run(`{"mcpServers":{"z":{"command":"z","settings":{}}}}`); strings.Contains(got, `"z"`) {
 		t.Errorf("settings outside Zed offered: %s", got)
+	}
+}
+
+// An env object at any depth under Zed settings gets the separate question;
+// one under an array cannot be gated by path, so the server is not offered.
+// A command nested in settings is shown on its own line.
+func TestImportZedSettingsEnvGated(t *testing.T) {
+	bundle := `{"context_servers":{"z":{"source":"extension","settings":{"env":{"NODE_OPTIONS":"--require /e.js"},"inner":{"deep":{"env":{"LD_PRELOAD":"/e.so","PLAIN":"1"}},"command":"evil-helper"}}}}}`
+	run := func(ctx *importApplyContext, b string) string {
+		home := t.TempDir()
+		settings := filepath.Join(home, ".claude", "settings.json")
+		mustWriteFile(t, settings, `{}`)
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(b)}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		return readString(t, settings)
+	}
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("z")
+	got := run(ctx, bundle)
+	if strings.Contains(got, "NODE_OPTIONS") || strings.Contains(got, "LD_PRELOAD") || !strings.Contains(got, `"PLAIN": "1"`) {
+		t.Errorf("flag: %s", got)
+	}
+	ctx = fixedCtx("1\n\nn\nn\n")
+	out := &bytes.Buffer{}
+	ctx.Out = out
+	got = run(ctx, bundle)
+	if strings.Contains(got, "NODE_OPTIONS") || strings.Contains(got, "LD_PRELOAD") ||
+		!strings.Contains(out.String(), "settings.env NODE_OPTIONS") || !strings.Contains(out.String(), "settings.inner.deep.env LD_PRELOAD") ||
+		!strings.Contains(out.String(), `      settings.inner.command: "evil-helper"`) {
+		t.Errorf("terminal no: %s\n%s", got, out.String())
+	}
+	ctx = fixedCtx("1\n\ny\ny\n")
+	ctx.Out = &bytes.Buffer{}
+	if got := run(ctx, bundle); !strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, "LD_PRELOAD") {
+		t.Errorf("terminal yes: %s", got)
+	}
+	ctx = fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("z")
+	if got := run(ctx, `{"context_servers":{"z":{"source":"extension","settings":{"list":[{"env":{"NODE_OPTIONS":"x"}}]}}}}`); strings.Contains(got, `"z"`) {
+		t.Errorf("env under an array offered: %s", got)
+	}
+}
+
+// One run, one terminal: a work dir mapping into a hidden folder confirmed
+// earlier is not asked again, and the MCP pick that follows reads its own
+// answer from the same input.
+func TestHiddenConfirmedWorkDirAndMCPPickInOneRun(t *testing.T) {
+	set, o, v, hiddenWD := hiddenFixture(t)
+	o.Interactive = true
+	if res, _ := importOnce(t, set, &o, v, "y\n\n"); len(res.Missed) != 0 {
+		t.Fatalf("first import: %+v", res)
+	}
+	in := bufio.NewReader(strings.NewReader("\n2\n\n"))
+	var out bytes.Buffer
+	o.Out, o.In = &out, in
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Missed) != 0 || len(res.Remaps) != 1 || res.Remaps[0].To != filepath.Join(hiddenWD, "app") || strings.Contains(out.String(), "inside a hidden folder") {
+		t.Fatalf("hidden asked again or not matched: %+v\n%s", res, out.String())
+	}
+	home := t.TempDir()
+	cj := filepath.Join(home, ".claude.json")
+	mustWriteFile(t, cj, mcpLocalClaude)
+	ctx := fixedCtx("")
+	ctx.Interactive, ctx.In, ctx.Out, ctx.KeepBundleCommands = true, in, &out, false
+	ctx.OnConflict = conflictKeep // keep "shared" without a question
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{mcpClaudeJSONAsset()}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := readString(t, cj)
+	if !strings.Contains(got, `"n2"`) || strings.Contains(got, `"n1"`) || !strings.Contains(got, "local1") {
+		t.Errorf("MCP pick: %s\n%s", got, out.String())
 	}
 }

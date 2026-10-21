@@ -293,7 +293,11 @@ func offerableServer(v any, zed bool) bool {
 			return false
 		}
 	}
-	for _, loc := range mcpEnvLocations {
+	locs, inArray := mcpEnvLocations(m)
+	if inArray {
+		return false
+	}
+	for _, loc := range locs {
 		ev, _ := getPath(m, loc)
 		env, _ := ev.(map[string]any)
 		for k, v := range env {
@@ -522,6 +526,9 @@ func describeMCPServer(name string, v any) string {
 			lines = append(lines, "      "+printable(k)+": "+showValue(m[k]))
 		}
 	}
+	for _, c := range settingsCommands(m) {
+		lines = append(lines, "      "+printable(c[0])+": "+c[1])
+	}
 	if refs := mcpEnvRefs(m); len(refs) > 0 {
 		lines = append(lines, "      reads this machine's variables: "+printable(strings.Join(refs, ", ")))
 	}
@@ -590,7 +597,9 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 	taken = append(append([]string(nil), rep.Added...), rep.Replaced...)
 	sort.Strings(taken)
 	for _, name := range taken {
-		for _, loc := range mcpEnvLocations {
+		srv, _ := merged[name].(map[string]any)
+		locs, _ := mcpEnvLocations(srv)
+		for _, loc := range locs {
 			if err := c.gateEnvAt(file, name, loc, merged, local, rep, asked); err != nil {
 				return err
 			}
@@ -599,9 +608,62 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 	return nil
 }
 
-// mcpEnvLocations are where a server keeps its environment: env, and Zed's
-// command.env.
-var mcpEnvLocations = [][]string{{"env"}, {"command", "env"}}
+// mcpEnvLocations are where a server keeps its environment: env, Zed's
+// command.env, and every env object at any depth under Zed's settings.
+// inArray is true when an env sits under an array there, where it cannot
+// be gated by path: such a server is not offered.
+func mcpEnvLocations(srv map[string]any) (locs [][]string, inArray bool) {
+	locs = [][]string{{"env"}, {"command", "env"}}
+	var walk func(v any, path []string, underArray bool)
+	walk = func(v any, path []string, underArray bool) {
+		switch t := v.(type) {
+		case map[string]any:
+			for _, k := range sortedKeys(t) {
+				p := append(append([]string(nil), path...), k)
+				if strings.EqualFold(k, "env") {
+					if underArray {
+						inArray = true
+					} else if _, ok := t[k].(map[string]any); ok {
+						locs = append(locs, p)
+					}
+				}
+				walk(t[k], p, underArray)
+			}
+		case []any:
+			for _, x := range t {
+				walk(x, path, true)
+			}
+		}
+	}
+	walk(srv["settings"], []string{"settings"}, false)
+	return locs, inArray
+}
+
+// settingsCommands are the command fields at any depth under Zed's
+// settings, as "settings.a.command" -> value.
+func settingsCommands(srv map[string]any) [][2]string {
+	var out [][2]string
+	var walk func(v any, path string)
+	walk = func(v any, path string) {
+		switch t := v.(type) {
+		case map[string]any:
+			for _, k := range sortedKeys(t) {
+				p := path + "." + k
+				if commandField(k) {
+					out = append(out, [2]string{p, showValue(t[k])})
+					continue
+				}
+				walk(t[k], p)
+			}
+		case []any:
+			for i, x := range t {
+				walk(x, fmt.Sprintf("%s[%d]", path, i))
+			}
+		}
+	}
+	walk(srv["settings"], "settings")
+	return out
+}
 
 // gateEnvAt asks about, or leaves out, the gated variables of one env map
 // of a taken server.
