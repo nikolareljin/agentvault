@@ -8,7 +8,7 @@
 - Import merges MCP servers one by one
   (https://github.com/nikolareljin/agentvault/issues/72): servers only
   this machine has stay, new servers are picked from a list, changed ones
-  are asked about with the masked difference, and
+  are asked about, and
   `--mcp-servers a,b|all|none` decides without a terminal. Picking a server
   is consent for its command, args and URL only: a server that reads this
   machine's environment variables, and code-loading or routing env
@@ -36,11 +36,11 @@
   not found here is skipped with its projects, listed at the end (non-zero
   exit) and asked about on a terminal; mappings are saved in the vault.
   Targets inside hidden folders are confirmed one by one, even with
-  `--accept-matches`. New import
-  flags `--workdir-map`, `--accept-matches`, `--no-match`; new export flag
-  `--workdir`. `--apply-projects` no longer needs `--project-root` when the
-  bundle's project was matched. `instructions push` applies directory
-  patterns written for another checkout of the same repository.
+  `--accept-matches`. New import flags `--workdir-map`, `--accept-matches`,
+  `--no-match`; new export flag `--workdir`. `--apply-projects` no longer
+  needs `--project-root` when the bundle's project was matched.
+  `instructions push` applies directory patterns written for another
+  checkout of the same repository.
 - `import` rewrites the exporting machine's paths for this one. Its home
   directory becomes this home directory, its `--project` directory becomes
   `--project-root`, and each `--map OLD=NEW` is applied first (OLD and NEW
@@ -81,20 +81,21 @@
   `--keep-interpreter-allows` keeps them all.
 - Import leaves out what runs code that the bundle adds or changes, keeps
   this machine's value and names each one: `hooks` events, `statusLine`,
-  credential helpers, plugins and marketplaces, MCP servers of any type,
-  code-loading `env` variables (`NODE_OPTIONS`, `LD_PRELOAD` and the like),
+  credential helpers, plugins and marketplaces, MCP servers of any type
+  unless picked (see `--mcp-servers`), code-loading `env` variables
+  (`NODE_OPTIONS`, `LD_PRELOAD` and the like),
   `env` variables that route requests (`ANTHROPIC_BASE_URL`, `*PROXY*`),
   provider switches (`CLAUDE_CODE_USE_BEDROCK`), folder trust (Copilot
   `trusted_folders`, Gemini `trustedFolders.json`, `security.folderTrust`),
   JSON settings that do not parse as plain JSON, other command fields,
   trusted Codex projects, and new or changed files that are not prose or
-  settings (hook scripts, extensionless files). A
-  Codex `config.toml` whose parsed `mcp_servers`, `notify`,
-  `model_providers`, `projects`, `approval_policy`, `sandbox_mode`, `hooks`
-  or URL and endpoint keys (`chatgpt_base_url`) differ,
-  or that does not parse, is not applied. `--keep-bundle-commands` keeps
-  the hook, `statusLine` and MCP server commands, hook scripts and Gemini
-  `trustedFolders.json`.
+  settings (hook scripts, extensionless files). From a Codex
+  `config.toml` whose parsed `notify`, `model_providers`, `projects`,
+  `approval_policy`, `sandbox_mode`, `hooks`, command fields or URL and
+  endpoint keys (`chatgpt_base_url`) differ, only the MCP servers are
+  applied; one that does not parse is not applied.
+  `--keep-bundle-commands` keeps the hook, `statusLine` and MCP server
+  commands, hook scripts and Gemini `trustedFolders.json`.
 - The Codex provider config is applied as files through the same checks,
   and import no longer deletes local Codex rules. A rule name that is not
   a plain file name is left out and named by import, and refused by
@@ -190,9 +191,9 @@
 - On Windows, every import write checks the name of the file it opened
   (`GetFinalPathNameByHandle`) and refuses one that differs from the name
   asked for: an 8.3 short name (`SETTIN~1.JSO`) aliasing a long-named file
-  or directory. Names with `~N`
-  (`draft~2.md`) are otherwise ordinary names on every OS, and a reference
-  spelled as a short name is judged by its long name.
+  or directory. Names with `~N` (`draft~2.md`) are otherwise ordinary
+  names on every OS, and a reference spelled as a short name is judged by
+  its long name.
 - Import on Windows refuses Windows device names (`CON`, `NUL`, `aux.md`,
   `COM1.txt`) in any path segment: Windows opens them as devices, and
   writing one can block. Other OSes write them, and export warns that
@@ -281,8 +282,7 @@
   the setup the bundle carries, rule directories, and prose files at the
   top of that directory. Memory, session transcripts, archived sessions,
   history, backups and caches are declined. The same holds through a
-  symlink: with `~/.claude`
-  linked to `~/dotfiles/claude`, a reference to
+  symlink: with `~/.claude` linked to `~/dotfiles/claude`, a reference to
   `~/dotfiles/claude/todos/` is declined too, and so is a link at any
   depth (`~/.claude/projects/p/memory` linked to `~/notes/mem`). Import
   does not write those paths from the home root either.
