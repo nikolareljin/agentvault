@@ -415,6 +415,8 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 		have = map[string]any{}
 	}
 	var dropped []string
+	// keptBlank: an export blank replaced by this machine's value.
+	keptBlank := false
 	put := func(m map[string]any, k string, lv any, lok bool) {
 		if lok {
 			m[k] = lv
@@ -543,8 +545,14 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 					if lok && jsonEqual(env[v], lv) {
 						continue
 					}
+					blank := env[v] == ""
 					put(env, v, lv, lok)
-					dropped = append(dropped, name+"."+v)
+					// A blank is what export left of a secret: nothing to name.
+					if blank {
+						keptBlank = true
+					} else {
+						dropped = append(dropped, name+"."+v)
+					}
 				}
 			default:
 				walk(bm[k], lm[k], name)
@@ -572,7 +580,7 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 			dropped = append(dropped, k)
 		}
 	}
-	if len(dropped) == 0 {
+	if len(dropped) == 0 && !keptBlank {
 		return content, nil
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
