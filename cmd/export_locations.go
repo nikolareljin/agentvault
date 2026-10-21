@@ -45,6 +45,7 @@ func captureBundleLocations(cmd *cobra.Command, v *vault.Vault, bundle SetupBund
 	}
 	// Work dir mappings are this machine's choices, not the bundle's.
 	merged.WorkDirMaps = nil
+	merged.ConfirmedHidden = nil
 	if merged.Empty() {
 		return nil
 	}

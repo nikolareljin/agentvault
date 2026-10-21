@@ -6,10 +6,12 @@ package locations
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/nikolareljin/agentvault/internal/gitid"
@@ -46,11 +48,74 @@ type Set struct {
 	// WorkDirMaps are mappings the user chose, bundle work dir path to a
 	// directory here. Only the vault keeps them; later imports reuse them.
 	WorkDirMaps map[string]string `json:"work_dir_maps,omitempty"`
+	// ConfirmedHidden are saved mappings to a hidden folder that the user
+	// confirmed on this machine, keyed by bundle work dir path. A
+	// confirmation holds only while WorkDirMaps maps the same path to the
+	// same target, and only for the projects it lists. Only the vault keeps
+	// them, never a bundle.
+	ConfirmedHidden map[string]HiddenConfirm `json:"confirmed_hidden,omitempty"`
+}
+
+// HiddenConfirm is one confirmed hidden mapping: its target and the keys
+// (ProjectKey) of the projects that were under the work dir when the user
+// said yes. A bundle path is only a name another bundle can reuse, so a
+// project not listed here is asked about again.
+type HiddenConfirm struct {
+	Target   string   `json:"target"`
+	Projects []string `json:"projects,omitempty"`
+}
+
+// UnmarshalJSON also reads the older form, a bare target string, which
+// lists no projects and so confirms nothing.
+func (h *HiddenConfirm) UnmarshalJSON(b []byte) error {
+	var target string
+	if err := json.Unmarshal(b, &target); err == nil {
+		*h = HiddenConfirm{Target: target}
+		return nil
+	}
+	type plain HiddenConfirm
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*h = HiddenConfirm(p)
+	return nil
+}
+
+// Covers reports whether every key is listed. No keys covers nothing.
+func (h HiddenConfirm) Covers(keys []string) bool {
+	if len(keys) == 0 {
+		return false
+	}
+	have := map[string]bool{}
+	for _, k := range h.Projects {
+		have[k] = true
+	}
+	for _, k := range keys {
+		if !have[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// ProjectKey is a project's identity for a hidden confirmation: its remote,
+// else its root commits, else its name in the work dir.
+func ProjectKey(p Project) string {
+	switch {
+	case p.GitRemote != "":
+		return "remote:" + p.GitRemote
+	case len(p.RootCommits) > 0:
+		roots := append([]string(nil), p.RootCommits...)
+		sort.Strings(roots)
+		return "roots:" + strings.Join(roots, ",")
+	}
+	return "rel:" + p.Rel
 }
 
 // Empty reports whether the set names nothing.
 func (s *Set) Empty() bool {
-	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0 && len(s.WorkDirMaps) == 0
+	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0 && len(s.WorkDirMaps) == 0 && len(s.ConfirmedHidden) == 0
 }
 
 // Identifier is gitid.Identify; tests replace it.
@@ -200,6 +265,41 @@ func Merge(s, other Set) Set {
 			out.WorkDirMaps[k] = v
 		}
 	}
+	// A confirmation is for one (path, target) pair: a mapping changed to
+	// another target, or removed, drops it.
+	// For the same target the project lists add up: each yes extends it.
+	for _, m := range []map[string]HiddenConfirm{s.ConfirmedHidden, other.ConfirmedHidden} {
+		for k, v := range m {
+			if out.ConfirmedHidden == nil {
+				out.ConfirmedHidden = map[string]HiddenConfirm{}
+			}
+			if old, ok := out.ConfirmedHidden[k]; ok && old.Target == v.Target {
+				v.Projects = unionStrings(old.Projects, v.Projects)
+			}
+			out.ConfirmedHidden[k] = v
+		}
+	}
+	for k, v := range out.ConfirmedHidden {
+		if out.WorkDirMaps[k] != v.Target {
+			delete(out.ConfirmedHidden, k)
+		}
+	}
+	if len(out.ConfirmedHidden) == 0 {
+		out.ConfirmedHidden = nil
+	}
+	return out
+}
+
+func unionStrings(a, b []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, x := range append(append([]string(nil), a...), b...) {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 
