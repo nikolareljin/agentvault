@@ -1,9 +1,8 @@
 name: PPA
 
+# Manual only: GPG_PRIVATE_KEY, GPG_PASSPHRASE, LAUNCHPAD_SSH_KEY and var GPG_KEY_ID are not set.
 on:
-  push:
-    tags:
-      - "*.*.*"
+  workflow_dispatch:
 
 jobs:
   ppa:

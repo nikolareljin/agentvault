@@ -286,6 +286,12 @@
   The export warning for a hard-linked file says why it was redacted.
 
 ### Fixed
+- Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first
+  time: `release.yml` now calls `deb.yml` and `rpm.yml`, which only ran on
+  tag pushes that the auto-tag workflow never triggers, and the repo gains
+  the packaging files they need (`packaging/`, `scripts/package_deb.sh`).
+- `ppa.yml` runs only by hand: it no longer triggers on tag pushes, since
+  the GPG and Launchpad secrets it needs are not set.
 - `release-rc-pr.yml` no longer fails when the repository does not let
   Actions create pull requests (HTTP 403 "not permitted to create or approve
   pull requests"). It prints a warning with the compare link to open the
