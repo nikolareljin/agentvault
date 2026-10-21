@@ -932,12 +932,27 @@ func TestMCPEnvRefsPercentForms(t *testing.T) {
 }
 
 // The URL exception holds only for the server's own url and httpUrl.
+// https://x/%AB%CD parses as a clean URL whose %AB% is also a cmd.exe
+// reference, so only the field decides.
 func TestMCPEnvRefsURLExceptionOnlyInURLFields(t *testing.T) {
+	const u = "https://x/%AB%CD"
+	if mayExpand(u) || !mayExpandStrict(u) {
+		t.Fatalf("%s must be a clean URL that holds a %%...%% pair", u)
+	}
 	for _, srv := range []map[string]any{
-		{"command": "x", "args": []any{"https://x/%CD%"}},
-		{"url": "https://u", "headers": map[string]any{"A": "https://x/%CD%"}},
-		{"settings": map[string]any{"url": "https://x/%CD%"}},
-		{"command": "https://x/%CD%"},
+		{"command": "x", "args": []any{u}},
+		{"url": "https://u", "headers": map[string]any{"A": u}},
+		{"url": "https://u", "headers": map[string]any{"url": u}},
+		{"url": "https://u", "http_headers": map[string]any{"httpUrl": u}},
+		{"url": "https://u", "env_http_headers": map[string]any{"url": u}},
+		{"command": "x", "env": map[string]any{"url": u}},
+		{"settings": map[string]any{"url": u}},
+		{"settings": map[string]any{"a": map[string]any{"httpUrl": u}}},
+		{"command": map[string]any{"path": "x", "url": u}},
+		{"command": map[string]any{"path": "x", "env": map[string]any{"url": u}}},
+		{"url": []any{u}},
+		{"url": map[string]any{"url": u}},
+		{"command": u},
 	} {
 		if refs := mcpEnvRefs(srv); len(refs) == 0 {
 			t.Errorf("%v: no reference", srv)
@@ -946,6 +961,42 @@ func TestMCPEnvRefsURLExceptionOnlyInURLFields(t *testing.T) {
 	for _, srv := range []map[string]any{{"url": "https://x/caf%C3%A9"}, {"httpUrl": "https://x/caf%C3%A9"}} {
 		if refs := mcpEnvRefs(srv); len(refs) != 0 {
 			t.Errorf("%v: %v", srv, refs)
+		}
+	}
+}
+
+// A url nested in a server (headers, env, a Codex sub-table) gets no URL
+// exception end to end; a clean top-level url with %20 is still taken.
+func TestImportNestedURLRefsGated(t *testing.T) {
+	const u = "https://x/%AB%CD"
+	for _, srv := range []string{
+		`{"url":"https://u","headers":{"url":"` + u + `"}}`,
+		`{"command":"n","env":{"url":"` + u + `"}}`,
+		`{"command":"n","args":["` + u + `"]}`,
+	} {
+		ctx := fixedCtx("")
+		ctx.MCPServers, _ = parseMCPSelection("n")
+		if got, r := applyClaudeJSON(t, ctx, `{"mcpServers":{"n":`+srv+`}}`); strings.Contains(got, `"n"`) {
+			t.Errorf("%s taken: %s\n%s", srv, got, r)
+		}
+	}
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("n")
+	if got, r := applyClaudeJSON(t, ctx, `{"mcpServers":{"n":{"url":"https://x/a%20b"}}}`); !strings.Contains(got, `"n"`) {
+		t.Errorf("clean url not taken: %s\n%s", got, r)
+	}
+	for _, val := range []string{u, "https://x/a%20b"} {
+		home := t.TempDir()
+		cfg := filepath.Join(home, ".codex", "config.toml")
+		mustWriteFile(t, cfg, "model = \"m\"\r\n")
+		bundle := "model = \"m\"\r\n\r\n[mcp_servers.n]\r\ncommand = \"x\"\r\n\r\n[mcp_servers.n.env]\r\nurl = \"" + val + "\"\r\n"
+		ctx := fixedCtx("")
+		ctx.MCPServers, _ = parseMCPSelection("n")
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{codexAsset(bundle)}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		if got := readString(t, cfg); strings.Contains(got, "mcp_servers") != (val != u) {
+			t.Errorf("%s: %q %v", val, got, ctx.MCPReport)
 		}
 	}
 }
