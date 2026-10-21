@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -1198,6 +1199,13 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			m, err := ctx.mergeCodexConfig(dest, content, original)
 			if err != nil {
 				return applied, warnings, err
+			}
+			if !m.OK && m.Report.changed() {
+				names := append(append([]string(nil), m.Report.Added...), m.Report.Replaced...)
+				for i, n := range names {
+					names[i] = strconv.Quote(n)
+				}
+				ctx.MCPReport = append(ctx.MCPReport, printable(dest)+": not applied per server, could not edit the [mcp_servers] tables (unusual layout); the whole-file rule decides: "+strings.Join(names, ", "))
 			}
 			if m.OK {
 				content, mcpRep, codexServersOnly, codexMerged = m.Content, m.Report, m.LocalBase, true

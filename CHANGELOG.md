@@ -10,7 +10,11 @@
   is consent for its command, args and URL only: a server that reads this
   machine's environment variables, and code-loading or routing env
   variables, need a separate yes. A server with an unknown field or a
-  secret-shaped value where it runs or sends is not offered. Without a pick nothing new is added and
+  secret-shaped value where it runs or sends is not offered.
+  Changed servers show the masked difference of the changed fields and the
+  bundle's definition verbatim. VS Code `mcp.servers` and Zed
+  `context_servers` are merged the same way. An unknown `--mcp-servers`
+  name is warned about. Without a pick nothing new is added and
   changed servers stay as they are. Covers `~/.claude.json`, JSON settings
   (`mcpServers`, `servers`) and Codex `config.toml`, whose tables are edited
   in place. Import prints what it added, replaced, kept and left out per

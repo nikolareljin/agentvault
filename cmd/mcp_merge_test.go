@@ -548,3 +548,90 @@ func TestImportGatesEnvReferencesOnChangedURL(t *testing.T) {
 		t.Errorf("got %s", got)
 	}
 }
+
+func TestMCPEnvRefsNames(t *testing.T) {
+	for in, want := range map[string]string{
+		"${env:GITHUB_TOKEN}": "GITHUB_TOKEN", "${GITHUB_TOKEN:-x}": "GITHUB_TOKEN", "$env:GITHUB_TOKEN": "GITHUB_TOKEN",
+		"%GITHUB_TOKEN%": "GITHUB_TOKEN", "Bearer $GITHUB_TOKEN": "GITHUB_TOKEN",
+	} {
+		if got := mcpEnvRefs(map[string]any{"a": in}); len(got) != 1 || got[0] != want {
+			t.Errorf("%q: %v", in, got)
+		}
+	}
+	if got := mcpEnvRefs(map[string]any{"a": "$(id)"}); len(got) != 1 || !strings.HasPrefix(got[0], "(unparsed)") {
+		t.Errorf("unparsed: %v", got)
+	}
+}
+
+func TestMCPSelectionUnknown(t *testing.T) {
+	s, _ := parseMCPSelection("a,b")
+	s.note("a")
+	if u := s.unknown(); len(u) != 1 || u[0] != "b" {
+		t.Errorf("unknown = %v", u)
+	}
+	o := importAssetOptions{ApplyConfigs: true, Apply: newImportApplyContext()}
+	o.Apply.MCPServers = s
+	if u := mcpUnknownNames(o); len(u) != 1 {
+		t.Errorf("names = %v", u)
+	}
+	o.ApplyConfigs = false
+	if u := mcpUnknownNames(o); len(u) != 0 {
+		t.Errorf("warned without provider configs: %v", u)
+	}
+}
+
+// A Codex layout the text edit cannot handle is named in the report.
+func TestImportCodexFallbackReported(t *testing.T) {
+	home := t.TempDir()
+	cfg := filepath.Join(home, ".codex", "config.toml")
+	mustWriteFile(t, cfg, "model = \"a\"\n")
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("x")
+	bundle := "model = \"b\"\nmcp_servers.x.command = \"n\"\nmcp_servers.y.command = \"m\"\n"
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{codexAsset(bundle)}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r := strings.Join(ctx.MCPReport, "\n"); !strings.Contains(r, `not applied per server, could not edit the [mcp_servers] tables`) || !strings.Contains(r, `"x"`) {
+		t.Errorf("report = %s", r)
+	}
+}
+
+// A CRLF config.toml gets CRLF tables.
+func TestImportCodexKeepsCRLF(t *testing.T) {
+	home := t.TempDir()
+	cfg := filepath.Join(home, ".codex", "config.toml")
+	local := "model = \"a\"\r\n\r\n[mcp_servers.old]\r\ncommand = \"o\"\r\n\r\n[mcp_servers.l]\r\ncommand = \"l\"\r\n"
+	mustWriteFile(t, cfg, local)
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("new,old")
+	bundle := "model = \"a\"\n\n[mcp_servers.old]\ncommand = \"o2\"\n\n[mcp_servers.l]\ncommand = \"l\"\n\n[mcp_servers.new]\ncommand = \"n\"\n"
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{codexAsset(bundle)}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := readString(t, cfg)
+	if !strings.Contains(got, "[mcp_servers.new]") || !strings.Contains(got, "o2") || strings.Count(got, "\n") != strings.Count(got, "\r\n") {
+		t.Errorf("got %q", got)
+	}
+}
+
+// VS Code mcp.servers and Zed context_servers are merged per server too.
+func TestImportNestedAndZedServerMaps(t *testing.T) {
+	for _, tc := range []struct{ local, bundle string }{
+		{`{"mcp":{"servers":{"local1":{"command":"l1"}}}}`, `{"mcp":{"servers":{"new1":{"command":"n1"},"new2":{"command":"n2"}}}}`},
+		{`{"context_servers":{"local1":{"command":"l1"}}}`, `{"context_servers":{"new1":{"command":"n1"},"new2":{"command":"n2"}}}`},
+	} {
+		home := t.TempDir()
+		settings := filepath.Join(home, ".claude", "settings.json")
+		mustWriteFile(t, settings, tc.local)
+		ctx := fixedCtx("")
+		ctx.MCPServers, _ = parseMCPSelection("new1")
+		_, w, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(tc.bundle)}, ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := readString(t, settings)
+		if !strings.Contains(got, "l1") || !strings.Contains(got, "n1") || strings.Contains(got, "n2") {
+			t.Errorf("%s: got %s\n%v\n%v", tc.bundle, got, w, ctx.MCPReport)
+		}
+	}
+}

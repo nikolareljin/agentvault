@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -243,6 +244,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, n := range mcpUnknownNames(assetOpts) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: --mcp-servers: no MCP server %s in the bundle\n", strconv.Quote(n))
+	}
 	printBroadAllowWarning(cmd.ErrOrStderr(), assetOpts.Apply.Broad)
 	if len(assetOpts.Apply.Backups) > 0 {
 		fmt.Fprintln(out, "\nBackups of replaced files:")
@@ -425,6 +429,15 @@ func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w
 
 // importProfileAssets writes the non-vault parts of a profile: workflow
 // templates, staged portable assets, and optionally the live provider configs.
+// mcpUnknownNames are --mcp-servers names no bundle server had, once
+// provider configs were looked at.
+func mcpUnknownNames(o importAssetOptions) []string {
+	if !o.ApplyConfigs || o.Apply == nil {
+		return nil
+	}
+	return o.Apply.MCPServers.unknown()
+}
+
 // importAssetOptions selects what import does with a bundle's files.
 type importAssetOptions struct {
 	ApplyConfigs  bool

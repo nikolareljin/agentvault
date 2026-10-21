@@ -519,7 +519,7 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 					if srv != nil && lok && sameServerApartFromBlanks(srv, lsrv) {
 						continue
 					}
-					if path == "" && consent[k][s] {
+					if consent[name][s] {
 						continue
 					}
 					if lok {
@@ -560,9 +560,12 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 			continue
 		}
 		bk, lk := doc[k], lv
-		if picked := consent[k]; len(picked) > 0 {
+		for p, picked := range consent {
 			// The picked servers were consented to one by one above.
-			bk, lk = withoutServers(bk, picked), withoutServers(lv, picked)
+			parts := strings.Split(p, ".")
+			if parts[0] == k && len(picked) > 0 {
+				bk, lk = withoutServersAt(bk, parts[1:], picked), withoutServersAt(lk, parts[1:], picked)
+			}
 		}
 		if commandFieldsDiffer(bk, lk) {
 			put(doc, k, lv, lok)
@@ -577,6 +580,24 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 		return content, nil
 	}
 	return out, dropped
+}
+
+// withoutServersAt is v with the named servers left out of the server map
+// at rest below it.
+func withoutServersAt(v any, rest []string, names map[string]bool) any {
+	if len(rest) == 0 {
+		return withoutServers(v, names)
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return v
+	}
+	out := make(map[string]any, len(m))
+	for k, inner := range m {
+		out[k] = inner
+	}
+	out[rest[0]] = withoutServersAt(m[rest[0]], rest[1:], names)
+	return out
 }
 
 // withoutServers is a server map with the named servers left out.

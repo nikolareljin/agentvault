@@ -14,10 +14,56 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// mcpServerKeys are the top-level keys that hold a map of MCP servers in a
-// JSON settings file: mcpServers (Claude, Gemini, Copilot, Cursor,
-// Windsurf) and servers (VS Code style).
-var mcpServerKeys = []string{"mcpServers", "servers"}
+// mcpServerPaths are where a JSON settings file holds a map of MCP
+// servers: mcpServers (Claude, Gemini, Copilot, Cursor, Windsurf), servers
+// and mcp.servers (VS Code style), context_servers (Zed).
+var mcpServerPaths = [][]string{{"mcpServers"}, {"servers"}, {"mcp", "servers"}, {"context_servers"}}
+
+// getPath is the value at path in doc, and whether it is there.
+func getPath(doc map[string]any, path []string) (any, bool) {
+	var cur any = doc
+	for _, k := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if cur, ok = m[k]; !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+// setPath sets the value at path, creating missing objects on the way. It
+// does nothing when a value on the way is not an object.
+func setPath(doc map[string]any, path []string, v any) bool {
+	m := doc
+	for _, k := range path[:len(path)-1] {
+		next, ok := m[k]
+		if !ok {
+			nm := map[string]any{}
+			m[k] = nm
+			m = nm
+			continue
+		}
+		if m, ok = next.(map[string]any); !ok {
+			return false
+		}
+	}
+	m[path[len(path)-1]] = v
+	return true
+}
+
+func deletePath(doc map[string]any, path []string) {
+	parent := doc
+	if len(path) > 1 {
+		p, _ := getPath(doc, path[:len(path)-1])
+		parent, _ = p.(map[string]any)
+	}
+	if parent != nil {
+		delete(parent, path[len(path)-1])
+	}
+}
 
 // errMCPAborted is returned when the user answers q at the server list.
 var errMCPAborted = errors.New("import aborted at the MCP server list")
@@ -135,6 +181,31 @@ func mergeMCPServers(local, bundle map[string]any, ch mcpChooser) (map[string]an
 type mcpSelection struct {
 	all   bool
 	names map[string]bool
+	// seen are the server names the bundle had, in any file.
+	seen map[string]bool
+}
+
+// note records a bundle server name, for unknown().
+func (s *mcpSelection) note(name string) {
+	if s.seen == nil {
+		s.seen = map[string]bool{}
+	}
+	s.seen[name] = true
+}
+
+// unknown are the names given that no bundle server had.
+func (s *mcpSelection) unknown() []string {
+	if s == nil {
+		return nil
+	}
+	var out []string
+	for n := range s.names {
+		if !s.seen[n] {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func parseMCPSelection(v string) (*mcpSelection, error) {
@@ -335,6 +406,15 @@ func (ch *ctxChooser) replaceChanged(name string, local, bundle any) (bool, erro
 		return c.askReplaceServer(ch.file, name, local, bundle)
 	}
 	return false, nil
+}
+
+func (c *importApplyContext) noteBundleServers(servers map[string]any) {
+	if c.MCPServers == nil {
+		return
+	}
+	for n := range servers {
+		c.MCPServers.note(n)
+	}
 }
 
 // askReplaceServer asks about one changed server. End of input keeps this
@@ -574,13 +654,15 @@ func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte
 	have, _ := decodeSettingsObject(local)
 	consent := map[string]map[string]bool{}
 	touched := false
-	for _, key := range mcpServerKeys {
-		bs, bok := doc[key].(map[string]any)
-		ls, lok := have[key].(map[string]any)
+	for _, path := range mcpServerPaths {
+		key := strings.Join(path, ".")
+		bv, bpresent := getPath(doc, path)
+		lv, _ := getPath(have, path)
+		bs, bok := bv.(map[string]any)
+		ls, lok := lv.(map[string]any)
 		if !bok {
-			if _, present := doc[key]; !present && lok && len(ls) > 0 {
+			if !bpresent && lok && len(ls) > 0 && setPath(doc, path, ls) {
 				// The bundle has none: this machine's servers stay.
-				doc[key] = ls
 				touched = true
 			}
 			continue
@@ -588,6 +670,7 @@ func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte
 		if !lok {
 			ls = map[string]any{}
 		}
+		c.noteBundleServers(bs)
 		ch := &ctxChooser{c: c, file: dest}
 		merged, r, err := mergeMCPServers(ls, bs, ch)
 		if err != nil {
@@ -599,7 +682,7 @@ func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte
 		}
 		rep.EnvLeftOut = append(rep.EnvLeftOut, r.EnvLeftOut...)
 		rep.EnvRefused = append(rep.EnvRefused, r.EnvRefused...)
-		doc[key] = merged
+		setPath(doc, path, merged)
 		touched = true
 		consent[key] = r.consent()
 		rep.Added = append(rep.Added, r.Added...)
@@ -627,9 +710,9 @@ func sameApartFromMCP(a, b []byte) bool {
 	if !okA || !okB {
 		return false
 	}
-	for _, k := range mcpServerKeys {
-		delete(da, k)
-		delete(db, k)
+	for _, p := range mcpServerPaths {
+		deletePath(da, p)
+		deletePath(db, p)
 	}
 	return jsonEqual(da, db)
 }
@@ -772,6 +855,10 @@ func editCodexServerTables(text string, drop map[string]bool, swap map[string]st
 	if len(drop) == 0 {
 		return text
 	}
+	nl := "\n"
+	if strings.Contains(text, "\r\n") {
+		nl = "\r\n"
+	}
 	var b, pending strings.Builder
 	skipping := false
 	written := map[string]bool{}
@@ -780,7 +867,7 @@ func editCodexServerTables(text string, drop map[string]bool, swap map[string]st
 			now := len(keys) >= 2 && keys[0] == "mcp_servers" && drop[keys[1]]
 			if skipping && !now {
 				keep := pending.String()
-				if strings.HasSuffix(b.String(), "\n\n") || b.Len() == 0 {
+				if strings.HasSuffix(b.String(), nl+nl) || b.Len() == 0 {
 					// No second blank line where a table was taken out.
 					keep = strings.TrimLeft(keep, "\r\n")
 				}
@@ -792,8 +879,8 @@ func editCodexServerTables(text string, drop map[string]bool, swap map[string]st
 				written[keys[1]] = true
 				if t, ok := swap[keys[1]]; ok {
 					b.WriteString(t)
-					if !strings.HasSuffix(t, "\n\n") {
-						pending.WriteString("\n")
+					if !strings.HasSuffix(t, nl+nl) {
+						pending.WriteString(nl)
 					}
 				}
 			}
@@ -861,13 +948,26 @@ func mergeCodexServerText(base string, baseServers, merged map[string]any) (stri
 			drop[name] = true
 		}
 	}
+	if strings.Contains(base, "\r\n") {
+		// Inserted tables use the file's line ending.
+		for k, t := range swap {
+			swap[k] = strings.ReplaceAll(t, "\n", "\r\n")
+		}
+		for i, t := range add {
+			add[i] = strings.ReplaceAll(t, "\n", "\r\n")
+		}
+	}
 	out := editCodexServerTables(base, drop, swap)
+	nl := "\n"
+	if strings.Contains(base, "\r\n") {
+		nl = "\r\n"
+	}
 	for _, t := range add {
 		if out != "" && !strings.HasSuffix(out, "\n") {
-			out += "\n"
+			out += nl
 		}
-		if out != "" && !strings.HasSuffix(out, "\n\n") {
-			out += "\n"
+		if out != "" && !strings.HasSuffix(out, nl+nl) {
+			out += nl
 		}
 		out += t
 	}
@@ -942,6 +1042,7 @@ func (c *importApplyContext) mergeCodexConfig(dest string, content, local []byte
 	if bservers == nil {
 		bservers = map[string]any{}
 	}
+	c.noteBundleServers(bservers)
 	ch := &ctxChooser{c: c, file: dest}
 	merged, rep, err := mergeMCPServers(lservers, bservers, ch)
 	if err != nil {
