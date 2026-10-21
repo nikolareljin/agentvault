@@ -47,8 +47,9 @@ jobs:
       contents: write # the reusable workflow's release job uploads the .deb
     uses: nikolareljin/ci-helpers/.github/workflows/deb-build.yml@production
     with:
-      # The bootstrap step makes vendor/, which would put go in vendor mode.
-      prebuild_command: "GOFLAGS=-mod=readonly make build"
+      # Static like the release binaries, so the .deb needs no Depends. The
+      # bootstrap step makes vendor/, which would put go in vendor mode.
+      prebuild_command: "CGO_ENABLED=0 GOFLAGS=-mod=readonly make build"
       build_command: "bash scripts/package_deb.sh"
       artifact_name: "agentvault-deb"
       upload_to_release: "true"
