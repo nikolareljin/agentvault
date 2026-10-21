@@ -665,14 +665,21 @@ func gatedAssignIn(s string) bool {
 			}
 		}
 	}
+	// Only a plain URL: no whitespace or shell metacharacters, printed back
+	// the same, and the match inside its query.
 	u, err := url.Parse(s)
-	isURL := err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+	queryStart, queryEnd := -1, -1
+	if err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.String() == s &&
+		!strings.ContainsAny(s, " \t\r\n;|`$'\"<>") && !strings.Contains(s, "&&") && u.RawQuery != "" {
+		queryStart = strings.Index(s, "?") + 1
+		queryEnd = queryStart + len(u.RawQuery)
+	}
 	for _, m := range gatedAssign.FindAllStringSubmatchIndex(s, -1) {
 		name := s[m[2]:m[3]]
 		if !gatedEnv(name) {
 			continue
 		}
-		if isURL && m[2] > 0 && (s[m[2]-1] == '?' || s[m[2]-1] == '&') {
+		if queryStart > 0 && m[2] >= queryStart && m[3] <= queryEnd && (s[m[2]-1] == '?' || s[m[2]-1] == '&') {
 			up := strings.ToUpper(name)
 			if !codeLoadingEnv[up] && !routingEnv[up] {
 				continue
