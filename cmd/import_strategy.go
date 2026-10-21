@@ -194,7 +194,19 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 		rep.record("Removed", "shared router config (not in bundle)")
 	}
 
-	incomingShared.MCPServers = restoreMCPServerSecrets(incomingShared.MCPServers, shared.MCPServers)
+	var mcpLeft []mcpBlankLeft
+	incomingShared.MCPServers, mcpLeft = restoreMCPServerSecrets(incomingShared.MCPServers, shared.MCPServers)
+	localMCP := make(map[string]bool, len(shared.MCPServers))
+	for _, s := range shared.MCPServers {
+		localMCP[s.Name] = true
+	}
+	for _, l := range mcpLeft {
+		// A changed server merge keeps local takes nothing from the bundle.
+		if localMCP[l.Server] && !strategy.incomingWins() {
+			continue
+		}
+		rep.record("Left out", "shared MCP server %s %s: blank in the bundle, and the server is new or differs from this machine's", l.Server, l.Field)
+	}
 	shared.MCPServers = mergeKeyed(shared.MCPServers, incomingShared.MCPServers,
 		func(s agent.MCPServer) string { return s.Name }, strategy, "MCP server", rep)
 	// Stamp override-derived instructions with the bundle's own creation time, not
@@ -264,10 +276,10 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 		// Values an export without --include-secrets blanked come back from
 		// the local agent, or are dropped.
 		a, left := restoreAgentSecrets(a, current, exists)
-		for _, f := range left {
-			rep.record("Left out", "agent %s %s: blank in the bundle, and the agent points elsewhere than this machine's", a.Name, f)
-		}
 		if !exists {
+			for _, f := range left {
+				rep.record("Left out", "agent %s %s: blank in the bundle, and this machine has no such agent", a.Name, f)
+			}
 			a.CreatedAt = now
 			a.UpdatedAt = now
 			ops = append(ops, agentOp{Kind: "add", Agent: a, Name: a.Name})
@@ -278,13 +290,16 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 			rep.record("Skipped", "agent %s (kept local)", a.Name)
 			continue
 		}
+		for _, f := range left {
+			rep.record("Left out", "agent %s %s: blank in the bundle, and the bundle's definition differs from this machine's", a.Name, f)
+		}
 		// An empty key in the bundle must not wipe a working local credential,
 		// and must not follow an agent the bundle points elsewhere.
 		if a.APIKey == "" && current.APIKey != "" {
 			if sameAgentEndpoint(a, current) {
 				a.APIKey = current.APIKey
 			} else {
-				rep.record("Left out", "agent %s api_key: blank in the bundle, and the agent points elsewhere than this machine's", a.Name)
+				rep.record("Left out", "agent %s api_key: blank in the bundle, and the bundle's definition differs from this machine's", a.Name)
 			}
 		}
 		a.CreatedAt = current.CreatedAt
@@ -322,6 +337,16 @@ func planProviderConfigs(existing agent.ProviderConfig, incoming agent.ProviderC
 	if o := incoming.Ollama; o != nil && o.BaseURL == "" && existing.Ollama != nil && secretString(existing.Ollama.BaseURL) {
 		cp := *o
 		cp.BaseURL = existing.Ollama.BaseURL
+		incoming.Ollama = &cp
+	}
+	if c := incoming.Codex; c != nil && existing.Codex != nil {
+		cp := *c
+		cp.CustomSettings = restoreCustomSettings(c.CustomSettings, existing.Codex.CustomSettings)
+		incoming.Codex = &cp
+	}
+	if o := incoming.Ollama; o != nil && existing.Ollama != nil {
+		cp := *o
+		cp.CustomSettings = restoreCustomSettings(o.CustomSettings, existing.Ollama.CustomSettings)
 		incoming.Ollama = &cp
 	}
 

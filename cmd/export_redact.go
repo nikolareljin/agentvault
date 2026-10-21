@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -169,12 +170,14 @@ func restoreClaudeConfig(incoming, existing *agent.ClaudeConfig) *agent.ClaudeCo
 
 // restoreMCPServerSecrets fills the values an export blanked in incoming from
 // the server of the same name in existing. Only an unchanged definition gets
-// them: same command and every arg the bundle kept equal. An env value with
-// nothing to fill it is removed, so a tool never reads "" as its token.
-func restoreMCPServerSecrets(incoming, existing []agent.MCPServer) []agent.MCPServer {
+// them: same command, every arg the bundle kept equal and the same env
+// names. An env value with nothing to fill it is removed, so a tool never
+// reads "" as its token. left names each blank that was not filled.
+func restoreMCPServerSecrets(incoming, existing []agent.MCPServer) ([]agent.MCPServer, []mcpBlankLeft) {
 	if incoming == nil {
-		return nil
+		return nil, nil
 	}
+	var left []mcpBlankLeft
 	byName := make(map[string]agent.MCPServer, len(existing))
 	for _, s := range existing {
 		byName[s.Name] = s
@@ -196,13 +199,24 @@ func restoreMCPServerSecrets(incoming, existing []agent.MCPServer) []agent.MCPSe
 				}
 				s.Args = args
 			}
+		} else {
+			if s.Command == "" && ok && e.Command != "" {
+				left = append(left, mcpBlankLeft{s.Name, "command"})
+			}
+			for j, a := range s.Args {
+				if a == "" {
+					left = append(left, mcpBlankLeft{s.Name, fmt.Sprintf("args[%d]", j)})
+				}
+			}
 		}
 		if s.Env != nil {
 			env := make(map[string]string, len(s.Env))
-			for k, val := range s.Env {
+			for _, k := range sortedStringKeys(s.Env) {
+				val := s.Env[k]
 				if val == "" {
 					local, has := e.Env[k]
 					if !same || !has {
+						left = append(left, mcpBlankLeft{s.Name, "env." + k})
 						continue
 					}
 					val = local
@@ -213,14 +227,17 @@ func restoreMCPServerSecrets(incoming, existing []agent.MCPServer) []agent.MCPSe
 		}
 		out[i] = s
 	}
-	return out
+	return out, left
 }
+
+// mcpBlankLeft is a blank of an MCP server that import could not fill.
+type mcpBlankLeft struct{ Server, Field string }
 
 func sameMCPApartFromBlanks(in, have agent.MCPServer) bool {
 	if in.Command != "" && in.Command != have.Command {
 		return false
 	}
-	if len(in.Args) != len(have.Args) {
+	if len(in.Args) != len(have.Args) || len(in.Env) != len(have.Env) {
 		return false
 	}
 	for i, a := range in.Args {
@@ -228,8 +245,11 @@ func sameMCPApartFromBlanks(in, have agent.MCPServer) bool {
 			return false
 		}
 	}
+	// Export blanks every env value but keeps the names, so a missing
+	// name (API_URL dropped to reach a default endpoint) is a change.
 	for k, val := range in.Env {
-		if val != "" && have.Env[k] != val {
+		hv, ok := have.Env[k]
+		if !ok || (val != "" && hv != val) {
 			return false
 		}
 	}
@@ -267,7 +287,11 @@ func restoreAgentSecrets(in, have agent.Agent, exists bool) (agent.Agent, []stri
 		}
 		in.ProviderMeta = &meta
 	}
-	in.MCPServers = restoreMCPServerSecrets(in.MCPServers, have.MCPServers)
+	servers, mcpLeft := restoreMCPServerSecrets(in.MCPServers, have.MCPServers)
+	in.MCPServers = servers
+	for _, l := range mcpLeft {
+		left = append(left, "MCP server "+l.Server+" "+l.Field)
+	}
 	return in, left
 }
 
@@ -277,7 +301,9 @@ func sameAgentEndpoint(in, have agent.Agent) bool {
 	if in.Provider != have.Provider || in.Backend != have.Backend {
 		return false
 	}
-	if in.BaseURL != "" && in.BaseURL != have.BaseURL {
+	// A blank matches only a value export blanks: a blank plain base URL
+	// or extra would send the key to the provider's default endpoint.
+	if in.BaseURL != have.BaseURL && (in.BaseURL != "" || !secretString(have.BaseURL)) {
 		return false
 	}
 	var im, hm agent.AgentProviderMeta
@@ -287,11 +313,33 @@ func sameAgentEndpoint(in, have agent.Agent) bool {
 	if have.ProviderMeta != nil {
 		hm = *have.ProviderMeta
 	}
+	if len(im.Extra) != len(hm.Extra) {
+		return false
+	}
 	for k, v := range im.Extra {
-		if v != "" && hm.Extra[k] != v {
+		hv, ok := hm.Extra[k]
+		if !ok || (v != hv && (v != "" || !(isSecretKey(k) || secretString(hv)))) {
 			return false
 		}
 	}
 	im.Extra, hm.Extra = nil, nil
 	return reflect.DeepEqual(im, hm)
+}
+
+// restoreCustomSettings returns this machine's settings when incoming is
+// exactly what export makes of them, so the secret keys export dropped stay.
+// Settings that differ in any other way are taken as the bundle has them.
+func restoreCustomSettings(incoming, existing map[string]any) map[string]any {
+	if len(existing) == 0 {
+		return incoming
+	}
+	want, err1 := json.Marshal(redactSensitiveMap(existing))
+	got, err2 := json.Marshal(incoming)
+	if len(incoming) == 0 {
+		got = []byte("{}")
+	}
+	if err1 != nil || err2 != nil || string(want) != string(got) {
+		return incoming
+	}
+	return existing
 }

@@ -120,12 +120,15 @@ func TestRestoreMCPServerSecrets(t *testing.T) {
 	if in[0].Args[1] != "" || in[0].Env["T"] != "" || local[0].Args[1] != "tok" {
 		t.Fatalf("blanking: %+v (local %+v)", in, local)
 	}
-	got := restoreMCPServerSecrets(in, local)
+	got, _ := restoreMCPServerSecrets(in, local)
 	if got[0].Args[1] != "tok" || got[0].Env["T"] != "env-v" {
 		t.Errorf("unchanged server not restored: %+v", got)
 	}
 	changed := blankMCPServerSecrets([]agent.MCPServer{{Name: "gh", Command: "evil", Args: []string{"--token", "x", "-v"}, Env: map[string]string{"T": "y"}}})
-	got = restoreMCPServerSecrets(changed, local)
+	got, left := restoreMCPServerSecrets(changed, local)
+	if len(left) != 2 {
+		t.Errorf("want args[1] and env.T named, got %v", left)
+	}
 	if got[0].Args[1] == "tok" || got[0].Env["T"] == "env-v" {
 		t.Errorf("local secret restored into a changed server: %+v", got)
 	}
