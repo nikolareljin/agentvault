@@ -145,21 +145,18 @@
 - macOS install with Homebrew: `brew install nikolareljin/tap/agentvault`.
   Each release builds an arm64 and amd64 formula from the release asset
   digests and checks it with `brew style`, `brew test` and
-  `agentvault version` before it is published to the tap.
+  `agentvault version` before ci-helpers `homebrew-tap-publish.yml` commits
+  it to the tap with the tap's deploy key (`HOMEBREW_TAP_DEPLOY_KEY`,
+  `HOMEBREW_TAP_REPO` secrets).
 
 ### Changed
 - New dependency `github.com/BurntSushi/toml` v1.5.0: import parses Codex
   `config.toml` to compare its commands.
 - `actions/checkout` and `actions/github-script` are pinned to commit SHAs.
-- The Homebrew formula is committed to the tap by ci-helpers
-  `homebrew-tap-publish.yml` with the tap's deploy key
-  (`HOMEBREW_TAP_DEPLOY_KEY`, `HOMEBREW_TAP_REPO` secrets). Before, each
-  release opened a tap pull request with `HOMEBREW_TAP_TOKEN` that had to be
-  merged by hand.
 - Go 1.26 (toolchain go1.26.9) and `golang.org/x/crypto` v0.56.0. Go 1.25
   is no longer supported upstream.
-- CI runs the tests on macOS (`macos-latest`) on push and pull request, next
-  to Linux and Windows.
+- CI runs the tests on Windows (`windows-latest`) and macOS (`macos-latest`)
+  on push and pull request, next to Linux.
 - A project's own settings files (`.claude/settings.json`, `.mcp.json`,
   `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`,
   `.vscode/mcp.json`) are listed in the bundle as `repository` and not
