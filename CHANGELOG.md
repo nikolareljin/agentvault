@@ -292,6 +292,10 @@
   spelling.
 - A file whose hard link count cannot be read is treated as hard-linked.
   The export warning for a hard-linked file says why it was redacted.
+- The detected Claude settings summary in a bundle no longer carries `env`
+  or `headers` values, or values shaped like secrets (`--token x` args,
+  known token prefixes). Before, `export` without `--include-secrets`
+  still wrote every `env` value of `~/.claude/settings.json` there.
 
 ### Fixed
 - Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first

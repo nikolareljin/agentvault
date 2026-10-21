@@ -279,7 +279,9 @@ func detectClaude() DetectedAgent {
 func redactSensitiveMap(in map[string]any) map[string]any {
 	out := make(map[string]any)
 	for k, v := range in {
-		if isSensitiveKey(k) {
+		// env and headers hold secrets under any name; export carries this
+		// map in the bundle even without --include-secrets.
+		if isSensitiveKey(k) || secretContainers[strings.ToLower(k)] {
 			continue
 		}
 		switch tv := v.(type) {
@@ -289,7 +291,14 @@ func redactSensitiveMap(in map[string]any) map[string]any {
 				out[k] = nested
 			}
 		case []any:
+			if containsSecretShape(tv) {
+				continue
+			}
 			out[k] = redactSensitiveSlice(tv)
+		case string:
+			if !secretString(tv) {
+				out[k] = tv
+			}
 		default:
 			out[k] = v
 		}
