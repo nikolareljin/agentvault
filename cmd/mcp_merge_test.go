@@ -558,7 +558,7 @@ func TestMCPEnvRefsNames(t *testing.T) {
 			t.Errorf("%q: %v", in, got)
 		}
 	}
-	if got := mcpEnvRefs(map[string]any{"a": "$(id)"}); len(got) != 1 || !strings.HasPrefix(got[0], "(unparsed)") {
+	if got := mcpEnvRefs(map[string]any{"a": "$(id)"}); len(got) != 1 || !strings.HasPrefix(got[0], "contains $ or %...% that may expand a variable: ") {
 		t.Errorf("unparsed: %v", got)
 	}
 }
@@ -633,5 +633,52 @@ func TestImportNestedAndZedServerMaps(t *testing.T) {
 		if !strings.Contains(got, "l1") || !strings.Contains(got, "n1") || strings.Contains(got, "n2") {
 			t.Errorf("%s: got %s\n%v\n%v", tc.bundle, got, w, ctx.MCPReport)
 		}
+	}
+}
+
+// ~/.claude.json gets only mcpServers: other server maps are not merged,
+// asked about or reported.
+func TestImportClaudeJSONOnlyMergesMCPServers(t *testing.T) {
+	home := t.TempDir()
+	cj := filepath.Join(home, ".claude.json")
+	mustWriteFile(t, cj, `{"mcpServers":{}}`)
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("all")
+	asset := SetupAsset{LogicalRoot: setupAssetRootProviderHome, LogicalPath: ".claude.json", ContentPresent: true,
+		Content: []byte(`{"mcpServers":{"a":{"command":"a"}},"context_servers":{"p":{"command":"p"}},"mcp":{"servers":{"q":{"command":"q"}}}}`)}
+	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := strings.Join(ctx.MCPReport, "\n")
+	if !strings.Contains(r, `added "a"`) || strings.Contains(r, `"p"`) || strings.Contains(r, `"q"`) {
+		t.Errorf("report = %s", r)
+	}
+	if got := readString(t, cj); strings.Contains(got, "context_servers") || strings.Contains(got, `"mcp"`) {
+		t.Errorf("got %s", got)
+	}
+}
+
+// Zed's command.env gets the same separate question as env.
+func TestImportZedCommandEnvGated(t *testing.T) {
+	bundle := `{"context_servers":{"z":{"command":{"path":"z","args":[],"env":{"NODE_OPTIONS":"--require /e.js","PLAIN":"1"}}}}}`
+	run := func(ctx *importApplyContext) string {
+		home := t.TempDir()
+		settings := filepath.Join(home, ".claude", "settings.json")
+		mustWriteFile(t, settings, `{}`)
+		if _, _, err := applyProviderAssetsWith(home, []SetupAsset{claudeSettingsAsset(bundle)}, ctx); err != nil {
+			t.Fatal(err)
+		}
+		return readString(t, settings)
+	}
+	ctx := fixedCtx("")
+	ctx.MCPServers, _ = parseMCPSelection("z")
+	if got := run(ctx); strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"PLAIN": "1"`) || !strings.Contains(strings.Join(ctx.MCPReport, ""), `"z.NODE_OPTIONS"`) {
+		t.Errorf("flag: %s\n%v", got, ctx.MCPReport)
+	}
+	ctx = fixedCtx("1\n\ny\n")
+	out := &bytes.Buffer{}
+	ctx.Out = out
+	if got := run(ctx); !strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(out.String(), "command.env NODE_OPTIONS") {
+		t.Errorf("yes: %s\n%s", got, out.String())
 	}
 }

@@ -1238,7 +1238,7 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 				}
 				var consent map[string]map[string]bool
 				var err error
-				content, consent, mcpRep, err = ctx.mergeMCPKeysJSON(dest, content, original)
+				content, consent, mcpRep, err = ctx.mergeMCPKeysJSON(dest, content, original, mergeKeys)
 				if err != nil {
 					return applied, warnings, err
 				}
@@ -1251,7 +1251,7 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		} else if !codexConfig && jsonSettingsAsset(asset) {
 			if _, ok := decodeSettingsObject(original); ok || len(bytes.TrimSpace(original)) == 0 {
 				var err error
-				content, _, mcpRep, err = ctx.mergeMCPKeysJSON(dest, content, original)
+				content, _, mcpRep, err = ctx.mergeMCPKeysJSON(dest, content, original, mergeKeys)
 				if err != nil {
 					return applied, warnings, err
 				}

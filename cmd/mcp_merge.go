@@ -284,10 +284,13 @@ func offerableServer(v any) bool {
 			return false
 		}
 	}
-	env, _ := m["env"].(map[string]any)
-	for k, v := range env {
-		if gatedEnv(k) && anySecretString(v) {
-			return false
+	for _, loc := range mcpEnvLocations {
+		ev, _ := getPath(m, loc)
+		env, _ := ev.(map[string]any)
+		for k, v := range env {
+			if gatedEnv(k) && anySecretString(v) {
+				return false
+			}
 		}
 	}
 	return true
@@ -339,7 +342,7 @@ func mcpEnvRefs(v any) []string {
 					found = true
 				}
 				if !found {
-					seen["(unparsed) "+t] = true
+					seen["contains $ or %...% that may expand a variable: "+t] = true
 				}
 			}
 			if strings.HasSuffix(key, "_env_var") || key == "env_vars" || key == "env_http_headers" {
@@ -578,57 +581,73 @@ func (c *importApplyContext) gateTaken(file string, merged, local map[string]any
 	taken = append(append([]string(nil), rep.Added...), rep.Replaced...)
 	sort.Strings(taken)
 	for _, name := range taken {
-		srv, ok := merged[name].(map[string]any)
-		if !ok {
-			continue
-		}
-		env, _ := srv["env"].(map[string]any)
-		lsrv, _ := local[name].(map[string]any)
-		lenv, _ := lsrv["env"].(map[string]any)
-		var gated []string
-		for _, k := range sortedKeys(env) {
-			if gatedEnv(k) {
-				if lv, ok := lenv[k]; !ok || !jsonEqual(lv, env[k]) {
-					gated = append(gated, k)
-				}
-			}
-		}
-		if len(gated) == 0 {
-			continue
-		}
-		yes := false
-		if asked {
-			fmt.Fprintf(c.Out, "%s: MCP server %s sets variables that load code or send requests elsewhere:\n", printable(file), strconv.Quote(name))
-			for _, k := range gated {
-				fmt.Fprintf(c.Out, "  env %s = %s\n", printable(k), showValue(env[k]))
-			}
-			var err error
-			if yes, err = askBool(c.Out, c.In, "keep these", false); err != nil {
+		for _, loc := range mcpEnvLocations {
+			if err := c.gateEnvAt(file, name, loc, merged, local, rep, asked); err != nil {
 				return err
 			}
 		}
-		if yes {
-			continue
-		}
-		// Copies: the maps may be the bundle's own.
-		ns, ne := map[string]any{}, map[string]any{}
-		for k, v := range srv {
-			ns[k] = v
-		}
-		for k, v := range env {
-			ne[k] = v
-		}
-		for _, k := range gated {
-			if lv, ok := lenv[k]; ok {
-				ne[k] = lv
-			} else {
-				delete(ne, k)
-			}
-			rep.EnvLeftOut = append(rep.EnvLeftOut, name+"."+k)
-		}
-		ns["env"] = ne
-		merged[name] = ns
 	}
+	return nil
+}
+
+// mcpEnvLocations are where a server keeps its environment: env, and Zed's
+// command.env.
+var mcpEnvLocations = [][]string{{"env"}, {"command", "env"}}
+
+// gateEnvAt asks about, or leaves out, the gated variables of one env map
+// of a taken server.
+func (c *importApplyContext) gateEnvAt(file, name string, loc []string, merged, local map[string]any, rep *mcpMergeReport, asked bool) error {
+	srv, ok := merged[name].(map[string]any)
+	if !ok {
+		return nil
+	}
+	ev, _ := getPath(srv, loc)
+	env, _ := ev.(map[string]any)
+	lsrv, _ := local[name].(map[string]any)
+	lev, _ := getPath(lsrv, loc)
+	lenv, _ := lev.(map[string]any)
+	var gated []string
+	for _, k := range sortedKeys(env) {
+		if gatedEnv(k) {
+			if lv, ok := lenv[k]; !ok || !jsonEqual(lv, env[k]) {
+				gated = append(gated, k)
+			}
+		}
+	}
+	if len(gated) == 0 {
+		return nil
+	}
+	label := strings.Join(loc, ".")
+	yes := false
+	if asked {
+		fmt.Fprintf(c.Out, "%s: MCP server %s sets variables that load code or send requests elsewhere:\n", printable(file), strconv.Quote(name))
+		for _, k := range gated {
+			fmt.Fprintf(c.Out, "  %s %s = %s\n", label, printable(k), showValue(env[k]))
+		}
+		var err error
+		if yes, err = askBool(c.Out, c.In, "keep these", false); err != nil {
+			return err
+		}
+	}
+	if yes {
+		return nil
+	}
+	// A deep copy: the maps may be the bundle's own.
+	ns := deepCopyJSON(srv)
+	ne := map[string]any{}
+	for k, v := range env {
+		ne[k] = v
+	}
+	for _, k := range gated {
+		if lv, ok := lenv[k]; ok {
+			ne[k] = lv
+		} else {
+			delete(ne, k)
+		}
+		rep.EnvLeftOut = append(rep.EnvLeftOut, name+"."+k)
+	}
+	setPath(ns, loc, ne)
+	merged[name] = ns
 	return nil
 }
 
@@ -645,7 +664,7 @@ func removeString(list []string, s string) []string {
 // mergeMCPKeysJSON merges the server maps of a JSON settings file one
 // server at a time, against this machine's copy. It returns the new
 // content, the servers taken from the bundle per key, and the report.
-func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte) ([]byte, map[string]map[string]bool, mcpMergeReport, error) {
+func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte, only []string) ([]byte, map[string]map[string]bool, mcpMergeReport, error) {
 	var rep mcpMergeReport
 	doc, ok := decodeSettingsObject(content)
 	if !ok {
@@ -656,6 +675,10 @@ func (c *importApplyContext) mergeMCPKeysJSON(dest string, content, local []byte
 	touched := false
 	for _, path := range mcpServerPaths {
 		key := strings.Join(path, ".")
+		if len(only) > 0 && !containsString(only, key) {
+			// Only these keys of the file are written (~/.claude.json).
+			continue
+		}
 		bv, bpresent := getPath(doc, path)
 		lv, _ := getPath(have, path)
 		bs, bok := bv.(map[string]any)

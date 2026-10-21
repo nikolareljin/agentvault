@@ -501,7 +501,7 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 				name = path + "." + k
 			}
 			switch {
-			case k == "mcpServers" || k == "mcp_servers" || k == "servers":
+			case k == "mcpServers" || k == "mcp_servers" || k == "servers" || k == "context_servers":
 				servers, ok := bm[k].(map[string]any)
 				if !ok {
 					// Not a map of servers: the whole value is this
