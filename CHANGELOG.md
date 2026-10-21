@@ -159,8 +159,11 @@
 - A project's own settings files (`.claude/settings.json`, `.mcp.json`,
   `.gemini/settings.json`, `.codex/config.toml`, `.cursor/mcp.json`,
   `.vscode/mcp.json`) are listed in the bundle as `repository` and not
-  carried, in any letter case and also when an instruction file names them. They travel with the repository. Before, `.claude/settings.json`
+  carried, in any letter case and also when an instruction file names
+  them. They travel with the repository. Before, `.claude/settings.json`
   was carried.
+
+### Security
 - Login token files (`.credentials.json`, `auth.json`, `oauth_creds.json`,
   `google_accounts.json`) are never collected, even with `--include-secrets`,
   and import never writes one from a bundle, under any spelling
@@ -173,8 +176,6 @@
   skips it when it is not JSON. Import strips the same keys from a bundle and
   keeps this machine's sign-in, also when the bundle spells the name
   `config.json.`, which Windows writes to `config.json`.
-
-### Security
 - Asset paths with control characters are refused, so a path printed during
   import cannot rewrite the terminal. `--apply-projects` also refuses
   segments Windows reads as another name (`.git.`, `name:stream`).
@@ -273,9 +274,8 @@
   `~/.gemini`, `~/.copilot`, `~/.cursor`, `~/.codeium`) is followed only into
   the setup the bundle carries, rule directories, and prose files at the
   top of that directory. Memory, session transcripts, archived sessions,
-  history, backups and caches are declined. Before, naming
-  `~/.claude/projects/` carried session transcripts, and memory without
-  `--include-memory`. The same holds through a symlink: with `~/.claude`
+  history, backups and caches are declined. The same holds through a
+  symlink: with `~/.claude`
   linked to `~/dotfiles/claude`, a reference to
   `~/dotfiles/claude/todos/` is declined too, and so is a link at any
   depth (`~/.claude/projects/p/memory` linked to `~/notes/mem`). Import
