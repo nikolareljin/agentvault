@@ -182,3 +182,14 @@ func TestPlanProviderConfigsRestoresOllamaBaseURL(t *testing.T) {
 		t.Errorf("local base URL lost: %q", got.Ollama.BaseURL)
 	}
 }
+
+func TestRemapProviderConfigsRewritesRedactedPointers(t *testing.T) {
+	exported := redactClaudeConfig(claudeConfigFrom(t, `{"mcpServers":{"/old/home/p":{"command":"srv","env":{"T":"v"}}}}`))
+	pc, n, err := remapProviderConfigs(agent.ProviderConfig{Claude: exported}, []pathRemap{{From: "/old/home", To: "/new/home"}})
+	if err != nil || n == 0 {
+		t.Fatalf("remap: n=%d err=%v", n, err)
+	}
+	if got := pc.Claude.RedactedFields; len(got) != 1 || got[0] != "/mcpServers/~1new~1home~1p/env/T" {
+		t.Errorf("pointers not remapped with their keys: %v", got)
+	}
+}
