@@ -392,11 +392,12 @@
 - `run --env` and `generate env --format shell` write values in single
   quotes, so a model or URL such as `$(cmd)` does not run when the output
   is eval'd or sourced, and a multi-line system prompt comes back
-  unchanged. A value with a control character is left out with a warning
-  (exit 1) and unset, so an older export of that name is not used instead. A name
-  saved before control characters were refused cannot start a new line
-  in the generated env file, and the provider, which import does not
-  check, is cleaned like the name: `claude;cmd;` ran `cmd` when sourced.
+  unchanged. A value with a control character is left out with a
+  warning (exit 1) and unset, so an older export of that name is not
+  used instead. A name saved before control characters were refused
+  cannot start a new line in the generated env file, and the provider,
+  which import does not check, is cleaned like the name: `claude;cmd;`
+  ran `cmd` when sourced.
 - `generate env` (dotenv, the default) and `generate all` write values in
   single quotes, so sourcing `.env.agents` from a shell runs nothing
   (0.14.0 wrote `"$(cmd)"`, which ran). docker compose reads them
