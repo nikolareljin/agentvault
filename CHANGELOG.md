@@ -12,7 +12,8 @@
   the rest. `--from-any-project` writes them anyway. A referenced file
   stored before this release has no source project and is skipped until
   pulled again; a file stored by hand that no instruction names is written
-  as before.
+  as before. `instructions pull --name` and `instructions set` over a
+  referenced file keep it its project's.
 
 ## [0.15.2] - 2026-10-22
 

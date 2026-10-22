@@ -11,6 +11,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/locations"
+	"github.com/nikolareljin/agentvault/internal/vault"
 )
 
 // fromAnyProjectUsage is the help text of --from-any-project.
@@ -128,4 +129,31 @@ func remapInstructionProjects(insts, fromBundle []agent.InstructionFile, remaps 
 		out[i] = inst
 	}
 	return out, changed
+}
+
+// withSourceProject sets the source project of inst, stored by hand over
+// whatever entry has its key. A referenced file stays one: it takes project,
+// the project it was just read from, or with project "" (set) the replaced
+// entry's. A file nothing names that replaces no referenced file stays an
+// instruction.
+func withSourceProject(v *vault.Vault, inst agent.InstructionFile, project string) agent.InstructionFile {
+	key := agent.InstructionKey(inst)
+	prev := ""
+	all := []agent.InstructionFile{inst}
+	for _, e := range v.ListInstructions() {
+		if agent.InstructionKey(e) == key {
+			prev = e.SourceProject
+			continue
+		}
+		all = append(all, e)
+	}
+	if prev == "" && !agent.ReferencedFileClassifier(all)(inst) {
+		return inst
+	}
+	if project != "" {
+		inst.SourceProject = project
+	} else {
+		inst.SourceProject = prev
+	}
+	return inst
 }

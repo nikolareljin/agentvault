@@ -319,3 +319,53 @@ func TestRemapInstructionProjectsMatchesFoldedKey(t *testing.T) {
 		t.Errorf("folded key after import = %q (changed %v), want %q", got[0].SourceProject, changed, want)
 	}
 }
+
+// Refreshing one referenced file by hand keeps it this project's: pull
+// --name notes/x.md --file notes/x.md must not leave it of unknown project.
+func TestPullSingleReferencedFileKeepsItsProject(t *testing.T) {
+	cfgDir := scopeTestVault(t)
+	svc, _ := twoProjects(t)
+	if err := instPullCmd.RunE(instPullCmd, []string{svc}); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	writeFile(t, filepath.Join(svc, "notes", "x.md"), "svc, edited\n")
+	v := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	if err := pullSingleFile(v, svc, "notes/x.md", "notes/x.md"); err != nil {
+		t.Fatalf("pull single: %v", err)
+	}
+	if err := os.Remove(filepath.Join(svc, "notes", "x.md")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdoutForTest(t, func() error { return instPushCmd.RunE(instPushCmd, []string{svc}) })
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(svc, "notes", "x.md"))
+	if err != nil || string(got) != "svc, edited\n" {
+		t.Errorf("push did not restore the refreshed notes/x.md (%v):\n%s", err, out)
+	}
+}
+
+// set replacing a referenced file keeps the project it was pulled from.
+func TestSetKeepsSourceProject(t *testing.T) {
+	cfgDir := scopeTestVault(t)
+	v := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	old := agent.InstructionFile{Name: "notes/x.md", Filename: "notes/x.md", Content: "a\n", SourceProject: "path:/p"}
+	if err := v.SetInstruction(old); err != nil {
+		t.Fatal(err)
+	}
+	got := withSourceProject(v, agent.InstructionFile{Name: "notes/x.md", Filename: "notes/x.md", Content: "b\n"}, "")
+	if got.SourceProject != "path:/p" {
+		t.Errorf("set dropped the source project: %q", got.SourceProject)
+	}
+	hand := withSourceProject(v, agent.InstructionFile{Name: "NOTES.md", Filename: "NOTES.md"}, "path:/q")
+	if hand.SourceProject != "" {
+		t.Errorf("a hand-stored file nothing names got project %q", hand.SourceProject)
+	}
+}

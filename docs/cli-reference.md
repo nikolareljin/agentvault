@@ -481,6 +481,9 @@ or use `--from-any-project`. Such a file is recognised by its name being
 its filename and a stored instruction naming it; a file stored by hand
 (`instructions set docs/style.md --filename docs/style.md`) that no
 instruction names is an instruction and is written as before.
+Refreshing one referenced file by hand keeps it a referenced file:
+`instructions pull --name notes/x.md --file notes/x.md` records the
+project it is read from, and `instructions set` keeps the stored one.
 
 A directory-scoped instruction whose pattern names another known path of the same repository (its path on the machine a bundle came from, or an older checkout) applies to the directory too.
 

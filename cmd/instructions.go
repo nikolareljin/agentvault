@@ -262,6 +262,7 @@ Examples:
 			Scope:            scope,
 			DirectoryPattern: dirPattern,
 		}
+		inst = withSourceProject(v, inst, "")
 		if err := v.SetInstruction(inst); err != nil {
 			return err
 		}
@@ -590,6 +591,7 @@ func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 		Content:   content,
 		UpdatedAt: time.Now(),
 	}
+	inst = withSourceProject(v, inst, instructionProjectKey(dir, nil))
 	if err := v.SetInstruction(inst); err != nil {
 		return err
 	}
