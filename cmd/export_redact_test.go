@@ -237,3 +237,13 @@ func TestPlanAgentOpsKeepsLocalAPIKeyFromMovedAgent(t *testing.T) {
 		t.Errorf("local API key lost for an unchanged endpoint: %s", s)
 	}
 }
+
+// A server this machine does not have, whose command export blanked,
+// cannot be filled; import must name it rather than add it silently.
+func TestRestoreMCPServerSecretsNamesBlankCommandOfNewServer(t *testing.T) {
+	in := blankMCPServerSecrets([]agent.MCPServer{{Name: "s", Command: "https://u:p@host/x"}})
+	_, left := restoreMCPServerSecrets(in, nil)
+	if len(left) != 1 || left[0] != (mcpBlankLeft{"s", "command"}) {
+		t.Errorf("left = %v", left)
+	}
+}

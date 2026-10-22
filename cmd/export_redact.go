@@ -309,7 +309,8 @@ func restoreMCPServerSecrets(incoming, existing []agent.MCPServer) ([]agent.MCPS
 				s.Args = args
 			}
 		} else {
-			if s.Command == "" && ok && e.Command != "" {
+			// A server new here with a blank command lost it to redaction.
+			if s.Command == "" && (!ok || e.Command != "") {
 				left = append(left, mcpBlankLeft{s.Name, "command"})
 			}
 			for j, a := range s.Args {
