@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -130,7 +129,7 @@ func decodeAgentProfile(data []byte, format string) (agent.Agent, string, []stri
 	}
 	var blanks []string
 	for _, f := range export.Blanks {
-		if !profileBlankField(f) {
+		if !profileBlankField(*export.BlankedAgent, f) {
 			return agent.Agent{}, "", nil, fmt.Errorf("agent profile names blank %q, which export never blanks; it was edited and is not trusted", f)
 		}
 		blanks = append(blanks, f)
@@ -138,18 +137,20 @@ func decodeAgentProfile(data []byte, format string) (agent.Agent, string, []stri
 	return *export.BlankedAgent, agentProfileSchemaVersion, blanks, nil
 }
 
-// profileBlankField is a field agent export can blank: base_url, or
-// provider_meta.extra.<key> with a key of printable characters.
-func profileBlankField(f string) bool {
+// profileBlankField is a field export blanks and the profile's agent has
+// blank: base_url, or provider_meta.extra.<key>. Any key export can write
+// is let in; the report prints it through printable.
+func profileBlankField(a agent.Agent, f string) bool {
 	if f == "base_url" {
-		return true
+		return a.BaseURL == ""
 	}
 	k, ok := strings.CutPrefix(f, "provider_meta.extra.")
-	return ok && plainExtraKey.MatchString(k)
+	if !ok || a.ProviderMeta == nil {
+		return false
+	}
+	v, ok := a.ProviderMeta.Extra[k]
+	return ok && v == ""
 }
-
-// No control characters: the key is printed in the import report.
-var plainExtraKey = regexp.MustCompile(`^[^\x00-\x1f\x7f-\x9f]{1,256}$`)
 
 // marshalJSON serializes v to indented JSON.
 func marshalJSON(v any) ([]byte, error) {

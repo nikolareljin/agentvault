@@ -227,3 +227,34 @@ func TestImportRefusesControlCharacterNames(t *testing.T) {
 		t.Error("controlCharName() refused a plain non-ASCII name")
 	}
 }
+
+// Every blank export lists is one import reads: a long extra key once
+// made a profile its own import refused.
+func TestDecodeAgentProfileReadsEveryBlankExportWrites(t *testing.T) {
+	a := testAgent()
+	long := "api_token_" + strings.Repeat("k", 300)
+	a.BaseURL = "https://u:pw@proxy.example"
+	a.ProviderMeta.Extra = map[string]string{long: "secret-value", "region": "us"}
+	b := SetupBundle{Agents: []agent.Agent{a}}
+	redactVaultSecrets(&b)
+	var blanks []string
+	for _, vb := range b.VaultBlanks {
+		blanks = append(blanks, vb.Field)
+	}
+	if len(blanks) != 2 {
+		t.Fatalf("blanks = %v, want base_url and the extra", blanks)
+	}
+	data, err := marshalBlankedAgentProfile(b.Agents[0], blanks, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, got, err := decodeAgentProfile(data, ""); err != nil || len(got) != 2 {
+		t.Fatalf("decodeAgentProfile() = %v, %v; want both blanks read", got, err)
+	}
+	// A listed blank whose field is not blank in the profile was edited.
+	b.Agents[0].ProviderMeta.Extra[long] = "x"
+	data, _ = marshalBlankedAgentProfile(b.Agents[0], blanks, "json")
+	if _, _, _, err := decodeAgentProfile(data, ""); err == nil {
+		t.Fatal("listed blank with a value accepted")
+	}
+}
