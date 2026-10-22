@@ -267,3 +267,18 @@ func TestDropInterpreterAllowsWithByteOrderMark(t *testing.T) {
 		t.Errorf("dropped=%v out=%s", dropped, out)
 	}
 }
+
+// "Basic" and "Bearer" followed by an English word are prose, not a
+// credential; a token after them is.
+func TestSecretStringAuthSchemeWords(t *testing.T) {
+	for _, s := range []string{"Basic authentication required", "uses bearer authentication", "Basic usage", "basic configuration options"} {
+		if secretString(s) {
+			t.Errorf("%q: treated as a secret", s)
+		}
+	}
+	for _, s := range []string{"Bearer abcdefgh123", "Authorization: Basic dXNlcjpwYXNz", "bearer eyJhbGciOiJIUzI1NiJ9", "Basic Zm9vYmFyYmF6"} {
+		if !secretString(s) {
+			t.Errorf("%q: not treated as a secret", s)
+		}
+	}
+}

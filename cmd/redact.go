@@ -340,7 +340,9 @@ func secretPointer(p string) bool {
 var (
 	// Credentials in a URL, a credential query parameter, or a well-known
 	// token prefix.
-	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\bbearer\s+[A-Za-z0-9._~+/=-]{8,}|\bbasic\s+[A-Za-z0-9+/=]{8,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
+	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
+	// An HTTP auth scheme and its token: "Bearer abc123", "Basic dXNl".
+	authSchemeToken = regexp.MustCompile(`(?i)\b(?:bearer\s+[A-Za-z0-9._~+/=-]{8,}|basic\s+[A-Za-z0-9+/=]{8,})`)
 	// A query or fragment parameter: ?client_secret=x, #access_token=x.
 	// Its name decides, by the key rules.
 	queryParam = regexp.MustCompile(`[?&#]([^=&#\s]+)=[^&#\s]`)
@@ -365,6 +367,12 @@ func secretString(s string) bool {
 	}
 	if secretValueShapes.MatchString(s) || secretFlagInline.MatchString(s) {
 		return true
+	}
+	// A token with only lower-case letters is a word: "Basic authentication".
+	for _, m := range authSchemeToken.FindAllString(s, -1) {
+		if tok := m[strings.LastIndexAny(m, " \t\r\n")+1:]; strings.Trim(tok, "abcdefghijklmnopqrstuvwxyz") != "" {
+			return true
+		}
 	}
 	for _, u := range urlInString.FindAllString(s, -1) {
 		if urlCarriesCredential(u) {
