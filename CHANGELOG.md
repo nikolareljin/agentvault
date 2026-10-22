@@ -246,7 +246,15 @@
   a crafted bundle could make `push` write outside the project. The write
   also refuses symlinked path components below the target directory, and
   `instructions diff` reports such an entry as refused instead of reading
-  the file it names.
+  the file it names. A filename that git or an agent reads as
+  configuration or runs is refused the same way: anything under `.git`,
+  `.githooks` or `.husky`, `.github/workflows` and `.github/actions`,
+  `.claude/settings*.json`, `.mcp.json`, `.gemini/settings.json`,
+  `.codex/config.toml`, `.cursor/mcp.json`, `.vscode/mcp.json`,
+  `.vscode/settings.json`, `.vscode/tasks.json` and `.envrc`. Before, a
+  bundle instruction named `.git/config` was pushed there, and its
+  `core.fsmonitor` ran on the next `git status`. Import skips such an
+  instruction and names it; before, import stored any filename.
 - Prompts reach `codex` and `claude` after `--`, and `gemini` as
   `--prompt=<text>`. Before, a prompt such as `--help` sent to
   `POST /api/v1/prompt` was parsed as a CLI option.
@@ -379,7 +387,8 @@
 - Vault fields that came from a bundle reach the terminal without control
   characters in every command that prints them: `rules`, `roles`,
   `session`, `instructions` (list, show, preview, export, diff, scan),
-  `templates` (list, show), `config show`, `run`, `generate` and the TUI.
+  `templates` (list, show), `config show`, `run`, `generate`, `status`,
+  `detect`, `setup apply`, `setup export`, prompt mode and the TUI.
   JSON output escapes C1 control characters as `\u0080`-`\u009f`.
   Instruction, rule and prompt text keeps its newlines, tabs and CRLF,
   also when piped. New `--raw` on `instructions show`,
@@ -398,12 +407,20 @@
   cannot start a new line in the generated env file, and the provider,
   which import does not check, is cleaned like the name: `claude;cmd;`
   ran `cmd` when sourced.
-- `generate env` (dotenv, the default) and `generate all` write values in
-  single quotes, so sourcing `.env.agents` from a shell runs nothing
-  (0.14.0 wrote `"$(cmd)"`, which ran). docker compose reads them
-  literally. A value with a single quote, `${` (python-dotenv expands it
-  even in single quotes) or a control character is left out of the file
-  with a warning on stderr, and the command exits 1.
+- `generate env` (dotenv, the default), `generate all` and
+  `setup apply --generate` write values in single quotes, so sourcing
+  `.env.agents` from a shell runs nothing (0.14.0 wrote `"$(cmd)"`, which
+  ran, and `setup apply` wrote a model with a newline as a second
+  variable). docker compose reads them literally. A value with a single
+  quote, `${` (python-dotenv expands it even in single quotes) or a
+  control character is left out of the file with a warning on stderr,
+  and the command exits 1. `setup apply --generate` names variables
+  `PROVIDER_NAME_MODEL` like `generate all` (was `PROVIDER_MODEL`).
+- `sync to`, `generate env`, `generate all` and `setup apply --generate`
+  do not write through a symlink, dangling or not, at the file or (for
+  `sync to` and `setup apply`) in a directory below the target. Before,
+  an `AGENTS.md` or `.env` planted in a cloned repository as a link to a
+  file outside it was written there.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older

@@ -408,7 +408,9 @@ Flags:
 Flags:
 - `--file <path>`
 - `--content <text>`
-- `--filename <target-file-name>`
+- `--filename <target-file-name>`: relative to the project; not under
+  `.git`, `.githooks`, `.husky` or `.github/workflows`, and not an agent
+  or editor settings file such as `.claude/settings.json` or `.mcp.json`
 
 ### `agentvault instructions edit [name]`
 No flags.
@@ -492,7 +494,8 @@ Flags:
 A value that cannot be written safely (`dotenv`: a single quote, `${` or a
 control character; `shell`: a control character) is left out with a
 comment and a warning; the rest is written and the command exits 1. The
-same holds for `run --env` and the `.env.agents` of `generate all`.
+same holds for `run --env` and the `.env.agents` of `generate all` and
+`setup apply --generate`. An output file that is a symlink is refused.
 
 ### `agentvault generate mcp [output-file]`
 Default output is Claude Desktop's config for the OS:

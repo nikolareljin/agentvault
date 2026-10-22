@@ -472,7 +472,9 @@ Flags:
 Flags:
 - `--file <path>`
 - `--content <text>`
-- `--filename <target-file-name>`
+- `--filename <target-file-name>`: relative to the project; not under
+  `.git`, `.githooks`, `.husky` or `.github/workflows`, and not an agent
+  or editor settings file such as `.claude/settings.json` or `.mcp.json`
 
 ### `agentvault instructions edit [name]`
 No flags.
@@ -554,8 +556,9 @@ nothing. `dotenv` leaves out a value with a single quote, `${` or a control
 character, and `shell` one with a control character; each is named in a
 comment in the file and in a warning on stderr, and `shell` also unsets it.
 The rest is still written, and the command exits 1 with a last stderr line
-giving the count. `run --env` and the `.env.agents` of `generate all` do
-the same.
+giving the count. `run --env` and the `.env.agents` of `generate all` and
+`setup apply --generate` do the same. An output file that is a symlink is
+refused.
 
 ### `agentvault generate mcp [output-file]`
 Flags:
