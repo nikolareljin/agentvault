@@ -266,33 +266,40 @@ func TestGenerateEnvNoKeysStripsBaseURLCredentials(t *testing.T) {
 	}
 }
 
-// secretString parses URLs: a password, a token-shaped user name outside
-// ssh and a percent-encoded secret parameter name count; a login name does
-// not.
+// secretString parses URLs and fails closed on userinfo: a password, and
+// a user name alone outside ssh and git, count unless the name is git,
+// oauth2, x-access-token or the Azure DevOps organization.
 func TestSecretStringParsesURLs(t *testing.T) {
 	for s, want := range map[string]bool{
-		"https://ghp_0123456789abcdefghijABCDEF@h.example/":          true,
-		"https://a1b2c3d4e5f6a7b8c9d0e1f2@h.example/v1":              true,
-		"https://u:p@[::1]:8080/":                                    true,
-		"ssh://git:p@h.example/o/r.git":                              true,
-		"https://h.example/v1?Api%5FKey=x":                           true,
-		"run --url=https://a1b2c3d4e5f6a7b8c9d0e1f2@h.example/x now": true,
-		"https://h.example/v1?model=x":                               false,
-		"https://h.example:8443/v1":                                  false,
-		"http://${HOST}:8080/v1":                                     false,
-		"http://a1b2c3d4e5f6a7b8c9d0e1f2@${HOST}:8080/v1":            true,
-		"http://u:p@${HOST}:8080/v1":                                 true,
-		"http://git@${HOST}:8080/v1":                                 false,
-		"http://${HOST}:8080/v1?token=x":                             true,
-		// A login name is not a credential.
+		"https://ghp_0123456789abcdefghijABCDEF@h.example/": true,
+		"https://abcdefghij012345678@h.example/v1":          true, // 19 characters
+		"https://tok.en.with.dots@h.example/v1":             true,
+		"https://na%6De@h.example/v1":                       true,
+		"https://na+me@h.example/v1":                        true,
+		"http://user@localhost:11434":                       true,
+		"https://first.last@h.example/r.git":                true,
+		"https://evil@dev.azure.com/org/p/_git/r":           true,
+		"https://u:p@[::1]:8080/":                           true,
+		"ssh://git:p@h.example/o/r.git":                     true,
+		"https://oauth2:p@gitlab.com/o/r.git":               true,
+		"https://h.example/v1?Api%5FKey=x":                  true,
+		"run --url=https://tok@h.example/x now":             true,
+		"http://tok@${HOST}:8080/v1":                        true,
+		"http://u:p@${HOST}:8080/v1":                        true,
+		"http://${HOST}:8080/v1?token=x":                    true,
+		"https://h.example/v1?model=x":                      false,
+		"https://h.example:8443/v1":                         false,
+		"http://${HOST}:8080/v1":                            false,
+		"http://git@${HOST}:8080/v1":                        false,
+		// Login names, not credentials.
 		"ssh://git@github.com/o/r.git":                false,
 		"git+ssh://git@github.com/o/r.git":            false,
+		"sftp://deploy@h.example/x":                   false,
 		"ssh://a1b2c3d4e5f6a7b8c9d0e1f2@h.example/r":  false,
 		"https://oauth2@gitlab.com/o/r.git":           false,
-		"https://myorg@dev.azure.com/myorg/p/_git/r":  false,
-		"http://user@localhost:11434":                 false,
+		"https://git@h.example/o/r.git":               false,
 		"https://x-access-token@github.com/o/r.git":   false,
-		"https://first.last@h.example/r.git":          false,
+		"https://myorg@dev.azure.com/myorg/p/_git/r":  false,
 		"git clone ssh://git@github.com/o/r.git here": false,
 	} {
 		if got := secretString(s); got != want {
@@ -302,7 +309,8 @@ func TestSecretStringParsesURLs(t *testing.T) {
 }
 
 // stripURLSecrets drops only the credential: the remaining query keeps its
-// order, encoding, empty and repeated values, and a login name stays.
+// order, encoding, empty and repeated values, and an allowed login name
+// stays.
 func TestStripURLSecretsKeepsTheRest(t *testing.T) {
 	for in, want := range map[string]string{
 		"https://h.example/v1?z=1&token=x&a=b+c&a=%20&e=&f": "https://h.example/v1?z=1&a=b+c&a=%20&e=&f",
@@ -311,7 +319,9 @@ func TestStripURLSecretsKeepsTheRest(t *testing.T) {
 		"https://h.example/cb#access_token=x&state=s":       "https://h.example/cb#state=s",
 		"https://u:p@h.example:8443/a%2Fb?q=1":              "https://h.example:8443/a%2Fb?q=1",
 		"https://a1b2c3d4e5f6a7b8c9d0e1f2@h.example/v1":     "https://h.example/v1",
+		"https://user@localhost:11434/v1":                   "https://localhost:11434/v1",
 		"https://org@dev.azure.com/org/p/_git/r?token=x":    "https://org@dev.azure.com/org/p/_git/r",
+		"https://oauth2@gitlab.com/o/r.git?a=1":             "https://oauth2@gitlab.com/o/r.git?a=1",
 	} {
 		got, ok := stripURLSecrets(in)
 		if !ok || got != want {

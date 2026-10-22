@@ -390,27 +390,20 @@ func secretString(s string) bool {
 var urlInString = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
 
 // urlCarriesCredential reports a URL with a credential in its userinfo or
-// a query or fragment parameter whose decoded name is a secret key. A
-// password is always a credential; a user name alone (git@, oauth2@,
-// org@dev.azure.com) is one only when it looks like a token, as in
-// https://ghp_x@github.com, and never for ssh. It parses with net/url, so
-// ports, IPv6 hosts and percent-encoding do not hide one. A URL that does
-// not parse, such as http://${HOST}:8080, is judged by its raw authority
-// and query.
+// a query or fragment parameter whose decoded name is a secret key; see
+// userinfoIsCredential for the userinfo rule. It parses with net/url, so
+// ports, IPv6 hosts and percent-encoding do not hide a parameter. A URL
+// that does not parse, such as http://${HOST}:8080, is judged by its raw
+// authority and query.
 func urlCarriesCredential(raw string) bool {
+	userinfo, rest, query, frag := splitURL(raw)
+	scheme, _, _ := strings.Cut(raw, "://")
+	if userinfoIsCredential(scheme, userinfo, rest) {
+		return true
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		userinfo, _, query, frag := splitURL(raw)
-		scheme, _, _ := strings.Cut(raw, "://")
-		return userinfoIsCredential(scheme, userinfo) || secretParams(query) || secretParams(frag)
-	}
-	if u.User != nil {
-		if _, has := u.User.Password(); has {
-			return true
-		}
-		if !loginScheme(u.Scheme) && tokenLike(u.User.Username()) {
-			return true
-		}
+		return secretParams(query) || secretParams(frag)
 	}
 	return secretParams(u.RawQuery) || secretParams(u.Fragment)
 }
@@ -435,59 +428,48 @@ func splitURL(raw string) (userinfo, rest, query, frag string) {
 	return userinfo, rest, query, frag
 }
 
-// userinfoIsCredential reports raw userinfo with a password, or a user name
-// that looks like a token.
-func userinfoIsCredential(scheme, userinfo string) bool {
+// userinfoIsCredential reports raw userinfo that is a credential. It fails
+// closed: a password always is; on ssh, git, git+ssh, ssh+git and sftp a
+// user name alone is a login and is not; on any other scheme a user name
+// alone is, except git, oauth2 and x-access-token, and an Azure DevOps
+// organization (https://org@dev.azure.com/org/...). A percent-encoded name,
+// or one with a character outside [A-Za-z0-9._-], always is. rest is the
+// URL up to its query, as splitURL returns it.
+func userinfoIsCredential(scheme, userinfo, rest string) bool {
 	if userinfo == "" {
 		return false
 	}
-	if _, _, has := strings.Cut(userinfo, ":"); has {
+	if strings.Contains(userinfo, ":") {
 		return true
+	}
+	for _, r := range userinfo {
+		ok := r == '.' || r == '_' || r == '-' || (r >= '0' && r <= '9') ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if !ok {
+			return true
+		}
 	}
 	if loginScheme(scheme) {
 		return false
 	}
-	name := userinfo
-	if dec, err := url.PathUnescape(name); err == nil {
-		name = dec
+	switch userinfo {
+	case "git", "oauth2", "x-access-token":
+		return false
 	}
-	return tokenLike(name)
+	after := rest[strings.Index(rest, "@")+1:]
+	host, path, _ := strings.Cut(after, "/")
+	first, _, _ := strings.Cut(path, "/")
+	return !(strings.EqualFold(host, "dev.azure.com") && first == userinfo)
 }
 
 // loginScheme is a scheme whose user name is a login, never a token:
-// ssh://git@host/repo, git+ssh://git@host/repo.
+// ssh://git@host/repo, git+ssh://git@host/repo. The key lives in ~/.ssh.
 func loginScheme(scheme string) bool {
 	switch strings.ToLower(scheme) {
-	case "ssh", "git", "git+ssh", "ssh+git", "sftp", "scp":
+	case "ssh", "git", "git+ssh", "ssh+git", "sftp":
 		return true
 	}
 	return false
-}
-
-// tokenLike is a URL user name that is a token rather than a login: a known
-// token prefix, or 20 or more characters mixing letters and digits with no
-// separator a login name uses. git, oauth2, x-access-token and an Azure
-// DevOps organization name are not.
-func tokenLike(name string) bool {
-	if secretValueShapes.MatchString(name) || strings.HasPrefix(name, "glpat-") {
-		return true
-	}
-	if len(name) < 20 || strings.ContainsAny(name, ".@ ") {
-		return false
-	}
-	var letter, digit bool
-	for _, r := range name {
-		switch {
-		case r >= '0' && r <= '9':
-			digit = true
-		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
-			letter = true
-		case r == '-' || r == '_':
-		default:
-			return false
-		}
-	}
-	return letter && digit
 }
 
 // secretParams reports a query-shaped string with a secret parameter name,
@@ -516,7 +498,7 @@ func stripURLSecrets(raw string) (string, bool) {
 		return "", false
 	}
 	userinfo, rest, query, frag := splitURL(raw)
-	if userinfoIsCredential(u.Scheme, userinfo) {
+	if userinfoIsCredential(u.Scheme, userinfo, rest) {
 		rest = strings.Replace(rest, userinfo+"@", "", 1)
 	}
 	out := rest

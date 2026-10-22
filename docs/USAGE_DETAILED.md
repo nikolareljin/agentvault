@@ -596,8 +596,9 @@ Flags:
 Flags:
 - `--format <dotenv|shell|json>` (default: `dotenv`)
 - `--no-keys` (default: `false`): leave out API keys, and write base URLs
-  without a password, a token-shaped user name or secret query parameters;
-  the rest of the URL is kept as written
+  without a password, a user name (except `git`, `oauth2`,
+  `x-access-token` and an Azure DevOps organization) or secret query
+  parameters; the rest of the URL is kept as written
 - `--agent <name>`
 
 Values are written in single quotes, so sourcing or eval-ing the file runs

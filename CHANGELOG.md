@@ -410,11 +410,12 @@
   and secret keys and `http_headers` of Codex and Ollama custom settings.
   A URL query parameter counts as a secret by its name under the key rules
   (`?client_secret=`, `?api-key=`, `?sig=`), and so does `X-Api-Key=x` in
-  an argument. A URL carries a credential when it has a password, a user
-  name shaped like a token (`https://ghp_x@host`, never on ssh or git
-  URLs), or a secret-named query or fragment parameter, percent-encoded or
-  not; ports and IPv6 hosts do not hide one. A login name such as
-  `ssh://git@host/r.git` or `https://org@dev.azure.com/...` is kept. Before,
+  an argument. A URL carries a credential when it has a password, a
+  secret-named query or fragment parameter (percent-encoded or not), or a
+  user name alone on any scheme but ssh, git, git+ssh and sftp; ports and
+  IPv6 hosts do not hide one. The user names `git`, `oauth2` and
+  `x-access-token`, and an Azure DevOps organization
+  (`https://org@dev.azure.com/org/...`), are kept as logins. Before,
   the flag left them in. They are blanked as in
   provider files and filled on import from this machine's vault when the
   definition is unchanged: for an MCP server the same command, args and `env`
