@@ -480,7 +480,8 @@ Flags:
   `.github/instructions`, `.github/prompts`, `.cursor/rules`,
   `.windsurf/rules`, `.clinerules`, `.claude/agents`, `.claude/commands`,
   `.claude/skills` or `.gemini/commands` (`.toml` too there); any file in
-  a skill directory (`.claude/skills/NAME/scripts/x.py`); or a file an
+  a skill directory but its dot paths (`.claude/skills/NAME/scripts/x.py`);
+  or a file an
   instruction refers to in a plain directory (`scripts/check.sh`,
   `.env.example`). Any other dot directory or dot file, at any depth, is
   refused (`.git`, `.vscode`, `.claude/settings.json`, `pkg/.envrc`), as are
