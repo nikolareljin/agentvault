@@ -489,6 +489,11 @@ Flags:
 - `--no-keys` (default: `false`)
 - `--agent <name>`
 
+A value that cannot be written safely (`dotenv`: a single quote, `${` or a
+control character; `shell`: a control character) is left out with a
+comment and a warning; the rest is written and the command exits 1. The
+same holds for `run --env` and the `.env.agents` of `generate all`.
+
 ### `agentvault generate mcp [output-file]`
 Default output is Claude Desktop's config for the OS:
 `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS),

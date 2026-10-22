@@ -354,6 +354,7 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 	}
 
 	var output strings.Builder
+	left := 0
 
 	switch format {
 	case "shell":
@@ -363,13 +364,13 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			prefix := envPrefixForAgent(a)
 			output.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", printable(a.Name), printable(string(a.Provider))))
 			if a.Model != "" {
-				output.WriteString(shellExportLine(prefix+"_MODEL", a.Model))
+				output.WriteString(countLeftOut(&left, shellExportLine(prefix+"_MODEL", a.Model)))
 			}
 			if !noKeys && a.APIKey != "" {
-				output.WriteString(shellExportLine(prefix+"_API_KEY", a.APIKey))
+				output.WriteString(countLeftOut(&left, shellExportLine(prefix+"_API_KEY", a.APIKey)))
 			}
 			if a.BaseURL != "" {
-				output.WriteString(shellExportLine(prefix+"_BASE_URL", a.BaseURL))
+				output.WriteString(countLeftOut(&left, shellExportLine(prefix+"_BASE_URL", a.BaseURL)))
 			}
 			output.WriteString("\n")
 		}
@@ -399,13 +400,13 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			output.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", printable(a.Name), printable(string(a.Provider))))
 			prefix := envPrefixForAgent(a)
 			if a.Model != "" {
-				output.WriteString(dotenvLine(prefix+"_MODEL", a.Model))
+				output.WriteString(countLeftOut(&left, dotenvLine(prefix+"_MODEL", a.Model)))
 			}
 			if !noKeys && a.APIKey != "" {
-				output.WriteString(dotenvLine(prefix+"_API_KEY", a.APIKey))
+				output.WriteString(countLeftOut(&left, dotenvLine(prefix+"_API_KEY", a.APIKey)))
 			}
 			if a.BaseURL != "" {
-				output.WriteString(dotenvLine(prefix+"_BASE_URL", a.BaseURL))
+				output.WriteString(countLeftOut(&left, dotenvLine(prefix+"_BASE_URL", a.BaseURL)))
 			}
 			output.WriteString("\n")
 		}
@@ -413,7 +414,7 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 
 	if outputFile == "-" {
 		fmt.Print(output.String())
-		return nil
+		return leftOutError(cmd, left)
 	}
 
 	if err := os.WriteFile(outputFile, []byte(output.String()), 0600); err != nil {
@@ -424,7 +425,25 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 	if noKeys {
 		fmt.Println("  Note: API keys excluded (use without --no-keys to include)")
 	}
-	return nil
+	return leftOutError(cmd, left)
+}
+
+// countLeftOut counts a line that shellExportLine or dotenvLine left out.
+func countLeftOut(n *int, line string) string {
+	if strings.HasPrefix(line, "# ") {
+		*n++
+	}
+	return line
+}
+
+// leftOutError is the exit 1 of an env writer that left values out. What
+// is safe is still written; a script must not take the result as whole.
+func leftOutError(cmd *cobra.Command, n int) error {
+	if n == 0 {
+		return nil
+	}
+	cmd.SilenceUsage = true
+	return fmt.Errorf("%d value(s) left out of the env output (control character, or for dotenv a quote or ${); see the warnings above", n)
 }
 
 func cloneClaudeConfig(in *agent.ClaudeConfig) *agent.ClaudeConfig {
@@ -952,6 +971,7 @@ func runGenerateAll(cmd *cobra.Command, args []string) error {
 	}
 
 	// Generate .env
+	left := 0
 	agents := v.List()
 	if len(agents) > 0 {
 		var envContent strings.Builder
@@ -962,10 +982,10 @@ func runGenerateAll(cmd *cobra.Command, args []string) error {
 			prefix := envPrefixForAgent(a)
 			envContent.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", printable(a.Name), printable(string(a.Provider))))
 			if a.Model != "" {
-				envContent.WriteString(dotenvLine(prefix+"_MODEL", a.Model))
+				envContent.WriteString(countLeftOut(&left, dotenvLine(prefix+"_MODEL", a.Model)))
 			}
 			if a.BaseURL != "" {
-				envContent.WriteString(dotenvLine(prefix+"_BASE_URL", a.BaseURL))
+				envContent.WriteString(countLeftOut(&left, dotenvLine(prefix+"_BASE_URL", a.BaseURL)))
 			}
 			envContent.WriteString("\n")
 		}
@@ -993,5 +1013,5 @@ func runGenerateAll(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nGenerated %d configuration(s).\n", generated)
 	}
 
-	return nil
+	return leftOutError(cmd, left)
 }

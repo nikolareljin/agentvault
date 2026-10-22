@@ -78,8 +78,8 @@ func TestGenerateEnvShellNameStaysInComment(t *testing.T) {
 	out, err := captureStdoutForTest(t, func() error {
 		return generateEnvCmd.RunE(generateEnvCmd, []string{"-"})
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.HasPrefix(err.Error(), "1 value(s) left out") {
+		t.Fatalf("err = %v, want 1 value left out", err)
 	}
 	if strings.Contains(out, "\nexport PWN") || strings.ContainsAny(out, "\x1b\a") {
 		t.Errorf("output = %q", out)
@@ -139,8 +139,8 @@ func TestGenerateDotenvRunsNothing(t *testing.T) {
 	out, err := captureStdoutForTest(t, func() error {
 		return generateEnvCmd.RunE(generateEnvCmd, []string{"-"})
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.HasPrefix(err.Error(), "2 value(s) left out") {
+		t.Fatalf("err = %v, want 2 values left out", err)
 	}
 	prefix := envPrefixForAgent(a)
 	got, err := exec.Command("env", "-i", "HOME=/nonexistent", "sh", "-c", out+"\nprintf %s \"$"+prefix+"_MODEL|${"+prefix+"_BASE_URL-unset}|${"+prefix+"_API_KEY-unset}\"").Output()
@@ -187,5 +187,36 @@ func TestShellExportLineLeftOutUnsets(t *testing.T) {
 	}
 	if string(got) != "unset" {
 		t.Errorf("AV_T_KEY = %q after %q, want unset", got, line)
+	}
+}
+
+// An env writer that leaves a value out still prints the rest but fails,
+// so a script does not take a config without its API key as whole.
+func TestEnvWritersExitOneWhenLeftOut(t *testing.T) {
+	for _, bad := range []bool{false, true} {
+		a := testAgent()
+		if bad {
+			a.APIKey = "k\x1b[2J"
+		}
+		root := t.TempDir()
+		setTestHomeDir(t, root)
+		t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+		dir := filepath.Join(root, config.AppName)
+		seedProfileVault(t, dir, []agent.Agent{a}, nil)
+		useConfigDir(t, dir)
+		withFlags(t, runCmd, map[string]string{"env": "true"})
+		out, err := captureStdoutForTest(t, func() error { return runCmd.RunE(runCmd, []string{a.Name}) })
+		if (err != nil) != bad || !strings.Contains(out, "AGENT_MODEL=") {
+			t.Errorf("run --env bad=%v: err = %v, out = %q", bad, err, out)
+		}
+		for _, format := range []string{"shell", "dotenv"} {
+			withFlags(t, generateEnvCmd, map[string]string{"format": format})
+			f := filepath.Join(root, "env-"+format)
+			_, err := captureStdoutForTest(t, func() error { return generateEnvCmd.RunE(generateEnvCmd, []string{f}) })
+			data, rerr := os.ReadFile(f)
+			if (err != nil) != bad || rerr != nil || !strings.Contains(string(data), "_MODEL=") {
+				t.Errorf("generate env %s bad=%v: err = %v, file %q", format, bad, err, data)
+			}
+		}
 	}
 }

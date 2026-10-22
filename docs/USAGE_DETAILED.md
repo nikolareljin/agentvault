@@ -118,7 +118,8 @@ Flags:
 Show effective resolved configuration for one agent.
 
 Flags:
-- `--env` (default: `false`): Print shell exports instead of JSON.
+- `--env` (default: `false`): Print shell exports instead of JSON. A value
+  with a control character is left out and unset, and the command exits 1.
 
 ## 3.3 Prompt Gateway and status
 
@@ -551,7 +552,10 @@ Flags:
 Values are written in single quotes, so sourcing or eval-ing the file runs
 nothing. `dotenv` leaves out a value with a single quote, `${` or a control
 character, and `shell` one with a control character; each is named in a
-comment in the file and in a warning on stderr.
+comment in the file and in a warning on stderr, and `shell` also unsets it.
+The rest is still written, and the command exits 1 with a last stderr line
+giving the count. `run --env` and the `.env.agents` of `generate all` do
+the same.
 
 ### `agentvault generate mcp [output-file]`
 Flags:

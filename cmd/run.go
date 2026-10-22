@@ -34,20 +34,21 @@ Example:
 		asEnv, _ := cmd.Flags().GetBool("env")
 
 		if asEnv {
-			fmt.Print(shellExportLine("AGENT_NAME", a.Name))
-			fmt.Print(shellExportLine("AGENT_PROVIDER", string(a.Provider)))
-			fmt.Print(shellExportLine("AGENT_MODEL", a.Model))
+			left := 0
+			fmt.Print(countLeftOut(&left, shellExportLine("AGENT_NAME", a.Name)))
+			fmt.Print(countLeftOut(&left, shellExportLine("AGENT_PROVIDER", string(a.Provider))))
+			fmt.Print(countLeftOut(&left, shellExportLine("AGENT_MODEL", a.Model)))
 			if a.APIKey != "" {
-				fmt.Print(shellExportLine("AGENT_API_KEY", a.APIKey))
+				fmt.Print(countLeftOut(&left, shellExportLine("AGENT_API_KEY", a.APIKey)))
 			}
 			if a.BaseURL != "" {
-				fmt.Print(shellExportLine("AGENT_BASE_URL", a.BaseURL))
+				fmt.Print(countLeftOut(&left, shellExportLine("AGENT_BASE_URL", a.BaseURL)))
 			}
 			prompt := a.EffectiveSystemPrompt(shared)
 			if prompt != "" {
-				fmt.Print(shellExportLine("AGENT_SYSTEM_PROMPT", prompt))
+				fmt.Print(countLeftOut(&left, shellExportLine("AGENT_SYSTEM_PROMPT", prompt)))
 			}
-			return nil
+			return leftOutError(cmd, left)
 		}
 
 		type output struct {

@@ -160,9 +160,11 @@
 - Output that scripts may read changed (see Security for why):
   `instructions show`, `instructions preview`, `rules export` and
   `templates show` print control characters as `?`, also when piped;
-  add `--raw` for the exact bytes. `generate env` leaves out a value with
-  a control character (dotenv also one with `'` or `${`) and still exits
-  0; the shell format unsets it. Import refuses a bundle whose names hold
+  add `--raw` for the exact bytes, so `rules export > FILE` now needs
+  `--raw` to write the rules byte-exact. `generate env`, `generate all`
+  and `run --env` leave out a value with a control character (dotenv
+  also one with `'` or `${`), write the rest, and exit 1 with a count on
+  stderr; the shell format unsets it. Import refuses a bundle whose names hold
   control characters, and does not add an MCP server whose command was
   blanked by export.
 - A plaintext export that writes API keys or secrets now needs
@@ -391,7 +393,7 @@
   quotes, so a model or URL such as `$(cmd)` does not run when the output
   is eval'd or sourced, and a multi-line system prompt comes back
   unchanged. A value with a control character is left out with a warning
-  and unset, so an older export of that name is not used instead. A name
+  (exit 1) and unset, so an older export of that name is not used instead. A name
   saved before control characters were refused cannot start a new line
   in the generated env file, and the provider, which import does not
   check, is cleaned like the name: `claude;cmd;` ran `cmd` when sourced.
@@ -400,7 +402,7 @@
   (0.14.0 wrote `"$(cmd)"`, which ran). docker compose reads them
   literally. A value with a single quote, `${` (python-dotenv expands it
   even in single quotes) or a control character is left out of the file
-  with a warning on stderr.
+  with a warning on stderr, and the command exits 1.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older
