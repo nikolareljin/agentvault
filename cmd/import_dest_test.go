@@ -46,3 +46,25 @@ func TestApplyProjectsMergeKeepsUnreadableDestination(t *testing.T) {
 		t.Error("merge overwrote a destination it could not read")
 	}
 }
+
+// A non-prose file already in place with the same bytes, as on the machine
+// that exported it, is not reported as left staged; a changed one still is.
+func TestApplyProjectsQuietForIdenticalNonProse(t *testing.T) {
+	cfg := t.TempDir()
+	project := t.TempDir()
+	stage := filepath.Join(cfg, setupImportedAssetsDirName, "project")
+	mustWriteFile(t, filepath.Join(stage, "scripts", "run.sh"), "#!/bin/sh\necho hi\n")
+	mustWriteFile(t, filepath.Join(stage, ".aider.conf.yml"), "lint-cmd: true\n")
+	mustWriteFile(t, filepath.Join(project, "scripts", "run.sh"), "#!/bin/sh\necho hi\n")
+	mustWriteFile(t, filepath.Join(project, ".aider.conf.yml"), "lint-cmd: other\n")
+	_, skipped, err := applyStagedProjectAssetsWith(cfg, project, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped) != 1 || !strings.HasPrefix(skipped[0], ".aider.conf.yml: ") {
+		t.Errorf("skipped %v, want only the changed .aider.conf.yml", skipped)
+	}
+	if got, _ := os.ReadFile(filepath.Join(project, ".aider.conf.yml")); string(got) != "lint-cmd: other\n" {
+		t.Error("changed non-prose file was written")
+	}
+}

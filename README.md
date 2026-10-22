@@ -23,7 +23,7 @@ Detailed command and TUI references: `docs/README.md`.
 - **Live Streaming Output**: Prompt responses stream in real-time for Claude, Codex, and Gemini
 - **Interactive TUI**: 8-tab interface (Agents/Instructions/Rules/Sessions/Detected/Commands/Status/About) with search, filtering, and Prompt Gateway
 - **MCP Server Support**: Configure Model Context Protocol servers per agent
-- **Secure Portable Setup**: Export with env-var key capture (`--include-keys`) and confirmation-gated sensitive content (`--include-secrets`)
+- **Secure Portable Setup**: Export with env-var key capture (`--include-keys`) and sensitive content (`--include-secrets`) that a plaintext export writes only with `--confirm`
 
 ## Quick Start
 
@@ -253,7 +253,7 @@ Execution behavior:
 
 Current limitation:
 - Prompt text alone does not switch repositories or instruction scope. If you start from `~/my-projects-location`, AgentVault uses that current directory for local instruction discovery.
-- Agentic prompt runs now use explicit execution workspace selection. CLI defaults to workflow repo root when `--workflow ... --repo ...` is used, otherwise current directory. Override with `--workspace`.
+- Agentic prompt runs use explicit execution workspace selection. CLI defaults to workflow repo root when `--workflow ... --repo ...` is used, otherwise current directory. Override with `--workspace`.
 - For repository-aware PR or issue work, prefer explicit workflow execution such as `agentvault prompt my-codex --workflow implement_pr --repo ~/my-projects-location/my-app --workspace ~/my-projects-location/my-app --pr 27`.
 
 Runtime value precedence for prompt execution is:
@@ -269,7 +269,7 @@ Portable setup bundles can additionally include explicit asset manifests for:
 - discovered local instruction overrides (`instruction_overrides`)
 - custom skill trees (`skill_assets`)
 
-`agentvault export` includes sensitive provider file content by default and encrypts the bundle by default; use `--include-secrets=false` to leave it out, and note that `--plain` requires explicit confirmation whenever secrets are included. The deprecated `agentvault setup export` keeps its old defaults: secrets excluded unless `--include-secrets`, plaintext unless `--encrypted`.
+`agentvault export` includes sensitive provider file content by default and encrypts the bundle by default; use `--include-secrets=false` to leave it out, and note that `--plain` is refused without `--confirm` whenever keys or secrets are included. The deprecated `agentvault setup export` keeps its old defaults: secrets excluded unless `--include-secrets`, plaintext unless `--encrypted`.
 
 In the TUI Agent detail view, effective values include source tags (`local`, `env`, `default`) for model/API key/base URL.
 
@@ -300,7 +300,7 @@ agentvault rules add no-todos \
   --priority 50
 
 # Export rules as markdown for instruction files
-agentvault rules export > RULES.md
+agentvault rules export --raw > RULES.md
 ```
 
 ## Roles System

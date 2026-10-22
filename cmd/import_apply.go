@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"io"
 	"os"
 	"path"
@@ -415,6 +416,8 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 		have = map[string]any{}
 	}
 	var dropped []string
+	// keptBlank: an export blank replaced by this machine's value.
+	keptBlank := false
 	put := func(m map[string]any, k string, lv any, lok bool) {
 		if lok {
 			m[k] = lv
@@ -543,8 +546,14 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 					if lok && jsonEqual(env[v], lv) {
 						continue
 					}
+					blank := env[v] == ""
 					put(env, v, lv, lok)
-					dropped = append(dropped, name+"."+v)
+					// A blank is what export left of a secret: nothing to name.
+					if blank {
+						keptBlank = true
+					} else {
+						dropped = append(dropped, name+"."+v)
+					}
 				}
 			default:
 				walk(bm[k], lm[k], name)
@@ -572,7 +581,7 @@ func dropBundleCommandsExcept(content, local []byte, consent map[string]map[stri
 			dropped = append(dropped, k)
 		}
 	}
-	if len(dropped) == 0 {
+	if len(dropped) == 0 && !keptBlank {
 		return content, nil
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
@@ -726,6 +735,33 @@ func codexCommandsChanged(content, local []byte) bool {
 var proseExtensions = map[string]bool{".md": true, ".markdown": true, ".mdx": true, ".txt": true,
 	".rst": true, ".json": true, ".jsonc": true, ".toml": true}
 
+// proseRunsCommands is whether a prose file can carry something an agent
+// runs, so a bundle's new or changed copy needs consent like a script: any
+// TOML command file (Gemini runs "!{cmd}", and TOML escapes hide it from a
+// byte check), any file with frontmatter (hooks, tools, mcpServers,
+// permissionMode and other keys), and a shell line ("!`cmd`", "!{cmd}").
+func proseRunsCommands(name string, content []byte) bool {
+	slashed := strings.TrimPrefix(agent.NormalizePathForMatch(name), "./")
+	ext := path.Ext(slashed)
+	switch ext {
+	case ".toml":
+		// Only Codex config.toml is checked key by key elsewhere.
+		return slashed != "config.toml"
+	case ".md", ".markdown", ".mdx", ".mdc", ".txt", ".prompt":
+	default:
+		return false
+	}
+	if agent.TextProblem(content) != "" {
+		// UTF-16 hides "---" and "!`" from the checks below behind NUL
+		// bytes, and a tool may still decode it. Not text: ask.
+		return true
+	}
+	if bytes.Contains(content, []byte("!`")) || bytes.Contains(content, []byte("!{")) {
+		return true
+	}
+	return bytes.HasPrefix(bytes.TrimLeft(content, "\ufeff \t\r\n"), []byte("---"))
+}
+
 // scriptAsset is a provider file that may run as a program: anything in a
 // hooks directory, and anything that is not prose by extension (an
 // extensionless file can be a script with a #! line, and a kept command can
@@ -734,7 +770,7 @@ func scriptAsset(asset SetupAsset) bool {
 	if execAllowed(asset) {
 		return true
 	}
-	p := strings.ToLower(strings.ReplaceAll(strings.TrimRight(asset.LogicalPath, ". "), `\`, "/"))
+	p := agent.NormalizePathForMatch(asset.LogicalPath)
 	if strings.HasPrefix(p, "hooks/") || strings.Contains(p, "/hooks/") {
 		return true
 	}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,12 @@ func TestMain(m *testing.M) {
 }
 
 func runWithTempHome(m *testing.M) int {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		// A helper process started by a test: HOME is already that test
+		// binary's throwaway home, and the helper ends with os.Exit, so a
+		// home made here would never be removed.
+		return m.Run()
+	}
 	dir, err := os.MkdirTemp("", "agentvault-test-home-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "home guard:", err)
@@ -50,5 +57,20 @@ func TestHomeGuardIsolatesUserHome(t *testing.T) {
 	}
 	if filepath.Dir(home) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(home), "agentvault-test-home-") {
 		t.Fatalf("tests run against a real home directory: %s", home)
+	}
+}
+
+// A helper process leaves no throwaway home behind.
+func TestHelperProcessLeavesNoTempHome(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		return
+	}
+	tmp := t.TempDir()
+	helper := exec.Command(os.Args[0], "-test.run=TestPromptWorkflowHelperProcess", "--", "git", "x")
+	helper.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1", "PROMPT_WORKFLOW_HELPER_FAIL=1", "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
+	_ = helper.Run()
+	left, err := filepath.Glob(filepath.Join(tmp, "agentvault-test-home-*"))
+	if err != nil || len(left) > 0 {
+		t.Errorf("helper left %v (%v)", left, err)
 	}
 }

@@ -72,7 +72,8 @@ func (r *importReport) record(action string, format string, args ...any) {
 	case "Removed":
 		r.Removed++
 	}
-	r.Lines = append(r.Lines, fmt.Sprintf("  %s: %s", action, fmt.Sprintf(format, args...)))
+	// Names and fields come from the bundle: no terminal escapes.
+	r.Lines = append(r.Lines, printable(fmt.Sprintf("  %s: %s", action, fmt.Sprintf(format, args...))))
 }
 
 // mergeKeyed reconciles two keyed collections under a strategy and returns the
@@ -164,11 +165,11 @@ type profileImportPlan struct {
 
 // planProfileImport computes, but does not apply, the vault changes for one
 // bundle profile under the given strategy.
-func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrategy, now time.Time) profileImportPlan {
+func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrategy, now time.Time, consent importConsent) profileImportPlan {
 	plan := profileImportPlan{}
 	rep := &plan.Report
 
-	plan.AgentOps = planAgentOps(v.List(), setup.Agents, strategy, now, rep)
+	plan.AgentOps = planAgentOps(v.List(), setup.Agents, strategy, now, consent, rep)
 
 	shared := cloneSharedConfig(v.SharedConfig())
 	// Prompt sessions are local run history that export deliberately omits, so
@@ -186,20 +187,65 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 		rep.record("Removed", "shared system prompt (not in bundle)")
 	}
 
+	var routerLeft []string
+	incomingShared.Router, routerLeft = restoreRouterSecrets(incomingShared.Router, shared.Router)
+	routerApplied := false
 	if !incomingShared.Router.IsZero() && (shared.Router.IsZero() || strategy.incomingWins()) {
+		routerApplied = true
+		// The langgraph script runs on route and prompt --router langgraph.
+		if in := incomingShared.Router.LangGraphCmd; in != "" && in != shared.Router.LangGraphCmd && !consent.KeepCommands {
+			incomingShared.Router.LangGraphCmd = shared.Router.LangGraphCmd
+			rep.record("Left out", "shared router config langgraph_command: the bundle adds or changes the router script; kept this machine's (use --keep-bundle-commands to take it)")
+		}
 		shared.Router = incomingShared.Router
 		rep.Lines = append(rep.Lines, "  Applied: shared router config")
+		for _, f := range routerLeft {
+			rep.record("Left out", "shared router config %s: blank in the bundle, and the router differs from this machine's", f)
+		}
 	} else if strategy.deletesLocalOnly() && incomingShared.Router.IsZero() && !shared.Router.IsZero() {
 		shared.Router = agent.RouterConfig{}
 		rep.record("Removed", "shared router config (not in bundle)")
 	}
 
+	var mcpLeft []mcpBlankLeft
+	incomingShared.MCPServers, mcpLeft = restoreMCPServerSecrets(incomingShared.MCPServers, shared.MCPServers)
+	incomingShared.MCPServers = gateBundleCommands(incomingShared.MCPServers, shared.MCPServers,
+		mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true }, consent.takesMCP,
+		strategy, "shared MCP server", rep)
+	localMCP := make(map[string]agent.MCPServer, len(shared.MCPServers))
+	for _, s := range shared.MCPServers {
+		localMCP[s.Name] = s
+	}
+	finalMCP := make(map[string]agent.MCPServer, len(incomingShared.MCPServers))
+	for _, s := range incomingShared.MCPServers {
+		finalMCP[s.Name] = s
+	}
+	for _, l := range mcpLeft {
+		have, isLocal := localMCP[l.Server]
+		// Under merge a changed local server stays as it is: nothing left out.
+		if isLocal && !strategy.incomingWins() {
+			continue
+		}
+		// A server left out, or kept as this machine's, is reported once above.
+		if f, ok := finalMCP[l.Server]; !ok || (isLocal && reflect.DeepEqual(f, have)) {
+			continue
+		}
+		rep.record("Left out", "shared MCP server %s %s: blank in the bundle, and the server is new or differs from this machine's", l.Server, l.Field)
+	}
 	shared.MCPServers = mergeKeyed(shared.MCPServers, incomingShared.MCPServers,
 		func(s agent.MCPServer) string { return s.Name }, strategy, "MCP server", rep)
 	// Stamp override-derived instructions with the bundle's own creation time, not
 	// the wall clock: a timestamp that moves on every run would make re-importing
 	// an unchanged bundle rewrite them forever.
-	shared.Instructions = mergeKeyed(shared.Instructions, mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)),
+	incomingInstructions := validIncomingInstructions(mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)), shared.Instructions, rep)
+	// .aider.conf.yml and the scripts instructions refer to run code.
+	incomingInstructions = gateBundleCommands(incomingInstructions, shared.Instructions,
+		agent.InstructionKey, sameInstructionFile,
+		func(i agent.InstructionFile) bool {
+			return agent.InstructionFileRunsCommands(i.Filename) || proseRunsCommands(i.Filename, []byte(i.Content))
+		},
+		consent.takes, strategy, "instruction", rep)
+	shared.Instructions = mergeKeyed(shared.Instructions, incomingInstructions,
 		agent.InstructionKey, strategy, "instruction", rep)
 	shared.Rules = mergeKeyed(shared.Rules, incomingShared.Rules,
 		func(r agent.UnifiedRule) string { return r.Name }, strategy, "rule", rep)
@@ -211,7 +257,9 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	plan.Shared = shared
 	plan.SharedChanged = !reflect.DeepEqual(v.SharedConfig(), shared)
 
-	plan.ProviderConfigs, plan.ProviderChanged = planProviderConfigs(v.ProviderConfigs(), setup.ProviderConfigs, strategy, rep)
+	localProviders := v.ProviderConfigs()
+	plan.ProviderConfigs, plan.ProviderChanged = planProviderConfigs(localProviders, setup.ProviderConfigs, strategy, rep)
+	reportVaultBlanks(&plan, setup.VaultBlanks, localProviders, routerApplied, rep)
 
 	// Normalize empty-but-allocated slices to nil first: mergeKeyed yields nil for
 	// an empty result, and an unchanged section must compare deep-equal.
@@ -249,7 +297,7 @@ func nilIfEmpty[T any](items []T) []T {
 }
 
 // planAgentOps diffs the vault's agents against the bundle's.
-func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy importStrategy, now time.Time, rep *importReport) []agentOp {
+func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy importStrategy, now time.Time, consent importConsent, rep *importReport) []agentOp {
 	byName := make(map[string]agent.Agent, len(existing))
 	for _, a := range existing {
 		byName[a.Name] = a
@@ -260,7 +308,25 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 	for _, a := range incoming {
 		incomingNames[a.Name] = struct{}{}
 		current, exists := byName[a.Name]
+		// Values an export without --include-secrets blanked come back from
+		// the local agent, or are dropped.
+		a, left := restoreAgentSecrets(a, current, exists)
+		if !exists || strategy.incomingWins() {
+			a.MCPServers = gateBundleCommands(a.MCPServers, current.MCPServers,
+				mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true }, consent.takesMCP,
+				strategyReplace, "agent "+a.Name+" MCP server", rep)
+			kept := left[:0]
+			for _, f := range left {
+				if !mcpBlankOfKeptServer(f, a.MCPServers, current.MCPServers) {
+					kept = append(kept, f)
+				}
+			}
+			left = kept
+		}
 		if !exists {
+			for _, f := range left {
+				rep.record("Left out", "agent %s %s: blank in the bundle, and this machine has no such agent", a.Name, f)
+			}
 			a.CreatedAt = now
 			a.UpdatedAt = now
 			ops = append(ops, agentOp{Kind: "add", Agent: a, Name: a.Name})
@@ -271,9 +337,17 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 			rep.record("Skipped", "agent %s (kept local)", a.Name)
 			continue
 		}
-		// An empty key in the bundle must not wipe a working local credential.
-		if a.APIKey == "" {
-			a.APIKey = current.APIKey
+		for _, f := range left {
+			rep.record("Left out", "agent %s %s: blank in the bundle, and the bundle's definition differs from this machine's", a.Name, f)
+		}
+		// An empty key in the bundle must not wipe a working local credential,
+		// and must not follow an agent the bundle points elsewhere.
+		if a.APIKey == "" && current.APIKey != "" {
+			if sameAgentEndpoint(a, current) {
+				a.APIKey = current.APIKey
+			} else {
+				rep.record("Left out", "agent %s api_key: blank in the bundle, and the bundle's definition differs from this machine's", a.Name)
+			}
 		}
 		a.CreatedAt = current.CreatedAt
 		// Compare against the stored agent ignoring UpdatedAt, so re-running an
@@ -306,6 +380,27 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 func planProviderConfigs(existing agent.ProviderConfig, incoming agent.ProviderConfig, strategy importStrategy, rep *importReport) (agent.ProviderConfig, bool) {
 	result := existing
 	changed := false
+	// left: per provider, the secrets the bundle blanked or dropped that
+	// this machine's values do not fill; named only if the bundle's config
+	// replaces this machine's.
+	left := map[string][]string{}
+	incoming.Claude, left["Claude"] = restoreClaudeConfig(incoming.Claude, existing.Claude)
+	if o := incoming.Ollama; o != nil && o.BaseURL == "" && existing.Ollama != nil && secretString(existing.Ollama.BaseURL) {
+		cp := *o
+		cp.BaseURL = existing.Ollama.BaseURL
+		incoming.Ollama = &cp
+	}
+	if c := incoming.Codex; c != nil && existing.Codex != nil {
+		cp := *c
+		cp.CustomSettings, left["Codex"] = restoreCustomSettings(c.CustomSettings, existing.Codex.CustomSettings, true)
+		incoming.Codex = &cp
+	}
+	// Ollama's custom settings go to its base URL: a moved one gets none.
+	if o := incoming.Ollama; o != nil && existing.Ollama != nil {
+		cp := *o
+		cp.CustomSettings, left["Ollama"] = restoreCustomSettings(o.CustomSettings, existing.Ollama.CustomSettings, o.BaseURL == existing.Ollama.BaseURL)
+		incoming.Ollama = &cp
+	}
 
 	apply := func(name string, cur any, inc any, set func()) {
 		incPresent := !isNilProviderConfig(inc)
@@ -315,6 +410,9 @@ func planProviderConfigs(existing agent.ProviderConfig, incoming agent.ProviderC
 			set()
 			changed = true
 			rep.Lines = append(rep.Lines, fmt.Sprintf("  Applied: %s provider config", name))
+			for _, f := range left[name] {
+				rep.record("Left out", "%s provider config %s: secret not in the bundle, and not filled from this machine's settings", name, f)
+			}
 		case !incPresent && curPresent && strategy.deletesLocalOnly():
 			set()
 			changed = true
@@ -423,6 +521,47 @@ func capabilityKey(e agent.ModelCapabilityEntry) string {
 
 // mergeInstructionSources folds instruction override assets into the bundle's
 // instruction list so both carriers land in the vault as instructions.
+// validIncomingInstructions drops a bundle instruction the vault would
+// refuse to store or push: a filename such as .git/config or one that
+// escapes the project, or an invalid scope. This machine's entry under the
+// same key is passed on in its place, so mirror never deletes local data
+// because the bundle's copy was refused.
+func validIncomingInstructions(in, local []agent.InstructionFile, rep *importReport) []agent.InstructionFile {
+	byKey := make(map[string]agent.InstructionFile, len(local))
+	for _, l := range local {
+		byKey[agent.InstructionKey(l)] = l
+	}
+	out := in[:0:0]
+	for _, inst := range in {
+		if err := agent.ValidateInstructionScope(inst); err != nil {
+			if l, ok := byKey[agent.InstructionKey(inst)]; ok {
+				rep.record("Skipped", "instruction %s: %v; kept this machine's", inst.Name, err)
+				out = append(out, l)
+				continue
+			}
+			rep.record("Skipped", "instruction %s: %v", inst.Name, err)
+			continue
+		}
+		if problem := agent.TextProblem([]byte(inst.Content)); problem != "" {
+			// The vault holds UTF-8 text, as pull and instructions import
+			// store it. An equal copy (a vault from 0.14) still matches.
+			l, ok := byKey[agent.InstructionKey(inst)]
+			switch {
+			case ok && sameInstructionFile(l, inst):
+				out = append(out, inst)
+			case ok:
+				rep.record("Skipped", "instruction %s: %s; kept this machine's", inst.Name, problem)
+				out = append(out, l)
+			default:
+				rep.record("Left out", "instruction %s: %s", inst.Name, problem)
+			}
+			continue
+		}
+		out = append(out, inst)
+	}
+	return out
+}
+
 func mergeInstructionSources(instructions []agent.InstructionFile, overrides []SetupAsset, now time.Time) []agent.InstructionFile {
 	result := append([]agent.InstructionFile(nil), instructions...)
 	seen := make(map[string]struct{}, len(result))
@@ -432,6 +571,11 @@ func mergeInstructionSources(instructions []agent.InstructionFile, overrides []S
 	for _, asset := range overrides {
 		name := instructionNameForAsset(asset)
 		if name == "" || asset.Missing || !asset.ContentPresent {
+			continue
+		}
+		if agent.TextProblem(asset.Content) != "" || len(asset.Content) > maxSetupAssetBytes {
+			// The vault holds text, and export never writes more. The file
+			// itself is still staged with the other project files.
 			continue
 		}
 		filename := asset.ProjectRelativePath
@@ -477,15 +621,15 @@ func commitProfileImport(v *vault.Vault, plan profileImportPlan) error {
 		switch op.Kind {
 		case "add":
 			if err := v.Add(op.Agent); err != nil {
-				return fmt.Errorf("adding agent %s: %w", op.Name, err)
+				return fmt.Errorf("adding agent %s: %w", printable(op.Name), err)
 			}
 		case "update":
 			if err := v.Update(op.Agent); err != nil {
-				return fmt.Errorf("updating agent %s: %w", op.Name, err)
+				return fmt.Errorf("updating agent %s: %w", printable(op.Name), err)
 			}
 		case "remove":
 			if err := v.Remove(op.Name); err != nil {
-				return fmt.Errorf("removing agent %s: %w", op.Name, err)
+				return fmt.Errorf("removing agent %s: %w", printable(op.Name), err)
 			}
 		}
 	}
@@ -510,4 +654,183 @@ func commitProfileImport(v *vault.Vault, plan profileImportPlan) error {
 		}
 	}
 	return nil
+}
+
+// reportVaultBlanks names each value the bundle's export blanked that the
+// plan still leaves blank, unless a Left out line names it already, and
+// drops a blank agent extra so no tool reads "" as its value. Only what the
+// plan writes counts: an agent, router or provider config kept local is
+// not reported.
+func reportVaultBlanks(plan *profileImportPlan, blanks []VaultBlank, local agent.ProviderConfig, routerApplied bool, rep *importReport) {
+	for _, b := range blanks {
+		subject := b.subject()
+		named := false
+		for _, l := range rep.Lines {
+			if strings.HasPrefix(l, printable("  Left out: "+subject+":")) {
+				named = true
+				break
+			}
+		}
+		if named || !planLeavesBlank(plan, b, local, routerApplied) {
+			continue
+		}
+		rep.record("Left out", "%s: blank in the bundle, and not filled from this machine", subject)
+	}
+}
+
+func planLeavesBlank(plan *profileImportPlan, b VaultBlank, local agent.ProviderConfig, routerApplied bool) bool {
+	switch b.Section {
+	case blankAgent:
+		for i := range plan.AgentOps {
+			op := &plan.AgentOps[i]
+			if op.Kind == "remove" || op.Agent.Name != b.Name {
+				continue
+			}
+			return dropAgentBlank(&op.Agent, b.Field)
+		}
+	case blankRouter:
+		if !routerApplied {
+			return false
+		}
+		r := plan.Shared.Router
+		for _, f := range routerSecretFields(&r) {
+			if f.Name == b.Field {
+				return *f.Value == ""
+			}
+		}
+	case blankProvider:
+		var got, have map[string]any
+		switch b.Name {
+		case "Ollama":
+			o := plan.ProviderConfigs.Ollama
+			if o == nil || o == local.Ollama {
+				return false
+			}
+			if b.Field == "base_url" {
+				return o.BaseURL == ""
+			}
+			got = o.CustomSettings
+			if local.Ollama != nil {
+				have = local.Ollama.CustomSettings
+			}
+		case "Codex":
+			c := plan.ProviderConfigs.Codex
+			if c == nil || c == local.Codex {
+				return false
+			}
+			got = c.CustomSettings
+			if local.Codex != nil {
+				have = local.Codex.CustomSettings
+			}
+		default:
+			return false
+		}
+		k := strings.TrimPrefix(b.Field, "customSettings.")
+		hv, ok := have[k]
+		return !ok || !jsonEqual(got[k], hv)
+	}
+	return false
+}
+
+// dropAgentBlank reports whether a's field, as a VaultBlank names it, is
+// still blank, and removes a blank extra so no tool reads "" as its value.
+func dropAgentBlank(a *agent.Agent, field string) bool {
+	if field == "base_url" {
+		return a.BaseURL == ""
+	}
+	k := strings.TrimPrefix(field, "provider_meta.extra.")
+	if a.ProviderMeta == nil {
+		return true
+	}
+	v, ok := a.ProviderMeta.Extra[k]
+	if ok && v == "" {
+		meta := *a.ProviderMeta
+		meta.Extra = make(map[string]string, len(a.ProviderMeta.Extra))
+		for ek, ev := range a.ProviderMeta.Extra {
+			if ek != k {
+				meta.Extra[ek] = ev
+			}
+		}
+		a.ProviderMeta = &meta
+	}
+	return v == ""
+}
+
+// importConsent is what the user agreed to take from a bundle that makes
+// this machine run code: --keep-bundle-commands, or servers picked with
+// --mcp-servers.
+type importConsent struct {
+	KeepCommands bool
+	MCP          *mcpSelection
+}
+
+func (c importConsent) takes(string) bool { return c.KeepCommands }
+
+func (c importConsent) takesMCP(name string) bool {
+	if c.KeepCommands {
+		return true
+	}
+	if c.MCP != nil {
+		c.MCP.note(name)
+		return c.MCP.has(name)
+	}
+	return false
+}
+
+func mcpServerName(s agent.MCPServer) string { return s.Name }
+
+// sameMCPCommand is whether a and b run the same thing.
+func sameMCPCommand(a, b agent.MCPServer) bool {
+	if a.Command != b.Command || len(a.Args) != len(b.Args) || len(a.Env) != len(b.Env) {
+		return false
+	}
+	for i := range a.Args {
+		if a.Args[i] != b.Args[i] {
+			return false
+		}
+	}
+	for k, v := range a.Env {
+		if bv, ok := b.Env[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
+}
+
+func sameInstructionFile(a, b agent.InstructionFile) bool {
+	return a.Filename == b.Filename && a.Content == b.Content
+}
+
+// gateBundleCommands leaves out what in adds or changes that runs code on
+// this machine, unless take consents to it: a changed item keeps this
+// machine's copy, a new one is dropped. Under merge an existing local item
+// wins anyway, so it is passed through.
+func gateBundleCommands[T any](in, local []T, keyOf func(T) string, same func(a, b T) bool,
+	runs func(T) bool, take func(string) bool, strategy importStrategy, label string, rep *importReport) []T {
+	if len(in) == 0 {
+		return in
+	}
+	byKey := make(map[string]T, len(local))
+	for _, l := range local {
+		byKey[keyOf(l)] = l
+	}
+	out := make([]T, 0, len(in))
+	for _, item := range in {
+		key := keyOf(item)
+		have, exists := byKey[key]
+		switch {
+		case exists && same(item, have):
+		case exists && !strategy.incomingWins():
+		case !runs(item):
+		case take(key):
+		case exists:
+			item = have
+			rep.record("Left out", "%s %s: the bundle changes what it runs; kept this machine's (use --keep-bundle-commands to take it)", label, displayKey(key))
+		default:
+			rep.record("Left out", "%s %s: the bundle adds something that runs code (use --keep-bundle-commands to take it)", label, displayKey(key))
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }

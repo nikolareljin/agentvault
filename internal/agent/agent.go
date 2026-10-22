@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 // Provider represents a supported AI provider.
@@ -543,8 +545,26 @@ func joinStrings(strs []string, sep string) string {
 	return strings.Join(strs, sep)
 }
 
-// Validate checks that required fields are populated.
+// Validate checks a new agent: required fields, and names without control
+// characters, since names reach terminals and generated files.
 func (a *Agent) Validate() error {
+	if a.Name == "" {
+		return errors.New("agent name is required")
+	}
+	if textutil.Printable(a.Name) != a.Name {
+		return fmt.Errorf("agent name %q has control characters", a.Name)
+	}
+	for _, m := range a.MCPServers {
+		if textutil.Printable(m.Name) != m.Name {
+			return fmt.Errorf("MCP server name %q has control characters", m.Name)
+		}
+	}
+	return a.ValidateFields()
+}
+
+// ValidateFields is Validate without the name checks, for an edit that
+// keeps the names: an agent saved before they were refused stays editable.
+func (a *Agent) ValidateFields() error {
 	if a.Name == "" {
 		return errors.New("agent name is required")
 	}

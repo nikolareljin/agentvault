@@ -57,6 +57,14 @@ func (v *Vault) PullReferenceClosure(dir string) (ClosureResult, error) {
 				continue
 			}
 			visited[ref.Rel] = true
+			if err := agent.ValidateInstructionFilename(ref.Rel); err != nil {
+				// A tool's settings file (.vscode/tasks.json) is reported,
+				// not stored, and does not stop the files already pulled.
+				ref.Status = agent.ReferenceRefused
+				ref.Reason = err.Error()
+				result.Refused = append(result.Refused, ref)
+				continue
+			}
 
 			data, err := readReferencedFile(dir, ref.Rel)
 			if err != nil {
@@ -64,6 +72,14 @@ func (v *Vault) PullReferenceClosure(dir string) (ClosureResult, error) {
 				// this is a race or a permission problem, not prose naming a
 				// file that is not there.
 				return result, fmt.Errorf("reading referenced %s: %w", ref.Rel, err)
+			}
+			if problem := agent.TextProblem(data); problem != "" {
+				// The vault holds text: a PNG would come back with every
+				// invalid byte replaced, and push would write that back.
+				ref.Status = agent.ReferenceRefused
+				ref.Reason = problem
+				result.Refused = append(result.Refused, ref)
+				continue
 			}
 			inst := agent.InstructionFile{
 				Name:      ref.Rel,

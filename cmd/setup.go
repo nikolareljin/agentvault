@@ -1,22 +1,19 @@
 package cmd
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
-	"github.com/nikolareljin/agentvault/internal/crypto"
 	"github.com/nikolareljin/agentvault/internal/locations"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 // SetupBundle represents a complete portable agent configuration bundle.
@@ -76,6 +73,10 @@ type SetupBundle struct {
 	// Locations names the projects by work dir and git identity, so import
 	// can find them where they are checked out on this machine.
 	Locations *locations.Set `json:"locations,omitempty"`
+	// VaultBlanks are the vault values an export without --include-secrets
+	// blanked or dropped where a blank cannot be told from no value, so
+	// import can name each one it does not fill.
+	VaultBlanks []VaultBlank `json:"vault_blanks,omitempty"`
 }
 
 // MarshalJSON normalizes empty asset and guide slices to [] for stable bundle output.
@@ -243,8 +244,8 @@ func init() {
 	setupExportCmd.Flags().Bool("include-keys", false, "include API keys in export, also resolving keys from environment variables (use with caution)")
 	setupExportCmd.Flags().Bool("detect", false, "include detected agent information")
 	setupExportCmd.Flags().Bool("include-status", false, "include provider token/quota status snapshot in bundle")
-	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content; plaintext exports require interactive confirmation unless --confirm is set or --encrypted is used")
-	setupExportCmd.Flags().Bool("confirm", false, "skip interactive confirmation for sensitive export options (for scripted/CI use)")
+	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content; plaintext exports of keys or secrets require --confirm")
+	setupExportCmd.Flags().Bool("confirm", false, "allow writing API keys or secrets in plain text")
 	setupExportCmd.Flags().Bool("encrypted", false, "encrypt the bundle (prompted for password)")
 	setupExportCmd.Flags().Bool("plain", false, "force plaintext JSON output")
 	setupExportCmd.Flags().String("agent", "", "export only one named agent")
@@ -285,8 +286,9 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	if strings.HasSuffix(outputFile, ".bundle") && !plain {
 		encrypted = true
 	}
-	if includeSecrets && !encrypted {
-		if err := confirmPlaintextExport(confirmFlag, term.IsTerminal(stdinFD()), os.Stdin, cmd.ErrOrStderr(), "--encrypted"); err != nil {
+	if !encrypted {
+		what := plaintextSecretsWhat(includeKeys, includeSecrets)
+		if err := confirmPlaintextExport(confirmFlag, what, outputFile, "drop --include-keys/--include-secrets, or add --encrypted"); err != nil {
 			return err
 		}
 	}
@@ -308,7 +310,17 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	}
 	bundle := collected.Bundle
 
-	data, err := json.MarshalIndent(bundle, "", "  ")
+	var data []byte
+	if includeSecrets {
+		data, err = json.MarshalIndent(bundle, "", "  ")
+	} else {
+		// Blanked secrets: older readers of the 1.x layout would write the
+		// blanks over their values, so it goes out as a blanked portable
+		// bundle, which they refuse and setup import reads.
+		wrapped := wrapSetupBundle(bundle)
+		wrapped.SchemaVersion = BlankedBundleSchemaVersion
+		data, err = json.MarshalIndent(wrapped, "", "  ")
+	}
 	if err != nil {
 		return fmt.Errorf("encoding bundle: %w", err)
 	}
@@ -364,7 +376,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 		fmt.Println("  Agent keys:")
 		for i, a := range bundle.Agents {
 			keyStatus := agentKeyStatus(a, includeKeys, collected.EnvKeyFilled[i])
-			fmt.Printf("    %-20s %s\n", a.Name+":", keyStatus)
+			fmt.Printf("    %-20s %s\n", printable(a.Name)+":", keyStatus)
 		}
 	}
 	return nil
@@ -381,7 +393,7 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 		strategy = strategyReplace
 	}
 
-	raw, err := os.ReadFile(args[0])
+	raw, err := readImportFile(args[0])
 	if err != nil {
 		return fmt.Errorf("reading bundle: %w", err)
 	}
@@ -416,7 +428,7 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 		if len(bundle.Profiles) > 1 {
 			fmt.Fprintf(out, "\nProfile %q:\n", profile.Name)
 		}
-		plan := planProfileImport(v, profile.Setup, strategy, now)
+		plan := planProfileImport(v, profile.Setup, strategy, now, importConsent{})
 		for _, line := range plan.Report.Lines {
 			fmt.Fprintln(out, line)
 		}
@@ -453,57 +465,71 @@ func mergeSharedRouterConfig(dst *agent.SharedConfig, src agent.SharedConfig, me
 }
 
 func runSetupShow(cmd *cobra.Command, args []string) error {
-	data, err := os.ReadFile(args[0])
+	raw, err := readImportFile(args[0])
 	if err != nil {
 		return fmt.Errorf("reading bundle: %w", err)
 	}
+	payload, err := decodeImportPayload(raw)
+	if err != nil {
+		return err
+	}
+	// Any export: a 1.x setup bundle, a portable bundle (what setup export
+	// writes without --include-secrets) or a legacy vault export.
+	bundle, _, err := decodePortableBundle(payload)
+	if err != nil {
+		return err
+	}
+	for i, profile := range bundle.Profiles {
+		if len(bundle.Profiles) > 1 {
+			if i > 0 {
+				fmt.Println()
+			}
+			fmt.Printf("Profile %q:\n", profile.Name)
+		}
+		printSetupBundle(profile.Setup)
+	}
+	return nil
+}
 
-	var bundle SetupBundle
-	if err := json.Unmarshal(data, &bundle); err != nil {
-		// Might be encrypted
-		if len(data) < crypto.SaltLen {
-			return fmt.Errorf("invalid bundle format")
-		}
-		password, err := readPassword("Bundle password: ")
-		if err != nil {
-			return err
-		}
-		plaintext, err := decryptBundlePayload(data, password)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(plaintext, &bundle); err != nil {
-			return fmt.Errorf("decoding bundle: %w", err)
+// printfClean is fmt.Printf with every string argument made printable: the
+// bundle's names and commands come from another machine.
+func printfClean(format string, args ...any) {
+	for i, a := range args {
+		if v := reflect.ValueOf(a); v.IsValid() && v.Kind() == reflect.String {
+			args[i] = printable(v.String())
 		}
 	}
+	fmt.Printf(format, args...)
+}
 
+func printSetupBundle(bundle SetupBundle) {
 	fmt.Println("Setup Bundle Contents")
 	fmt.Println(strings.Repeat("─", 50))
-	fmt.Printf("Version:     %s\n", bundle.Version)
-	fmt.Printf("Created:     %s\n", bundle.CreatedAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("Source:      %s (%s)\n", bundle.SourceMachine, bundle.SourceOS)
+	printfClean("Version:     %s\n", bundle.Version)
+	printfClean("Created:     %s\n", bundle.CreatedAt.Format("2006-01-02 15:04:05"))
+	printfClean("Source:      %s (%s)\n", bundle.SourceMachine, bundle.SourceOS)
 
-	fmt.Printf("\nAgents (%d):\n", len(bundle.Agents))
+	printfClean("\nAgents (%d):\n", len(bundle.Agents))
 	for _, a := range bundle.Agents {
 		hasKey := "no key"
 		if a.APIKey != "" {
 			hasKey = "has key"
 		}
-		fmt.Printf("  • %s (%s, %s) [%s]\n", a.Name, a.Provider, a.Model, hasKey)
+		printfClean("  • %s (%s, %s) [%s]\n", a.Name, a.Provider, a.Model, hasKey)
 	}
 
-	fmt.Printf("\nInstructions (%d):\n", len(bundle.SharedConfig.Instructions))
+	printfClean("\nInstructions (%d):\n", len(bundle.SharedConfig.Instructions))
 	for _, inst := range bundle.SharedConfig.Instructions {
-		fmt.Printf("  • %s -> %s (%d bytes)\n", inst.Name, inst.Filename, len(inst.Content))
+		printfClean("  • %s -> %s (%d bytes)\n", inst.Name, inst.Filename, len(inst.Content))
 	}
 	if len(bundle.Templates.Assets) > 0 {
-		fmt.Printf("\nWorkflow Templates (%d):\n", len(bundle.Templates.Assets))
+		printfClean("\nWorkflow Templates (%d):\n", len(bundle.Templates.Assets))
 		for _, tpl := range bundle.Templates.Assets {
-			fmt.Printf("  • %s (%s, version=%s)\n", tpl.Filename, tpl.Key, tpl.Version)
+			printfClean("  • %s (%s, version=%s)\n", tpl.Filename, tpl.Key, tpl.Version)
 		}
 	}
 	if len(bundle.ProviderFiles) > 0 || len(bundle.ProjectFiles) > 0 || len(bundle.InstructionOverrides) > 0 || len(bundle.SkillAssets) > 0 {
-		fmt.Printf("\nPortable Assets:\n")
+		printfClean("\nPortable Assets:\n")
 		printSetupAssetSummary("Provider Files", bundle.ProviderFiles)
 		printSetupAssetSummary("Project Files", bundle.ProjectFiles)
 		printSetupAssetSummary("Instruction Overrides", bundle.InstructionOverrides)
@@ -515,32 +541,30 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 		if len(prompt) > 60 {
 			prompt = prompt[:57] + "..."
 		}
-		fmt.Printf("\nShared Prompt: %s\n", prompt)
+		printfClean("\nShared Prompt: %s\n", prompt)
 	}
 
-	fmt.Printf("\nMCP Servers (%d):\n", len(bundle.SharedConfig.MCPServers))
+	printfClean("\nMCP Servers (%d):\n", len(bundle.SharedConfig.MCPServers))
 	for _, s := range bundle.SharedConfig.MCPServers {
-		fmt.Printf("  • %s: %s\n", s.Name, s.Command)
+		printfClean("  • %s: %s\n", s.Name, s.Command)
 	}
 
 	if len(bundle.DetectedAgents) > 0 {
-		fmt.Printf("\nDetected Agents on Source Machine:\n")
+		printfClean("\nDetected Agents on Source Machine:\n")
 		for _, a := range bundle.DetectedAgents {
 			if a.Status != "not_found" {
-				fmt.Printf("  • %s v%s (%s)\n", a.Name, a.Version, a.Status)
+				printfClean("  • %s v%s (%s)\n", a.Name, a.Version, a.Status)
 			}
 		}
 	}
-	fmt.Printf("\nSessions (%d):\n", len(bundle.Sessions.Sessions))
+	printfClean("\nSessions (%d):\n", len(bundle.Sessions.Sessions))
 	for _, s := range bundle.Sessions.Sessions {
-		fmt.Printf("  • %s (%d agents, %s)\n", s.Name, len(s.Agents), s.ProjectDir)
+		printfClean("  • %s (%d agents, %s)\n", s.Name, len(s.Agents), s.ProjectDir)
 	}
 	if bundle.StatusSnapshot != nil {
-		fmt.Printf("\nStatus Snapshot: %s\n", bundle.StatusSnapshot.GeneratedAt.Format("2006-01-02 15:04:05"))
-		fmt.Printf("  Providers: %d\n", len(bundle.StatusSnapshot.Providers))
+		printfClean("\nStatus Snapshot: %s\n", bundle.StatusSnapshot.GeneratedAt.Format("2006-01-02 15:04:05"))
+		printfClean("  Providers: %d\n", len(bundle.StatusSnapshot.Providers))
 	}
-
-	return nil
 }
 
 func selectAgentsForExport(all []agent.Agent, name string) ([]agent.Agent, error) {
@@ -679,6 +703,12 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if err := checkInstructionFilenames(instructions, func(i agent.InstructionFile) bool {
+		_, ok := onlySet[i.Name]
+		return len(onlySet) == 0 || ok
+	}); err != nil {
+		return err
+	}
 	pushed := 0
 	for _, inst := range instructions {
 		if len(onlySet) > 0 {
@@ -689,12 +719,16 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 		if err := writeInstructionFile(dir, inst); err != nil {
 			return err
 		}
-		fmt.Printf("  Pushed %s -> %s\n", inst.Name, inst.Filename)
+		fmt.Printf("  Pushed %s -> %s\n", printable(inst.Name), printable(inst.Filename))
 		pushed++
 	}
 	fmt.Printf("Applied %d instruction file(s) to %s\n", pushed, dir)
 	if len(onlySet) == 0 {
-		stagedApplied, err := applyStagedProjectAssets(effectiveConfigDir(), dir)
+		stagedApplied, skipped, err := applyStagedProjectAssetsWith(effectiveConfigDir(), dir, true)
+		// Each staged file not written is named, as import names it.
+		for _, s := range skipped {
+			fmt.Printf("  Left out: %s\n", printable(s))
+		}
 		if err != nil {
 			return err
 		}
@@ -710,26 +744,15 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 		var envContent strings.Builder
 		envContent.WriteString("# Generated by agentvault\n")
 		envContent.WriteString(fmt.Sprintf("# %s\n\n", time.Now().Format("2006-01-02 15:04:05")))
-
-		agents := v.List()
-		for _, a := range agents {
-			prefix := strings.ToUpper(string(a.Provider))
-			if a.Model != "" {
-				envContent.WriteString(fmt.Sprintf("%s_MODEL=%s\n", prefix, a.Model))
-			}
-			if a.APIKey != "" {
-				envContent.WriteString(fmt.Sprintf("%s_API_KEY=%s\n", prefix, a.APIKey))
-			}
-			if a.BaseURL != "" {
-				envContent.WriteString(fmt.Sprintf("%s_BASE_URL=%s\n", prefix, a.BaseURL))
-			}
-			envContent.WriteString("\n")
+		left := 0
+		for _, a := range v.List() {
+			writeAgentDotenv(&envContent, a, true, &left)
 		}
-
-		if err := os.WriteFile(envPath, []byte(envContent.String()), 0600); err != nil {
+		if err := writeEnvFile(dir, envPath, envContent.String()); err != nil {
 			return fmt.Errorf("writing .env.agents: %w", err)
 		}
-		fmt.Printf("  Generated %s\n", envPath)
+		fmt.Printf("  Generated %s\n", printable(envPath))
+		return leftOutError(cmd, left)
 	}
 
 	return nil
@@ -889,29 +912,27 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 	return guide
 }
 
-// confirmPlaintextExport gates a plaintext --include-secrets export.
-// encryptFlag names the flag that would encrypt the output, because `export` and
-// the deprecated `setup export` spell it differently.
-// It returns nil when export should proceed (confirmFlag set or user typed y/yes).
-// isTerminal and r are injected so the function is testable without a real TTY.
-func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io.Writer, encryptFlag string) error {
-	if confirmFlag {
+// confirmPlaintextExport refuses to write API keys or secrets in plain
+// text unless --confirm is set. what names them ("API keys", "secrets");
+// file is the output; fix says how to leave them out or encrypt.
+func confirmPlaintextExport(confirmFlag bool, what, file, fix string) error {
+	if confirmFlag || what == "" {
 		return nil
 	}
-	if !isTerminal {
-		return fmt.Errorf("--include-secrets without %s requires interactive confirmation; use --confirm to bypass in non-interactive environments", encryptFlag)
+	return fmt.Errorf("refusing to write %s in plain text: anyone who can read %s gets them. Add --confirm to write them anyway, or %s", what, file, fix)
+}
+
+// plaintextSecretsWhat names what a plaintext export would carry, or "".
+func plaintextSecretsWhat(keys, secrets bool) string {
+	switch {
+	case keys && secrets:
+		return "API keys and secrets"
+	case keys:
+		return "API keys"
+	case secrets:
+		return "secrets"
 	}
-	fmt.Fprintln(w, "warning: --include-secrets will embed sensitive asset content in plaintext")
-	fmt.Fprint(w, "Confirm export with sensitive content? [y/N]: ")
-	line, err := bufio.NewReader(r).ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("reading confirmation: %w", err)
-	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	if answer != "y" && answer != "yes" {
-		return fmt.Errorf("export cancelled: add %s to protect sensitive content, or use --confirm to bypass this check", encryptFlag)
-	}
-	return nil
+	return ""
 }
 
 // resolveAgentEnvAPIKey returns the API key for the agent from standard environment

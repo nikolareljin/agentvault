@@ -20,6 +20,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/nikolareljin/agentvault/internal/safefile"
 )
 
 // ErrNotRepo means no .git was found in the directory or any parent.
@@ -295,7 +297,7 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 		return Repo{}, err
 	}
 	common := gitDir
-	if b, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
+	if b, err := safefile.Read(filepath.Join(gitDir, "commondir")); err == nil {
 		common = parseCommonDir(gitDir, b)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Repo{}, err
@@ -310,13 +312,13 @@ func Identify(ctx context.Context, dir string, run Runner) (Repo, error) {
 	}
 	r := Repo{Root: root, GitDir: gitDir, CommonDir: common}
 	includes := false
-	if b, err := os.ReadFile(filepath.Join(common, "config")); err == nil { // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
+	if b, err := safefile.Read(filepath.Join(common, "config")); err == nil { // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
 		r.RemoteName, r.Remote = pickRemote(parseRemotes(b))
 		includes = hasInclude(b)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Repo{}, err
 	}
-	if b, err := os.ReadFile(filepath.Join(gitDir, "config.worktree")); err == nil { // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
+	if b, err := safefile.Read(filepath.Join(gitDir, "config.worktree")); err == nil { // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
 		includes = includes || hasInclude(b)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Repo{}, err
@@ -397,7 +399,7 @@ func findGitDir(dir string) (string, string, error) {
 		case err == nil && info.IsDir():
 			return cur, p, nil
 		case err == nil:
-			b, err := os.ReadFile(p)
+			b, err := safefile.Read(p)
 			if err != nil {
 				return "", "", err
 			}
@@ -425,7 +427,7 @@ func findGitDir(dir string) (string, string, error) {
 // headBorn reports whether HEAD names a commit: a detached hash, or a branch
 // that exists as a loose or packed ref.
 func headBorn(gitDir, common string) (bool, error) {
-	b, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	b, err := safefile.Read(filepath.Join(gitDir, "HEAD"))
 	if err != nil {
 		return false, err
 	}
@@ -444,7 +446,7 @@ func headBorn(gitDir, common string) (bool, error) {
 			return true, nil
 		}
 	}
-	packed, err := os.ReadFile(filepath.Join(common, "packed-refs")) // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
+	packed, err := safefile.Read(filepath.Join(common, "packed-refs")) // #nosec G703 -- read-only access to the repository the caller named, as git itself reads it
 	if err != nil {
 		return false, nil
 	}

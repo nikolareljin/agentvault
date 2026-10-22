@@ -48,7 +48,8 @@ Conflict handling is chosen with --strategy:
 A local file that differs from the bundle's is backed up and replaced, or
 kept: import asks on a terminal, and --on-conflict backup-replace|keep decides
 without asking. Commands the bundle adds or changes (hooks, statusLine, MCP
-servers) are left out unless --keep-bundle-commands is given.
+servers, the router's langgraph_command, .aider.conf.yml, scripts that
+instructions refer to) are left out unless --keep-bundle-commands is given.
 
 MCP servers are merged one by one: servers only this machine has stay. On a
 terminal, import lists the bundle's new servers to pick from and asks about
@@ -94,7 +95,7 @@ func init() {
 	importCmd.Flags().StringArray("workdir-map", nil, "place a work dir from the bundle here, OLD=NEW (repeatable); projects under it match by identity")
 	importCmd.Flags().Bool("no-match", false, "do not look for the bundle's projects on this machine; rewrite paths only by --map and the home directory")
 	importCmd.Flags().Bool("accept-matches", false, "apply computed project matches without asking (for non-interactive imports)")
-	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine and MCP server commands that the bundle adds or changes; left out by default")
+	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine, MCP server, router and script commands that the bundle adds or changes; left out by default")
 	importCmd.Flags().String("mcp-servers", "", "MCP servers to take from the bundle, new or changed: a comma-separated list of names, all, or none (default: ask on a terminal, else none)")
 	importCmd.Flags().String("on-conflict", "", "when a local file differs from the bundle: backup-replace or keep (default: ask on a terminal, else backup-replace; --strategy merge means keep)")
 	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
@@ -129,7 +130,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "Using newest bundle: %s\n", inPath)
 	}
 
-	raw, err := os.ReadFile(inPath)
+	raw, err := readImportFile(inPath)
 	if err != nil {
 		return fmt.Errorf("reading import file: %w", err)
 	}
@@ -195,7 +196,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	total := importReport{}
 	for _, profile := range selected {
 		fmt.Fprintf(out, "\nProfile %q:\n", profile.Name)
-		plan := planProfileImport(v, profile.Setup, strategy, now)
+		plan := planProfileImport(v, profile.Setup, strategy, now, importConsent{KeepCommands: assetOpts.Apply.KeepBundleCommands, MCP: assetOpts.Apply.MCPServers})
 		for _, line := range plan.Report.Lines {
 			fmt.Fprintln(out, line)
 		}
@@ -526,11 +527,41 @@ func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle
 	return setup, report, nil
 }
 
+// dropOversizedProfileAssets leaves out every file over the size export
+// uses: a bundle holding one was not made by export. Returns one line each.
+func dropOversizedProfileAssets(setup *SetupBundle) []string {
+	var report, r []string
+	for _, list := range []*[]SetupAsset{&setup.ProviderFiles, &setup.ProjectFiles, &setup.SkillAssets, &setup.InstructionOverrides} {
+		*list, r = dropOversizedAssets(*list)
+		report = append(report, r...)
+	}
+	return report
+}
+
+// dropOversizedAssets leaves out every asset whose content is over the
+// export ceiling, and names each one.
+func dropOversizedAssets(assets []SetupAsset) ([]SetupAsset, []string) {
+	var kept []SetupAsset
+	var report []string
+	for _, a := range assets {
+		if len(a.Content) > maxSetupAssetBytes {
+			report = append(report, fmt.Sprintf("%s: %d bytes, over the %d byte limit export uses",
+				describeSetupAsset(a), len(a.Content), maxSetupAssetBytes))
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return kept, report
+}
+
 // previewProfileAssets is the --dry-run view of importProfileAssets: the
 // path rewrites, and with --apply-projects or --apply-provider-configs each
 // file it would write, replace, keep or leave out. It writes nothing.
 func previewProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) {
 	out := cmd.OutOrStdout()
+	for _, line := range dropOversizedProfileAssets(&setup) {
+		fmt.Fprintf(out, "  Left out: %s\n", printable(line))
+	}
 	setup, report, err := remapProfileAssets(setup, opts)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(err.Error()))
@@ -567,7 +598,7 @@ func previewProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsse
 		fmt.Fprintf(out, "  would: %s\n", printable(line))
 	}
 	for _, line := range dry.MCPReport {
-		fmt.Fprintf(out, "  MCP servers: %s\n", line)
+		fmt.Fprintf(out, "  MCP servers: %s\n", printable(line))
 	}
 }
 
@@ -616,11 +647,37 @@ func providerAssetsToApply(setup SetupBundle, homeDir string, keepCommands bool)
 	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
 	codexAssets, codexDropped := codexConfigAssets(setup.ProviderConfigs.Codex, homeDir, keepCommands)
 	configAssets = append(configAssets, codexAssets...)
-	return append(append(configAssets, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...), codexDropped
+	// The bundle's own copy of a file wins over the config's (often older)
+	// one, which is then not applied at all: applied first, it would be
+	// written, backed up and reported, then replaced. A copy exported
+	// without its content cannot win, so where this machine has the file,
+	// the config's version must not replace it either.
+	carried := map[[2]string]bool{}
+	withheld := map[[2]string]bool{}
+	for _, f := range setup.ProviderFiles {
+		key := [2]string{f.LogicalRoot, f.LogicalPath}
+		if f.Redacted {
+			withheld[key] = true
+		} else {
+			carried[key] = true
+		}
+	}
+	kept := configAssets[:0]
+	for _, a := range configAssets {
+		key := [2]string{a.LogicalRoot, a.LogicalPath}
+		if carried[key] || (withheld[key] && localFileExists(homeDir, a)) {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return append(append(kept, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...), codexDropped
 }
 
 func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) error {
 	applyConfigs := opts.ApplyConfigs
+	for _, line := range dropOversizedProfileAssets(&setup) {
+		fmt.Fprintf(cmd.OutOrStdout(), "  Left out: %s\n", printable(line))
+	}
 	setup, remapReport, err := remapProfileAssets(setup, opts)
 	if err != nil {
 		return err
@@ -693,7 +750,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 	}
 	providerAssets, codexDropped := providerAssetsToApply(setup, homeDir, ctx.KeepBundleCommands)
 	for _, d := range codexDropped {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: Codex provider config: left out %s (use --keep-bundle-commands to take it)\n", printable(d))
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: Codex provider config: left out %s\n", printable(d))
 	}
 	applied, warnings, err := applyProviderAssetsWith(homeDir, providerAssets, ctx)
 	if err != nil {
@@ -706,7 +763,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 	}
 	for _, line := range ctx.MCPReport {
-		fmt.Fprintf(cmd.OutOrStdout(), "  MCP servers: %s\n", line)
+		fmt.Fprintf(cmd.OutOrStdout(), "  MCP servers: %s\n", printable(line))
 	}
 	ctx.MCPReport = nil
 	return nil
@@ -717,10 +774,10 @@ func printBundleProfiles(cmd *cobra.Command, bundle PortableBundle, format bundl
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Format: %s\n", format)
 	fmt.Fprintf(out, "Source: %s (%s), created %s\n",
-		bundleOrigin(bundle), bundle.SourceOS, bundle.CreatedAt.Format("2006-01-02 15:04"))
+		bundleOrigin(bundle), printable(bundle.SourceOS), bundle.CreatedAt.Format("2006-01-02 15:04"))
 	fmt.Fprintf(out, "Profiles: %d\n", len(bundle.Profiles))
 	for _, p := range bundle.Profiles {
-		fmt.Fprintf(out, "  %-16s %s\n", p.Name, p.ConfigDir)
+		fmt.Fprintf(out, "  %-16s %s\n", printable(p.Name), printable(p.ConfigDir))
 		fmt.Fprintf(out, "    Agents: %d, Sessions: %d, Rules: %d, Roles: %d, Instructions: %d\n",
 			len(p.Setup.Agents), len(p.Setup.Sessions.Sessions), len(p.Setup.SharedConfig.Rules),
 			len(p.Setup.SharedConfig.Roles), len(p.Setup.SharedConfig.Instructions))
@@ -749,7 +806,7 @@ func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
 	fmt.Fprintf(out, "    Declined: %d (%d refused by policy, %d not present%s)\n",
 		len(declined), len(byCategory[DeclinedByPolicy]), len(byCategory[DeclinedAbsent]), repoNote)
 	for _, d := range byCategory[DeclinedRepoScope] {
-		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedRepoScope, d.Path, d.Reason)
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedRepoScope, printable(d.Path), printable(d.Reason))
 	}
 	// Policy declines are few and each is a decision somebody can act on, so
 	// they are all printed. Absent ones are mostly prose naming a file that was
@@ -758,7 +815,7 @@ func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
 	// The bundle keeps the full list either way.
 	const maxAbsentPrinted = 5
 	for _, d := range byCategory[DeclinedByPolicy] {
-		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedByPolicy, d.Path, d.Reason)
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedByPolicy, printable(d.Path), printable(d.Reason))
 	}
 	absent := byCategory[DeclinedAbsent]
 	for i, d := range absent {
@@ -767,14 +824,14 @@ func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
 				DeclinedAbsent, len(absent)-maxAbsentPrinted)
 			break
 		}
-		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedAbsent, d.Path, d.Reason)
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedAbsent, printable(d.Path), printable(d.Reason))
 	}
 }
 
 // bundleOrigin names the machine a bundle came from.
 func bundleOrigin(bundle PortableBundle) string {
 	if strings.TrimSpace(bundle.SourceMachine) != "" {
-		return bundle.SourceMachine
+		return printable(bundle.SourceMachine)
 	}
 	return "unknown machine"
 }
@@ -794,9 +851,9 @@ func printInstallGuide(cmd *cobra.Command, profiles []PortableProfile) {
 			if req.Required {
 				status = "required"
 			}
-			fmt.Fprintf(out, "  - %s (%s)\n", req.Name, status)
+			fmt.Fprintf(out, "  - %s (%s)\n", printable(req.Name), status)
 			if req.InstallCmd != "" {
-				fmt.Fprintf(out, "    Install: %s\n", req.InstallCmd)
+				fmt.Fprintf(out, "    Install: %s\n", printable(req.InstallCmd))
 			}
 		}
 		return
@@ -826,6 +883,17 @@ func resolveConflictPolicy(flag conflictPolicy, strategyGiven bool, strategy imp
 	return conflictBackupReplace
 }
 
+// localFileExists reports whether the provider file a writes is on this
+// machine. One whose place cannot be resolved counts as present.
+func localFileExists(homeDir string, a SetupAsset) bool {
+	dest, err := providerAssetDestination(homeDir, a)
+	if err != nil {
+		return true
+	}
+	_, err = os.Lstat(dest)
+	return err == nil
+}
+
 // claudeConfigAssets are the files SaveClaudeConfig would write for c, as
 // assets, so they go through the same checks as the bundle's own files.
 func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
@@ -833,8 +901,9 @@ func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
 		return nil
 	}
 	var out []SetupAsset
-	if data, err := agent.ClaudeSettingsJSON(c); err == nil {
-		out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json", ContentPresent: true, Content: data})
+	// Exported without its settings: this machine's settings.json stays.
+	if data, err := agent.ClaudeSettingsJSON(c); err == nil && !c.SettingsRedacted {
+		out = append(out, SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json", ContentPresent: true, Content: data, RedactedFields: c.RedactedFields})
 	}
 	if len(c.Keybindings) > 0 {
 		if data, err := json.MarshalIndent(c.Keybindings, "", "  "); err == nil {
@@ -849,8 +918,8 @@ func claudeConfigAssets(c *agent.ClaudeConfig) []SetupAsset {
 // backups) instead of SaveCodexConfig, which rewrites config.toml in place
 // and deletes local rules. A trusted project the bundle adds or changes is
 // left out unless keepCommands: trust lets Codex run commands there. A rule
-// whose name is not a plain file name is left out. It returns the assets
-// and what it left out.
+// whose name is not a plain file name is left out, flag or not. It returns
+// the assets and what it left out; only a trusted project names the flag.
 func codexConfigAssets(c *agent.CodexConfig, home string, keepCommands bool) ([]SetupAsset, []string) {
 	if c == nil {
 		return nil, nil
@@ -873,7 +942,7 @@ func codexConfigAssets(c *agent.CodexConfig, home string, keepCommands bool) ([]
 			continue
 		}
 		if !keepCommands {
-			dropped = append(dropped, fmt.Sprintf("trusted project %q (%s)", p, level))
+			dropped = append(dropped, fmt.Sprintf("trusted project %q (%s) (use --keep-bundle-commands to take it)", p, level))
 			continue
 		}
 		projects[p] = level

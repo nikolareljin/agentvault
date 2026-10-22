@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -250,39 +249,20 @@ func TestAgentKeyStatus_EnvKey(t *testing.T) {
 	}
 }
 
-func TestConfirmPlaintextExport_ConfirmFlagBypasses(t *testing.T) {
-	var w bytes.Buffer
-	if err := confirmPlaintextExport(true, false, strings.NewReader(""), &w, "--encrypted"); err != nil {
-		t.Fatalf("confirmFlag=true should bypass all checks, got error: %v", err)
+func TestConfirmPlaintextExport(t *testing.T) {
+	if err := confirmPlaintextExport(true, "API keys", "out.json", "x"); err != nil {
+		t.Fatalf("--confirm: error = %v, want nil", err)
 	}
-}
-
-func TestConfirmPlaintextExport_NonTTYErrors(t *testing.T) {
-	var w bytes.Buffer
-	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w, "--encrypted")
+	if err := confirmPlaintextExport(false, "", "out.json", "x"); err != nil {
+		t.Fatalf("nothing secret: error = %v, want nil", err)
+	}
+	err := confirmPlaintextExport(false, "API keys", "out.json", "drop --plain")
 	if err == nil {
-		t.Fatal("non-TTY without --confirm should return error")
+		t.Fatal("API keys without --confirm: error = nil, want a refusal")
 	}
-	if !strings.Contains(err.Error(), "--confirm") {
-		t.Fatalf("error should mention --confirm, got: %v", err)
-	}
-}
-
-func TestConfirmPlaintextExport_TTYAcceptsYes(t *testing.T) {
-	for _, input := range []string{"y\n", "yes\n", "Y\n", "YES\n"} {
-		var w bytes.Buffer
-		if err := confirmPlaintextExport(false, true, strings.NewReader(input), &w, "--encrypted"); err != nil {
-			t.Fatalf("input %q should be accepted, got error: %v", input, err)
-		}
-	}
-}
-
-func TestConfirmPlaintextExport_TTYRejectsCancels(t *testing.T) {
-	for _, input := range []string{"n\n", "no\n", "\n", "maybe\n"} {
-		var w bytes.Buffer
-		err := confirmPlaintextExport(false, true, strings.NewReader(input), &w, "--encrypted")
-		if err == nil {
-			t.Fatalf("input %q should cancel export, but got nil error", input)
+	for _, want := range []string{"refusing to write API keys in plain text", "anyone who can read out.json", "--confirm", "drop --plain"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to contain %q", err, want)
 		}
 	}
 }
@@ -346,16 +326,5 @@ func TestSetupImportRejectsMultiProfileBundle(t *testing.T) {
 	err = runSetupImport(cmd, []string{path})
 	if err == nil || !strings.Contains(err.Error(), "agentvault import") {
 		t.Fatalf("runSetupImport() error = %v, want it to redirect to 'agentvault import --profile'", err)
-	}
-}
-
-func TestConfirmPlaintextExport_NamesTheCallersEncryptFlag(t *testing.T) {
-	var w bytes.Buffer
-	err := confirmPlaintextExport(false, false, strings.NewReader(""), &w, "--encrypt")
-	if err == nil || !strings.Contains(err.Error(), "--encrypt ") {
-		t.Fatalf("confirmPlaintextExport() error = %v, want it to name the caller's --encrypt flag", err)
-	}
-	if strings.Contains(err.Error(), "--encrypted") {
-		t.Fatalf("confirmPlaintextExport() error = %v, must not mention a flag the caller does not have", err)
 	}
 }

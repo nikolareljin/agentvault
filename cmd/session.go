@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -52,7 +53,7 @@ var sessionListCmd = &cobra.Command{
 
 		if jsonOutput {
 			data, _ := json.MarshalIndent(sessions.Sessions, "", "  ")
-			fmt.Println(string(data))
+			fmt.Println(string(escapeC1JSON(data)))
 			return nil
 		}
 
@@ -63,12 +64,12 @@ var sessionListCmd = &cobra.Command{
 			if s.ID == sessions.ActiveSession {
 				active = " [ACTIVE]"
 			}
-			fmt.Printf("\n  %s (%s)%s\n", s.Name, s.ID, active)
-			fmt.Printf("    Status:  %s\n", s.Status)
-			fmt.Printf("    Project: %s\n", s.ProjectDir)
+			fmt.Printf("\n  %s (%s)%s\n", printable(s.Name), printable(s.ID), active)
+			fmt.Printf("    Status:  %s\n", printable(string(s.Status)))
+			fmt.Printf("    Project: %s\n", printable(s.ProjectDir))
 			fmt.Printf("    Agents:  %d\n", len(s.Agents))
 			if s.ActiveRole != "" {
-				fmt.Printf("    Role:    %s\n", s.ActiveRole)
+				fmt.Printf("    Role:    %s\n", printable(s.ActiveRole))
 			}
 		}
 		fmt.Println()
@@ -147,11 +148,11 @@ Examples:
 		}
 
 		fmt.Printf("Session %q created with %d agent(s).\n", name, len(agentNames))
-		fmt.Printf("  ID:      %s\n", session.ID)
-		fmt.Printf("  Project: %s\n", session.ProjectDir)
+		fmt.Printf("  ID:      %s\n", printable(session.ID))
+		fmt.Printf("  Project: %s\n", printable(session.ProjectDir))
 		fmt.Printf("  Agents:  %s\n", strings.Join(agentNames, ", "))
 		if role != "" {
-			fmt.Printf("  Role:    %s\n", role)
+			fmt.Printf("  Role:    %s\n", printable(role))
 		}
 		fmt.Println("\nUse 'agentvault session start " + name + "' to run all agents.")
 		return nil
@@ -173,12 +174,12 @@ var sessionShowCmd = &cobra.Command{
 			return fmt.Errorf("session %q not found", args[0])
 		}
 
-		fmt.Printf("Session: %s\n", session.Name)
-		fmt.Printf("ID: %s\n", session.ID)
-		fmt.Printf("Status: %s\n", session.Status)
-		fmt.Printf("Project: %s\n", session.ProjectDir)
+		fmt.Printf("Session: %s\n", printable(session.Name))
+		fmt.Printf("ID: %s\n", printable(session.ID))
+		fmt.Printf("Status: %s\n", printable(string(session.Status)))
+		fmt.Printf("Project: %s\n", printable(session.ProjectDir))
 		if session.ActiveRole != "" {
-			fmt.Printf("Default Role: %s\n", session.ActiveRole)
+			fmt.Printf("Default Role: %s\n", printable(session.ActiveRole))
 		}
 		fmt.Printf("Created: %s\n", session.CreatedAt.Format("2006-01-02 15:04"))
 		fmt.Printf("Updated: %s\n", session.UpdatedAt.Format("2006-01-02 15:04"))
@@ -191,13 +192,13 @@ var sessionShowCmd = &cobra.Command{
 			}
 			role := ""
 			if a.Role != "" {
-				role = fmt.Sprintf(" [%s]", a.Role)
+				role = fmt.Sprintf(" [%s]", printable(a.Role))
 			}
 			task := ""
 			if a.Task != "" {
-				task = fmt.Sprintf(" - %s", a.Task)
+				task = fmt.Sprintf(" - %s", printable(a.Task))
 			}
-			fmt.Printf("  %s %s%s%s\n", status, a.Name, role, task)
+			fmt.Printf("  %s %s%s%s\n", status, printable(a.Name), printable(role), task)
 		}
 		return nil
 	},
@@ -241,7 +242,7 @@ var sessionStopCmd = &cobra.Command{
 				process, err := os.FindProcess(a.PID)
 				if err == nil {
 					if err := process.Signal(os.Interrupt); err != nil {
-						fmt.Fprintf(os.Stderr, "warning: failed to stop agent %q (pid %d): %v\n", a.Name, a.PID, err)
+						fmt.Fprintf(os.Stderr, "warning: failed to stop agent %q (pid %d): %v\n", printable(a.Name), a.PID, err)
 					}
 					stopped++
 				}
@@ -255,7 +256,7 @@ var sessionStopCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Stopped %d agent(s) in session %q.\n", stopped, session.Name)
+		fmt.Printf("Stopped %d agent(s) in session %q.\n", stopped, printable(session.Name))
 		return nil
 	},
 }
@@ -318,6 +319,12 @@ var sessionExportCmd = &cobra.Command{
 			return err
 		}
 		includeKeys, _ := cmd.Flags().GetBool("include-keys")
+		if includeKeys {
+			confirm, _ := cmd.Flags().GetBool("confirm")
+			if err := confirmPlaintextExport(confirm, "API keys and secrets", args[1], "drop --include-keys"); err != nil {
+				return err
+			}
+		}
 
 		session, ok := v.GetSessionByName(args[0])
 		if !ok {
@@ -326,12 +333,9 @@ var sessionExportCmd = &cobra.Command{
 
 		// Bundle the session with its agents, rules, and roles so the
 		// recipient can import everything needed to recreate the session.
-		exportData := struct {
-			Session agent.Session       `json:"session"`
-			Agents  []agent.Agent       `json:"agents"`
-			Rules   []agent.UnifiedRule `json:"rules"`
-			Roles   []agent.Role        `json:"roles"`
-		}{
+		// Process IDs are this machine's: they mean nothing elsewhere.
+		session = idleSession(session)
+		exportData := sessionExport{
 			Session: session,
 			Rules:   v.SharedConfig().Rules,
 			Roles:   v.SharedConfig().Roles,
@@ -341,7 +345,17 @@ var sessionExportCmd = &cobra.Command{
 		for _, sa := range session.Agents {
 			if a, ok := v.Get(sa.Name); ok {
 				if !includeKeys {
-					a.APIKey = ""
+					// The other secrets go too, as agent export blanks them:
+					// MCP server env and secret args, credential extras, a
+					// base URL with credentials. Import names each blank.
+					var blanks []string
+					a, _, blanks = blankAgentForExport(a)
+					if len(blanks) > 0 {
+						if exportData.Blanks == nil {
+							exportData.Blanks = map[string][]string{}
+						}
+						exportData.Blanks[a.Name] = blanks
+					}
 				}
 				exportData.Agents = append(exportData.Agents, a)
 			}
@@ -361,6 +375,17 @@ var sessionExportCmd = &cobra.Command{
 	},
 }
 
+// sessionExport is the file session export writes: the session, its
+// agents, and the rules and roles. Blanks names, per agent, each secret
+// export blanked, so import can say what it left out.
+type sessionExport struct {
+	Session agent.Session       `json:"session"`
+	Agents  []agent.Agent       `json:"agents"`
+	Blanks  map[string][]string `json:"blanks,omitempty"`
+	Rules   []agent.UnifiedRule `json:"rules"`
+	Roles   []agent.Role        `json:"roles"`
+}
+
 var sessionImportCmd = &cobra.Command{
 	Use:   "import [file]",
 	Short: "Import a session from a file",
@@ -371,84 +396,180 @@ var sessionImportCmd = &cobra.Command{
 			return err
 		}
 
-		data, err := os.ReadFile(args[0])
+		data, err := readImportFile(args[0])
 		if err != nil {
 			return fmt.Errorf("reading file: %w", err)
 		}
 
-		var importData struct {
-			Session agent.Session       `json:"session"`
-			Agents  []agent.Agent       `json:"agents"`
-			Rules   []agent.UnifiedRule `json:"rules"`
-			Roles   []agent.Role        `json:"roles"`
-		}
-
+		var importData sessionExport
 		if err := json.Unmarshal(data, &importData); err != nil {
 			return fmt.Errorf("decoding session: %w", err)
 		}
+		// The session is settled before anything is written: a clash found
+		// later would leave its agents, rules and roles imported without it.
+		importData.Session = sessionToImport(v, importData.Session, time.Now())
+		_, sameSession := sameSessionInVault(v, importData.Session)
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		prefix, would := "Left out", ""
+		if dryRun {
+			prefix, would = "Dry-run: would leave out", "Dry-run: would import "
+		}
 
-		// Import agents
+		// Import agents the vault does not have, as agent import adds them:
+		// blanks dropped and named, MCP server commands only with
+		// --keep-bundle-commands.
+		keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
+		var newAgents []agent.Agent
+		seen := map[string]bool{}
 		for _, a := range importData.Agents {
-			if _, exists := v.Get(a.Name); !exists {
-				a.CreatedAt = time.Now()
-				a.UpdatedAt = time.Now()
-				if err := v.Add(a); err != nil {
-					return fmt.Errorf("importing agent %q: %w", a.Name, err)
+			if _, exists := v.Get(a.Name); exists || seen[a.Name] {
+				// The first of a name wins, so a file that names an agent
+				// twice cannot fail the import after the first is written.
+				continue
+			}
+			seen[a.Name] = true
+			if err := a.Validate(); err != nil {
+				return fmt.Errorf("importing agent %q: %w", printable(a.Name), err)
+			}
+			var blanks []string
+			for _, f := range importData.Blanks[a.Name] {
+				if profileBlankField(a, f) {
+					blanks = append(blanks, f)
 				}
-				fmt.Printf("  Imported agent: %s\n", a.Name)
 			}
+			a = prepareImportedAgent(os.Stderr, a, agent.Agent{}, false, blanks, keep, prefix)
+			a.CreatedAt = time.Now()
+			a.UpdatedAt = time.Now()
+			newAgents = append(newAgents, a)
 		}
 
-		// Import rules
+		// Rules and roles the vault does not have, the first of a name.
 		shared := v.SharedConfig()
-		existingRules := make(map[string]bool)
-		for _, r := range shared.Rules {
-			existingRules[r.Name] = true
+		newRules := newByName(shared.Rules, importData.Rules, func(r agent.UnifiedRule) string { return r.Name })
+		newRoles := newByName(shared.Roles, importData.Roles, func(r agent.Role) string { return r.Name })
+		if dryRun {
+			for _, a := range newAgents {
+				fmt.Printf("  %sagent: %s\n", would, printable(a.Name))
+			}
+			for _, r := range newRules {
+				fmt.Printf("  %srule: %s\n", would, printable(r.Name))
+			}
+			for _, r := range newRoles {
+				fmt.Printf("  %srole: %s\n", would, printable(r.Name))
+			}
+			if sameSession {
+				fmt.Printf("\nSession %q already matches this vault.\n", printable(importData.Session.Name))
+			} else {
+				fmt.Printf("\n%ssession %q.\n", would, printable(importData.Session.Name))
+			}
+			return nil
 		}
-		for _, r := range importData.Rules {
-			if !existingRules[r.Name] {
-				r.CreatedAt = time.Now()
-				r.UpdatedAt = time.Now()
-				shared.Rules = append(shared.Rules, r)
-				fmt.Printf("  Imported rule: %s\n", r.Name)
+		for _, a := range newAgents {
+			if err := v.Add(a); err != nil {
+				return fmt.Errorf("importing agent %q: %w", printable(a.Name), err)
+			}
+			fmt.Printf("  Imported agent: %s\n", printable(a.Name))
+		}
+		now := time.Now()
+		for _, r := range newRules {
+			r.CreatedAt, r.UpdatedAt = now, now
+			shared.Rules = append(shared.Rules, r)
+			fmt.Printf("  Imported rule: %s\n", printable(r.Name))
+		}
+		for _, r := range newRoles {
+			r.CreatedAt, r.UpdatedAt = now, now
+			shared.Roles = append(shared.Roles, r)
+			fmt.Printf("  Imported role: %s\n", printable(r.Name))
+		}
+		// The vault is written only when a rule or role is added.
+		if len(newRules)+len(newRoles) > 0 {
+			if err := v.SetSharedConfig(shared); err != nil {
+				return fmt.Errorf("saving shared config: %w", err)
 			}
 		}
 
-		// Import roles
-		existingRoles := make(map[string]bool)
-		for _, r := range shared.Roles {
-			existingRoles[r.Name] = true
+		if sameSession {
+			fmt.Printf("\nSession %q already matches this vault.\n", printable(importData.Session.Name))
+			return nil
 		}
-		for _, r := range importData.Roles {
-			if !existingRoles[r.Name] {
-				r.CreatedAt = time.Now()
-				r.UpdatedAt = time.Now()
-				shared.Roles = append(shared.Roles, r)
-				fmt.Printf("  Imported role: %s\n", r.Name)
-			}
-		}
-		if err := v.SetSharedConfig(shared); err != nil {
-			return fmt.Errorf("saving shared config: %w", err)
-		}
-
-		// Import session
-		importData.Session.CreatedAt = time.Now()
-		importData.Session.UpdatedAt = time.Now()
-		importData.Session.Status = agent.SessionStatusIdle
-
-		// Check if session name exists
-		if _, exists := v.GetSessionByName(importData.Session.Name); exists {
-			importData.Session.ID = agent.GenerateSessionID()
-			importData.Session.Name = importData.Session.Name + "-imported"
-		}
-
 		if err := v.AddSession(importData.Session); err != nil {
 			return err
 		}
 
-		fmt.Printf("\nSession %q imported successfully.\n", importData.Session.Name)
+		fmt.Printf("\nSession %q imported successfully.\n", printable(importData.Session.Name))
 		return nil
 	},
+}
+
+// sessionToImport is s as import adds it: idle, without the process IDs
+// of the machine it came from (session stop would signal whatever runs
+// under them here), and with a fresh ID and an unused name where the vault
+// has them already.
+func sessionToImport(v *vault.Vault, s agent.Session, now time.Time) agent.Session {
+	s = idleSession(s)
+	if have, same := sameSessionInVault(v, s); same {
+		// A re-import on the machine that exported it adds nothing.
+		return have
+	}
+	s.CreatedAt, s.UpdatedAt = now, now
+	if _, exists := v.GetSession(s.ID); exists || s.ID == "" {
+		s.ID = agent.GenerateSessionID()
+	}
+	if _, exists := v.GetSessionByName(s.Name); exists {
+		base := s.Name + "-imported"
+		s.Name = base
+		for n := 2; ; n++ {
+			// The same file imported again matches the copy the first
+			// import added, and adds nothing.
+			if have, same := sameSessionInVault(v, s); same {
+				return have
+			}
+			if _, exists := v.GetSessionByName(s.Name); !exists {
+				break
+			}
+			s.Name = fmt.Sprintf("%s-%d", base, n)
+		}
+	}
+	return s
+}
+
+// newByName is each item of in whose name have does not hold, the first
+// of a name only.
+func newByName[T any](have, in []T, name func(T) string) []T {
+	seen := make(map[string]bool, len(have))
+	for _, h := range have {
+		seen[name(h)] = true
+	}
+	var out []T
+	for _, i := range in {
+		if !seen[name(i)] {
+			seen[name(i)] = true
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// idleSession is s without process IDs and not running.
+func idleSession(s agent.Session) agent.Session {
+	s.Agents = append([]agent.SessionAgent(nil), s.Agents...)
+	for i := range s.Agents {
+		s.Agents[i].PID = 0
+	}
+	s.Status = agent.SessionStatusIdle
+	return s
+}
+
+// sameSessionInVault is the vault's session of s's name, and whether it
+// holds what s holds: the same agents, directory, role and description.
+func sameSessionInVault(v *vault.Vault, s agent.Session) (agent.Session, bool) {
+	have, ok := v.GetSessionByName(s.Name)
+	if !ok {
+		return have, false
+	}
+	a, b := idleSession(have), idleSession(s)
+	return have, a.Description == b.Description && a.ProjectDir == b.ProjectDir &&
+		a.ActiveRole == b.ActiveRole && reflect.DeepEqual(a.Agents, b.Agents)
 }
 
 // runSessionStart orchestrates the parallel (or sequential) launch of all
@@ -490,14 +611,14 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("Starting %d agent(s) in session %q...\n\n", len(agentsToStart), session.Name)
+	fmt.Printf("Starting %d agent(s) in session %q...\n\n", len(agentsToStart), printable(session.Name))
 
 	if dryRun {
 		fmt.Println("DRY RUN - would start:")
 		for _, sa := range agentsToStart {
 			a, ok := v.Get(sa.Name)
 			if !ok {
-				fmt.Printf("  %s (missing)\n", sa.Name)
+				fmt.Printf("  %s (missing)\n", printable(sa.Name))
 				continue
 			}
 			role := sessionAgentRole(sa, session.ActiveRole)
@@ -505,14 +626,14 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 				a.Role = role
 			}
 			prompt := a.BuildEffectivePrompt(shared)
-			fmt.Printf("  %s (%s)\n", sa.Name, a.Provider)
+			fmt.Printf("  %s (%s)\n", printable(sa.Name), a.Provider)
 			if role != "" {
-				fmt.Printf("    Role: %s\n", role)
+				fmt.Printf("    Role: %s\n", printable(role))
 			}
 			if len(prompt) > 100 {
-				fmt.Printf("    Prompt: %s...\n", prompt[:100])
+				fmt.Printf("    Prompt: %s...\n", printableText(prompt[:100]))
 			} else {
-				fmt.Printf("    Prompt: %s\n", prompt)
+				fmt.Printf("    Prompt: %s\n", printableText(prompt))
 			}
 		}
 		return nil
@@ -530,7 +651,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 		for _, sa := range agentsToStart {
 			pid, err := startAgent(v, session, sa, shared, true)
 			if err != nil {
-				fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
+				fmt.Printf("  Error starting %s: %v\n", printable(sa.Name), err)
 				continue
 			}
 			for i := range session.Agents {
@@ -568,7 +689,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 				}
 				pid, err := startAgent(v, session, sa, shared, false)
 				if err != nil {
-					fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
+					fmt.Printf("  Error starting %s: %v\n", printable(sa.Name), err)
 					return
 				}
 				mu.Lock()
@@ -641,7 +762,7 @@ func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, sh
 		return 0, fmt.Errorf("%s not found in PATH", cmdPath)
 	}
 
-	fmt.Printf("  Starting %s (%s) in %s...\n", sa.Name, a.Provider, session.ProjectDir)
+	fmt.Printf("  Starting %s (%s) in %s...\n", printable(sa.Name), a.Provider, printable(session.ProjectDir))
 
 	// Start the process
 	cmd := exec.Command(cmdPath, cmdArgs...)
@@ -664,7 +785,7 @@ func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, sh
 		return 0, fmt.Errorf("starting %s: %w", cmdPath, err)
 	}
 
-	fmt.Printf("  Started %s (PID: %d)\n", sa.Name, cmd.Process.Pid)
+	fmt.Printf("  Started %s (PID: %d)\n", printable(sa.Name), cmd.Process.Pid)
 	return cmd.Process.Pid, nil
 }
 
@@ -696,5 +817,8 @@ func init() {
 	sessionStartCmd.Flags().Bool("sequential", false, "start agents sequentially instead of parallel")
 	sessionStartCmd.Flags().String("agent", "", "start only a specific agent")
 	sessionStartCmd.Flags().Bool("dry-run", false, "show what would be started without starting")
-	sessionExportCmd.Flags().Bool("include-keys", false, "include API keys in exported agent entries")
+	sessionExportCmd.Flags().Bool("include-keys", false, "include the agents' API keys and other secrets (MCP server env and secret args, credential extras, a base URL with credentials)")
+	sessionExportCmd.Flags().Bool("confirm", false, "allow --include-keys to write the keys and secrets in plain text")
+	sessionImportCmd.Flags().Bool("dry-run", false, "show what would be imported without writing")
+	sessionImportCmd.Flags().Bool("keep-bundle-commands", false, "keep MCP server commands of the agents the file adds; left out by default")
 }

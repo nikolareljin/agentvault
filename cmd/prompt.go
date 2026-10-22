@@ -21,6 +21,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/envutil"
 	routerpkg "github.com/nikolareljin/agentvault/internal/router"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/nikolareljin/agentvault/internal/workspace"
 	"github.com/spf13/cobra"
@@ -205,7 +206,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if jsonOut {
-			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(map[string]any{
 				"agent":    a.Name,
 				"provider": a.Provider,
 				"runner":   target.Runner,
@@ -281,13 +282,14 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			if decision != nil {
 				payload["route"] = decision
 			}
-			_ = json.NewEncoder(os.Stdout).Encode(payload)
+			_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 			return nil
 		}
 		if decision != nil {
 			printRoutingDecision(cmd.ErrOrStderr(), a, target, decision)
 		}
-		fmt.Println(effectivePrompt)
+		// Rules and roles in the prompt can come from a bundle.
+		fmt.Println(printableText(effectivePrompt))
 		return nil
 	}
 
@@ -357,7 +359,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			if decision != nil {
 				payload["route"] = decision
 			}
-			_ = json.NewEncoder(os.Stdout).Encode(payload)
+			_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 			return nil
 		}
 		return execErr
@@ -371,7 +373,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		if decision != nil {
 			payload["route"] = decision
 		}
-		_ = json.NewEncoder(os.Stdout).Encode(payload)
+		_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 		return nil
 	}
 
@@ -550,7 +552,7 @@ func readOptionalPromptInput(cmd *cobra.Command) (string, bool, error) {
 		return "", false, errors.New("use either --text or --file, not both")
 	}
 	if file != "" {
-		data, err := os.ReadFile(file)
+		data, err := safefile.Read(file)
 		if err != nil {
 			return "", false, fmt.Errorf("reading prompt file: %w", err)
 		}

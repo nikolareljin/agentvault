@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -161,10 +162,10 @@ var instListCmd = &cobra.Command{
 					pattern = "-"
 				}
 				fmt.Printf("  %-12s -> %-35s  %-10s  %-30s  (%d bytes, %s)\n",
-					inst.Name, inst.Filename, scope, pattern, len(inst.Content), age)
+					printable(inst.Name), printable(inst.Filename), printable(scope), printable(pattern), len(inst.Content), age)
 			} else {
 				fmt.Printf("  %-12s -> %-40s  (%d bytes, %s)\n",
-					inst.Name, inst.Filename, len(inst.Content), age)
+					printable(inst.Name), printable(inst.Filename), len(inst.Content), age)
 			}
 		}
 		return nil
@@ -189,7 +190,7 @@ var instShowCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("instruction %q not found", args[0])
 		}
-		fmt.Print(inst.Content)
+		fmt.Print(contentText(cmd, inst.Content))
 		if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
 			fmt.Println()
 		}
@@ -217,15 +218,23 @@ Examples:
 		content, _ := cmd.Flags().GetString("content")
 		filename, _ := cmd.Flags().GetString("filename")
 
+		scope, _ := cmd.Flags().GetString("scope")
+		dirPattern, _ := cmd.Flags().GetString("directory-pattern")
 		if filePath == "" && content == "" {
-			return fmt.Errorf("provide --file or --content")
+			// --filename alone moves a stored instruction, such as one an
+			// older version stored under a name push now refuses.
+			existing, ok := findInstruction(v, name, scope, dirPattern)
+			if filename == "" || !ok {
+				return fmt.Errorf("provide --file or --content (or --filename alone to move a stored instruction)")
+			}
+			content = existing.Content
 		}
 		if filePath != "" && content != "" {
 			return fmt.Errorf("use either --file or --content, not both")
 		}
 
 		if filePath != "" {
-			data, err := os.ReadFile(filePath)
+			data, err := readImportFile(filePath)
 			if err != nil {
 				return fmt.Errorf("reading file: %w", err)
 			}
@@ -236,16 +245,13 @@ Examples:
 			filename = agent.FilenameForInstruction(name)
 		}
 
-		scope, _ := cmd.Flags().GetString("scope")
-		dirPattern, _ := cmd.Flags().GetString("directory-pattern")
-
 		if err := validateScopeFlags(scope, dirPattern); err != nil {
 			return err
 		}
 
 		// Scan for prompt hijacking
 		if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-			fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+			fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 		}
 
 		inst := agent.InstructionFile{
@@ -259,7 +265,7 @@ Examples:
 		if err := v.SetInstruction(inst); err != nil {
 			return err
 		}
-		fmt.Printf("Instruction %q stored (%d bytes, target: %s).\n", name, len(content), filename)
+		fmt.Printf("Instruction %q stored (%d bytes, target: %s).\n", printable(name), len(content), printable(filename))
 		return nil
 	},
 }
@@ -343,7 +349,7 @@ Examples:
 
 		// Scan for prompt hijacking
 		if warnings := agent.CheckHijacking(newContent); len(warnings) > 0 {
-			fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+			fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 		}
 
 		inst.Content = newContent
@@ -351,7 +357,7 @@ Examples:
 		if err := v.SetInstruction(inst); err != nil {
 			return err
 		}
-		fmt.Printf("Instruction %q updated (%d bytes).\n", name, len(newContent))
+		fmt.Printf("Instruction %q updated (%d bytes).\n", printable(name), len(newContent))
 		return nil
 	},
 }
@@ -389,7 +395,7 @@ otherwise removes the first match by name.`,
 				return err
 			}
 		}
-		fmt.Printf("Instruction %q removed.\n", name)
+		fmt.Printf("Instruction %q removed.\n", printable(name))
 		return nil
 	},
 }
@@ -443,18 +449,19 @@ Examples:
 		}
 
 		// auto-discover known files
-		pulled := 0
-		// check well-known files
-		for filename, name := range knownFilenameToName {
-			p := filepath.Join(dir, filename)
-			data, err := os.ReadFile(p)
-			if err != nil {
-				continue // file doesn't exist, skip
+		pulled, refusedHere := 0, 0
+		// A file that is not UTF-8 text is reported and skipped: one UTF-16
+		// AGENTS.md must not stop the other files from being pulled.
+		store := func(name, filename string, data []byte) error {
+			if problem := agent.TextProblem(data); problem != "" {
+				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", printable(filename), problem)
+				refusedHere++
+				return nil
 			}
 			content := string(data)
 			if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-				fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, filename)
-				fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+				fmt.Fprintf(os.Stderr, "  [%s] %s\n", printable(name), printable(filename))
+				fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 			}
 			inst := agent.InstructionFile{
 				Name:      name,
@@ -465,54 +472,37 @@ Examples:
 			if err := v.SetInstruction(inst); err != nil {
 				return err
 			}
-			fmt.Printf("  Pulled %s -> %q (%d bytes)\n", filename, name, len(data))
+			fmt.Printf("  Pulled %s -> %q (%d bytes)\n", printable(filename), printable(name), len(data))
 			pulled++
+			return nil
 		}
-		// also check files in subdirectories
-		subdirFiles := map[string]string{
-			filepath.Join(".github", "copilot-instructions.md"): "copilot",
+		// Sorted, so a failure leaves the same files stored on every run.
+		known := make([]string, 0, len(knownFilenameToName))
+		for filename := range knownFilenameToName {
+			known = append(known, filename)
 		}
-		for relPath, name := range subdirFiles {
-			fullPath := filepath.Join(dir, relPath)
-			if data, err := os.ReadFile(fullPath); err == nil {
-				content := string(data)
-				if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-					fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, relPath)
-					fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
-				}
-				inst := agent.InstructionFile{
-					Name:      name,
-					Filename:  relPath,
-					Content:   content,
-					UpdatedAt: time.Now(),
-				}
-				if err := v.SetInstruction(inst); err != nil {
-					return err
-				}
-				fmt.Printf("  Pulled %s -> %q (%d bytes)\n", relPath, name, len(data))
-				pulled++
+		sort.Strings(known)
+		for _, filename := range known {
+			data := readLocalInstruction(filepath.Join(dir, filename), &refusedHere)
+			if data == nil {
+				continue
 			}
-		}
-
-		// also check .aider.conf.yml
-		aiderPath := filepath.Join(dir, ".aider.conf.yml")
-		if data, err := os.ReadFile(aiderPath); err == nil {
-			content := string(data)
-			if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-				fmt.Fprintf(os.Stderr, "  [aider] .aider.conf.yml\n")
-				fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
-			}
-			inst := agent.InstructionFile{
-				Name:      "aider",
-				Filename:  ".aider.conf.yml",
-				Content:   content,
-				UpdatedAt: time.Now(),
-			}
-			if err := v.SetInstruction(inst); err != nil {
+			if err := store(knownFilenameToName[filename], filename, data); err != nil {
 				return err
 			}
-			fmt.Printf("  Pulled .aider.conf.yml -> %q (%d bytes)\n", "aider", len(data))
-			pulled++
+		}
+		// also check files in subdirectories, and .aider.conf.yml
+		for _, extra := range [][2]string{
+			{filepath.Join(".github", "copilot-instructions.md"), "copilot"},
+			{".aider.conf.yml", "aider"},
+		} {
+			data := readLocalInstruction(filepath.Join(dir, extra[0]), &refusedHere)
+			if data == nil {
+				continue
+			}
+			if err := store(extra[1], extra[0], data); err != nil {
+				return err
+			}
 		}
 
 		// An instruction file is not self-contained: it can name other files as
@@ -527,27 +517,40 @@ Examples:
 			}
 			for _, inst := range res.Stored {
 				if warnings := agent.CheckHijacking(inst.Content); len(warnings) > 0 {
-					fmt.Fprintf(os.Stderr, "  [%s] %s\n", inst.Name, inst.Filename)
-					fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+					fmt.Fprintf(os.Stderr, "  [%s] %s\n", printable(inst.Name), printable(inst.Filename))
+					fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 				}
 				fmt.Printf("  Pulled %s -> %q (%d bytes, named by an instruction file)\n",
-					inst.Filename, inst.Name, len(inst.Content))
+					printable(inst.Filename), printable(inst.Name), len(inst.Content))
 			}
 			pulled += len(res.Stored)
 
 			// Refusals and missing files are printed, never swallowed. A rule
 			// naming a file that cannot travel is the defect this exists to
 			// end, and it is invisible if the export is quiet about it.
+			incomplete := map[string]bool{}
 			for _, r := range res.Refused {
-				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", r.Raw, r.Reason)
+				shown := r.Raw
+				if r.Rel != "" {
+					shown = r.Rel
+				}
+				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", printable(shown), printable(r.Reason))
+				if skill := agent.SkillDirOf(r.Rel); skill != "" && !incomplete[skill] {
+					incomplete[skill] = true
+					fmt.Fprintf(os.Stderr, "  skill %s is incomplete in the vault; "+
+						"'agentvault export --project %s' carries every file\n", printable(skill), printable(dir))
+				}
 			}
 			for _, r := range res.Missing {
-				fmt.Fprintf(os.Stderr, "  named but not present: %s\n", r.Raw)
+				fmt.Fprintf(os.Stderr, "  named but not present: %s\n", printable(r.Raw))
 			}
 			if strict && (len(res.Refused) > 0 || len(res.Missing) > 0) {
-				return fmt.Errorf("--strict: %d reference(s) refused, %d named but not present",
-					len(res.Refused), len(res.Missing))
+				return fmt.Errorf("--strict: %d file(s) refused, %d named but not present",
+					len(res.Refused)+refusedHere, len(res.Missing))
 			}
+		}
+		if strict && refusedHere > 0 {
+			return fmt.Errorf("--strict: %d file(s) refused", refusedHere)
 		}
 
 		if pulled > 0 {
@@ -566,16 +569,19 @@ Examples:
 
 func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 	p := filepath.Join(dir, filename)
-	data, err := os.ReadFile(p)
+	data, err := readImportFile(p)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", p, err)
+	}
+	if problem := agent.TextProblem(data); problem != "" {
+		return fmt.Errorf("%s: %s", printable(filename), problem)
 	}
 	content := string(data)
 
 	// Scan for prompt hijacking
 	if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-		fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, filename)
-		fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+		fmt.Fprintf(os.Stderr, "  [%s] %s\n", printable(name), printable(filename))
+		fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 	}
 
 	inst := agent.InstructionFile{
@@ -587,7 +593,7 @@ func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 	if err := v.SetInstruction(inst); err != nil {
 		return err
 	}
-	fmt.Printf("Pulled %s -> %q (%d bytes)\n", filename, name, len(data))
+	fmt.Printf("Pulled %s -> %q (%d bytes)\n", printable(filename), printable(name), len(data))
 	return nil
 }
 
@@ -625,6 +631,11 @@ Examples:
 			return nil
 		}
 
+		if err := checkInstructionFilenames(instructions, func(i agent.InstructionFile) bool {
+			return specificName == "" || i.Name == specificName
+		}); err != nil {
+			return err
+		}
 		pushed := 0
 		for _, inst := range instructions {
 			if specificName != "" && inst.Name != specificName {
@@ -633,7 +644,7 @@ Examples:
 			if err := writeInstructionFile(dir, inst); err != nil {
 				return err
 			}
-			fmt.Printf("  Pushed %q -> %s (%d bytes)\n", inst.Name, inst.Filename, len(inst.Content))
+			fmt.Printf("  Pushed %q -> %s (%d bytes)\n", printable(inst.Name), printable(inst.Filename), len(inst.Content))
 			pushed++
 		}
 
@@ -676,23 +687,23 @@ Examples:
 		for _, inst := range instructions {
 			diskData, err := readInstructionOnDisk(dir, inst)
 			if errors.Is(err, errUnsafeInstructionFilename) {
-				fmt.Printf("  %-12s  %s  (refused: %v)\n", inst.Name, inst.Filename, err)
+				fmt.Printf("  %-12s  %s  (refused: %v)\n", printable(inst.Name), printable(inst.Filename), err)
 				diffs++
 				continue
 			}
 			if err != nil {
-				fmt.Printf("  %-12s  %s  (not on disk)\n", inst.Name, inst.Filename)
+				fmt.Printf("  %-12s  %s  (not on disk)\n", printable(inst.Name), printable(inst.Filename))
 				diffs++
 				continue
 			}
 			diskContent := string(diskData)
 			if diskContent == inst.Content {
-				fmt.Printf("  %-12s  %s  (identical)\n", inst.Name, inst.Filename)
+				fmt.Printf("  %-12s  %s  (identical)\n", printable(inst.Name), printable(inst.Filename))
 			} else {
 				vaultLines := strings.Count(inst.Content, "\n")
 				diskLines := strings.Count(diskContent, "\n")
 				fmt.Printf("  %-12s  %s  (DIFFERS: vault %d lines, disk %d lines)\n",
-					inst.Name, inst.Filename, vaultLines, diskLines)
+					printable(inst.Name), printable(inst.Filename), vaultLines, diskLines)
 				diffs++
 			}
 		}
@@ -709,7 +720,7 @@ Examples:
 			if !found {
 				p := filepath.Join(dir, filename)
 				if _, err := os.Stat(p); err == nil {
-					fmt.Printf("  %-12s  %s  (on disk, not in vault)\n", name, filename)
+					fmt.Printf("  %-12s  %s  (on disk, not in vault)\n", printable(name), printable(filename))
 					diffs++
 				}
 			}
@@ -771,12 +782,12 @@ Examples:
 		for _, inst := range toScan {
 			warnings := agent.CheckHijacking(inst.Content)
 			if len(warnings) > 0 {
-				fmt.Printf("--- %s (%s) ---\n", inst.Name, inst.Filename)
-				fmt.Print(agent.FormatWarnings(warnings))
+				fmt.Printf("--- %s (%s) ---\n", printable(inst.Name), printable(inst.Filename))
+				fmt.Print(printableText(agent.FormatWarnings(warnings)))
 				fmt.Println()
 				totalWarnings += len(warnings)
 			} else {
-				fmt.Printf("  %-12s  %s  (clean)\n", inst.Name, inst.Filename)
+				fmt.Printf("  %-12s  %s  (clean)\n", printable(inst.Name), printable(inst.Filename))
 			}
 		}
 
@@ -832,8 +843,8 @@ Examples:
 				if scope == "" {
 					scope = agent.InstructionScopeGlobal
 				}
-				fmt.Printf("=== %s (%s, scope: %s) ===\n", inst.Name, inst.Filename, scope)
-				fmt.Println(inst.Content)
+				fmt.Printf("=== %s (%s, scope: %s) ===\n", printable(inst.Name), printable(inst.Filename), printable(scope))
+				fmt.Println(contentText(cmd, inst.Content))
 			}
 			return nil
 		}
@@ -845,8 +856,8 @@ Examples:
 				if scope == "" {
 					scope = agent.InstructionScopeGlobal
 				}
-				fmt.Printf("=== %s (%s, scope: %s) ===\n", inst.Name, inst.Filename, scope)
-				fmt.Print(inst.Content)
+				fmt.Printf("=== %s (%s, scope: %s) ===\n", printable(inst.Name), printable(inst.Filename), printable(scope))
+				fmt.Print(contentText(cmd, inst.Content))
 				if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
 					fmt.Println()
 				}
@@ -905,7 +916,7 @@ Examples:
 		}
 
 		if len(args) == 0 {
-			fmt.Println(string(data))
+			fmt.Println(string(escapeC1JSON(data)))
 			return nil
 		}
 		if err := os.WriteFile(args[0], data, 0600); err != nil {
@@ -937,7 +948,7 @@ Examples:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		format, _ := cmd.Flags().GetString("format")
 
-		raw, err := os.ReadFile(args[0])
+		raw, err := readImportFile(args[0])
 		if err != nil {
 			return fmt.Errorf("reading file: %w", err)
 		}
@@ -972,7 +983,22 @@ Examples:
 		validIncoming = deduped
 
 		existing := v.ListInstructions()
+		keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
+		validIncoming, unchanged, leftOut, notText := screenImportedInstructions(validIncoming, existing, merge, keep)
+		invalidIncoming = append(invalidIncoming, notText...)
 		conflicts := agent.CheckInstructionConflicts(existing, validIncoming)
+		defer func() {
+			if unchanged > 0 {
+				fmt.Printf("Unchanged: %d instruction(s) already match this vault.\n", unchanged)
+			}
+			prefix := "Left out"
+			if dryRun {
+				prefix = "Dry-run: would leave out"
+			}
+			for _, l := range leftOut {
+				fmt.Printf("%s: %s\n", prefix, printable(l))
+			}
+		}()
 
 		if dryRun {
 			wouldImport := len(validIncoming)
@@ -983,16 +1009,16 @@ Examples:
 			if len(invalidIncoming) > 0 {
 				fmt.Println("Invalid (would be skipped):")
 				for _, e := range invalidIncoming {
-					fmt.Printf("  %v\n", e)
+					fmt.Printf("  %s\n", printable(e.Error()))
 				}
 			}
 			if len(conflicts) > 0 {
 				fmt.Println("Conflicts (existing would win):")
 				for _, c := range conflicts {
 					if c.DirectoryPattern != "" {
-						fmt.Printf("  %s [scope: %s, pattern: %s]: %s\n", c.Name, c.IncomingScope, c.DirectoryPattern, c.ResolutionNote)
+						fmt.Printf("  %s [scope: %s, pattern: %s]: %s\n", printable(c.Name), printable(c.IncomingScope), printable(c.DirectoryPattern), printable(c.ResolutionNote))
 					} else {
-						fmt.Printf("  %s [scope: %s]: %s\n", c.Name, c.IncomingScope, c.ResolutionNote)
+						fmt.Printf("  %s [scope: %s]: %s\n", printable(c.Name), printable(c.IncomingScope), printable(c.ResolutionNote))
 					}
 				}
 			}
@@ -1031,11 +1057,41 @@ Examples:
 		if len(invalidIncoming) > 0 {
 			fmt.Println("Invalid (skipped):")
 			for _, e := range invalidIncoming {
-				fmt.Printf("  %v\n", e)
+				fmt.Printf("  %s\n", printable(e.Error()))
 			}
 		}
 		return nil
 	},
+}
+
+// screenImportedInstructions sorts what instructions import may write, as
+// a bundle import does: an instruction equal to this vault's is unchanged
+// and not written again, content that is not UTF-8 text is refused, and one
+// that runs code (a command file, frontmatter, a shell line) and would add
+// or replace an instruction is left out without keep.
+func screenImportedInstructions(in, existing []agent.InstructionFile, merge, keep bool) (out []agent.InstructionFile, unchanged int, leftOut []string, notText []error) {
+	byKey := make(map[string]agent.InstructionFile, len(existing))
+	for _, e := range existing {
+		byKey[agent.InstructionKey(e)] = e
+	}
+	for _, inst := range in {
+		have, exists := byKey[agent.InstructionKey(inst)]
+		if exists && sameInstructionFile(have, inst) {
+			unchanged++
+			continue
+		}
+		if problem := agent.TextProblem([]byte(inst.Content)); problem != "" {
+			notText = append(notText, fmt.Errorf("instruction %q: %s", inst.Name, problem))
+			continue
+		}
+		writes := !exists || merge
+		if writes && !keep && (agent.InstructionFileRunsCommands(inst.Filename) || proseRunsCommands(inst.Filename, []byte(inst.Content))) {
+			leftOut = append(leftOut, fmt.Sprintf("instruction %s (%s): the file adds or changes something that runs code (use --keep-bundle-commands to take it)", inst.Name, inst.Filename))
+			continue
+		}
+		out = append(out, inst)
+	}
+	return out, unchanged, leftOut, notText
 }
 
 func marshalInstructions(instructions []agent.InstructionFile, format string, args []string) ([]byte, error) {
@@ -1116,6 +1172,7 @@ func init() {
 
 	instPreviewCmd.Flags().String("dir", "", "directory to resolve scope against (default: cwd)")
 	instPreviewCmd.Flags().Bool("all", false, "show all resolved instructions")
+	instPreviewCmd.Flags().Bool("raw", false, rawFlagUsage)
 
 	instExportCmd.Flags().String("format", "", "output format: json or yaml (default: json)")
 	instExportCmd.Flags().String("scope", "", "export only instructions at this scope")
@@ -1123,12 +1180,14 @@ func init() {
 	instImportCmd.Flags().String("format", "", "input format: json or yaml (autodetect by extension)")
 	instImportCmd.Flags().Bool("merge", false, "update existing instructions by name+scope+directory_pattern")
 	instImportCmd.Flags().Bool("dry-run", false, "validate and report conflicts without writing")
+	instImportCmd.Flags().Bool("keep-bundle-commands", false, "take instructions that run code (command files, frontmatter, shell lines); left out by default")
 
 	instRemoveCmd.Flags().String("scope", "", "target scope: global, directory, or local")
 	instRemoveCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
 
 	instShowCmd.Flags().String("scope", "", "target scope: global, directory, or local")
 	instShowCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
+	instShowCmd.Flags().Bool("raw", false, rawFlagUsage)
 
 	instEditCmd.Flags().String("scope", "", "target scope: global, directory, or local")
 	instEditCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
@@ -1159,6 +1218,24 @@ func writeInstructionFile(dir string, inst agent.InstructionFile) error {
 	return nil
 }
 
+// checkInstructionFilenames refuses the whole push when any selected
+// instruction has a filename that is not allowed, so nothing is half written.
+func checkInstructionFilenames(list []agent.InstructionFile, selected func(agent.InstructionFile) bool) error {
+	var errs []string
+	for _, inst := range list {
+		if !selected(inst) {
+			continue
+		}
+		if err := agent.ValidateInstructionFilename(inst.Filename); err != nil {
+			errs = append(errs, fmt.Sprintf("instruction %q: %v", inst.Name, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("nothing written; change or remove these with 'instructions set <name> --filename <new>' or 'instructions remove <name>':\n  %s", strings.Join(errs, "\n  "))
+	}
+	return nil
+}
+
 var errUnsafeInstructionFilename = errors.New("unsafe instruction filename")
 
 // readInstructionOnDisk reads inst's file under dir. A vault written before
@@ -1175,7 +1252,21 @@ func readInstructionOnDisk(dir string, inst agent.InstructionFile) ([]byte, erro
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errUnsafeInstructionFilename, err)
 	}
-	return os.ReadFile(p)
+	return readImportFile(p)
+}
+
+// readLocalInstruction reads an instruction file pull looks for. A missing
+// one is nil. One that is not a regular file of at most
+// maxImportFileBytes (a pipe, /dev/zero behind a symlink) is reported,
+// counted in refused and nil, so it neither blocks pull nor stops it.
+func readLocalInstruction(path string, refused *int) []byte {
+	data, err := readImportFile(path)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return data
+	}
+	fmt.Fprintf(os.Stderr, "  refused %s\n", printable(err.Error()))
+	*refused++
+	return nil
 }
 
 // ensureNoSymlinkBelow rejects symlinks in the components of p below root.
@@ -1206,4 +1297,15 @@ func ensureNoSymlinkBelow(root string, p string) error {
 		}
 	}
 	return nil
+}
+
+// findInstruction returns the stored instruction with name in scope.
+func findInstruction(v *vault.Vault, name, scope, dirPattern string) (agent.InstructionFile, bool) {
+	key := agent.InstructionKey(agent.InstructionFile{Name: name, Scope: scope, DirectoryPattern: dirPattern})
+	for _, inst := range v.ListInstructions() {
+		if agent.InstructionKey(inst) == key {
+			return inst, true
+		}
+	}
+	return agent.InstructionFile{}, false
 }

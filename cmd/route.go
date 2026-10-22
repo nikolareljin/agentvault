@@ -72,7 +72,7 @@ func runRoute(cmd *cobra.Command, args []string) error {
 	}
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	if jsonOut {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(c1Writer(os.Stdout))
 		enc.SetIndent("", "  ")
 		return enc.Encode(decision)
 	}

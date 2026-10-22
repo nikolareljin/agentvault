@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,17 @@ import (
 func claudeSettingsAsset(content string, pointers ...string) SetupAsset {
 	return SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json",
 		ContentPresent: true, Content: []byte(content), RedactedFields: pointers}
+}
+
+// compactJSON is s without insignificant whitespace, so a check does not
+// depend on whether the file kept this machine's layout.
+func compactJSON(t *testing.T, s string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(s)); err != nil {
+		t.Fatalf("not JSON: %v: %s", err, s)
+	}
+	return buf.String()
 }
 
 func readString(t *testing.T, p string) string {
@@ -302,7 +314,7 @@ func TestRemapRewritesRedactedPointers(t *testing.T) {
 	if _, _, err := applyProviderAssetsWith(home, out, fixedCtx("")); err != nil {
 		t.Fatal(err)
 	}
-	if got := readString(t, settings); !strings.Contains(got, `"Authorization": "tok"`) {
+	if got := compactJSON(t, readString(t, settings)); !strings.Contains(got, `"Authorization":"tok"`) {
 		t.Errorf("secret under remapped key not restored: %s", got)
 	}
 }
@@ -413,8 +425,8 @@ func TestImportDropsServerWithChangedEnv(t *testing.T) {
 	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{asset}, ctx); err != nil {
 		t.Fatal(err)
 	}
-	got := readString(t, cj)
-	if strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"TOKEN": "t"`) || !strings.Contains(got, `"TOKEN": "ty"`) {
+	got := compactJSON(t, readString(t, cj))
+	if strings.Contains(got, "NODE_OPTIONS") || !strings.Contains(got, `"TOKEN":"t"`) || !strings.Contains(got, `"TOKEN":"ty"`) {
 		t.Errorf("got %s", got)
 	}
 	all := strings.Join(ctx.MCPReport, "\n")
@@ -437,6 +449,10 @@ func TestImportLayoutOnlyChangeIsNoConflict(t *testing.T) {
 	}
 	if prompt.Len() > 0 || len(ctx.Backups) > 0 {
 		t.Errorf("asked or backed up: %q %v", prompt.String(), ctx.Backups)
+	}
+	// This machine's bytes stay: a same-machine import must not reformat.
+	if got := readString(t, settings); got != `{"model":"opus"}` {
+		t.Errorf("settings.json rewritten: %s", got)
 	}
 }
 
@@ -494,6 +510,13 @@ func TestCodexProviderConfigAssets(t *testing.T) {
 	}
 	if len(dropped) != 5 || !strings.Contains(strings.Join(dropped, "\n"), `trusted project "/evil"`) {
 		t.Errorf("dropped = %v", dropped)
+	}
+	// The flag takes a trusted project, never a rule name, so only the
+	// trusted project may point at it.
+	for _, d := range dropped {
+		if strings.HasPrefix(d, "rule ") == strings.Contains(d, "--keep-bundle-commands") {
+			t.Errorf("flag hint wrong in %q", d)
+		}
 	}
 	if _, _, err := applyProviderAssetsWith(home, assets, fixedCtx("")); err != nil {
 		t.Fatal(err)

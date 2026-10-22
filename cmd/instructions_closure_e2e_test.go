@@ -177,3 +177,47 @@ func TestPullDoesNotFollowIntoSecretFiles(t *testing.T) {
 		t.Errorf(".env.example not stored; stored %d instructions", len(reopened.ListInstructions()))
 	}
 }
+
+// A UTF-16 AGENTS.md (Windows Notepad writes one) is refused and named; the
+// other files are still pulled. Before, it stopped the pull with nothing
+// stored, and --strict is what turns the refusal into a failure.
+func TestPullSkipsAFileThatIsNotUTF8(t *testing.T) {
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv(ConfigDirsEnv, "")
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	cfgDir := filepath.Join(root, config.AppName)
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	v := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := v.Init(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	useConfigDir(t, cfgDir)
+
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "AGENTS.md"), "\xff\xfeh\x00i\x00")
+	writeFile(t, filepath.Join(src, "CLAUDE.md"), "claude\n")
+	writeFile(t, filepath.Join(src, "GEMINI.md"), "gemini\n")
+	if err := instPullCmd.RunE(instPullCmd, []string{src}); err != nil {
+		t.Fatalf("pull stopped at the UTF-16 file: %v", err)
+	}
+	reopened := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := reopened.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]bool{}
+	for _, inst := range reopened.ListInstructions() {
+		stored[inst.Filename] = true
+	}
+	if !stored["CLAUDE.md"] || !stored["GEMINI.md"] || stored["AGENTS.md"] {
+		t.Errorf("stored %v, want CLAUDE.md and GEMINI.md only", keysOf(stored))
+	}
+
+	withFlags(t, instPullCmd, map[string]string{"strict": "true"})
+	if err := instPullCmd.RunE(instPullCmd, []string{src}); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Errorf("--strict with a refused file: %v", err)
+	}
+}

@@ -85,6 +85,17 @@ func execAllowed(asset SetupAsset) bool {
 	return strings.HasPrefix(filepath.ToSlash(filepath.Clean(asset.LogicalPath)), "hooks/")
 }
 
+// skillAsset is whether asset is a file inside a provider's skill directory.
+func skillAsset(asset SetupAsset) bool {
+	switch asset.LogicalRoot {
+	case setupAssetRootProviderClaudeSkill, setupAssetRootProviderCodexSkill:
+		return true
+	case setupAssetRootProviderClaude, setupAssetRootProviderCodex:
+		return strings.HasPrefix(agent.NormalizePathForMatch(asset.LogicalPath), "skills/")
+	}
+	return false
+}
+
 // assetPerm is base, plus owner execute when the source file was executable.
 func assetPerm(asset SetupAsset, base os.FileMode) os.FileMode {
 	if os.FileMode(asset.Mode)&0o111 != 0 {
@@ -443,6 +454,10 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	missingInstructionFiles := 0
 	for _, filename := range sortedInstructionFilenames() {
 		absPath := filepath.Join(projectDir, filepath.FromSlash(filename))
+		if warn, skip := symlinkedAsset(absPath); skip {
+			instructionWarnings = append(instructionWarnings, warn)
+			continue
+		}
 		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
 			return nil, nil, warnings, projectDeclined, err
@@ -486,6 +501,10 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 			continue
 		}
 		absPath := filepath.Join(projectDir, filename)
+		if warn, skip := symlinkedAsset(absPath); skip {
+			workflowWarnings = append(workflowWarnings, warn)
+			continue
+		}
 		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
 			return nil, nil, warnings, projectDeclined, err
@@ -1028,8 +1047,9 @@ func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite b
 		if d.IsDir() {
 			return nil
 		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("staged project asset %q must not be a symlink", path)
+		if !d.Type().IsRegular() {
+			// A symlink or a pipe: the stage holds only files it wrote.
+			return fmt.Errorf("staged project asset %q is not a regular file", path)
 		}
 		rel, err := safeSubpath(projectRoot, path)
 		if err != nil {
@@ -1046,6 +1066,10 @@ func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite b
 	var skipped []string
 	for _, rel := range relPaths {
 		if reason := projectAssetRefusal(rel); reason != "" {
+			if reason == notProseReason && sameStagedAsTarget(projectRoot, targetDir, rel) {
+				// Already in place, as on the machine that exported it.
+				continue
+			}
 			skipped = append(skipped, fmt.Sprintf("%s: %s", rel, reason))
 			continue
 		}
@@ -1067,7 +1091,19 @@ func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite b
 			skipped = append(skipped, fmt.Sprintf("%s: exists and is not a regular file; kept", rel))
 			continue
 		}
-		if same, exists := sameFileContent(srcPath, destPath); exists && !same {
+		same, exists := sameFileContent(srcPath, destPath)
+		if exists && same {
+			// Already in place: rewriting it would only reset its mode.
+			applied++
+			continue
+		}
+		if !same && (ctx == nil || !ctx.KeepBundleCommands) {
+			if data, err := os.ReadFile(srcPath); err == nil && proseRunsCommands(rel, data) {
+				skipped = append(skipped, fmt.Sprintf("%s: runs commands (hooks, tools or shell lines) that the bundle adds or changes; left out (use --keep-bundle-commands to take it)", rel))
+				continue
+			}
+		}
+		if exists && !same {
 			if ctx == nil && !overwrite {
 				skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept (use --strategy replace to overwrite)", rel))
 				continue
@@ -1180,18 +1216,18 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		original, _ := ctx.original(dest)
 		current, _ := readExistingFile(dest)
 		desc := describeSetupAsset(asset)
-		if !ctx.KeepBundleCommands && scriptAsset(asset) && !bytes.Equal(original, content) {
+		if !ctx.KeepBundleCommands && (scriptAsset(asset) || proseRunsCommands(asset.LogicalPath, content)) && !bytes.Equal(original, content) {
 			// A kept hook command would run whatever script is here.
-			warnings = append(warnings, fmt.Sprintf("provider asset %s: left out script, which the bundle adds or changes; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+			warnings = append(warnings, fmt.Sprintf("provider asset %s: left out script (or hooks, tools or shell lines), which the bundle adds or changes; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 			continue
 		}
 		if !ctx.KeepBundleCommands && asset.LogicalRoot == setupAssetRootProviderGemini &&
-			strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "trustedFolders.json") && !sameFileBytes(original, content) {
+			agent.NormalizePathForMatch(asset.LogicalPath) == "trustedfolders.json" && !sameFileBytes(original, content) {
 			// Trust lets Gemini act in a folder without asking.
 			warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, the bundle adds or changes trusted folders; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 			continue
 		}
-		codexConfig := asset.LogicalRoot == setupAssetRootProviderCodex && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.toml")
+		codexConfig := asset.LogicalRoot == setupAssetRootProviderCodex && agent.NormalizePathForMatch(asset.LogicalPath) == "config.toml"
 		var mcpRep mcpMergeReport
 		codexServersOnly := false
 		codexMerged := false
@@ -1324,6 +1360,18 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			}
 			continue
 		}
+		// Equal JSON in another layout: keep this machine's bytes.
+		if exists && sameFileBytes(current, content) {
+			content = current
+		}
+		if exists && bytes.Equal(current, content) && declined == 0 {
+			// Nothing to write. Rewriting would reset the file's mode, and
+			// a skill script would lose its execute bit.
+			if line := formatMCPReport(dest, mcpRep, false); line != "" {
+				ctx.MCPReport = append(ctx.MCPReport, line)
+			}
+			continue
+		}
 		// Only servers the user already settled differ: no second question.
 		serversOnly := mcpRep.changed() && (codexServersOnly || (!codexConfig && sameApartFromMCP(current, content)))
 		if exists && !sameFileBytes(current, content) {
@@ -1354,7 +1402,9 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			}
 			warnings = append(warnings, fmt.Sprintf("provider asset %s: %d local secret(s) not restored because the definition holding them changed; the old values are in %s", desc, declined, where))
 		}
-		if execAllowed(asset) {
+		if execAllowed(asset) || (skillAsset(asset) && scriptAsset(asset) && agent.InstructionFileRunsCommands(".claude/skills/"+asset.LogicalPath)) {
+			// A skill script reaches here only when it matches this
+			// machine's or was taken with consent. Prose never gets +x.
 			perm = assetPerm(asset, perm)
 		}
 		if err := writeRegularFileAtomic(homeDir, dest, content, perm); err != nil {
@@ -1668,4 +1718,22 @@ func copyRegularFile(srcPath string, root string, destPath string, perm os.FileM
 	}
 	tmpPath = ""
 	return fsname.CheckAfterWrite(root, destPath)
+}
+
+// sameStagedAsTarget is whether the staged rel already sits in targetDir
+// with the same bytes, read without following a symlink at the target.
+func sameStagedAsTarget(projectRoot, targetDir, rel string) bool {
+	src, err := safeJoinUnder(projectRoot, rel)
+	if err != nil {
+		return false
+	}
+	dest, err := safeJoinUnder(targetDir, rel)
+	if err != nil || ensureNoSymlinkBelow(targetDir, dest) != nil {
+		return false
+	}
+	if info, err := os.Lstat(dest); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	same, exists := sameFileContent(src, dest)
+	return exists && same
 }

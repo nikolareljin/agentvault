@@ -41,6 +41,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/envutil"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/nikolareljin/agentvault/internal/workspace"
@@ -440,7 +441,7 @@ func (m *model) refreshLocalInstructions() {
 			if err != nil || info.IsDir() {
 				continue
 			}
-			data, err := os.ReadFile(fullPath)
+			data, err := safefile.Read(fullPath)
 			if err != nil {
 				continue
 			}
@@ -1382,7 +1383,7 @@ func (m *model) handleCycleClaudeBackend() (tea.Model, tea.Cmd) {
 	}
 	a.Backend = next
 	a.UpdatedAt = time.Now()
-	if err := a.Validate(); err != nil {
+	if err := a.ValidateFields(); err != nil {
 		m.setStatus(fmt.Sprintf("Invalid backend selection: %v", err), true)
 		return m, nil
 	}
@@ -1484,7 +1485,14 @@ func (m *model) setStatus(msg string, isError bool) {
 // View rendering
 // ──────────────────────────────────────────────────────────────────
 
+// View renders the screen. Vault fields can come from another machine's
+// bundle: they are rendered with ESC replaced (displayCopy), and the
+// result keeps only the styles' SGR codes and no other control character.
 func (m model) View() string {
+	return cleanView(m.displayCopy().view())
+}
+
+func (m model) view() string {
 	if m.quitting {
 		return ""
 	}
@@ -1918,7 +1926,7 @@ func (m model) renderRuleDetail() string {
 func (m model) renderSessions() string {
 	var b strings.Builder
 
-	sessions := m.vault.Sessions()
+	sessions := m.displaySessions()
 	if len(sessions.Sessions) == 0 {
 		b.WriteString(dimStyle.Render("  No sessions configured."))
 		b.WriteString("\n")
@@ -2016,7 +2024,7 @@ func (m model) renderSessions() string {
 }
 
 func (m model) renderSessionDetail() string {
-	sessions := m.vault.Sessions()
+	sessions := m.displaySessions()
 	if m.sessionCursor >= len(sessions.Sessions) {
 		return ""
 	}
@@ -2352,7 +2360,7 @@ func (m model) renderStatus() string {
 	b.WriteString(fmt.Sprintf("    Roles:        %d\n", len(m.shared.Roles)))
 	b.WriteString(fmt.Sprintf("    MCP Servers:  %d (shared)\n", len(m.shared.MCPServers)))
 
-	sessions := m.vault.Sessions()
+	sessions := m.displaySessions()
 	b.WriteString(fmt.Sprintf("    Sessions:     %d\n", len(sessions.Sessions)))
 
 	// Provider configs
@@ -3046,4 +3054,39 @@ func (p placeholderModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return p, nil
+}
+
+// cleanView replaces control characters with '?', keeping newlines, tabs
+// and SGR sequences (ESC [ digits/';' m), which is all lipgloss writes.
+func cleanView(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] == ';') {
+				j++
+			}
+			if j < len(s) && s[j] == 'm' {
+				b.WriteString(s[i : j+1])
+				i = j + 1
+				continue
+			}
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r < 0x20 || (r >= 0x7f && r < 0xa0):
+			b.WriteByte('?')
+		case r == utf8.RuneError && size == 1:
+			// A stray byte such as 0x9b is an 8-bit CSI to a terminal
+			// that is not in UTF-8 mode.
+			b.WriteByte('?')
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
 }

@@ -50,6 +50,7 @@ func init() {
 	templatesListCmd.Flags().String("repo", "", "repository path for repo-local overrides (default: current directory)")
 	templatesShowCmd.Flags().String("repo", "", "repository path for repo-local overrides (default: current directory)")
 	templatesShowCmd.Flags().Bool("metadata", false, "include metadata header before template content")
+	templatesShowCmd.Flags().Bool("raw", false, rawFlagUsage)
 	templatesRefreshCmd.Flags().Bool("force", false, "overwrite existing config templates with built-in defaults")
 }
 
@@ -67,13 +68,13 @@ func runTemplatesList(cmd *cobra.Command, args []string) error {
 	fmt.Fprintln(out, "Workflow templates")
 	for _, t := range resolved {
 		if desc := t.Description(); desc != "" {
-			fmt.Fprintf(out, "  - %s (%s, version=%s): %s\n", t.Filename, t.Source, t.Version, desc)
+			fmt.Fprintf(out, "  - %s (%s, version=%s): %s\n", printable(t.Filename), printable(t.Source), printable(t.Version), printable(desc))
 			continue
 		}
-		fmt.Fprintf(out, "  - %s (%s, version=%s)\n", t.Filename, t.Source, t.Version)
+		fmt.Fprintf(out, "  - %s (%s, version=%s)\n", printable(t.Filename), printable(t.Source), printable(t.Version))
 	}
 	for _, warn := range warnings {
-		fmt.Fprintf(errOut, "warning: %s\n", warn)
+		fmt.Fprintf(errOut, "warning: %s\n", printable(warn))
 	}
 	return nil
 }
@@ -96,14 +97,15 @@ func runTemplatesShow(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		if includeMeta {
-			fmt.Fprintf(out, "# Source: %s\n# File: %s\n# Version: %s\n\n", t.Source, t.Filename, t.Version)
+			fmt.Fprintf(out, "# Source: %s\n# File: %s\n# Version: %s\n\n", printable(t.Source), printable(t.Filename), printable(t.Version))
 		}
-		fmt.Fprint(out, t.Content)
+		// Templates travel in bundles: --raw is needed for the bytes.
+		fmt.Fprint(out, contentText(cmd, t.Content))
 		if !strings.HasSuffix(t.Content, "\n") {
 			fmt.Fprintln(out)
 		}
 		for _, warn := range filterTemplateWarnings(warnings, t.Key, t.Filename) {
-			fmt.Fprintf(errOut, "warning: %s\n", warn)
+			fmt.Fprintf(errOut, "warning: %s\n", printable(warn))
 		}
 		return nil
 	}
@@ -123,7 +125,7 @@ func runTemplatesRefresh(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(out, "Initialized %d workflow template(s) in config storage:\n", len(written))
 	for _, t := range written {
-		fmt.Fprintf(out, "  - %s (%s)\n", t.Filename, t.Version)
+		fmt.Fprintf(out, "  - %s (%s)\n", printable(t.Filename), printable(t.Version))
 	}
 	return nil
 }

@@ -63,3 +63,20 @@ func TestApplyProjectsPipeDestinationNotRead(t *testing.T) {
 		t.Errorf("skipped = %v, err = %v", skipped, err)
 	}
 }
+
+// A pipe in the stage itself is refused, not opened: the open would wait
+// for a writer.
+func TestApplyProjectsPipeInStageRefused(t *testing.T) {
+	cfg := t.TempDir()
+	project := t.TempDir()
+	stage := filepath.Join(cfg, setupImportedAssetsDirName, "project")
+	mustMkdirAll(t, stage)
+	if err := syscall.Mkfifo(filepath.Join(stage, "AGENTS.md"), 0o600); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	var err error
+	runWithin(t, func() { _, _, err = applyStagedProjectAssetsWith(cfg, project, true) })
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("err = %v", err)
+	}
+}

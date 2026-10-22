@@ -118,7 +118,8 @@ Flags:
 Show effective resolved configuration for one agent.
 
 Flags:
-- `--env` (default: `false`): Print shell exports instead of JSON.
+- `--env` (default: `false`): Print shell exports instead of JSON. A value
+  with a control character is left out and unset, and the command exits 1.
 
 ## 3.3 Prompt Gateway and status
 
@@ -369,7 +370,10 @@ Flags:
 - `--force` (default: `false`): Add defaults even when rules already exist.
 
 ### `agentvault rules export`
-No flags.
+Flags:
+- `--raw` (default: `false`): Print content byte-exact, for redirecting to
+  a file. Without it control characters are shown as `?`, also when piped.
+  Raw output can carry terminal escapes; do not print it to a terminal.
 
 ## 3.5 Roles
 
@@ -445,10 +449,25 @@ No flags.
 No flags.
 
 ### `agentvault session export [name] [file]`
-No flags.
+Flags:
+- `--include-keys` (default: `false`): include the agents' API keys and
+  other secrets; without it they are blanked.
+- `--confirm` (default: `false`): allow `--include-keys` to write them in
+  plain text.
 
 ### `agentvault session import [file]`
-No flags.
+Flags:
+- `--keep-bundle-commands` (default: `false`): keep the MCP server commands
+  of the agents the file adds; left out by default.
+- `--dry-run` (default: `false`): report what would be imported.
+
+Agents already in the vault are kept. A blank secret of an added agent is
+dropped and named. Process IDs in the file are cleared. A session equal to
+the vault's session of that name, or to the `NAME-imported` copy an earlier
+import added, adds nothing and leaves the vault file as it is; another one
+of that name is imported as `NAME-imported`, then `NAME-imported-2`. Of an
+agent, rule or role named twice in the file, the first is taken. The file
+must be a regular file of at most 256 MiB, as for every import.
 
 ## 3.7 Instruction management
 
@@ -459,13 +478,33 @@ Aliases:
 No flags.
 
 ### `agentvault instructions show [name]`
-No flags.
+Flags:
+- `--raw` (default: `false`): Print content byte-exact, for redirecting to
+  a file. Without it control characters are shown as `?`, also when piped.
+  Raw output can carry terminal escapes; do not print it to a terminal.
 
 ### `agentvault instructions set [name]`
 Flags:
 - `--file <path>`
 - `--content <text>`
-- `--filename <target-file-name>`
+- `--filename <target-file-name>`: relative to the project. Allowed: a
+  well-known instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+  `codex.md`, `.github/copilot-instructions.md`, `.cursorrules`,
+  `.windsurfrules`, `.clinerules`, `.aider.conf.yml`); `.md`, `.mdc`,
+  `.markdown`, `.txt` or `.rst` in a plain directory or under
+  `.github/instructions`, `.github/prompts`, `.cursor/rules`,
+  `.windsurf/rules`, `.clinerules`, `.claude/agents`, `.claude/commands`,
+  `.claude/skills` or `.gemini/commands` (`.toml` too there); any file in
+  a skill directory but its dot paths (`.claude/skills/NAME/scripts/x.py`);
+  or a file an
+  instruction refers to in a plain directory (`scripts/check.sh`,
+  `.env.example`). Any other dot directory or dot file, at any depth, is
+  refused (`.git`, `.vscode`, `.claude/settings.json`, `pkg/.envrc`), as are
+  `mise.toml`, `CMakeLists.txt`, `devcontainer.json`, `Directory.Build.*`,
+  8.3 short names and `:`. Import takes `.aider.conf.yml`, referred-to files,
+  skill files that are not prose and files with frontmatter, shell lines or TOML that the bundle adds or
+  changes only with `--keep-bundle-commands`. With no `--file` or
+  `--content`, `--filename` moves a stored instruction to a new name
 
 ### `agentvault instructions edit [name]`
 No flags.
@@ -487,6 +526,22 @@ No flags.
 
 ### `agentvault instructions scan [name]`
 No flags.
+
+### `agentvault instructions export [file]`
+Flags:
+- `--format <json|yaml>`: default from the file extension, else JSON.
+
+### `agentvault instructions import [file]`
+Flags:
+- `--merge` (default: `false`): update instructions with the same name,
+  scope and directory pattern.
+- `--dry-run` (default: `false`): report what would be imported.
+- `--format <json|yaml>`: default from the file extension.
+- `--keep-bundle-commands` (default: `false`): take instructions that run
+  code (command files, frontmatter, shell lines); left out by default.
+
+An instruction equal to the vault's is unchanged. One that is not UTF-8
+text is listed as invalid and not stored.
 
 ## 3.8 Shared config
 
@@ -522,6 +577,7 @@ Flags:
 ### `agentvault sync preview`
 Flags:
 - `--provider <provider>`
+- `--raw` (default: `false`)
 
 ## 3.10 Generate
 
@@ -539,8 +595,20 @@ Flags:
 ### `agentvault generate env [output-file]`
 Flags:
 - `--format <dotenv|shell|json>` (default: `dotenv`)
-- `--no-keys` (default: `false`)
+- `--no-keys` (default: `false`): leave out API keys, and write base URLs
+  without a password, a user name (except `git`, `oauth2`,
+  `x-access-token` and an Azure DevOps organization) or secret query
+  parameters; the rest of the URL is kept as written
 - `--agent <name>`
+
+Values are written in single quotes, so sourcing or eval-ing the file runs
+nothing. `dotenv` leaves out a value with a single quote, `${` or a control
+character, and `shell` one with a control character; each is named in a
+comment in the file and in a warning on stderr, and `shell` also unsets it.
+The rest is still written, and the command exits 1 with a last stderr line
+giving the count. `run --env` and the `.env.agents` of `generate all` and
+`setup apply --generate` do the same. An output file that is a symlink is
+refused.
 
 ### `agentvault generate mcp [output-file]`
 Flags:
@@ -548,20 +616,23 @@ Flags:
 - `--shared-only` (default: `false`)
 
 ### `agentvault generate all`
-No flags.
+No flags. Its `.env.agents` leaves out API keys and writes base URLs
+without credentials, as `generate env --no-keys` does.
 
 ## 3.11 Setup (deprecated)
 
 `setup export` and `setup import` are superseded by `agentvault export` and
 `agentvault import` (section 3.13). They keep working and keep reading and writing the
 schema 1.x bundle, but they only ever see the single config directory `--config` points
-at, and `setup import` has no `mirror` strategy.
+at, and `setup import` has no `mirror` strategy. Without `--include-secrets` (the
+default), `setup export` writes a one-profile portable bundle with its secrets blanked
+instead, which 0.14.0 and earlier refuse.
 
 ### `agentvault setup export [file]`
 Flags:
 - `--include-keys` (default: `false`): Include API keys. Also captures keys sourced from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) when the vault-stored key is empty.
-- `--include-secrets` (default: `false`): Include sensitive provider asset file content. **Requires interactive confirmation or `--confirm` when `--encrypted` is not set.**
-- `--confirm` (default: `false`): Skip the interactive confirmation prompt for sensitive export options. Use in CI/scripted contexts.
+- `--include-secrets` (default: `false`): Include sensitive provider asset file content.
+- `--confirm` (default: `false`): Allow `--include-keys` or `--include-secrets` without `--encrypted`. Without it such an export is refused: anyone who can read the file gets the keys.
 - `--detect` (default: `false`)
 - `--include-status` (default: `false`): Include provider usage/quota snapshot.
 - `--encrypted` (default: `false`)
@@ -583,12 +654,16 @@ one profile rather than folding several machines' configurations into one vault.
 `agentvault import <file> --profile NAME` for those.
 
 ### `agentvault setup show [file]`
-No flags.
+No flags. Reads any export: a setup bundle, a portable bundle (each profile in turn) or
+a legacy vault export.
 
 ### `agentvault setup apply [directory]`
 Flags:
 - `--generate` (default: `false`): Also generate `.env.agents` / provider configs.
 - `--only <comma-separated-instruction-names>`
+
+Staged project files from an import that run code are not written; each
+is named as `Left out`.
 
 ### `agentvault setup pull`
 Flags:
@@ -610,6 +685,11 @@ List effective templates and their source.
 
 ### `agentvault templates show <name>`
 Show effective template content by key or filename.
+
+Flags:
+- `--raw` (default: `false`): Print content byte-exact, for redirecting to
+  a file. Without it control characters are shown as `?`, also when piped.
+  Raw output can carry terminal escapes; do not print it to a terminal.
 
 ### `agentvault templates refresh`
 Initialize or refresh config-stored templates from built-in defaults.
@@ -638,7 +718,7 @@ Flags:
 - `-y`, `--yes` (default: `false`): Accept every default and skip the wizard.
 - `--profile <name>` (repeatable; default: every discovered profile). `--profile all` is explicit.
 - `--include-keys` (default: `true`): Include API keys, filling empty vault keys from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`.
-- `--include-secrets` (default: `true`): Include secret-bearing provider and asset file content. Plaintext output with secrets requires interactive confirmation or `--confirm`.
+- `--include-secrets` (default: `true`): Include secret-bearing provider and asset file content. Plaintext output with keys or secrets requires `--confirm`.
 - `--include-sessions` (default: `true`)
 - `--include-templates` (default: `true`): Workflow templates from the profile's config storage.
 - `--include-provider-files` (default: `true`): user-level setup of Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor and Windsurf, and the files it references. The full list is in `docs/cli-reference.md`, "What a bundle carries".
@@ -649,8 +729,8 @@ Flags:
 - `--project <dir>`: Also capture project-local instruction, workflow and skill assets.
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
-- `--vault-only` (default: `false`): Write the legacy single-vault payload instead of a bundle. One profile only.
-- `--confirm` (default: `false`): Skip interactive confirmations.
+- `--vault-only` (default: `false`): Write the legacy single-vault payload instead of a bundle. One profile only. It is the whole vault, keys and secrets included, so it refuses `--include-keys=false` and `--include-secrets=false`.
+- `--confirm` (default: `false`): Skip interactive confirmations, and allow a `--plain` export with `--include-keys` or `--include-secrets` (both on by default). Without it such an export is refused; the wizard asks instead.
 
 Bundle contents, per profile: agents, shared config (system prompt, MCP servers, rules,
 roles, instructions, router, provider pricing), provider configs, model capability

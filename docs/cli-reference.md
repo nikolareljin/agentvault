@@ -319,7 +319,8 @@ Flags:
 - `--force` (default: `false`)
 
 ### `agentvault rules export`
-No flags.
+Flags:
+- `--raw` (default: `false`)
 
 ## Roles (`roles` alias: `role`)
 
@@ -387,10 +388,25 @@ No flags.
 No flags.
 
 ### `agentvault session export [name] [file]`
-No flags.
+Flags:
+- `--include-keys` (default: `false`): include the agents' API keys and
+  other secrets; without it they are blanked.
+- `--confirm` (default: `false`): allow `--include-keys` to write them in
+  plain text.
 
 ### `agentvault session import [file]`
-No flags.
+Flags:
+- `--keep-bundle-commands` (default: `false`): keep the MCP server commands
+  of the agents the file adds; left out by default.
+- `--dry-run` (default: `false`): report what would be imported.
+
+Agents already in the vault are kept. A blank secret of an added agent is
+dropped and named. Process IDs in the file are cleared. A session equal to
+the vault's session of that name, or to the `NAME-imported` copy an earlier
+import added, adds nothing and leaves the vault file as it is; another one
+of that name is imported as `NAME-imported`, then `NAME-imported-2`. Of an
+agent, rule or role named twice in the file, the first is taken. The file
+must be a regular file of at most 256 MiB, as for every import.
 
 ## Instructions (`instructions` alias: `inst`)
 
@@ -398,13 +414,33 @@ No flags.
 No flags.
 
 ### `agentvault instructions show [name]`
-No flags.
+Flags:
+- `--scope <scope>`
+- `--directory-pattern <pattern>`
+- `--raw` (default: `false`)
 
 ### `agentvault instructions set [name]`
 Flags:
 - `--file <path>`
 - `--content <text>`
-- `--filename <target-file-name>`
+- `--filename <target-file-name>`: relative to the project. Allowed: a
+  well-known instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+  `codex.md`, `.github/copilot-instructions.md`, `.cursorrules`,
+  `.windsurfrules`, `.clinerules`, `.aider.conf.yml`); `.md`, `.mdc`,
+  `.markdown`, `.txt` or `.rst` in a plain directory or under
+  `.github/instructions`, `.github/prompts`, `.cursor/rules`,
+  `.windsurf/rules`, `.clinerules`, `.claude/agents`, `.claude/commands`,
+  `.claude/skills` or `.gemini/commands` (`.toml` too there); any file in
+  a skill directory but its dot paths (`.claude/skills/NAME/scripts/x.py`);
+  or a file an
+  instruction refers to in a plain directory (`scripts/check.sh`,
+  `.env.example`). Any other dot directory or dot file, at any depth, is
+  refused (`.git`, `.vscode`, `.claude/settings.json`, `pkg/.envrc`), as are
+  `mise.toml`, `CMakeLists.txt`, `devcontainer.json`, `Directory.Build.*`,
+  8.3 short names and `:`. Import takes `.aider.conf.yml`, referred-to files,
+  skill files that are not prose and files with frontmatter, shell lines or TOML that the bundle adds or
+  changes only with `--keep-bundle-commands`. With no `--file` or
+  `--content`, `--filename` moves a stored instruction to a new name
 
 ### `agentvault instructions edit [name]`
 No flags.
@@ -430,6 +466,22 @@ No flags.
 
 ### `agentvault instructions scan [name]`
 No flags.
+
+### `agentvault instructions export [file]`
+Flags:
+- `--format <json|yaml>`: default from the file extension, else JSON.
+
+### `agentvault instructions import [file]`
+Flags:
+- `--merge` (default: `false`): update instructions with the same name,
+  scope and directory pattern.
+- `--dry-run` (default: `false`): report what would be imported.
+- `--format <json|yaml>`: default from the file extension.
+- `--keep-bundle-commands` (default: `false`): take instructions that run
+  code (command files, frontmatter, shell lines); left out by default.
+
+An instruction equal to the vault's is unchanged. One that is not UTF-8
+text is listed as invalid and not stored.
 
 ## Shared config
 
@@ -465,6 +517,7 @@ Flags:
 ### `agentvault sync preview`
 Flags:
 - `--provider <provider>`
+- `--raw` (default: `false`)
 
 ## Generate
 
@@ -482,8 +535,17 @@ Flags:
 ### `agentvault generate env [output-file]`
 Flags:
 - `--format <dotenv|shell|json>` (default: `dotenv`)
-- `--no-keys` (default: `false`)
+- `--no-keys` (default: `false`): leave out API keys, and write base URLs
+  without a password, a user name (except `git`, `oauth2`,
+  `x-access-token` and an Azure DevOps organization) or secret query
+  parameters; the rest of the URL is kept as written
 - `--agent <name>`
+
+A value that cannot be written safely (`dotenv`: a single quote, `${` or a
+control character; `shell`: a control character) is left out with a
+comment and a warning; the rest is written and the command exits 1. The
+same holds for `run --env` and the `.env.agents` of `generate all` and
+`setup apply --generate`. An output file that is a symlink is refused.
 
 ### `agentvault generate mcp [output-file]`
 Default output is Claude Desktop's config for the OS:
@@ -499,19 +561,23 @@ Flags:
 - `--shared-only` (default: `false`)
 
 ### `agentvault generate all`
-No flags.
+No flags. Its `.env.agents` leaves out API keys and writes base URLs
+without credentials, as `generate env --no-keys` does.
 
 ## Setup (deprecated)
 
 `setup export` and `setup import` are superseded by `agentvault export` and
 `agentvault import`. They still work and still read and write the schema 1.x
 bundle, but they only ever see the single config directory `--config` points at.
+Without `--include-secrets` (the default), `setup export` writes a one-profile
+portable bundle with its secrets blanked instead (see `agentvault export`),
+which 0.14.0 and earlier refuse.
 
 ### `agentvault setup export [file]`
 Flags:
 - `--include-keys` (default: `false`): Include API keys; also resolves keys from env vars when vault key is empty.
-- `--include-secrets` (default: `false`): Include sensitive asset files; requires `--confirm` or interactive consent when not encrypted.
-- `--confirm` (default: `false`): Bypass interactive confirmation for sensitive export options (CI/scripted use).
+- `--include-secrets` (default: `false`): Include sensitive asset files.
+- `--confirm` (default: `false`): Allow `--include-keys` or `--include-secrets` without `--encrypted`. Without it such an export is refused: anyone who can read the file gets the keys.
 - `--detect` (default: `false`)
 - `--include-status` (default: `false`)
 - `--encrypted` (default: `false`)
@@ -526,12 +592,16 @@ Refuses a portable bundle holding more than one profile, since this command has 
 selection; use `agentvault import <file> --profile NAME` instead.
 
 ### `agentvault setup show [file]`
-No flags.
+No flags. Reads any export: a setup bundle, a portable bundle (each profile
+in turn) or a legacy vault export.
 
 ### `agentvault setup apply [directory]`
 Flags:
 - `--generate` (default: `false`)
 - `--only <comma-separated-instruction-names>`
+
+Staged project files from an import that run code are not written; each
+is named as `Left out`.
 
 ### `agentvault setup pull`
 Flags:
@@ -551,6 +621,7 @@ Flags:
 Flags:
 - `--repo <path>` (default: current directory)
 - `--metadata` (default: `false`)
+- `--raw` (default: `false`)
 
 ### `agentvault templates refresh`
 Flags:
@@ -589,8 +660,8 @@ Flags:
 - `--workdir <dir>` (repeatable): Record a folder of projects. Projects under it are recorded relative to it, so import can place them in the folder of the same name on the other machine.
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
-- `--vault-only` (default: `false`): Write the legacy single-vault export instead.
-- `--confirm` (default: `false`): Skip interactive confirmations.
+- `--vault-only` (default: `false`): Write the legacy single-vault export instead. It is the whole vault, API keys and secrets included, so it refuses `--include-keys=false` and `--include-secrets=false`.
+- `--confirm` (default: `false`): Skip interactive confirmations, and allow a `--plain` export with `--include-keys` or `--include-secrets` (both on by default). Without it such an export is refused, because anyone who can read the file gets the keys; the wizard asks instead.
 
 Environment:
 - `AGENTVAULT_PASSWORD`: Master password tried before prompting, per profile.
@@ -627,6 +698,12 @@ Windows names:
 - Shell and login startup files (`.bashrc`, `.zshrc`, `.profile`, `.config/autostart`, `Library/LaunchAgents`, ...) and any other dotfile at the home root except `~/.claude.json`. Import refuses to write them from a bundle, too.
 
 Without `--include-secrets`, JSON settings files that can hold tokens (`~/.copilot/config.json` included) travel with their secret values blanked, as described below. Other settings files that can hold tokens are redacted whole. So are `~/.claude/hooks/` scripts, which are code and cannot be blanked field by field, files in project rule directories that are neither prose nor TOML, credential-named files in any carried directory, files with a second hard link inside a tool's directory, and referenced files that are not prose, such as scripts and config files. Import names each redacted file it could not write. Markdown and text are carried as is.
+
+The vault's own copies are blanked the same way: the Claude settings `setup pull` stored (`env`, `apiKeyHelper`, MCP `headers` and the like; with a secret under a neutral key, such as `--token x` in a command, the settings are left out and import keeps this machine's), every `env` value and secret-shaped argument of shared and per-agent MCP servers, secret-shaped agent and Ollama base URLs, agent provider extras under a secret key, `env` or `headers` or with a secret-shaped value, the shared router's `langgraph_command`, `llm_router_url` and `local_ai_ollama_url` when secret-shaped, and secret keys and `http_headers` of Codex and Ollama custom settings (these are dropped, not blanked). Import fills each blank from this machine's vault when the definition is unchanged, and otherwise leaves the value out and names it as `Left out`. An MCP server is unchanged when it keeps this machine's command, args and `env` names; Codex and Ollama custom settings and the router when they are exactly what export makes of this machine's, and for Ollama the base URL is this machine's. For an agent this covers its API key too: the agent must keep this machine's provider, backend, base URL, provider settings and provider extras names, and a blank matches only a value export blanks, or the blank value is left out and named. The detected-agents summary drops `env`, `headers`, `http_headers`, secret keys and secret-shaped values. A URL query parameter is a secret when its name is a secret key (`?client_secret=`, `?api-key=`, `?sig=`, `#access_token=`), and so is `NAME=value` in an argument or command when `NAME` is one (`X-Api-Key=x`).
+
+A bundle exported without `--include-secrets` carries its version as `blanked_schema_version` (`2.1`) instead of `schema_version`. Only a reader that fills blanks back may apply it; 0.14.0 and earlier refuse it as "not a recognized agentvault export". Import and `setup show` refuse a portable bundle whose version is not `2.0` or `2.1`, or that names both keys with different versions.
+
+With `--apply-provider-configs`, a provider file the bundle carries redacted whole is not written, and neither is the provider config's copy of it (`settings.json`, Codex `config.toml`) when this machine has the file.
 
 Files referenced outside the tools' own directories are written back on import only when they are prose. They are written 0600 and never executable. `~/.claude.json` only gets its `mcpServers` key merged in. Referenced scripts and config files are staged under `<config dir>/imported-assets/provider/provider_home/` for review, and never written to the home directory: placed on `PATH` or named by a hook, a file from a bundle runs code.
 
@@ -669,16 +746,18 @@ Flags:
   - a JSON settings file that does not parse as a plain JSON object (comments, trailing data) and differs: it is not applied. When this machine's copy is the one that does not parse, it is kept as it is;
   - any other top-level key under which a `command`, `args`, `*Command` or `*Helper` field differs (Gemini `tools.discoveryCommand`, `tools.callCommand`);
   - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
-  - trusted projects from the Codex provider config that are new or changed.
+  - trusted projects from the Codex provider config that are new or changed;
+  - the vault's router `langgraph_command`, shared and per-agent MCP servers in the vault (a server named in `--mcp-servers` is taken), and `.aider.conf.yml`, files instructions refer to that are not prose, and every file in a skill directory (`.claude/skills/NAME/`) that is not prose;
+  - Claude agents, commands and skills, rules and prompts with any frontmatter (it can add hooks, tools, MCP servers or a permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every TOML file but Codex `config.toml` (Gemini commands run `!{cmd}`), in the home, the project and vault instructions. `.clinerules/hooks/` is never written.
 
-  A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
+  A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are kept.
 - `--mcp-servers <a,b|all|none>`: Which MCP servers to take from the bundle, without asking. `all` and `none` stand alone; combined with names they are an error. A name no bundle server has is warned about. MCP servers in `mcpServers`, `servers`, `mcp.servers` (VS Code) and `context_servers` (Zed) of JSON settings (Claude `~/.claude.json` and `settings.json`, Gemini, Copilot, Cursor, Windsurf) and in Codex `config.toml` are merged one by one:
   - only on this machine: kept;
   - the same on both sides, apart from secrets the bundle blanked: this machine's definition stays;
   - changed: kept unless named here (or `all`). On a terminal import shows the masked difference and asks `[b]ackup + replace / [k]eep` (`ba`, `ka` for all remaining servers); the default and end of input keep this machine's server. A replaced server can get this machine's secret back after a yes;
   - only in the bundle: left out unless named here. On a terminal import lists them with type and command or URL; a row number selects or clears one, `a` selects all, an empty line accepts, `q` stops the import (files already written stay, with their backups). None is selected at first, and end of input picks none.
 
-  A server from the bundle is offered only when every field is known (`type`, `command`, `args`, `url`, `httpUrl`, `env`, `headers`, `timeout`, `disabled`, `description`, and Codex `enabled`, `startup_timeout_sec`, `tool_timeout_sec`, `http_headers`, `bearer_token_env_var`, `env_http_headers`, `env_vars`; Zed `context_servers` also `source` and `settings`) and no secret-shaped value sits in `command`, `args`, `url`, `httpUrl`, the headers, a gated env variable or Zed `settings`. Any other server (`serverUrl`, `envFile`, `cwd`, `headersHelper`, ...) is not offered and is named; `--keep-bundle-commands` takes it. The pick list shows every field verbatim, nothing masked. The changed-server question shows the changed fields with secret values masked, then the bundle's whole definition verbatim. These checks fail closed, so some ordinary servers are also not offered or need the separate yes: any `%...%` pair counts as a variable reference (`%1%`, `%PROGRAM FILES%`) except the `%XX` escapes of a clean http(s) URL in the server's own `url` or `httpUrl` (`caf%C3%A9`; in `command`, `args`, env values, headers and `settings` every `%...%` pair counts, since a shell may expand `%CD%`; a `%25` or a bare `%` removes that exception, so any `%...%` pair in the URL counts), and a URL whose query uses `;` as a separator or holds a bad escape (`%zz`) is not offered. To take such a server, use `--keep-bundle-commands` or add it to this machine's config by hand. A picked or replaced server's command, args and URL are taken. Two things need a separate yes on a terminal and are refused without one (unless `--keep-bundle-commands`): a server that reads this machine's environment variables (`$VAR`, `${VAR}`, `${env:VAR}`, `$env:VAR`, `%VAR%` and any other `%...%` pair outside URL escapes, `bearer_token_env_var`, `env_http_headers`, `env_vars`; any other `$` or `%...%` counts too), asked with each variable named, even when this machine's server reads the same ones, and not taken on a no; and code-loading or request-routing env variables in `env`, Zed's `command.env` or any `env` object under Zed `settings` (environment under `settings` that cannot be gated by path, such as a non-object `env`, `environment` or `envVars`, an `env` under an array, a gated variable name anywhere else in `settings` (as a key: a known code-loading or routing name in any case, or another gated name spelled like an env name in upper case, ignoring surrounding spaces; lower-case keys such as `api_url` or `proxy` are ordinary settings; as `NAME=` in a string after any character that cannot be part of a name, in any case; or a known code-loading or routing name followed by `=` anywhere, even glued to a prefix such as `-eNODE_OPTIONS=`; only a shape-gated name such as `redirect_url=` inside the query of a plain http(s) URL, one with no whitespace or shell characters that prints back unchanged, is allowed), a settings key with non-ASCII letters, nested values inside an `env` object, or settings nested deeper than 64 levels, means the server is not offered and the report gives the reason; variable paths are printed with each part quoted; commands nested in `settings` are listed on their own lines) (the `env` rules below, such as `NODE_OPTIONS` or `*_URL`), left out and named on a no. Without the flag or a terminal nothing new is added and changed servers keep this machine's definition. A file whose only difference is the servers settled here is not asked about again; it is backed up and written. Import prints one `MCP servers:` line per file (`added`, `replaced`, `kept local`, `left out`, and `not offered` with the reason, each server named once); JSON files keep this machine's key order and server order, with new keys and servers after them in the bundle's order; `--dry-run` asks nothing and prints the plan (`would ask about` for questions it would ask on a terminal, including the separate yes for variables). Codex tables are edited in place: comments and other lines stay, a new server is appended, inserted tables use the file's line ending, and a server name with a quote, backslash, bracket or control character is refused. A layout that cannot be edited this way (dotted keys, inline tables) is named in the report and the whole-file rule decides.
+  A server from the bundle is offered only when every field is known (`type`, `command`, `args`, `url`, `httpUrl`, `env`, `headers`, `timeout`, `disabled`, `description`, and Codex `enabled`, `startup_timeout_sec`, `tool_timeout_sec`, `http_headers`, `bearer_token_env_var`, `env_http_headers`, `env_vars`; Zed `context_servers` also `source` and `settings`) and no secret-shaped value sits in `command`, `args`, `url`, `httpUrl`, the headers, a gated env variable or Zed `settings`. Any other server (`serverUrl`, `envFile`, `cwd`, `headersHelper`, ...) is not offered and is named; `--keep-bundle-commands` takes it. The pick list shows every field verbatim, nothing masked. The changed-server question shows the changed fields with secret values masked, then the bundle's whole definition verbatim. These checks fail closed, so some ordinary servers are also not offered or need the separate yes: any `%...%` pair counts as a variable reference (`%1%`, `%PROGRAM FILES%`) except the `%XX` escapes of a clean http(s) URL in the server's own `url` or `httpUrl` (`caf%C3%A9`; in `command`, `args`, env values, headers and `settings` every `%...%` pair counts, since a shell may expand `%CD%`; a `%25` or a bare `%` removes that exception, so any `%...%` pair in the URL counts), and a URL whose query uses `;` as a separator or holds a bad escape (`%zz`) is not offered. To take such a server, use `--keep-bundle-commands` or add it to this machine's config by hand. A picked or replaced server's command, args and URL are taken. Two things need a separate yes on a terminal and are refused without one (unless `--keep-bundle-commands`): a server that reads this machine's environment variables (`$VAR`, `${VAR}`, `${env:VAR}`, `$env:VAR`, `%VAR%` and any other `%...%` pair outside URL escapes, `bearer_token_env_var`, `env_http_headers`, `env_vars`; any other `$` or `%...%` counts too), asked with each variable named, even when this machine's server reads the same ones, and not taken on a no; and code-loading or request-routing env variables in `env`, Zed's `command.env` or any `env` object under Zed `settings` (environment under `settings` that cannot be gated by path, such as a non-object `env`, `environment` or `envVars`, an `env` under an array, a gated variable name anywhere else in `settings` (as a key: a known code-loading or routing name in any case, or another gated name spelled like an env name in upper case, ignoring surrounding spaces; lower-case keys such as `api_url` or `proxy` are ordinary settings; as `NAME=` in a string after any character that cannot be part of a name, in any case; or a known code-loading or routing name followed by `=` anywhere, even glued to a prefix such as `-eNODE_OPTIONS=`; only a shape-gated name such as `redirect_url=` inside the query of a plain http(s) URL, one with no whitespace or shell characters that prints back unchanged, is allowed), a settings key with non-ASCII letters, nested values inside an `env` object, or settings nested deeper than 64 levels, means the server is not offered and the report gives the reason; variable paths are printed with each part quoted; commands nested in `settings` are listed on their own lines) (the `env` rules below, such as `NODE_OPTIONS` or `*_URL`), left out and named on a no. Without the flag or a terminal nothing new is added and changed servers keep this machine's definition. A file whose only difference is the servers settled here is not asked about again; it is backed up and written. Import prints one `MCP servers:` line per file, naming once each server of the bundle that is new or changed: `added`, `replaced`, `kept local` (a changed server whose replacement was declined), `left out`, `left out variables` (each variable by path), `not offered` with the reason, and `not taken, reads this machine's variables`. A server only this machine has is kept and not listed; JSON files keep this machine's key order and server order, with new keys and servers after them in the bundle's order; `--dry-run` asks nothing and prints the plan (`would ask about` for questions it would ask on a terminal, including the separate yes for variables). Codex tables are edited in place: comments and other lines stay, a new server is appended, inserted tables use the file's line ending, and a server name with a quote, backslash, bracket or control character is refused. A layout that cannot be edited this way (dotted keys, inline tables) is named in the report and the whole-file rule decides.
 - `--on-conflict <backup-replace|keep>`: What to do with a provider file, Claude project memory file or `--apply-projects` file that already exists and differs. Without it, import asks on a terminal and backs up and replaces otherwise; `--strategy merge` given explicitly means `keep`, `replace` and `mirror` mean `backup-replace`.
 - `--confirm` (default: `false`): Skip the confirmation prompt that guards `mirror`.
 
@@ -731,7 +810,7 @@ A row number edits that row's path (an existing absolute directory, `~/` allowed
 
 Rewrites match whole path segments, so `/home/alex` does not rewrite `/home/alexandra` or `/srv/home/alex`. Each spot is rewritten once, and a Windows path also matches its JSON spelling (`C:\\Users\\alex`), its forward-slash spelling (`C:/Users/alex`) and any letter case. A path moved between Windows and POSIX gets the new separators up to its end (`C:\Users\alex\bin\x` becomes `/home/alex/bin/x`). In a JSON file the path runs to the closing quote, spaces included, or to a space before a flag, a drive or another absolute path; in other text it ends at the first whitespace, so `My Docs\x` there keeps its backslash. Claude's per-project memory directories (`~/.claude/projects/-home-alex-...`) are renamed the same way, unless the new name is already taken by another directory in the bundle. Provider configs applied with `--apply-provider-configs` are rewritten too. A home path that no rewrite covers is reported with the `--map` to add. `--dry-run` prints every rewrite and changes nothing.
 
-Secret values in JSON settings files are blanked on export without `--include-secrets`; the rest of the file travels. On import each blanked value is taken from the same file already on this machine. A value this machine does not have is left out and reported, never written as an empty string. A value is restored without asking only into the same definition. If the bundle changed the definition (an MCP server's URL or command, which also needs `--keep-bundle-commands`, the rest of `env` for a key in `env`, or any other field of the file for a top-level secret such as `apiKeyHelper`), import shows the old and new fields, with secrets masked, and asks once per definition: `restore local secret into changed server? [y/N]`. Without a terminal the answer is no, and the warning names the backup that holds the old value. Only listed fields under a secret key, `env` or `headers` count as secrets; any other field the bundle lists must still match. A file whose secrets sit under keys that do not say so is redacted whole, as before. That covers `args` such as `--token x` or `-H "X-API-Key: x"`, a command string with `--token x` in it, credentials in a URL, and known token prefixes. A JSON file that is a credential by name or location, such as `.docker/config.json` or anything under `.aws`, is redacted whole too.
+Secret values in JSON settings files are blanked on export without `--include-secrets`; the rest of the file travels. On import each blanked value is taken from the same file already on this machine. A value this machine does not have is left out and reported, never written as an empty string. A value is restored without asking only into the same definition. If the bundle changed the definition (an MCP server's URL or command, which also needs `--keep-bundle-commands`, the rest of `env` for a key in `env`, or any other field of the file for a top-level secret such as `apiKeyHelper`), import shows the old and new fields, with secrets masked, and asks once per definition: `restore local secret into changed server? [y/N]`. Without a terminal the answer is no, and the warning names the backup that holds the old value. Only listed fields under a secret key, `env`, `headers` or `http_headers` count as secrets; any other field the bundle lists must still match. A file whose secrets sit under keys that do not say so is redacted whole, as before. That covers `args` such as `--token x` or `-H "X-API-Key: x"`, a command string with `--token x` in it, credentials in a URL, and known token prefixes. A JSON file that is a credential by name or location, such as `.docker/config.json` or anything under `.aws`, is redacted whole too.
 
 `--apply-projects` writes prose and the files agent tools read as instructions, the project's own `AGENTS.md` or `CLAUDE.md` included:
 - Never written: `.git/`, `.githooks/`, `.husky/`, `.github/workflows/`, repository settings and credential files.

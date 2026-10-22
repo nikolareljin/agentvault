@@ -381,6 +381,10 @@ func remapProviderConfigs(c agent.ProviderConfig, remaps []pathRemap) (agent.Pro
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		return c, 0, err
 	}
+	// The pointers escape "/" as "~1", which remapText does not see.
+	if c.Claude != nil && out.Claude != nil && len(c.Claude.RedactedFields) > 0 {
+		out.Claude.RedactedFields = remapPointers(c.Claude.RedactedFields, remaps)
+	}
 	return out, n, nil
 }
 

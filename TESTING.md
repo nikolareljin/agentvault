@@ -565,7 +565,7 @@ rm ~/.config/agentvault/templates/release-notes.md
 ./agentvault setup export test-setup.json
 
 # Export with API keys (vault-stored keys + env-var fallback via ANTHROPIC_API_KEY etc.)
-./agentvault setup export test-setup-full.json --include-keys
+./agentvault setup export test-setup-full.json --include-keys --confirm
 
 # Export encrypted bundle
 ./agentvault setup export test-setup.bundle --encrypted
@@ -579,8 +579,8 @@ rm ~/.config/agentvault/templates/release-notes.md
 
 # Sensitive content with confirmation gate
 ./agentvault setup export test-setup.json --include-secrets
-# Expected: prompts for y/N confirmation before proceeding
-./agentvault setup export test-setup.json --include-secrets --confirm   # non-interactive
+# Expected: refused, plaintext secrets need --confirm (or --encrypted)
+./agentvault setup export test-setup.json --include-secrets --confirm
 
 # Import on fresh vault
 rm ~/.config/agentvault/vault.enc
@@ -730,7 +730,7 @@ rm ~/.config/agentvault/vault.enc
 # Enter export password
 
 # Export plaintext (careful!)
-./agentvault export backup.json --plain
+./agentvault export backup.json --plain --confirm
 
 # Import encrypted
 ./agentvault import backup.enc

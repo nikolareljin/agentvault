@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -86,6 +87,9 @@ var homeStartupPaths = []string{
 	".pam_environment", ".gitconfig", ".config/git",
 }
 
+// shortName is an 8.3 alias such as GIT~1 or PROGRA~2.TXT.
+var shortName = regexp.MustCompile(`~[0-9]+(\.[^.]*)?$`)
+
 // homeAssetRefusal returns why a home-relative path may not be carried or
 // written, or "". Only .claude.json may sit at the home root: every other
 // dotfile there is shell or login state.
@@ -95,6 +99,17 @@ func homeAssetRefusal(rel string) string {
 		if seg != strings.TrimSpace(seg) {
 			return "a path segment with leading or trailing whitespace"
 		}
+		// Windows aliases: "git." and GIT~1 are git, "config:x" is a
+		// stream of config. A check on the name would miss the file.
+		if seg != "." && seg != ".." && strings.HasSuffix(seg, ".") {
+			return "a path segment ending in a dot"
+		}
+		if strings.Contains(seg, ":") {
+			return "a path segment with a colon"
+		}
+		if shortName.MatchString(seg) {
+			return "a path segment shaped like a Windows short name"
+		}
 	}
 	// macOS and Windows home directories are case-insensitive: .BASHRC is
 	// .bashrc there.
@@ -102,18 +117,9 @@ func homeAssetRefusal(rel string) string {
 	if reason := agent.SecretBearingReason(folded); reason != "" {
 		return reason
 	}
-	// Windows drops trailing dots from a segment: ".config/fish." is
-	// .config/fish there.
-	segs := strings.Split(folded, "/")
-	for i, seg := range segs {
-		if seg != "." && seg != ".." {
-			segs[i] = strings.TrimRight(seg, ".")
-		}
-	}
-	trimmed := strings.Join(segs, "/")
 	for _, p := range homeStartupPaths {
 		p = strings.ToLower(p)
-		if trimmed == p || strings.HasPrefix(trimmed, p+"/") {
+		if folded == p || strings.HasPrefix(folded, p+"/") {
 			return "a login or shell startup path; never written from a bundle"
 		}
 	}
@@ -419,15 +425,22 @@ func restoreLoginKeys(local, doc map[string]any) {
 	}
 }
 
-// symlinkedAsset reports a symlink where a single optional file is expected.
-// loadSetupAsset refuses symlinks with an error, which would end the whole
-// export over one dotfiles link; these are skipped with a warning instead.
+// symlinkedAsset reports a symlink, or anything else that is not a regular
+// file, where a single optional file is expected. loadSetupAsset refuses
+// them with an error, which would end the whole export over one dotfiles
+// link or a CLAUDE.md linked to AGENTS.md; they are skipped with a warning
+// instead.
 func symlinkedAsset(path string) (string, bool) {
 	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+	if err != nil || info.Mode().IsRegular() {
 		return "", false
 	}
-	return fmt.Sprintf("skipping symlink asset %q; copy its target by hand if you want it", path), true
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Sprintf("skipping symlink asset %q; copy its target by hand if you want it", path), true
+	}
+	// A pipe or device would block the export or never end; a directory is
+	// not a file to carry.
+	return fmt.Sprintf("skipping %q: not a regular file", path), true
 }
 
 // quietMissingRoots drops the "not found" note for optional directories. Most
@@ -1425,6 +1438,10 @@ func projectAssetRefusal(rel string) string {
 			return "runs code or configures git; never written from a bundle"
 		}
 	}
+	// .clinerules/hooks/PreToolUse is a script Cline runs.
+	if strings.HasPrefix(folded, ".clinerules/hooks/") || strings.Contains(folded, "/.clinerules/hooks/") {
+		return "a hooks directory; never written from a bundle"
+	}
 	if strings.HasPrefix(folded, ".github/workflows/") || strings.HasPrefix(folded, ".github/actions/") {
 		return "a CI definition; never written from a bundle"
 	}
@@ -1437,8 +1454,10 @@ func projectAssetRefusal(rel string) string {
 	if isProseFile(slashed) || isProjectInstructionPath(slashed) {
 		return ""
 	}
-	return "not prose; left staged for review"
+	return notProseReason
 }
+
+const notProseReason = "not prose; left staged for review"
 
 // plainTextRuleFiles are instruction files with no extension that hold rule
 // text and nothing a tool executes.

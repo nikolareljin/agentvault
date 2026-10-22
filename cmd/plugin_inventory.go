@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/nikolareljin/agentvault/internal/safefile"
 )
 
 // PluginInventory lists the Claude Code plugins and marketplaces of the
@@ -92,10 +94,12 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 // withoutURLCredentials returns a marketplace source with no credentials in
 // it, or "" when it cannot tell. A private marketplace added as
 // https://token@host/repo would otherwise carry the token into the bundle.
-// It fails closed: a URL must be http, https, ssh or git with a host, and
-// loses its user, query and fragment; an scp form user@host:path keeps
-// host:path only when the user part has no ":"; anything else with an "@"
-// is dropped. owner/repo and local paths pass as they are.
+// It fails closed: a URL must be http, https, ssh, git, git+ssh or ssh+git
+// with a host, loses its query and fragment, and loses its user when
+// userinfoIsCredential says it is one, so ssh://git@host/o/r keeps its
+// login. An scp form user@host:path is ssh: it stays as it is when the user
+// is a plain login name not starting with "-", and is dropped otherwise.
+// owner/repo and local paths pass as they are.
 func withoutURLCredentials(raw string) string {
 	if raw == "" {
 		return ""
@@ -106,17 +110,20 @@ func withoutURLCredentials(raw string) string {
 			return ""
 		}
 		switch strings.ToLower(u.Scheme) {
-		case "http", "https", "ssh", "git":
+		case "http", "https", "ssh", "git", "git+ssh", "ssh+git":
 		default:
 			return ""
 		}
-		u.User = nil
+		userinfo, rest, _, _ := splitURL(raw)
+		if u.User != nil && userinfoIsCredential(u.Scheme, userinfo, rest) {
+			u.User = nil
+		}
 		u.RawQuery = ""
 		u.ForceQuery = false
 		u.Fragment = ""
 		u.RawFragment = ""
 		out := u.String()
-		if strings.Contains(out, "@") {
+		if u.User == nil && strings.Contains(out, "@") {
 			return ""
 		}
 		return out
@@ -126,17 +133,17 @@ func withoutURLCredentials(raw string) string {
 		return raw
 	}
 	user, rest := raw[:at], raw[at+1:]
-	if strings.Contains(user, ":") || !strings.Contains(rest, ":") {
+	if !strings.Contains(rest, ":") || strings.HasPrefix(user, "-") || userinfoIsCredential("ssh", user, "@"+rest) {
 		return ""
 	}
-	return rest
+	return raw
 }
 
 // readJSONIfPresent decodes path into v. A missing file leaves v empty; a file
 // that does not parse is an error, so a damaged inventory is not exported as
 // an empty one.
 func readJSONIfPresent(path string, v any) error {
-	data, err := os.ReadFile(path)
+	data, err := safefile.Read(path)
 	if os.IsNotExist(err) {
 		return nil
 	}

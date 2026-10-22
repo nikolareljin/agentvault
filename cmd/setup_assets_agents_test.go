@@ -695,8 +695,14 @@ func TestWithoutURLCredentials(t *testing.T) {
 		{"https://github.com/o/r.git", "https://github.com/o/r.git"},
 		{"https://x-access-token:tok@github.com/o/r.git", "https://github.com/o/r.git"},
 		{"https://github.com/o/r.git?token=tok#frag", "https://github.com/o/r.git"},
-		{"ssh://git@host/o/r", "ssh://host/o/r"},
-		{"git@github.com:o/r.git", "github.com:o/r.git"},
+		{"ssh://git@host/o/r", "ssh://git@host/o/r"},
+		{"git+ssh://git@host/o/r?x=1", "git+ssh://git@host/o/r"},
+		{"https://oauth2@gitlab.com/o/r", "https://oauth2@gitlab.com/o/r"},
+		{"https://tok@github.com/o/r", "https://github.com/o/r"},
+		{"ssh://u:pw@host/o/r", "ssh://host/o/r"},
+		{"tok%41@host:o/r", ""},
+		{"-oProxyCommand@host:o/r", ""},
+		{"git@github.com:o/r.git", "git@github.com:o/r.git"},
 		{"user:tok@host:path", ""},
 		{"https:tok@host", ""},
 		{"file://tok@host/x", ""},
@@ -1269,6 +1275,21 @@ func TestAssetChangedAfterCheckIsNotExported(t *testing.T) {
 		}
 		if a.ContentPresent || len(a.Content) > 0 || warn == "" {
 			t.Errorf("%s: exported after it changed (%d bytes, warn %q)", p, len(a.Content), warn)
+		}
+	}
+}
+
+// Windows resolves 8.3 short names, stream suffixes and trailing dots to
+// another file: GIT~1 is git, config:x is a stream of config.
+func TestHomeAssetRefusalWindowsAliases(t *testing.T) {
+	for _, p := range []string{".config/GIT~1/config", ".config/git/config:x", ".claude/agents./a.md", ".claude/a~2.md"} {
+		if homeAssetRefusal(p) == "" {
+			t.Errorf("%s: not refused", p)
+		}
+	}
+	for _, p := range []string{".claude/agents/a.md", ".claude/x.y/z", ".claude/~notes.md", ".claude/a~b.md"} {
+		if r := homeAssetRefusal(p); r != "" {
+			t.Errorf("%s: refused: %s", p, r)
 		}
 	}
 }

@@ -34,20 +34,21 @@ Example:
 		asEnv, _ := cmd.Flags().GetBool("env")
 
 		if asEnv {
-			fmt.Printf("export AGENT_NAME=%q\n", a.Name)
-			fmt.Printf("export AGENT_PROVIDER=%q\n", a.Provider)
-			fmt.Printf("export AGENT_MODEL=%q\n", a.Model)
+			left := 0
+			fmt.Print(countLeftOut(&left, shellExportLine("AGENT_NAME", a.Name)))
+			fmt.Print(countLeftOut(&left, shellExportLine("AGENT_PROVIDER", string(a.Provider))))
+			fmt.Print(countLeftOut(&left, shellExportLine("AGENT_MODEL", a.Model)))
 			if a.APIKey != "" {
-				fmt.Printf("export AGENT_API_KEY=%q\n", a.APIKey)
+				fmt.Print(countLeftOut(&left, shellExportLine("AGENT_API_KEY", a.APIKey)))
 			}
 			if a.BaseURL != "" {
-				fmt.Printf("export AGENT_BASE_URL=%q\n", a.BaseURL)
+				fmt.Print(countLeftOut(&left, shellExportLine("AGENT_BASE_URL", a.BaseURL)))
 			}
 			prompt := a.EffectiveSystemPrompt(shared)
 			if prompt != "" {
-				fmt.Printf("export AGENT_SYSTEM_PROMPT=%q\n", prompt)
+				fmt.Print(countLeftOut(&left, shellExportLine("AGENT_SYSTEM_PROMPT", prompt)))
 			}
-			return nil
+			return leftOutError(cmd, left)
 		}
 
 		type output struct {
@@ -66,7 +67,7 @@ Example:
 			SystemPrompt: a.EffectiveSystemPrompt(shared),
 			TaskDesc:     a.TaskDesc,
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(c1Writer(os.Stdout))
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
 	},

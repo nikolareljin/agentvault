@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -269,5 +270,111 @@ func TestValidateInstructionScopeRejectsEscapingFilename(t *testing.T) {
 	err := ValidateInstructionScope(InstructionFile{Name: "x", Filename: "../../.bashrc"})
 	if err == nil {
 		t.Fatal("escaping filename accepted")
+	}
+}
+
+// An instruction filename from a bundle or an older vault must not name a
+// file that git or an agent runs or reads as configuration.
+func TestValidateInstructionFilenameRefusesConfigTargets(t *testing.T) {
+	refused := []string{
+		".git/config", ".git/hooks/pre-commit", "sub/.git/config", ".GIT/config",
+		".git./config", ".git /config", "GIT~1/config", ".githooks/pre-push",
+		".husky/pre-commit", ".github/workflows/ci.yml", ".github/actions/a/action.yml",
+		".claude/settings.json", ".claude/settings.local.json", ".Claude/Settings.json",
+		".mcp.json", ".gemini/settings.json", ".codex/config.toml", ".cursor/mcp.json",
+		".vscode/mcp.json", ".vscode/settings.json", ".vscode/tasks.json", ".envrc",
+	}
+	for _, name := range refused {
+		if err := ValidateInstructionFilename(name); err == nil {
+			t.Errorf("ValidateInstructionFilename(%q) = nil, want an error", name)
+		}
+	}
+	allowed := []string{
+		"AGENTS.md", "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md",
+		"docs/x.md", ".gitignore.md", "my.git/x.md", ".aider.conf.yml", "GEMINI.md", "codex.md",
+		".github/instructions/a.instructions.md", ".github/prompts/p.prompt.md", ".cursor/rules/r.mdc",
+		"pkg/.cursor/rules/r.mdc", ".windsurf/rules/r.md", ".clinerules", ".clinerules/r.md",
+		".windsurfrules", "implement_issue.txt", "Custom-PR.TXT", "docs/a.rst", "sub/AGENTS.md",
+	}
+	for _, name := range allowed {
+		if err := ValidateInstructionFilename(name); err != nil {
+			t.Errorf("ValidateInstructionFilename(%q) = %v, want nil", name, err)
+		}
+	}
+}
+
+// The allow list refuses settings and hook files at any depth, and names as
+// Windows resolves them: trailing dots and spaces, backslashes, alternate
+// data streams, 8.3 short names and case.
+func TestValidateInstructionFilenameAllowList(t *testing.T) {
+	refused := []string{
+		"sub/.vscode/settings.json", "pkg/.envrc", ".envrc", "a/b/.claude/settings.json",
+		".claude/agents/x.json", ".claude/skills/run.sh", ".claude/commands/x.toml",
+		".claude/skills/s/.git/config", ".claude/skills/s/.githooks/pre-commit", ".claude/skills/s/.husky/x",
+		".claude/skills/s/.vscode/tasks.json", ".claude/skills/s/.claude/agents/a.md", ".claude/skills/s/x/.github/x.md",
+		".claude/skills/s/.envrc", ".claude/skills/s/.aider.conf.yml", ".claude/skills/s/.cursorrules", ".claude/skills/s/mise.toml",
+		".claude/skills/s/devcontainer.json", ".claude/skills/s/sub/CMakeLists.txt", ".claude/skills/s/.npmrc",
+		".claude/skills/s/GIT~1/config", ".claude/skills/s/scripts/x.py:evil", ".claude/skills/../../.envrc", "sub/.claude/CLAUDE.md",
+		".claude/hooks/x.md", ".gemini/commands/x.json", ".gemini/x.toml", ".claude/agents.md/x.md",
+		".devcontainer/devcontainer.json", ".devcontainer/x.md", ".vscode/x.md", ".idea/runConfigurations/x.xml",
+		".pre-commit-config.yaml", ".tool-versions", "mise.toml", ".mise.toml", "sub/.npmrc", ".yarnrc.yml",
+		".husky/x.md", ".githooks/x.md", "sub/.aider.conf.yml",
+		"CMakeLists.txt", "sub/cmakelists.txt", "a/devcontainer.json", "Directory.Build.props",
+		"sub/.vscode./settings.json", ".vscode /tasks.json", `sub\.vscode\tasks.json`,
+		"AGENTS.md:evil", "a.md:x", "a.md::$DATA",
+		"CLAUDE~1/agents/x.md", "VSCODE~1/x.md", ".. /x.md", "a/.. /../x.md", "... /x.md", "a/ /x.md", ".envrc.", ".envrc ", "x.md/.envrc",
+		".GitHub/Workflows/ci.yml", ".github/workflows/ci.yml", ".github/x.md", ".github/workflows/x.md",
+		".github/ISSUE_TEMPLATE/bug.md", "sub/.github/agents/a.md",
+		".vscode/.github/copilot-instructions.md", ".git/.github/copilot-instructions.md",
+		".claude/.github/copilot-instructions.md", ".github/.github/x.md",
+	}
+	for _, name := range refused {
+		if err := ValidateInstructionFilename(name); err == nil {
+			t.Errorf("ValidateInstructionFilename(%q) = nil, want an error", name)
+		} else if !strings.Contains(err.Error(), "allowed:") && !strings.Contains(err.Error(), "relative") && !strings.Contains(err.Error(), "dots and spaces") && !strings.Contains(err.Error(), "escapes") {
+			t.Errorf("ValidateInstructionFilename(%q) = %v, want the allowed forms named", name, err)
+		}
+	}
+	allowed := []string{"AGENTS.md.", "AGENTS.md ", `docs\a.md`, ".GITHUB/Copilot-Instructions.md", "README.MD", "sub/.github/copilot-instructions.md",
+		// The project files setup export carries and instructions pull follows.
+		".claude/agents/r.md", ".claude/commands/x.md", `.Claude\agents\r.md`, ".claude/skills/sk/SKILL.md",
+		".claude/skills/sk/ref/notes.md", ".gemini/commands/x.toml", ".gemini/commands/git/c.TOML", "pkg/.claude/commands/x.md"}
+	for _, name := range allowed {
+		if err := ValidateInstructionFilename(name); err != nil {
+			t.Errorf("ValidateInstructionFilename(%q) = %v, want nil", name, err)
+		}
+	}
+	if !InstructionFileRunsCommands(".aider.conf.yml") || !InstructionFileRunsCommands(".Aider.conf.yml.") {
+		t.Error(".aider.conf.yml not flagged as running commands")
+	}
+	for _, n := range []string{"scripts/check.sh", "Makefile", "package.json", ".env.example", "x.sh.", `bin\\run`} {
+		if err := ValidateInstructionFilename(n); err != nil {
+			t.Errorf("reference file %q refused: %v", n, err)
+		}
+		if !InstructionFileRunsCommands(n) {
+			t.Errorf("reference file %q not flagged as running code", n)
+		}
+	}
+	// A skill is a directory: every file it bundles travels, and anything not
+	// prose is code.
+	for _, n := range []string{".claude/skills/s/scripts/x.py", ".claude/skills/s/run.sh", ".claude/skills/s/assets/logo.png",
+		".claude/skills/s/templates/t.json", `.Claude\Skills\s\scripts\x.py.`, "pkg/.claude/skills/s/bin/tool",
+		".claude/skills/s/.env.example", ".claude/skills/s/node/package.json"} {
+		if err := ValidateInstructionFilename(n); err != nil {
+			t.Errorf("skill file %q refused: %v", n, err)
+		}
+		if !InstructionFileRunsCommands(n) {
+			t.Errorf("skill file %q not flagged as running code", n)
+		}
+	}
+	for _, n := range []string{".claude/skills/s/SKILL.md", ".claude/skills/s/references/a.md", ".claude/skills/s/notes.txt"} {
+		if InstructionFileRunsCommands(n) {
+			t.Errorf("%q flagged as running code by name", n)
+		}
+	}
+	for _, n := range []string{"AGENTS.md", ".cursorrules", "docs/a.md", ".github/copilot-instructions.md"} {
+		if InstructionFileRunsCommands(n) {
+			t.Errorf("%q flagged as running code", n)
+		}
 	}
 }

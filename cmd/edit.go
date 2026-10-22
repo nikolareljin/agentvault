@@ -85,7 +85,7 @@ Example:
 		}
 		applyRouteConfigFlags(cmd, &a.Route)
 
-		if err := a.Validate(); err != nil {
+		if err := a.ValidateFields(); err != nil {
 			return err
 		}
 		a.UpdatedAt = time.Now()

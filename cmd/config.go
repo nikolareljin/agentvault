@@ -26,7 +26,7 @@ var configShowCmd = &cobra.Command{
 			return err
 		}
 		shared := v.SharedConfig()
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(c1Writer(os.Stdout))
 		enc.SetIndent("", "  ")
 		return enc.Encode(shared)
 	},

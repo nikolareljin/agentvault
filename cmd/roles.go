@@ -43,20 +43,20 @@ var rolesListCmd = &cobra.Command{
 
 		if jsonOutput {
 			data, _ := json.MarshalIndent(shared.Roles, "", "  ")
-			fmt.Println(string(data))
+			fmt.Println(string(escapeC1JSON(data)))
 			return nil
 		}
 
 		fmt.Println("Roles:")
 		fmt.Println(strings.Repeat("─", 60))
 		for _, r := range shared.Roles {
-			fmt.Printf("\n  %s (%s)\n", r.Title, r.Name)
-			fmt.Printf("    %s\n", r.Description)
+			fmt.Printf("\n  %s (%s)\n", printable(r.Title), printable(r.Name))
+			fmt.Printf("    %s\n", printable(r.Description))
 			if len(r.Rules) > 0 {
-				fmt.Printf("    Rules: %s\n", strings.Join(r.Rules, ", "))
+				fmt.Printf("    Rules: %s\n", printable(strings.Join(r.Rules, ", ")))
 			}
 			if len(r.Tags) > 0 {
-				fmt.Printf("    Tags: %s\n", strings.Join(r.Tags, ", "))
+				fmt.Printf("    Tags: %s\n", printable(strings.Join(r.Tags, ", ")))
 			}
 		}
 		fmt.Println()
@@ -80,16 +80,16 @@ var rolesShowCmd = &cobra.Command{
 			return fmt.Errorf("role %q not found", args[0])
 		}
 
-		fmt.Printf("Role: %s\n", role.Name)
-		fmt.Printf("Title: %s\n", role.Title)
-		fmt.Printf("Description: %s\n", role.Description)
+		fmt.Printf("Role: %s\n", printable(role.Name))
+		fmt.Printf("Title: %s\n", printable(role.Title))
+		fmt.Printf("Description: %s\n", printable(role.Description))
 		if len(role.Rules) > 0 {
-			fmt.Printf("Rules: %s\n", strings.Join(role.Rules, ", "))
+			fmt.Printf("Rules: %s\n", printable(strings.Join(role.Rules, ", ")))
 		}
 		if len(role.Tags) > 0 {
-			fmt.Printf("Tags: %s\n", strings.Join(role.Tags, ", "))
+			fmt.Printf("Tags: %s\n", printable(strings.Join(role.Tags, ", ")))
 		}
-		fmt.Printf("\nPrompt:\n%s\n", role.Prompt)
+		fmt.Printf("\nPrompt:\n%s\n", printableText(role.Prompt))
 		return nil
 	},
 }

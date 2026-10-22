@@ -30,6 +30,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
 	"github.com/nikolareljin/agentvault/internal/locations"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
@@ -103,7 +104,7 @@ func (v *Vault) Init(masterPassword string) error {
 
 // Unlock decrypts the vault with the master password.
 func (v *Vault) Unlock(masterPassword string) error {
-	data, err := os.ReadFile(v.path)
+	data, err := safefile.Read(v.path)
 	if err != nil {
 		return fmt.Errorf("reading vault: %w", err)
 	}
@@ -473,6 +474,11 @@ func (v *Vault) GetInstruction(name string) (agent.InstructionFile, bool) {
 func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
 	if err := agent.ValidateInstructionScope(inst); err != nil {
 		return err
+	}
+	if problem := agent.TextProblem([]byte(inst.Content)); problem != "" {
+		// Saving would replace every invalid byte, so the file pushed back
+		// would not be the file pulled.
+		return fmt.Errorf("instruction %q: %s", inst.Name, problem)
 	}
 	inst = normalizeInstructionForStorage(inst)
 	key := agent.InstructionKey(inst)
@@ -933,7 +939,7 @@ const LegacyBackupSuffix = ".v1.bak"
 // name. If the file no longer starts with salt, another process has already
 // replaced it, and there is no format 1 file left to back up.
 func backupLegacyVault(path string, salt []byte) error {
-	old, err := os.ReadFile(path)
+	old, err := safefile.Read(path)
 	if err != nil {
 		return fmt.Errorf("backing up format 1 vault: %w", err)
 	}
@@ -951,7 +957,7 @@ func backupLegacyVault(path string, salt []byte) error {
 	}
 	final := path + LegacyBackupSuffix
 	if err := linkFile(tmp, final); err != nil {
-		existing, rerr := os.ReadFile(final)
+		existing, rerr := safefile.Read(final)
 		switch {
 		case rerr == nil && bytes.Equal(existing, old):
 		case rerr == nil || !errors.Is(rerr, os.ErrNotExist):

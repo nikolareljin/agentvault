@@ -152,7 +152,15 @@ func ResolveReferences(dir, baseRel, content string) []Reference {
 
 	var out []Reference
 	for _, raw := range FindReferences(content) {
-		out = append(out, classifyReference(root, baseRel, raw))
+		ref := classifyReference(root, baseRel, raw)
+		if ref.Status == ReferenceNotFound && baseRel != "" && baseRel != "." {
+			// A file in .github/ naming `.github/instructions/go.md` means
+			// the project root: try it there before calling it missing.
+			if alt := classifyReference(root, "", raw); alt.Status != ReferenceNotFound {
+				ref = alt
+			}
+		}
+		out = append(out, ref)
 	}
 	// One entry per file taken, whatever the spelling: `AGENTS.md` and
 	// `./AGENTS.md` are the same reference and were reported twice.

@@ -59,7 +59,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		report.Cost = statuspkg.CostReportForVault(v)
 	}
 	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(c1Writer(os.Stdout))
 		enc.SetIndent("", "  ")
 		return enc.Encode(report)
 	}
@@ -106,7 +106,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(model) == "" {
 				model = "-"
 			}
-			fmt.Printf("  - %s (%s, model=%s): %s\n", a.Name, a.Provider, model, a.Status)
+			fmt.Printf("  - %s (%s, model=%s): %s\n", printable(a.Name), printable(string(a.Provider)), printable(model), printable(a.Status))
 		}
 	}
 

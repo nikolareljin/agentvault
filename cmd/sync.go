@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/fsname"
 	"github.com/spf13/cobra"
 )
 
@@ -73,6 +74,7 @@ func init() {
 	syncVaultCmd.Flags().Bool("include-roles", true, "include role descriptions")
 
 	syncPreviewCmd.Flags().String("provider", "", "preview specific provider")
+	syncPreviewCmd.Flags().Bool("raw", false, rawFlagUsage)
 }
 
 func runSyncTo(cmd *cobra.Command, args []string) error {
@@ -101,7 +103,7 @@ func runSyncTo(cmd *cobra.Command, args []string) error {
 	if agentsOnly || providerFilter == "" {
 		content := generateAgentsMD(shared, includeRoles)
 		path := filepath.Join(dir, "AGENTS.md")
-		if err := writeIfAllowed(path, content, force); err != nil {
+		if err := writeIfAllowed(dir, path, content, force); err != nil {
 			return err
 		}
 		fmt.Printf("  Wrote: AGENTS.md (%d bytes)\n", len(content))
@@ -130,7 +132,7 @@ func runSyncTo(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("creating directory: %w", err)
 		}
 
-		if err := writeIfAllowed(path, content, force); err != nil {
+		if err := writeIfAllowed(dir, path, content, force); err != nil {
 			return err
 		}
 		fmt.Printf("  Wrote: %s (%d bytes)\n", filename, len(content))
@@ -214,7 +216,7 @@ func runSyncPreview(cmd *cobra.Command, args []string) error {
 	if providerFilter == "" {
 		fmt.Println("=== AGENTS.md (Universal) ===")
 		fmt.Println()
-		fmt.Println(generateAgentsMD(shared, true))
+		fmt.Println(contentText(cmd, generateAgentsMD(shared, true)))
 		fmt.Println()
 	}
 
@@ -227,7 +229,7 @@ func runSyncPreview(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		fmt.Printf("=== %s ===\n\n", filename)
-		fmt.Println(generateProviderMD(p, shared, true))
+		fmt.Println(contentText(cmd, generateProviderMD(p, shared, true)))
 	}
 
 	return nil
@@ -442,13 +444,19 @@ func providerSyncTarget(provider agent.Provider) (name string, filename string, 
 	return "", "", false
 }
 
-// writeIfAllowed writes content to path, refusing to overwrite existing files
-// unless force is true. This prevents accidental loss of manually-edited files.
-func writeIfAllowed(path, content string, force bool) error {
+// writeIfAllowed writes content to path under dir, refusing to overwrite
+// existing files unless force is true. This prevents accidental loss of
+// manually-edited files. A symlink at path or in a directory below dir is
+// refused, even dangling: a cloned repository can plant AGENTS.md or .github
+// as a link to a file outside it.
+func writeIfAllowed(dir, path, content string, force bool) error {
+	if err := ensureNoSymlinkBelow(dir, path); err != nil {
+		return err
+	}
 	if !force {
-		if _, err := os.Stat(path); err == nil {
-			return fmt.Errorf("file %s already exists (use --force to overwrite)", path)
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("file %s already exists (use --force to overwrite)", printable(path))
 		}
 	}
-	return os.WriteFile(path, []byte(content), 0644)
+	return fsname.WriteFile(dir, path, []byte(content), 0755, 0644)
 }

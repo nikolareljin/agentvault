@@ -197,7 +197,7 @@ func TestBuildCodexExecArgs(t *testing.T) {
 	}
 
 	args := BuildCodexExecArgs("gpt-5", "/tmp/out.txt", repo, "fix the bug")
-	want := []string{"exec", "--json", "--output-last-message", "/tmp/out.txt", "--full-auto", "--model", "gpt-5", "--", "fix the bug"}
+	want := []string{"exec", "--json", "--output-last-message", "/tmp/out.txt", "--full-auto", "--model=gpt-5", "--", "fix the bug"}
 	if strings.Join(args, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("BuildCodexExecArgs() = %#v, want %#v", args, want)
 	}
@@ -238,7 +238,7 @@ func TestBuildCodexStreamArgsOmitsJSON(t *testing.T) {
 func TestBuildClaudeExecArgs(t *testing.T) {
 	args := BuildClaudeExecArgs("sonnet", "fix the bug")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"-p", "--output-format json", "--permission-mode auto", "--model sonnet", "fix the bug"} {
+	for _, want := range []string{"-p", "--output-format json", "--permission-mode auto", "--model=sonnet", "fix the bug"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected %q in args: %#v", want, args)
 		}
@@ -248,7 +248,7 @@ func TestBuildClaudeExecArgs(t *testing.T) {
 func TestBuildGeminiExecArgs(t *testing.T) {
 	args := BuildGeminiExecArgs("gemini-2.5-pro", "fix the bug")
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"--prompt=fix the bug", "--output-format json", "--approval-mode auto_edit", "--model gemini-2.5-pro"} {
+	for _, want := range []string{"--prompt=fix the bug", "--output-format json", "--approval-mode auto_edit", "--model=gemini-2.5-pro"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected %q in args: %#v", want, args)
 		}
@@ -312,6 +312,23 @@ func TestBuildArgsKeepFlagLikePromptAsPrompt(t *testing.T) {
 		for _, a := range args[1:] {
 			if a == p {
 				t.Errorf("%s: prompt passed as a separate argv entry: %#v", name, args)
+			}
+		}
+	}
+}
+
+// A model value from a bundle such as "--yolo" must stay the model's value,
+// not become a flag of the agent CLI.
+func TestBuildArgsKeepModelAttachedToFlag(t *testing.T) {
+	m := "--yolo"
+	for _, args := range [][]string{
+		BuildCodexExecArgs(m, "/tmp/o", "", "p"), BuildCodexStreamArgs(m, "", "p"),
+		BuildClaudeExecArgs(m, "p"), BuildClaudeStreamArgs(m, "p"),
+		BuildGeminiExecArgs(m, "p"), BuildGeminiStreamArgs(m, "p"),
+	} {
+		for _, a := range args {
+			if a == m {
+				t.Errorf("model is a separate argument: %#v", args)
 			}
 		}
 	}

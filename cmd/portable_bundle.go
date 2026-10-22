@@ -13,11 +13,22 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/crypto"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 // PortableBundleSchemaVersion is the schema version of multi-profile bundles
 // written by `agentvault export`.
 const PortableBundleSchemaVersion = "2.0"
+
+// BlankedBundleSchemaVersion marks a bundle exported without
+// --include-secrets. Its secrets are blanked in place, and only a reader
+// that fills them back may apply it: 0.14.0 and earlier would write the
+// blanks over this machine's values. The version is written under
+// blankedSchemaKey instead of "schema_version", so those releases refuse
+// the file as an unrecognized export format.
+const BlankedBundleSchemaVersion = "2.1"
+
+const blankedSchemaKey = "blanked_schema_version"
 
 // DefaultExportDirName is the directory under the config dir where exports land
 // when no output path is given.
@@ -64,13 +75,42 @@ type PortableProfile struct {
 }
 
 // MarshalJSON normalizes a nil profile slice to [] for stable bundle output.
+// A blanked bundle carries its version under blankedSchemaKey.
 func (b PortableBundle) MarshalJSON() ([]byte, error) {
 	type alias PortableBundle
 	out := b
 	if out.Profiles == nil {
 		out.Profiles = []PortableProfile{}
 	}
-	return json.Marshal(alias(out))
+	if out.SchemaVersion != BlankedBundleSchemaVersion {
+		return json.Marshal(alias(out))
+	}
+	out.SchemaVersion = ""
+	return json.Marshal(struct {
+		Blanked string `json:"blanked_schema_version"`
+		alias
+		SchemaVersion string `json:"schema_version,omitempty"`
+	}{Blanked: BlankedBundleSchemaVersion, alias: alias(out)})
+}
+
+// UnmarshalJSON reads the version from either key.
+func (b *PortableBundle) UnmarshalJSON(data []byte) error {
+	type alias PortableBundle
+	var in struct {
+		alias
+		Blanked string `json:"blanked_schema_version"`
+	}
+	if err := json.Unmarshal(data, &in); err != nil {
+		return err
+	}
+	*b = PortableBundle(in.alias)
+	if b.SchemaVersion != "" && in.Blanked != "" && b.SchemaVersion != in.Blanked {
+		return fmt.Errorf("bundle has schema_version %q and %s %q; it was edited and is not trusted", b.SchemaVersion, blankedSchemaKey, in.Blanked)
+	}
+	if b.SchemaVersion == "" {
+		b.SchemaVersion = in.Blanked
+	}
+	return nil
 }
 
 // ProfileNames returns the profile names in bundle order.
@@ -350,7 +390,9 @@ func detectBundleFormat(data []byte) bundleFormat {
 		return bundleFormatUnknown
 	}
 	if _, ok := probe["profiles"]; ok {
-		if _, hasSchema := probe["schema_version"]; hasSchema {
+		_, hasSchema := probe["schema_version"]
+		_, blanked := probe[blankedSchemaKey]
+		if hasSchema || blanked {
 			return bundleFormatPortable
 		}
 	}
@@ -372,13 +414,16 @@ func detectBundleFormat(data []byte) bundleFormat {
 // decodePortableBundle parses any supported export payload into the v2 shape.
 // v1 setup bundles and legacy vault exports are wrapped in a single "default"
 // profile so downstream import logic only handles one structure.
-func decodePortableBundle(data []byte) (PortableBundle, bundleFormat, error) {
+func decodePortableBundleUnchecked(data []byte) (PortableBundle, bundleFormat, error) {
 	format := detectBundleFormat(data)
 	switch format {
 	case bundleFormatPortable:
 		var bundle PortableBundle
 		if err := json.Unmarshal(data, &bundle); err != nil {
 			return PortableBundle{}, format, fmt.Errorf("decoding portable bundle: %w", err)
+		}
+		if bundle.SchemaVersion != PortableBundleSchemaVersion && bundle.SchemaVersion != BlankedBundleSchemaVersion {
+			return PortableBundle{}, format, fmt.Errorf("portable bundle schema version %q is not one this release reads (%s, %s); upgrade agentvault", bundle.SchemaVersion, PortableBundleSchemaVersion, BlankedBundleSchemaVersion)
 		}
 		if len(bundle.Profiles) == 0 {
 			return PortableBundle{}, format, errors.New("portable bundle contains no profiles")
@@ -451,4 +496,59 @@ func setupBundleFromVaultExport(data []byte) (SetupBundle, error) {
 		}
 	}
 	return bundle, nil
+}
+
+// decodePortableBundle decodes a bundle and refuses one whose names carry
+// control characters: export never writes them, and a name is printed by
+// later commands such as list.
+func decodePortableBundle(data []byte) (PortableBundle, bundleFormat, error) {
+	bundle, format, err := decodePortableBundleUnchecked(data)
+	if err != nil {
+		return bundle, format, err
+	}
+	for _, p := range bundle.Profiles {
+		if name, bad := controlCharName(p); bad {
+			if len(name) > 80 {
+				name = name[:80] + "..."
+			}
+			return PortableBundle{}, format, fmt.Errorf("bundle names %q with control characters; it was edited and is not trusted", name)
+		}
+	}
+	return bundle, format, nil
+}
+
+// controlCharName returns the first name in p with a control character.
+func controlCharName(p PortableProfile) (string, bool) {
+	s := p.Setup
+	names := []string{p.Name}
+	for _, a := range s.Agents {
+		names = append(names, a.Name)
+		for _, m := range a.MCPServers {
+			names = append(names, m.Name)
+		}
+	}
+	for _, m := range s.SharedConfig.MCPServers {
+		names = append(names, m.Name)
+	}
+	for _, in := range s.SharedConfig.Instructions {
+		names = append(names, in.Name, in.Filename)
+	}
+	for _, r := range s.SharedConfig.Rules {
+		names = append(names, r.Name)
+	}
+	for _, r := range s.SharedConfig.Roles {
+		names = append(names, r.Name)
+	}
+	for _, ps := range s.SharedConfig.PromptSessions {
+		names = append(names, ps.Name)
+	}
+	for _, se := range s.Sessions.Sessions {
+		names = append(names, se.Name)
+	}
+	for _, n := range names {
+		if textutil.Printable(n) != n {
+			return n, true
+		}
+	}
+	return "", false
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -25,11 +26,14 @@ var secretKeyParts = []string{
 }
 
 // secretKeys are short keys that are secrets by themselves.
-var secretKeys = map[string]bool{"key": true, "auth": true, "pat": true, "pass": true, "pin": true}
+// sig and signature are signed-URL secrets (Azure SAS ?sig=).
+var secretKeys = map[string]bool{"key": true, "auth": true, "pat": true, "pass": true, "pin": true,
+	"sig": true, "signature": true}
 
 // secretContainers hold values that are commonly secrets: an MCP server's env
-// and an HTTP server's headers. Every string under them is blanked.
-var secretContainers = map[string]bool{"env": true, "headers": true}
+// and an HTTP server's headers (Codex: http_headers). Every string under them
+// is blanked.
+var secretContainers = map[string]bool{"env": true, "headers": true, "http_headers": true}
 
 func isSecretKey(k string) bool {
 	lower := strings.ToLower(k)
@@ -336,7 +340,12 @@ func secretPointer(p string) bool {
 var (
 	// Credentials in a URL, a credential query parameter, or a well-known
 	// token prefix.
-	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|[?&](token|key|api_key|apikey|secret|password|sig|signature|access_token)=|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\bbearer\s+[A-Za-z0-9._~+/=-]{8,}|\bbasic\s+[A-Za-z0-9+/=]{8,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
+	secretValueShapes = regexp.MustCompile(`(?i)(://[^/\s:@]+:[^/\s@]+@|\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-|\bAKIA[0-9A-Z]{16}\b|\bAIza[0-9A-Za-z_-]{30,}|\bglpat-|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)`)
+	// An HTTP auth scheme and its token: "Bearer abc123", "Basic dXNl".
+	authSchemeToken = regexp.MustCompile(`(?i)\b(?:bearer\s+[A-Za-z0-9._~+/=-]{8,}|basic\s+[A-Za-z0-9+/=]{8,})`)
+	// A query or fragment parameter: ?client_secret=x, #access_token=x.
+	// Its name decides, by the key rules.
+	queryParam = regexp.MustCompile(`[?&#]([^=&#\s]+)=[^&#\s]`)
 	// A flag whose next argument is a secret.
 	secretFlag = regexp.MustCompile(`(?i)^--?(` + secretFlagNames + `)(=.+)?$`)
 	// The same flag with its value inside one string: a command line.
@@ -345,10 +354,15 @@ var (
 	headerArg = regexp.MustCompile(`^\s*([A-Za-z0-9_-]+)\s*:\s*\S`)
 	// An environment assignment passed as an argument or inside a command
 	// line: docker run -e GITHUB_TOKEN=x.
-	envAssign = regexp.MustCompile(`(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=\S`)
+	// A header passed the same way: X-Api-Key=x.
+	envAssign = regexp.MustCompile(`(?:^|\s)([A-Za-z_][A-Za-z0-9_-]*)=\S`)
 )
 
 const secretFlagNames = `[a-z]*[-_]?(token|secret|password|api[-_]?key)|key|pat|pass|passwd|auth|bearer|access[-_]?key|private[-_]?key|client[-_]?secret|credentials?|cookie` // #nosec G101 -- a regexp of flag names, not a credential
+
+// authSchemeProse are words that follow "Basic" or "Bearer" in prose.
+var authSchemeProse = map[string]bool{"authentication": true, "authorization": true, "usage": true,
+	"configuration": true, "credentials": true, "options": true, "schemes": true}
 
 // secretString is a string value that carries a secret in its text.
 func secretString(s string) bool {
@@ -358,6 +372,26 @@ func secretString(s string) bool {
 	if secretValueShapes.MatchString(s) || secretFlagInline.MatchString(s) {
 		return true
 	}
+	// Fails closed: only a listed prose word after the scheme is not a
+	// token ("Basic authentication").
+	for _, m := range authSchemeToken.FindAllString(s, -1) {
+		if !authSchemeProse[strings.ToLower(m[strings.LastIndexAny(m, " \t\r\n")+1:])] {
+			return true
+		}
+	}
+	for _, u := range urlInString.FindAllString(s, -1) {
+		if urlCarriesCredential(u) {
+			return true
+		}
+	}
+	if schemelessPassword(s) {
+		return true
+	}
+	for _, q := range queryParam.FindAllStringSubmatch(s, -1) {
+		if isSecretKey(q[1]) {
+			return true
+		}
+	}
 	for _, a := range envAssign.FindAllStringSubmatch(s, -1) {
 		if isSecretKey(a[1]) && !settingLikeKey(a[1]) {
 			return true
@@ -365,6 +399,195 @@ func secretString(s string) bool {
 	}
 	m := headerArg.FindStringSubmatch(s)
 	return m != nil && isSecretKey(m[1])
+}
+
+// schemelessUserinfo is user:password@host with no scheme in front: a
+// MySQL DSN root:pw@tcp(db:3306)/app or a Postgres user:pw@db:5432/app.
+// The password part has no "/" or "@", so git@host:o/r does not match.
+var schemelessUserinfo = regexp.MustCompile(`(?:^|[\s=,;'"(<])([^\s/:@=,;'"(<>]*):([^\s/@]+)@([^\s,;'"<>]*)`)
+
+// schemelessPassword reports a schemeless user:password@host in s. An image
+// digest such as node:20@sha256:..., a mailto: address and a Windows path
+// such as C:\npm\node_modules\@scope\pkg are not one. After such a match
+// the search resumes just past its "@", so a DSN written after it in the
+// same token, as in C:\a\@x;root:pw@db, is still found.
+func schemelessPassword(s string) bool {
+	for off := 0; off < len(s); {
+		m := schemelessUserinfo.FindStringSubmatchIndex(s[off:])
+		if m == nil {
+			return false
+		}
+		user := strings.ToLower(s[off+m[2] : off+m[3]])
+		pass := s[off+m[4] : off+m[5]]
+		host := strings.ToLower(s[off+m[6] : off+m[7]])
+		// An exempt shape has no second ":" in its password part, so
+		// mailto:root:pw@db, C:\a:pw@db and root:p:w@sha256:x are still
+		// credentials.
+		plain := !strings.Contains(pass, ":")
+		drivePath := plain && len(user) == 1 && user[0] >= 'a' && user[0] <= 'z' && strings.HasPrefix(pass, `\`)
+		mailto := plain && user == "mailto"
+		digest := plain && (strings.HasPrefix(host, "sha256:") || strings.HasPrefix(host, "sha512:"))
+		if !mailto && !drivePath && !digest {
+			return true
+		}
+		off += m[5] + 1 // just past the "@"
+	}
+	return false
+}
+
+// urlInString finds each URL in a string: a scheme, "://" and what follows
+// up to whitespace or a quote.
+var urlInString = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
+
+// urlCarriesCredential reports a URL with a credential in its userinfo or
+// a query or fragment parameter whose decoded name is a secret key; see
+// userinfoIsCredential for the userinfo rule. It parses with net/url, so
+// ports, IPv6 hosts and percent-encoding do not hide a parameter. A URL
+// that does not parse, such as http://${HOST}:8080, is judged by its raw
+// authority and query.
+func urlCarriesCredential(raw string) bool {
+	userinfo, rest, query, frag := splitURL(raw)
+	scheme, _, _ := strings.Cut(raw, "://")
+	if userinfoIsCredential(scheme, userinfo, rest) {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return secretParams(query) || secretParams(frag)
+	}
+	return secretParams(u.RawQuery) || secretParams(u.Fragment)
+}
+
+// splitURL cuts raw at "://" into its userinfo (without the "@"), the rest
+// of the authority and path, its query and its fragment, as written.
+func splitURL(raw string) (userinfo, rest, query, frag string) {
+	i := strings.Index(raw, "://")
+	if i < 0 {
+		return "", raw, "", ""
+	}
+	after := raw[i+3:]
+	end := strings.IndexAny(after, "/?#")
+	if end < 0 {
+		end = len(after)
+	}
+	if at := strings.LastIndex(after[:end], "@"); at >= 0 {
+		userinfo = after[:at]
+	}
+	rest, frag, _ = strings.Cut(raw, "#")
+	rest, query, _ = strings.Cut(rest, "?")
+	return userinfo, rest, query, frag
+}
+
+// userinfoIsCredential reports raw userinfo that is a credential. It fails
+// closed: a password always is; on ssh, git, git+ssh, ssh+git and sftp a
+// user name alone is a login and is not; on any other scheme a user name
+// alone is, except git, oauth2 and x-access-token, and an Azure DevOps
+// organization (https://org@dev.azure.com/org/...). A percent-encoded name,
+// or one with a character outside [A-Za-z0-9._-], always is. rest is the
+// URL up to its query, as splitURL returns it.
+func userinfoIsCredential(scheme, userinfo, rest string) bool {
+	if userinfo == "" {
+		return false
+	}
+	if strings.Contains(userinfo, ":") {
+		return true
+	}
+	for _, r := range userinfo {
+		ok := r == '.' || r == '_' || r == '-' || (r >= '0' && r <= '9') ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if !ok {
+			return true
+		}
+	}
+	if loginScheme(scheme) {
+		return false
+	}
+	switch userinfo {
+	case "git", "oauth2", "x-access-token":
+		return false
+	}
+	after := rest[strings.Index(rest, "@")+1:]
+	host, path, _ := strings.Cut(after, "/")
+	first, _, _ := strings.Cut(path, "/")
+	return !(strings.EqualFold(host, "dev.azure.com") && first == userinfo)
+}
+
+// loginScheme is a scheme whose user name is a login, never a token:
+// ssh://git@host/repo, git+ssh://git@host/repo. The key lives in ~/.ssh.
+func loginScheme(scheme string) bool {
+	switch strings.ToLower(scheme) {
+	case "ssh", "git", "git+ssh", "ssh+git", "sftp":
+		return true
+	}
+	return false
+}
+
+// secretParams reports a query-shaped string with a secret parameter name,
+// judged decoded where it decodes and as written where it does not.
+func secretParams(q string) bool {
+	for _, part := range strings.FieldsFunc(q, func(r rune) bool { return r == '&' || r == ';' }) {
+		name, _, _ := strings.Cut(part, "=")
+		if isSecretKey(name) {
+			return true
+		}
+		if dec, err := url.QueryUnescape(name); err == nil && isSecretKey(dec) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripURLSecrets is raw without a credential in its userinfo and without
+// query and fragment parameters whose name is a secret key. Everything else
+// stays as written: parameter order, encoding, empty and repeated values. ok
+// is false when raw is not a URL that parses; the caller then leaves the
+// whole value out.
+func stripURLSecrets(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", false
+	}
+	userinfo, rest, query, frag := splitURL(raw)
+	if userinfoIsCredential(u.Scheme, userinfo, rest) {
+		rest = strings.Replace(rest, userinfo+"@", "", 1)
+	}
+	out := rest
+	if q := dropSecretParams(query); q != "" {
+		out += "?" + q
+	} else if query == "" && strings.Contains(strings.SplitN(raw, "#", 2)[0], "?") {
+		out += "?"
+	}
+	if strings.Contains(raw, "#") {
+		if strings.Contains(frag, "=") {
+			// Only a parameter-shaped fragment (#access_token=x) is rewritten.
+			frag = dropSecretParams(frag)
+		}
+		if frag != "" {
+			out += "#" + frag
+		}
+	}
+	if secretString(out) {
+		return "", false
+	}
+	return out, true
+}
+
+// dropSecretParams is q without the &-separated parameters whose name,
+// raw or decoded, is a secret key. The rest are kept byte for byte.
+func dropSecretParams(q string) string {
+	if q == "" {
+		return ""
+	}
+	var keep []string
+	for _, part := range strings.Split(q, "&") {
+		name, _, _ := strings.Cut(part, "=")
+		dec, err := url.QueryUnescape(name)
+		if isSecretKey(name) || (err == nil && isSecretKey(dec)) {
+			continue
+		}
+		keep = append(keep, part)
+	}
+	return strings.Join(keep, "&")
 }
 
 // containsSecretShape reports a value that looks like a secret anywhere in

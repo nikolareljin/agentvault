@@ -1,16 +1,19 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -81,7 +84,7 @@ func runDetect(cmd *cobra.Command, args []string) error {
 
 	if jsonOutput {
 		data, _ := json.MarshalIndent(agents, "", "  ")
-		fmt.Println(string(data))
+		fmt.Println(string(escapeC1JSON(data)))
 		return nil
 	}
 
@@ -98,11 +101,11 @@ func runDetect(cmd *cobra.Command, args []string) error {
 		if a.InVault {
 			vaultStatus = " ✓ in vault"
 		}
-		fmt.Printf("\n  %s (%s)%s\n", a.Name, a.Provider, vaultStatus)
-		fmt.Printf("    Version:    %s\n", a.Version)
-		fmt.Printf("    Path:       %s\n", a.Path)
+		fmt.Printf("\n  %s (%s)%s\n", printable(a.Name), printable(string(a.Provider)), vaultStatus)
+		fmt.Printf("    Version:    %s\n", printable(a.Version))
+		fmt.Printf("    Path:       %s\n", printable(a.Path))
 		if a.ConfigDir != "" {
-			fmt.Printf("    Config:     %s\n", a.ConfigDir)
+			fmt.Printf("    Config:     %s\n", printable(a.ConfigDir))
 		}
 		if verbose && len(a.Settings) > 0 {
 			fmt.Println("    Settings:")
@@ -148,7 +151,7 @@ func runDetectAdd(cmd *cobra.Command, args []string) error {
 
 		existing, exists := v.Get(detected.Name)
 		if exists && !force {
-			fmt.Printf("  Skipped %s (already in vault, use --force to update)\n", detected.Name)
+			fmt.Printf("  Skipped %s (already in vault, use --force to update)\n", printable(detected.Name))
 			skipped++
 			continue
 		}
@@ -253,7 +256,7 @@ func detectClaude() DetectedAgent {
 
 		// Read settings.json
 		settingsPath := filepath.Join(configDir, "settings.json")
-		if data, err := os.ReadFile(settingsPath); err == nil {
+		if data, err := safefile.Read(settingsPath); err == nil {
 			var settings map[string]any
 			if json.Unmarshal(data, &settings) == nil {
 				if plugins, ok := settings["enabledPlugins"].(map[string]any); ok {
@@ -276,53 +279,96 @@ func detectClaude() DetectedAgent {
 	return a
 }
 
+// redactSensitiveMap is the settings summary export carries even without
+// --include-secrets: secret keys, env and headers are dropped, and so is any
+// string shaped like a secret, alone or as a flag and its value in a list.
 func redactSensitiveMap(in map[string]any) map[string]any {
 	out := make(map[string]any)
 	for k, v := range in {
-		if isSensitiveKey(k) {
+		if secretContainers[strings.ToLower(k)] {
 			continue
 		}
-		switch tv := v.(type) {
-		case map[string]any:
-			nested := redactSensitiveMap(tv)
-			if len(nested) > 0 {
-				out[k] = nested
+		if isSensitiveKey(k) || isSecretKey(k) {
+			// A boolean holds no secret (includeCoAuthoredBy: false), and a
+			// number is kept only under a count or limit (maxTokens: 4096).
+			switch v.(type) {
+			case bool:
+				out[k] = v
+			case float64, json.Number:
+				if settingLikeKey(k) {
+					out[k] = v
+				}
 			}
-		case []any:
-			out[k] = redactSensitiveSlice(tv)
-		default:
-			out[k] = v
+			continue
+		}
+		if r, keep := redactSensitiveValue(v); keep {
+			out[k] = r
 		}
 	}
 	return out
 }
 
+// redactSensitiveValue returns v without secrets, and false when nothing of
+// it is left to show.
+func redactSensitiveValue(v any) (any, bool) {
+	switch tv := v.(type) {
+	case map[string]any:
+		nested := redactSensitiveMap(tv)
+		return nested, len(nested) > 0
+	case []any:
+		return redactSensitiveSlice(tv), true
+	case string:
+		return tv, !secretString(tv)
+	}
+	// A typed list or map ([]map[string]any from a TOML array of tables) is
+	// read as JSON, so its strings are checked too. One that cannot be read
+	// is dropped.
+	switch reflect.ValueOf(v).Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer, reflect.Interface:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return nil, false
+		}
+		var generic any
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		if dec.Decode(&generic) != nil {
+			return nil, false
+		}
+		return redactSensitiveValue(generic)
+	}
+	return v, true
+}
+
+// redactSensitiveSlice drops the secret elements of a list and keeps the
+// rest: a "--token" flag takes its next element with it, so an args list
+// keeps "--verbose" and a permissions list keeps "Bash(ls)".
 func redactSensitiveSlice(in []any) []any {
 	out := make([]any, 0, len(in))
-	for _, v := range in {
-		switch tv := v.(type) {
-		case map[string]any:
-			nested := redactSensitiveMap(tv)
-			if len(nested) > 0 {
-				out = append(out, nested)
+	for i := 0; i < len(in); i++ {
+		if s, ok := in[i].(string); ok && secretFlag.MatchString(s) {
+			if !strings.Contains(s, "=") {
+				i++
 			}
-		case []any:
-			out = append(out, redactSensitiveSlice(tv))
-		default:
-			out = append(out, v)
+			continue
+		}
+		if r, keep := redactSensitiveValue(in[i]); keep {
+			out = append(out, r)
 		}
 	}
 	return out
 }
 
+// isSensitiveKey is the broad key test of the settings summary: any key
+// containing key, token, secret, password, credential or auth.
 func isSensitiveKey(key string) bool {
 	k := strings.ToLower(key)
-	return strings.Contains(k, "key") ||
-		strings.Contains(k, "token") ||
-		strings.Contains(k, "secret") ||
-		strings.Contains(k, "password") ||
-		strings.Contains(k, "credential") ||
-		strings.Contains(k, "auth")
+	for _, part := range []string{"key", "token", "secret", "password", "credential", "auth"} {
+		if strings.Contains(k, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func detectCodex() DetectedAgent {
@@ -364,7 +410,7 @@ func detectCodex() DetectedAgent {
 
 		// Read config.toml (simple parsing)
 		configPath := filepath.Join(configDir, "config.toml")
-		if data, err := os.ReadFile(configPath); err == nil {
+		if data, err := safefile.Read(configPath); err == nil {
 			// Parse trusted projects; only include sections explicitly marked as trusted.
 			lines := strings.Split(string(data), "\n")
 			trustedProjects := []string{}
