@@ -220,7 +220,7 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	// Stamp override-derived instructions with the bundle's own creation time, not
 	// the wall clock: a timestamp that moves on every run would make re-importing
 	// an unchanged bundle rewrite them forever.
-	shared.Instructions = mergeKeyed(shared.Instructions, mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)),
+	shared.Instructions = mergeKeyed(shared.Instructions, validIncomingInstructions(mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)), rep),
 		agent.InstructionKey, strategy, "instruction", rep)
 	shared.Rules = mergeKeyed(shared.Rules, incomingShared.Rules,
 		func(r agent.UnifiedRule) string { return r.Name }, strategy, "rule", rep)
@@ -484,6 +484,21 @@ func capabilityKey(e agent.ModelCapabilityEntry) string {
 
 // mergeInstructionSources folds instruction override assets into the bundle's
 // instruction list so both carriers land in the vault as instructions.
+// validIncomingInstructions drops a bundle instruction the vault would
+// refuse to store or push: a filename such as .git/config or one that
+// escapes the project, or an invalid scope.
+func validIncomingInstructions(in []agent.InstructionFile, rep *importReport) []agent.InstructionFile {
+	out := in[:0:0]
+	for _, inst := range in {
+		if err := agent.ValidateInstructionScope(inst); err != nil {
+			rep.record("Skipped", "instruction %s: %v", inst.Name, err)
+			continue
+		}
+		out = append(out, inst)
+	}
+	return out
+}
+
 func mergeInstructionSources(instructions []agent.InstructionFile, overrides []SetupAsset, now time.Time) []agent.InstructionFile {
 	result := append([]agent.InstructionFile(nil), instructions...)
 	seen := make(map[string]struct{}, len(result))
@@ -538,15 +553,15 @@ func commitProfileImport(v *vault.Vault, plan profileImportPlan) error {
 		switch op.Kind {
 		case "add":
 			if err := v.Add(op.Agent); err != nil {
-				return fmt.Errorf("adding agent %s: %w", op.Name, err)
+				return fmt.Errorf("adding agent %s: %w", printable(op.Name), err)
 			}
 		case "update":
 			if err := v.Update(op.Agent); err != nil {
-				return fmt.Errorf("updating agent %s: %w", op.Name, err)
+				return fmt.Errorf("updating agent %s: %w", printable(op.Name), err)
 			}
 		case "remove":
 			if err := v.Remove(op.Name); err != nil {
-				return fmt.Errorf("removing agent %s: %w", op.Name, err)
+				return fmt.Errorf("removing agent %s: %w", printable(op.Name), err)
 			}
 		}
 	}

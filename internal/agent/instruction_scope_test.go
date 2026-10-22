@@ -271,3 +271,30 @@ func TestValidateInstructionScopeRejectsEscapingFilename(t *testing.T) {
 		t.Fatal("escaping filename accepted")
 	}
 }
+
+// An instruction filename from a bundle or an older vault must not name a
+// file that git or an agent runs or reads as configuration.
+func TestValidateInstructionFilenameRefusesConfigTargets(t *testing.T) {
+	refused := []string{
+		".git/config", ".git/hooks/pre-commit", "sub/.git/config", ".GIT/config",
+		".git./config", ".git /config", "GIT~1/config", ".githooks/pre-push",
+		".husky/pre-commit", ".github/workflows/ci.yml", ".github/actions/a/action.yml",
+		".claude/settings.json", ".claude/settings.local.json", ".Claude/Settings.json",
+		".mcp.json", ".gemini/settings.json", ".codex/config.toml", ".cursor/mcp.json",
+		".vscode/mcp.json", ".vscode/settings.json", ".vscode/tasks.json", ".envrc",
+	}
+	for _, name := range refused {
+		if err := ValidateInstructionFilename(name); err == nil {
+			t.Errorf("ValidateInstructionFilename(%q) = nil, want an error", name)
+		}
+	}
+	allowed := []string{
+		"AGENTS.md", "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md",
+		"docs/x.md", "scripts/check.sh", ".claude/agents/r.md", ".gitignore.md", "my.git/x.md",
+	}
+	for _, name := range allowed {
+		if err := ValidateInstructionFilename(name); err != nil {
+			t.Errorf("ValidateInstructionFilename(%q) = %v, want nil", name, err)
+		}
+	}
+}

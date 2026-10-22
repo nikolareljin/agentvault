@@ -118,7 +118,37 @@ func ValidateInstructionFilename(name string) error {
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return fmt.Errorf("filename %q escapes the target directory", name)
 	}
+	if reason := instructionTargetRefusal(cleaned); reason != "" {
+		return fmt.Errorf("filename %q: %s", name, reason)
+	}
 	return nil
+}
+
+// instructionTargetRefusal is why an instruction must not be written to rel.
+// A name such as .git/config, .git/hooks/pre-commit or .claude/settings.json
+// would turn bundle content into git configuration or agent hooks that run
+// commands on the next git or agent invocation.
+func instructionTargetRefusal(rel string) string {
+	lower := strings.ToLower(rel)
+	for _, seg := range strings.Split(lower, "/") {
+		// Windows drops trailing dots and spaces: ".git. " is .git there.
+		switch strings.TrimRight(seg, ". ") {
+		case ".git", ".githooks", ".husky", "git~1":
+			return "runs code or configures git; refused"
+		}
+	}
+	if strings.HasPrefix(lower, ".github/workflows/") || strings.HasPrefix(lower, ".github/actions/") {
+		return "a CI definition; refused"
+	}
+	switch lower {
+	case ".mcp.json", ".gemini/settings.json", ".codex/config.toml", ".cursor/mcp.json",
+		".vscode/mcp.json", ".vscode/settings.json", ".vscode/tasks.json", ".envrc":
+		return "agent, editor or shell settings that can run commands; refused"
+	}
+	if strings.HasPrefix(lower, ".claude/") && strings.HasSuffix(lower, ".json") && strings.Contains(path.Base(lower), "settings") {
+		return "agent, editor or shell settings that can run commands; refused"
+	}
+	return ""
 }
 
 // InstructionConflict reports a scope collision detected during import.
