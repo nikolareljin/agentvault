@@ -217,8 +217,16 @@ Examples:
 		content, _ := cmd.Flags().GetString("content")
 		filename, _ := cmd.Flags().GetString("filename")
 
+		scope, _ := cmd.Flags().GetString("scope")
+		dirPattern, _ := cmd.Flags().GetString("directory-pattern")
 		if filePath == "" && content == "" {
-			return fmt.Errorf("provide --file or --content")
+			// --filename alone moves a stored instruction, such as one an
+			// older version stored under a name push now refuses.
+			existing, ok := findInstruction(v, name, scope, dirPattern)
+			if filename == "" || !ok {
+				return fmt.Errorf("provide --file or --content (or --filename alone to move a stored instruction)")
+			}
+			content = existing.Content
 		}
 		if filePath != "" && content != "" {
 			return fmt.Errorf("use either --file or --content, not both")
@@ -235,9 +243,6 @@ Examples:
 		if filename == "" {
 			filename = agent.FilenameForInstruction(name)
 		}
-
-		scope, _ := cmd.Flags().GetString("scope")
-		dirPattern, _ := cmd.Flags().GetString("directory-pattern")
 
 		if err := validateScopeFlags(scope, dirPattern); err != nil {
 			return err
@@ -1179,7 +1184,7 @@ func checkInstructionFilenames(list []agent.InstructionFile, selected func(agent
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("nothing written; change or remove these with 'instructions set --filename' or 'instructions remove':\n  %s", strings.Join(errs, "\n  "))
+		return fmt.Errorf("nothing written; change or remove these with 'instructions set <name> --filename <new>' or 'instructions remove <name>':\n  %s", strings.Join(errs, "\n  "))
 	}
 	return nil
 }
@@ -1231,4 +1236,15 @@ func ensureNoSymlinkBelow(root string, p string) error {
 		}
 	}
 	return nil
+}
+
+// findInstruction returns the stored instruction with name in scope.
+func findInstruction(v *vault.Vault, name, scope, dirPattern string) (agent.InstructionFile, bool) {
+	key := agent.InstructionKey(agent.InstructionFile{Name: name, Scope: scope, DirectoryPattern: dirPattern})
+	for _, inst := range v.ListInstructions() {
+		if agent.InstructionKey(inst) == key {
+			return inst, true
+		}
+	}
+	return agent.InstructionFile{}, false
 }

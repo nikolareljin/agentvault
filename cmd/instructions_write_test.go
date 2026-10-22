@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/vault"
 )
 
 // A vault written before filenames were validated can still hold an escaping
@@ -99,5 +100,41 @@ func TestWriteInstructionFileAllowsSymlinkedRoot(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(real, "docs", "a.md")); err != nil || string(b) != "ok" {
 		t.Fatalf("got %q, %v", b, err)
+	}
+}
+
+// The push error tells the user to move a refused name with
+// "instructions set <name> --filename <new>"; that must work without content.
+func TestInstructionsSetFilenameAloneMovesStoredInstruction(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	cfg := filepath.Join(root, "agentvault")
+	useConfigDir(t, cfg)
+	v := vault.New(filepath.Join(cfg, "vault.enc"))
+	if err := os.MkdirAll(cfg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Init(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "notes", Filename: "docs/notes.md", Content: "keep me\n"}); err != nil {
+		t.Fatal(err)
+	}
+	withFlags(t, instSetCmd, map[string]string{"filename": "guide/notes.md"})
+	if err := instSetCmd.RunE(instSetCmd, []string{"notes"}); err != nil {
+		t.Fatalf("set --filename: %v", err)
+	}
+	v2 := vault.New(filepath.Join(cfg, "vault.enc"))
+	if err := v2.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	got := v2.ListInstructions()
+	if len(got) != 1 || got[0].Filename != "guide/notes.md" || got[0].Content != "keep me\n" {
+		t.Fatalf("instructions = %+v, want notes moved to guide/notes.md with its content", got)
+	}
+	withFlags(t, instSetCmd, map[string]string{"filename": "x.md"})
+	if err := instSetCmd.RunE(instSetCmd, []string{"missing"}); err == nil {
+		t.Fatal("set --filename on a missing instruction succeeded; want an error")
 	}
 }
