@@ -270,7 +270,8 @@
   refer to, prose with any frontmatter (Claude agents, commands and
   skills, rules, prompts; it can add hooks, tools, MCP servers or a
   permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every
-  Gemini TOML command. Before, all of these were taken from the bundle. Values
+  TOML file but Codex `config.toml` (checked key by key; Gemini commands
+  run `!{cmd}`). Before, all of these were taken from the bundle. Values
   already in a vault are not changed. `.clinerules/hooks/` is never
   written from a bundle. The deprecated `setup import` has no flag and
   leaves them out.
