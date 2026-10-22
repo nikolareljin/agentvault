@@ -26,7 +26,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/crypto"
@@ -475,10 +474,10 @@ func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
 	if err := agent.ValidateInstructionScope(inst); err != nil {
 		return err
 	}
-	if !utf8.ValidString(inst.Content) {
+	if problem := agent.TextProblem([]byte(inst.Content)); problem != "" {
 		// Saving would replace every invalid byte, so the file pushed back
 		// would not be the file pulled.
-		return fmt.Errorf("instruction %q: content is not UTF-8 text", inst.Name)
+		return fmt.Errorf("instruction %q: %s", inst.Name, problem)
 	}
 	inst = normalizeInstructionForStorage(inst)
 	key := agent.InstructionKey(inst)

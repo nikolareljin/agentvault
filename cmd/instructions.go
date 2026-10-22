@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -448,13 +449,14 @@ Examples:
 		}
 
 		// auto-discover known files
-		pulled := 0
-		// check well-known files
-		for filename, name := range knownFilenameToName {
-			p := filepath.Join(dir, filename)
-			data, err := os.ReadFile(p)
-			if err != nil {
-				continue // file doesn't exist, skip
+		pulled, refusedHere := 0, 0
+		// A file that is not UTF-8 text is reported and skipped: one UTF-16
+		// AGENTS.md must not stop the other files from being pulled.
+		store := func(name, filename string, data []byte) error {
+			if problem := agent.TextProblem(data); problem != "" {
+				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", printable(filename), problem)
+				refusedHere++
+				return nil
 			}
 			content := string(data)
 			if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
@@ -472,52 +474,35 @@ Examples:
 			}
 			fmt.Printf("  Pulled %s -> %q (%d bytes)\n", printable(filename), printable(name), len(data))
 			pulled++
+			return nil
 		}
-		// also check files in subdirectories
-		subdirFiles := map[string]string{
-			filepath.Join(".github", "copilot-instructions.md"): "copilot",
+		// Sorted, so a failure leaves the same files stored on every run.
+		known := make([]string, 0, len(knownFilenameToName))
+		for filename := range knownFilenameToName {
+			known = append(known, filename)
 		}
-		for relPath, name := range subdirFiles {
-			fullPath := filepath.Join(dir, relPath)
-			if data, err := os.ReadFile(fullPath); err == nil {
-				content := string(data)
-				if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-					fmt.Fprintf(os.Stderr, "  [%s] %s\n", printable(name), printable(relPath))
-					fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
-				}
-				inst := agent.InstructionFile{
-					Name:      name,
-					Filename:  relPath,
-					Content:   content,
-					UpdatedAt: time.Now(),
-				}
-				if err := v.SetInstruction(inst); err != nil {
-					return err
-				}
-				fmt.Printf("  Pulled %s -> %q (%d bytes)\n", printable(relPath), printable(name), len(data))
-				pulled++
+		sort.Strings(known)
+		for _, filename := range known {
+			data, err := os.ReadFile(filepath.Join(dir, filename))
+			if err != nil {
+				continue // file doesn't exist, skip
 			}
-		}
-
-		// also check .aider.conf.yml
-		aiderPath := filepath.Join(dir, ".aider.conf.yml")
-		if data, err := os.ReadFile(aiderPath); err == nil {
-			content := string(data)
-			if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-				fmt.Fprintf(os.Stderr, "  [aider] .aider.conf.yml\n")
-				fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
-			}
-			inst := agent.InstructionFile{
-				Name:      "aider",
-				Filename:  ".aider.conf.yml",
-				Content:   content,
-				UpdatedAt: time.Now(),
-			}
-			if err := v.SetInstruction(inst); err != nil {
+			if err := store(knownFilenameToName[filename], filename, data); err != nil {
 				return err
 			}
-			fmt.Printf("  Pulled .aider.conf.yml -> %q (%d bytes)\n", "aider", len(data))
-			pulled++
+		}
+		// also check files in subdirectories, and .aider.conf.yml
+		for _, extra := range [][2]string{
+			{filepath.Join(".github", "copilot-instructions.md"), "copilot"},
+			{".aider.conf.yml", "aider"},
+		} {
+			data, err := os.ReadFile(filepath.Join(dir, extra[0]))
+			if err != nil {
+				continue
+			}
+			if err := store(extra[1], extra[0], data); err != nil {
+				return err
+			}
 		}
 
 		// An instruction file is not self-contained: it can name other files as
@@ -536,23 +521,36 @@ Examples:
 					fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 				}
 				fmt.Printf("  Pulled %s -> %q (%d bytes, named by an instruction file)\n",
-					inst.Filename, inst.Name, len(inst.Content))
+					printable(inst.Filename), printable(inst.Name), len(inst.Content))
 			}
 			pulled += len(res.Stored)
 
 			// Refusals and missing files are printed, never swallowed. A rule
 			// naming a file that cannot travel is the defect this exists to
 			// end, and it is invisible if the export is quiet about it.
+			incomplete := map[string]bool{}
 			for _, r := range res.Refused {
-				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", printable(r.Raw), printable(r.Reason))
+				shown := r.Raw
+				if r.Rel != "" {
+					shown = r.Rel
+				}
+				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", printable(shown), printable(r.Reason))
+				if skill := agent.SkillDirOf(r.Rel); skill != "" && !incomplete[skill] {
+					incomplete[skill] = true
+					fmt.Fprintf(os.Stderr, "  skill %s is incomplete in the vault; "+
+						"'agentvault export --project %s' carries every file\n", printable(skill), printable(dir))
+				}
 			}
 			for _, r := range res.Missing {
 				fmt.Fprintf(os.Stderr, "  named but not present: %s\n", printable(r.Raw))
 			}
-			if strict && (len(res.Refused) > 0 || len(res.Missing) > 0) {
+			if strict && (len(res.Refused) > 0 || len(res.Missing) > 0 || refusedHere > 0) {
 				return fmt.Errorf("--strict: %d reference(s) refused, %d named but not present",
-					len(res.Refused), len(res.Missing))
+					len(res.Refused)+refusedHere, len(res.Missing))
 			}
+		}
+		if strict && refusedHere > 0 {
+			return fmt.Errorf("--strict: %d file(s) refused", refusedHere)
 		}
 
 		if pulled > 0 {
@@ -574,6 +572,9 @@ func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", p, err)
+	}
+	if problem := agent.TextProblem(data); problem != "" {
+		return fmt.Errorf("%s: %s", printable(filename), problem)
 	}
 	content := string(data)
 
