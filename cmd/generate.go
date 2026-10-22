@@ -521,11 +521,12 @@ func envNamePart(s string) string {
 // literally, so $, backticks, backslashes, ! and newlines round-trip and
 // run nothing; a single quote ends the quotes, is escaped and reopens
 // them. A value with a control character other than newline, tab or the
-// CR of a CRLF would reach the terminal raw: it is left out with a warning.
+// CR of a CRLF would reach the terminal raw: it is left out with a warning
+// and unset, so a value exported earlier in the shell is not used instead.
 func shellExportLine(name, value string) string {
 	if textutil.PrintableText(value) != value {
 		fmt.Fprintf(os.Stderr, "warning: %s left out: its value has a control character\n", name)
-		return fmt.Sprintf("# %s left out: its value has a control character\n", name)
+		return fmt.Sprintf("# %s left out: its value has a control character\nunset %s\n", name, name)
 	}
 	return "export " + name + "='" + strings.ReplaceAll(value, "'", `'\''`) + "'\n"
 }

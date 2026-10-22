@@ -173,3 +173,19 @@ func TestEnvPrefixForAgentIsAName(t *testing.T) {
 		t.Errorf("prefix = %q, want CLAUDE_MY_CLAUDE", got)
 	}
 }
+
+// A left-out value must not leave an older export of the same name in
+// effect: an API key left out would otherwise quietly use a stale key.
+func TestShellExportLineLeftOutUnsets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh")
+	}
+	line := shellExportLine("AV_T_KEY", "new\x1b[2Jkey")
+	got, err := exec.Command("env", "-i", "AV_T_KEY=stale", "sh", "-c", line+"printf %s \"${AV_T_KEY-unset}\"").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "unset" {
+		t.Errorf("AV_T_KEY = %q after %q, want unset", got, line)
+	}
+}
