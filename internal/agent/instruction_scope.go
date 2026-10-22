@@ -101,54 +101,181 @@ func ValidateInstructionScope(inst InstructionFile) error {
 	return nil
 }
 
+// InstructionFilenameForms names what ValidateInstructionFilename accepts,
+// for error messages.
+const InstructionFilenameForms = "an instruction file (AGENTS.md, CLAUDE.md, GEMINI.md, codex.md, " +
+	".github/copilot-instructions.md, .cursorrules, .windsurfrules, .clinerules, .aider.conf.yml, " +
+	"or .md, .mdc, .markdown, .txt, .rst) in the project, in a plain directory or under " +
+	".github, .github/instructions, .github/prompts, .cursor/rules, .windsurf/rules or .clinerules; " +
+	"or a file an instruction refers to, in a plain directory"
+
+// instructionDirs are the dot directories an instruction may sit under, at
+// any depth. Any other dot directory belongs to a tool's settings.
+var instructionDirs = [][]string{
+	{".github", "instructions"},
+	{".github", "prompts"},
+	{".cursor", "rules"},
+	{".windsurf", "rules"},
+	{".github"},
+	{".clinerules"},
+}
+
+// instructionDotFiles are rule files without a prose extension that tools
+// read as instructions only.
+var instructionDotFiles = map[string]bool{
+	".cursorrules": true, ".windsurfrules": true, ".clinerules": true,
+}
+
+// autoLoadedFiles are files a tool loads and runs on its own when it
+// enters or opens the directory, at any depth. Never an instruction.
+var autoLoadedFiles = map[string]bool{
+	"mise.toml": true, "mise.local.toml": true, "cmakelists.txt": true, "cmakepresets.json": true,
+	"cmakeuserpresets.json": true, "devcontainer.json": true, "directory.build.props": true,
+	"directory.build.targets": true, "directory.build.rsp": true, "directory.packages.props": true,
+}
+
+// InstructionFileRunsCommands is whether an instruction written to name can
+// run code: .aider.conf.yml (aider runs its lint-cmd and test-cmd) and the
+// scripts and other files instructions refer to. An import takes a bundle's
+// copy of these only with consent.
+func InstructionFileRunsCommands(name string) bool {
+	n, err := normalizeInstructionFilename(name)
+	if err != nil {
+		return false
+	}
+	runs, reason := classifyInstructionTarget(n)
+	return reason == "" && runs
+}
+
+// normalizeInstructionFilename returns name as Windows would resolve it:
+// slash separated, lower case, each segment without trailing dots and spaces.
+func normalizeInstructionFilename(name string) (string, error) {
+	if strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("filename must not contain null bytes")
+	}
+	slashed := strings.ReplaceAll(name, "\\", "/")
+	// A colon is a drive or an NTFS alternate data stream ("a.md:x").
+	if path.IsAbs(slashed) || filepath.IsAbs(name) || filepath.VolumeName(name) != "" || strings.Contains(slashed, ":") {
+		return "", fmt.Errorf("filename %q must be relative", name)
+	}
+	segs := strings.Split(slashed, "/")
+	for i, seg := range segs {
+		if seg == "." || seg == ".." {
+			continue
+		}
+		t := strings.TrimRight(seg, ". ")
+		if t == "" && seg != "" {
+			// "... " or ".. " can read as a parent directory on Windows.
+			return "", fmt.Errorf("filename %q has a segment of dots and spaces", name)
+		}
+		segs[i] = strings.ToLower(t)
+	}
+	cleaned := path.Clean(strings.Join(segs, "/"))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("filename %q escapes the target directory", name)
+	}
+	return cleaned, nil
+}
+
 // ValidateInstructionFilename rejects filenames that would be written outside
-// the target directory on push or apply. Empty is allowed (not yet placed).
+// the target directory on push or apply, or that name a tool's settings,
+// hooks or git files rather than an instruction. Empty is allowed (not yet
+// placed).
 func ValidateInstructionFilename(name string) error {
 	if name == "" {
 		return nil
 	}
-	if strings.ContainsRune(name, 0) {
-		return fmt.Errorf("filename must not contain null bytes")
+	cleaned, err := normalizeInstructionFilename(name)
+	if err != nil {
+		return err
 	}
-	slashed := strings.ReplaceAll(name, "\\", "/")
-	if path.IsAbs(slashed) || filepath.IsAbs(name) || filepath.VolumeName(name) != "" || strings.Contains(slashed, ":") {
-		return fmt.Errorf("filename %q must be relative", name)
-	}
-	cleaned := path.Clean(slashed)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return fmt.Errorf("filename %q escapes the target directory", name)
-	}
-	if reason := instructionTargetRefusal(cleaned); reason != "" {
-		return fmt.Errorf("filename %q: %s", name, reason)
+	if _, reason := classifyInstructionTarget(cleaned); reason != "" {
+		return fmt.Errorf("filename %q: %s; allowed: %s", name, reason, InstructionFilenameForms)
 	}
 	return nil
 }
 
-// instructionTargetRefusal is why an instruction must not be written to rel.
-// A name such as .git/config, .git/hooks/pre-commit or .claude/settings.json
-// would turn bundle content into git configuration or agent hooks that run
-// commands on the next git or agent invocation.
-func instructionTargetRefusal(rel string) string {
-	lower := strings.ToLower(rel)
-	for _, seg := range strings.Split(lower, "/") {
-		// Windows drops trailing dots and spaces: ".git. " is .git there.
-		switch strings.TrimRight(seg, ". ") {
-		case ".git", ".githooks", ".husky", "git~1":
-			return "runs code or configures git; refused"
+// classifyInstructionTarget checks rel, a normalized name. reason is why it
+// is refused; runs is whether an allowed name can run code. Instructions
+// are allowed in plain directories and known instruction directories only:
+// a name such as .git/config, pkg/.envrc or sub/.vscode/tasks.json would
+// turn content into configuration that runs commands.
+func classifyInstructionTarget(rel string) (runs bool, reason string) {
+	segs := strings.Split(rel, "/")
+	for _, seg := range segs {
+		switch seg {
+		case ".git", ".githooks", ".husky":
+			return false, "runs code or configures git; refused"
+		}
+		// An 8.3 short name such as GIT~1 or CLAUDE~1 can name a dot directory
+		// on Windows.
+		if i := strings.IndexByte(seg, '~'); i >= 0 && i+1 < len(seg) && seg[i+1] >= '0' && seg[i+1] <= '9' {
+			return false, "an 8.3 short name; refused"
 		}
 	}
-	if strings.HasPrefix(lower, ".github/workflows/") || strings.HasPrefix(lower, ".github/actions/") {
-		return "a CI definition; refused"
+	if rel == ".aider.conf.yml" {
+		return true, ""
 	}
-	switch lower {
-	case ".mcp.json", ".gemini/settings.json", ".codex/config.toml", ".cursor/mcp.json",
-		".vscode/mcp.json", ".vscode/settings.json", ".vscode/tasks.json", ".envrc":
-		return "agent, editor or shell settings that can run commands; refused"
+	dirs, base := segs[:len(segs)-1], segs[len(segs)-1]
+	inToolDir := false
+	for i := 0; i < len(dirs); {
+		if !strings.HasPrefix(dirs[i], ".") {
+			i++
+			continue
+		}
+		n := matchInstructionDir(dirs[i:])
+		if n == 0 {
+			return false, "under a tool's settings directory; refused"
+		}
+		inToolDir = true
+		i += n
 	}
-	if strings.HasPrefix(lower, ".claude/") && strings.HasSuffix(lower, ".json") && strings.Contains(path.Base(lower), "settings") {
-		return "agent, editor or shell settings that can run commands; refused"
+	if instructionDotFiles[base] {
+		return false, ""
 	}
-	return ""
+	if autoLoadedFiles[base] {
+		return false, "a file a tool loads and runs on its own; refused"
+	}
+	switch path.Ext(base) {
+	case ".md", ".mdc", ".markdown", ".txt", ".rst":
+		return false, ""
+	}
+	if inToolDir {
+		// .github/workflows/ci.yml runs in CI; only prose is carried there.
+		return false, "not prose under a tool's directory; refused"
+	}
+	if strings.HasPrefix(base, ".") {
+		// Dot files configure tools (.envrc, .npmrc, .tool-versions); only
+		// samples such as .env.example are carried.
+		for _, suf := range []string{".example", ".sample", ".template"} {
+			if strings.HasSuffix(base, suf) {
+				return true, ""
+			}
+		}
+		return false, "a tool's settings file; refused"
+	}
+	return true, ""
+}
+
+// matchInstructionDir is how many leading segments of dirs form a known
+// instruction directory, or 0.
+func matchInstructionDir(dirs []string) int {
+	for _, d := range instructionDirs {
+		if len(dirs) < len(d) {
+			continue
+		}
+		ok := true
+		for j := range d {
+			if dirs[j] != d[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return len(d)
+		}
+	}
+	return 0
 }
 
 // InstructionConflict reports a scope collision detected during import.

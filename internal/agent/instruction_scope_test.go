@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -290,11 +291,61 @@ func TestValidateInstructionFilenameRefusesConfigTargets(t *testing.T) {
 	}
 	allowed := []string{
 		"AGENTS.md", "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md",
-		"docs/x.md", "scripts/check.sh", ".claude/agents/r.md", ".gitignore.md", "my.git/x.md",
+		"docs/x.md", ".gitignore.md", "my.git/x.md", ".aider.conf.yml", "GEMINI.md", "codex.md",
+		".github/instructions/a.instructions.md", ".github/prompts/p.prompt.md", ".cursor/rules/r.mdc",
+		"pkg/.cursor/rules/r.mdc", ".windsurf/rules/r.md", ".clinerules", ".clinerules/r.md",
+		".windsurfrules", "implement_issue.txt", "Custom-PR.TXT", "docs/a.rst", "sub/AGENTS.md",
 	}
 	for _, name := range allowed {
 		if err := ValidateInstructionFilename(name); err != nil {
 			t.Errorf("ValidateInstructionFilename(%q) = %v, want nil", name, err)
+		}
+	}
+}
+
+// The allow list refuses settings and hook files at any depth, and names as
+// Windows resolves them: trailing dots and spaces, backslashes, alternate
+// data streams, 8.3 short names and case.
+func TestValidateInstructionFilenameAllowList(t *testing.T) {
+	refused := []string{
+		"sub/.vscode/settings.json", "pkg/.envrc", ".envrc", "a/b/.claude/settings.json",
+		".claude/agents/r.md", ".claude/commands/x.md", "sub/.claude/CLAUDE.md",
+		".devcontainer/devcontainer.json", ".devcontainer/x.md", ".vscode/x.md", ".idea/runConfigurations/x.xml",
+		".pre-commit-config.yaml", ".tool-versions", "mise.toml", ".mise.toml", "sub/.npmrc", ".yarnrc.yml",
+		".husky/x.md", ".githooks/x.md", "sub/.aider.conf.yml", ".gemini/commands/x.toml",
+		"CMakeLists.txt", "sub/cmakelists.txt", "a/devcontainer.json", "Directory.Build.props",
+		"sub/.vscode./settings.json", ".vscode /tasks.json", `sub\.vscode\tasks.json`,
+		`.Claude\agents\r.md`, "AGENTS.md:evil", "a.md:x", "a.md::$DATA",
+		"CLAUDE~1/agents/x.md", "VSCODE~1/x.md", ".. /x.md", "a/.. /../x.md", "... /x.md", "a/ /x.md", ".envrc.", ".envrc ", "x.md/.envrc",
+		".GitHub/Workflows/ci.yml", ".github/workflows/ci.yml",
+	}
+	for _, name := range refused {
+		if err := ValidateInstructionFilename(name); err == nil {
+			t.Errorf("ValidateInstructionFilename(%q) = nil, want an error", name)
+		} else if !strings.Contains(err.Error(), "allowed:") && !strings.Contains(err.Error(), "relative") && !strings.Contains(err.Error(), "dots and spaces") && !strings.Contains(err.Error(), "escapes") {
+			t.Errorf("ValidateInstructionFilename(%q) = %v, want the allowed forms named", name, err)
+		}
+	}
+	allowed := []string{"AGENTS.md.", "AGENTS.md ", `docs\a.md`, ".GITHUB/Copilot-Instructions.md", "README.MD"}
+	for _, name := range allowed {
+		if err := ValidateInstructionFilename(name); err != nil {
+			t.Errorf("ValidateInstructionFilename(%q) = %v, want nil", name, err)
+		}
+	}
+	if !InstructionFileRunsCommands(".aider.conf.yml") || !InstructionFileRunsCommands(".Aider.conf.yml.") {
+		t.Error(".aider.conf.yml not flagged as running commands")
+	}
+	for _, n := range []string{"scripts/check.sh", "Makefile", "package.json", ".env.example", "x.sh.", `bin\\run`} {
+		if err := ValidateInstructionFilename(n); err != nil {
+			t.Errorf("reference file %q refused: %v", n, err)
+		}
+		if !InstructionFileRunsCommands(n) {
+			t.Errorf("reference file %q not flagged as running code", n)
+		}
+	}
+	for _, n := range []string{"AGENTS.md", ".cursorrules", "docs/a.md", ".github/copilot-instructions.md"} {
+		if InstructionFileRunsCommands(n) {
+			t.Errorf("%q flagged as running code", n)
 		}
 	}
 }

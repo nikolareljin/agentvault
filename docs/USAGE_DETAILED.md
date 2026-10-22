@@ -472,9 +472,19 @@ Flags:
 Flags:
 - `--file <path>`
 - `--content <text>`
-- `--filename <target-file-name>`: relative to the project; not under
-  `.git`, `.githooks`, `.husky` or `.github/workflows`, and not an agent
-  or editor settings file such as `.claude/settings.json` or `.mcp.json`
+- `--filename <target-file-name>`: relative to the project. Allowed: a
+  well-known instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+  `codex.md`, `.github/copilot-instructions.md`, `.cursorrules`,
+  `.windsurfrules`, `.clinerules`, `.aider.conf.yml`); `.md`, `.mdc`,
+  `.markdown`, `.txt` or `.rst` in a plain directory or under `.github`,
+  `.github/instructions`, `.github/prompts`, `.cursor/rules`,
+  `.windsurf/rules` or `.clinerules`; or a file an instruction refers to in
+  a plain directory (`scripts/check.sh`, `.env.example`). Any other dot
+  directory or dot file, at any depth, is refused (`.git`, `.vscode`,
+  `.claude`, `pkg/.envrc`), as are `mise.toml`, `CMakeLists.txt`,
+  `devcontainer.json`, `Directory.Build.*`, 8.3 short names and `:`.
+  Import takes `.aider.conf.yml` and referred-to files that the bundle adds
+  or changes only with `--keep-bundle-commands`
 
 ### `agentvault instructions edit [name]`
 No flags.

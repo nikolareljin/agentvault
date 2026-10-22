@@ -625,6 +625,11 @@ Examples:
 			return nil
 		}
 
+		if err := checkInstructionFilenames(instructions, func(i agent.InstructionFile) bool {
+			return specificName == "" || i.Name == specificName
+		}); err != nil {
+			return err
+		}
 		pushed := 0
 		for _, inst := range instructions {
 			if specificName != "" && inst.Name != specificName {
@@ -1157,6 +1162,24 @@ func writeInstructionFile(dir string, inst agent.InstructionFile) error {
 	}
 	if err := fsname.WriteFile(dir, p, []byte(inst.Content), 0755, 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", p, err)
+	}
+	return nil
+}
+
+// checkInstructionFilenames refuses the whole push when any selected
+// instruction has a filename that is not allowed, so nothing is half written.
+func checkInstructionFilenames(list []agent.InstructionFile, selected func(agent.InstructionFile) bool) error {
+	var errs []string
+	for _, inst := range list {
+		if !selected(inst) {
+			continue
+		}
+		if err := agent.ValidateInstructionFilename(inst.Filename); err != nil {
+			errs = append(errs, fmt.Sprintf("instruction %q: %v", inst.Name, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("nothing written; change or remove these with 'instructions set --filename' or 'instructions remove':\n  %s", strings.Join(errs, "\n  "))
 	}
 	return nil
 }
