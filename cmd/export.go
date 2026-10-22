@@ -162,7 +162,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 	// extension, so the same command always produces the same kind of file.
 	if !opts.Encrypt {
 		what := plaintextSecretsWhat(opts.IncludeKeys, opts.IncludeSecrets)
-		if err := confirmPlaintextExport(opts.Confirm, what, opts.Output, "use --include-keys=false --include-secrets=false, or drop --plain to encrypt"); err != nil {
+		fix := "use --include-keys=false --include-secrets=false, or drop --plain to encrypt"
+		if opts.VaultOnly {
+			fix = "drop --plain to encrypt (--vault-only cannot leave them out)"
+		}
+		if err := confirmPlaintextExport(opts.Confirm, what, opts.Output, fix); err != nil {
 			return err
 		}
 	}

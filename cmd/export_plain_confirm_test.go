@@ -25,7 +25,11 @@ func TestExportPlainWithKeysNeedsConfirm(t *testing.T) {
 			t.Errorf("%s: refused export still wrote %s", name, path)
 		}
 	}
-	if _, err := exportPlainForTest(t, t.TempDir(), map[string]string{"confirm": "false", "include-keys": "false", "include-secrets": "false"}); err != nil {
+	_, err := exportPlainForTest(t, t.TempDir(), map[string]string{"confirm": "false", "include-keys": "true", "include-secrets": "true", "vault-only": "true"})
+	if err == nil || strings.Contains(err.Error(), "include-keys=false") || !strings.Contains(err.Error(), "drop --plain") {
+		t.Errorf("--vault-only: error = %v, want a refusal that does not suggest leaving keys out", err)
+	}
+	if _, err := exportPlainForTest(t, t.TempDir(), map[string]string{"confirm": "false", "include-keys": "false", "include-secrets": "false", "vault-only": "false"}); err != nil {
 		t.Errorf("no keys, no secrets: error = %v, want nil", err)
 	}
 	if _, err := exportPlainForTest(t, t.TempDir(), map[string]string{"confirm": "true", "include-keys": "true", "include-secrets": "true"}); err != nil {
