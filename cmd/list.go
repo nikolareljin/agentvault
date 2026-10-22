@@ -3,9 +3,11 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"text/tabwriter"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/spf13/cobra"
 )
 
@@ -55,17 +57,24 @@ Use --show-keys to include API keys in the output (hidden by default).`,
 			return enc.Encode(out)
 		}
 
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tPROVIDER\tMODEL\tTAGS")
-		for _, a := range agents {
-			tags := "-"
-			if len(a.Tags) > 0 {
-				tags = fmt.Sprintf("%v", a.Tags)
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.Name, a.Provider, a.Model, tags)
-		}
-		return w.Flush()
+		return printAgentTable(os.Stdout, agents)
 	},
+}
+
+// printAgentTable prints the agent table. Fields can come from another
+// machine's bundle (or a name saved before they were checked), so control
+// characters are replaced.
+func printAgentTable(out io.Writer, agents []agent.Agent) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tPROVIDER\tMODEL\tTAGS")
+	for _, a := range agents {
+		tags := "-"
+		if len(a.Tags) > 0 {
+			tags = fmt.Sprintf("%v", a.Tags)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", printable(a.Name), printable(string(a.Provider)), printable(a.Model), printable(tags))
+	}
+	return w.Flush()
 }
 
 func init() {

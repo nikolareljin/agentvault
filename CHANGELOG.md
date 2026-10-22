@@ -359,10 +359,11 @@
 - The import report, `import --list`, the install guide, `agent import`
   and `setup show` print names, fields, paths and commands from a bundle
   or profile with control characters replaced by `?`, so a crafted file
-  cannot send terminal escape sequences. A bundle or profile whose agent,
-  MCP server, instruction, rule, role, session or profile name has a
-  control character is refused, and `add` and `edit` refuse such an agent
-  name: `list` printed it raw.
+  cannot send terminal escape sequences; so does `list`, for the name,
+  provider, model and tags. A bundle or profile whose agent, MCP server,
+  instruction, rule, role, session or profile name has a control
+  character is refused, and `add` refuses such an agent name. An agent
+  saved earlier with such a name can still be edited and removed.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older

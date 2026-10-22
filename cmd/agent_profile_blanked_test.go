@@ -258,3 +258,44 @@ func TestDecodeAgentProfileReadsEveryBlankExportWrites(t *testing.T) {
 		t.Fatal("listed blank with a value accepted")
 	}
 }
+
+// An agent saved before control characters were refused stays editable.
+func TestEditKeepsAgentWithControlCharacterName(t *testing.T) {
+	a := testAgent()
+	a.Name = "old\x1b[1m"
+	a.MCPServers = []agent.MCPServer{{Name: "m\x07", Command: "x"}}
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	dir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, dir, []agent.Agent{a}, nil)
+	useConfigDir(t, dir)
+	withFlags(t, editCmd, map[string]string{"model": "m2"})
+	if _, err := captureStdoutForTest(t, func() error {
+		return editCmd.RunE(editCmd, []string{a.Name})
+	}); err != nil {
+		t.Fatalf("edit refused an existing agent: %v", err)
+	}
+	v, err := openVault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := v.Get(a.Name); got.Model != "m2" {
+		t.Errorf("model = %q, want m2", got.Model)
+	}
+}
+
+// list prints fields a bundle sets, such as model and tags, without
+// control characters.
+func TestListPrintsNoEscapes(t *testing.T) {
+	var b strings.Builder
+	if err := printAgentTable(&b, []agent.Agent{{Name: "n\x1b[1m", Provider: "claude", Model: "m\x1b]0;t\a", Tags: []string{"t\x9b2J"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(b.String(), "\x1b\a\u009b") {
+		t.Errorf("list printed control characters: %q", b.String())
+	}
+	if !strings.Contains(b.String(), "n?[1m") {
+		t.Errorf("name missing: %q", b.String())
+	}
+}
