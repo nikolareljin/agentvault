@@ -361,6 +361,9 @@
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older
   than the file, replaced it, and a local `apiKeyHelper` could be lost.
+  When the bundle carries the file with content, the provider config's
+  copy is not applied at all. Before, it was written first, then replaced,
+  which reordered keys and reported MCP servers that were not kept.
 - A provider file that equals this machine's as JSON keeps this machine's
   bytes. Before, importing a bundle on the machine that made it rewrote
   `settings.json` and `~/.claude.json` with the bundle's indentation.

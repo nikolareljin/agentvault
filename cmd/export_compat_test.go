@@ -185,9 +185,14 @@ func TestProviderAssetsToApplyKeepsLocalFileTheBundleWithheld(t *testing.T) {
 	if n := fromConfig(); n != 0 {
 		t.Errorf("local settings.json and withheld bundle copy: %d config assets, want 0", n)
 	}
+	// The bundle's copy replaces the config's: applying the config's first
+	// wrote, backed up and reported a file that was then replaced.
 	setup.ProviderFiles[0].Redacted = false
-	if n := fromConfig(); n != 2 {
-		t.Errorf("bundle carries the file: %d assets, want config and file", n)
+	if err := os.Remove(filepath.Join(home, ".claude", "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	if n := fromConfig(); n != 1 {
+		t.Errorf("bundle carries the file: %d assets, want the file only", n)
 	}
 }
 

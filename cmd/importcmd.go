@@ -616,19 +616,25 @@ func providerAssetsToApply(setup SetupBundle, homeDir string, keepCommands bool)
 	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
 	codexAssets, codexDropped := codexConfigAssets(setup.ProviderConfigs.Codex, homeDir, keepCommands)
 	configAssets = append(configAssets, codexAssets...)
-	// The bundle's own copy of a file wins over the config's, as it is
-	// applied after it. A copy exported without its content cannot win, so
-	// where this machine has the file, the config's (often older) version
-	// must not replace it either: the file stays as it is.
+	// The bundle's own copy of a file wins over the config's (often older)
+	// one, which is then not applied at all: applied first, it would be
+	// written, backed up and reported, then replaced. A copy exported
+	// without its content cannot win, so where this machine has the file,
+	// the config's version must not replace it either.
+	carried := map[[2]string]bool{}
 	withheld := map[[2]string]bool{}
 	for _, f := range setup.ProviderFiles {
+		key := [2]string{f.LogicalRoot, f.LogicalPath}
 		if f.Redacted {
-			withheld[[2]string{f.LogicalRoot, f.LogicalPath}] = true
+			withheld[key] = true
+		} else {
+			carried[key] = true
 		}
 	}
 	kept := configAssets[:0]
 	for _, a := range configAssets {
-		if withheld[[2]string{a.LogicalRoot, a.LogicalPath}] && localFileExists(homeDir, a) {
+		key := [2]string{a.LogicalRoot, a.LogicalPath}
+		if carried[key] || (withheld[key] && localFileExists(homeDir, a)) {
 			continue
 		}
 		kept = append(kept, a)
