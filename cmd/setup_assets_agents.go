@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -89,11 +90,25 @@ var homeStartupPaths = []string{
 // homeAssetRefusal returns why a home-relative path may not be carried or
 // written, or "". Only .claude.json may sit at the home root: every other
 // dotfile there is shell or login state.
+// shortName is an 8.3 alias such as GIT~1 or PROGRA~2.TXT.
+var shortName = regexp.MustCompile(`~[0-9]+(\.[^.]*)?$`)
+
 func homeAssetRefusal(rel string) string {
 	slashed := filepath.ToSlash(filepath.Clean(rel))
 	for _, seg := range strings.Split(slashed, "/") {
 		if seg != strings.TrimSpace(seg) {
 			return "a path segment with leading or trailing whitespace"
+		}
+		// Windows aliases: "git." and GIT~1 are git, "config:x" is a
+		// stream of config. A check on the name would miss the file.
+		if seg != "." && seg != ".." && strings.HasSuffix(seg, ".") {
+			return "a path segment ending in a dot"
+		}
+		if strings.Contains(seg, ":") {
+			return "a path segment with a colon"
+		}
+		if shortName.MatchString(seg) {
+			return "a path segment shaped like a Windows short name"
 		}
 	}
 	// macOS and Windows home directories are case-insensitive: .BASHRC is

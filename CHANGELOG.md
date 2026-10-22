@@ -374,6 +374,8 @@
   the export.
   Credential and startup directories match with trailing dots and spaces
   too (`~/.aws./config`), which Windows drops.
+  A home asset path with a segment ending in a dot, a colon (an NTFS
+  stream) or an 8.3 short name (`.config/GIT~1/config`) is refused.
 - The plugin inventory drops a credential user and password from a
   marketplace URL, so `https://token@host/repo` does not carry the token;
   a login such as `ssh://git@host/o/r` is kept, by the URL rule below.

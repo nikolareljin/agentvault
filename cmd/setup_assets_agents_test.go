@@ -1278,3 +1278,18 @@ func TestAssetChangedAfterCheckIsNotExported(t *testing.T) {
 		}
 	}
 }
+
+// Windows resolves 8.3 short names, stream suffixes and trailing dots to
+// another file: GIT~1 is git, config:x is a stream of config.
+func TestHomeAssetRefusalWindowsAliases(t *testing.T) {
+	for _, p := range []string{".config/GIT~1/config", ".config/git/config:x", ".claude/agents./a.md", ".claude/a~2.md"} {
+		if homeAssetRefusal(p) == "" {
+			t.Errorf("%s: not refused", p)
+		}
+	}
+	for _, p := range []string{".claude/agents/a.md", ".claude/x.y/z", ".claude/~notes.md", ".claude/a~b.md"} {
+		if r := homeAssetRefusal(p); r != "" {
+			t.Errorf("%s: refused: %s", p, r)
+		}
+	}
+}
