@@ -249,10 +249,12 @@
   the file it names. Instruction filenames are an allow list: the
   well-known instruction files, prose (`.md`, `.mdc`, `.markdown`, `.txt`,
   `.rst`) in plain directories or under `.github/instructions`,
-  `.github/prompts`, `.cursor/rules`, `.windsurf/rules` or `.clinerules`,
-  and files instructions refer to in plain directories. Any other dot
-  directory or dot file at any depth (`.git`, `.vscode`, `.claude`,
-  `.devcontainer`, `pkg/.envrc`), files tools load on their own
+  `.github/prompts`, `.cursor/rules`, `.windsurf/rules`, `.clinerules`,
+  `.claude/agents`, `.claude/commands`, `.claude/skills` or
+  `.gemini/commands` (also `.toml` there), and files instructions refer to
+  in plain directories. Any other dot directory or dot file at any depth
+  (`.git`, `.vscode`, `.claude/settings.json`, `.devcontainer`,
+  `pkg/.envrc`), files tools load on their own
   (`mise.toml`, `CMakeLists.txt`, `Directory.Build.props`), 8.3 short names
   and `:` streams are refused; names are checked as Windows reads them
   (case, `\`, trailing dots and spaces; a segment of only dots and
@@ -260,7 +262,10 @@
   `apply` with the allowed forms named, before any file is written.
   Before, a bundle instruction named `.git/config` was pushed there, and its
   `core.fsmonitor` ran on the next `git status`. Import skips such an
-  instruction and names it; before, import stored any filename.
+  instruction and names it; before, import stored any filename. Under
+  `mirror` this machine's entry of the same name is kept. `instructions
+  pull` reports a named file it refuses and stores the rest, and
+  `instructions set <name> --filename <new>` moves a stored entry.
 - Import leaves out what a bundle adds or changes that runs code later,
   names it, and takes it only with `--keep-bundle-commands`: the router's
   `langgraph_command` (run by `route` and `prompt --router langgraph`),
@@ -460,6 +465,9 @@
   `settings.json` and `~/.claude.json` with the bundle's indentation.
 
 ### Fixed
+- `import --apply-projects` no longer lists a script or other non-prose
+  project file as left staged when this machine already has the same
+  bytes, so a same-machine round trip reports nothing.
 - Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first
   time: `release.yml` now calls `deb.yml` and `rpm.yml`, which only ran on
   tag pushes that the auto-tag workflow never triggers, and the repo gains
