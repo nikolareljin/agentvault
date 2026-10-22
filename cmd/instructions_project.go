@@ -55,17 +55,47 @@ func foldPathCase(p string) string {
 
 // scopeReferencedFiles drops the referenced files that do not belong to
 // project, unless anyProject, and returns them separately. Instructions
-// themselves are shared across projects and always kept.
+// themselves are shared across projects and always kept. With anyProject,
+// one copy per filename is kept: project's, else the first.
 func scopeReferencedFiles(insts []agent.InstructionFile, project string, anyProject bool) (keep, skipped []agent.InstructionFile) {
 	isReferenced := agent.ReferencedFileClassifier(insts)
-	for _, inst := range insts {
-		if anyProject || !isReferenced(inst) || inst.SourceProject == project {
-			keep = append(keep, inst)
-			continue
+	chosen := map[string]int{}
+	if anyProject {
+		for i, inst := range insts {
+			if !isReferenced(inst) {
+				continue
+			}
+			f := filepath.ToSlash(inst.Filename)
+			if j, ok := chosen[f]; !ok || (inst.SourceProject == project && insts[j].SourceProject != project) {
+				chosen[f] = i
+			}
 		}
-		skipped = append(skipped, inst)
 	}
-	return keep, skipped
+	for i, inst := range insts {
+		switch {
+		case !isReferenced(inst):
+			keep = append(keep, inst)
+		case anyProject && chosen[filepath.ToSlash(inst.Filename)] == i:
+			keep = append(keep, inst)
+		case !anyProject && inst.SourceProject == project:
+			keep = append(keep, inst)
+		default:
+			skipped = append(skipped, inst)
+		}
+	}
+	// Another project's copy of a file this project's copy writes is not
+	// missing here, so it is not listed.
+	written := map[string]bool{}
+	for _, inst := range keep {
+		written[filepath.ToSlash(inst.Filename)] = true
+	}
+	listed := skipped[:0]
+	for _, inst := range skipped {
+		if !written[filepath.ToSlash(inst.Filename)] {
+			listed = append(listed, inst)
+		}
+	}
+	return keep, listed
 }
 
 // reportSkippedReferences names each skipped file and its source project,
@@ -93,8 +123,10 @@ func reportSkippedReferences(w io.Writer, skipped []agent.InstructionFile) {
 // remapInstructionProjects rewrites, for this machine, the path of each
 // path-keyed source project that came from the bundle, as import rewrites
 // every other path. A git key names no path and is kept, and so is a key
-// this vault had that the bundle did not bring.
-func remapInstructionProjects(insts, fromBundle []agent.InstructionFile, remaps []pathRemap) ([]agent.InstructionFile, bool) {
+// this vault had that the bundle did not bring. A rewritten copy that lands
+// on a copy this vault already has for that project is one entry: the
+// bundle's when bundleWins, else this vault's.
+func remapInstructionProjects(insts, fromBundle []agent.InstructionFile, remaps []pathRemap, bundleWins bool) ([]agent.InstructionFile, bool) {
 	if len(remaps) == 0 {
 		return insts, false
 	}
@@ -128,32 +160,126 @@ func remapInstructionProjects(insts, fromBundle []agent.InstructionFile, remaps 
 		}
 		out[i] = inst
 	}
-	return out, changed
+	if !changed {
+		return out, false
+	}
+	return dedupeRemapped(out, insts, bundleWins), true
 }
 
-// withSourceProject sets the source project of inst, stored by hand over
-// whatever entry has its key. A referenced file stays one: it takes project,
-// the project it was just read from, or with project "" (set) the replaced
-// entry's. A file nothing names that replaces no referenced file stays an
-// instruction.
-func withSourceProject(v *vault.Vault, inst agent.InstructionFile, project string) agent.InstructionFile {
-	key := agent.InstructionKey(inst)
-	prev := ""
+// dedupeRemapped keeps one entry per key of out. before is out ahead of
+// the rewrite: an entry whose key it changed came from the bundle.
+func dedupeRemapped(out, before []agent.InstructionFile, bundleWins bool) []agent.InstructionFile {
+	at := map[string]int{}
+	var kept []agent.InstructionFile
+	for i, inst := range out {
+		key := agent.InstructionKey(inst)
+		j, dup := at[key]
+		if !dup {
+			at[key] = len(kept)
+			kept = append(kept, inst)
+			continue
+		}
+		if rewritten := inst.SourceProject != before[i].SourceProject; rewritten == bundleWins {
+			kept[j] = inst
+		}
+	}
+	return kept
+}
+
+// baseKey is inst's key without its source project: the slot each
+// project's copy of one referenced file shares.
+func baseKey(inst agent.InstructionFile) string {
+	inst.SourceProject = ""
+	return agent.InstructionKey(inst)
+}
+
+// pickProjectCopy chooses among entries sharing one base key: the copy of
+// project, else the one with no project, else the only one. Two or more
+// other projects' copies and none of project's is ambiguous.
+func pickProjectCopy(entries []agent.InstructionFile, project string) (agent.InstructionFile, bool, error) {
+	var none, other []agent.InstructionFile
+	for _, e := range entries {
+		switch e.SourceProject {
+		case project:
+			return e, true, nil
+		case "":
+			none = append(none, e)
+		default:
+			other = append(other, e)
+		}
+	}
+	if len(none) > 0 {
+		return none[0], true, nil
+	}
+	switch len(other) {
+	case 0:
+		return agent.InstructionFile{}, false, nil
+	case 1:
+		return other[0], true, nil
+	}
+	return agent.InstructionFile{}, false, fmt.Errorf("%s is stored for %d projects; run this from the project's directory", printable(entries[0].Name), len(other))
+}
+
+// withSourceProject sets the source project of inst, stored by hand. A
+// referenced file stays one: with project (pull) it is that project's copy,
+// and a copy stored before projects were recorded is returned in stale to
+// be removed; with project "" (set) it replaces the copy of the current
+// directory's project, else the only copy. A file nothing names that
+// replaces no referenced file stays an instruction.
+func withSourceProject(v *vault.Vault, inst agent.InstructionFile, project string) (out agent.InstructionFile, stale string, err error) {
+	key := baseKey(inst)
+	var same []agent.InstructionFile
 	all := []agent.InstructionFile{inst}
 	for _, e := range v.ListInstructions() {
-		if agent.InstructionKey(e) == key {
-			prev = e.SourceProject
+		if baseKey(e) == key {
+			same = append(same, e)
 			continue
 		}
 		all = append(all, e)
 	}
-	if prev == "" && !agent.ReferencedFileClassifier(all)(inst) {
-		return inst
+	hasProject := false
+	for _, e := range same {
+		hasProject = hasProject || e.SourceProject != ""
+	}
+	referenced := hasProject || agent.ReferencedFileClassifier(append(all, same...))(inst)
+	if !referenced {
+		return inst, "", nil
 	}
 	if project != "" {
 		inst.SourceProject = project
-	} else {
-		inst.SourceProject = prev
+		for _, e := range same {
+			if e.SourceProject == "" {
+				stale = agent.InstructionKey(e)
+			}
+		}
+		return inst, stale, nil
 	}
-	return inst
+	prev, ok, err := pickProjectCopy(same, instructionProjectKey(".", nil))
+	if err != nil {
+		return inst, "", err
+	}
+	if ok {
+		inst.SourceProject = prev.SourceProject
+	}
+	return inst, "", nil
+}
+
+// findByName returns the stored entry named name, in scope and pattern when
+// scope is set, choosing among projects' copies by the current directory.
+func findByName(v *vault.Vault, name, scope, pattern string) (agent.InstructionFile, bool, error) {
+	if scope == "" {
+		inst, ok := v.GetInstruction(name)
+		if !ok {
+			return inst, false, nil
+		}
+		scope, pattern = inst.Scope, inst.DirectoryPattern
+	}
+	key := baseKey(agent.InstructionFile{Name: name, Scope: scope, DirectoryPattern: pattern})
+	var same []agent.InstructionFile
+	for _, e := range v.ListInstructions() {
+		if baseKey(e) == key {
+			same = append(same, e)
+		}
+	}
+	return pickProjectCopy(same, instructionProjectKey(".", nil))
 }

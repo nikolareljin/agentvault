@@ -8,6 +8,13 @@
   when set, as every command that opens the vault does. Without it and
   without a terminal, init names the variable instead of failing with
   `reading password: inappropriate ioctl for device`.
+- Each project keeps its own copy of a referenced file
+  (https://github.com/nikolareljin/agentvault/issues/87). Before, two
+  projects naming `notes/x.md` shared one entry, the last pull won, and the
+  other project's push skipped the file. `instructions list` shows each
+  copy's project; `show`, `edit`, `remove` and `set` act on the current
+  directory's copy. A vault with two copies read by an older agentvault
+  sees one of them.
 
 ### Security
 

@@ -1184,6 +1184,9 @@ func instructionDisplayName(inst agent.InstructionFile) string {
 	if inst.DirectoryPattern != "" {
 		label += fmt.Sprintf(", pattern: %s", inst.DirectoryPattern)
 	}
+	if inst.SourceProject != "" {
+		label += fmt.Sprintf(", project: %s", inst.SourceProject)
+	}
 	return label + "]"
 }
 
@@ -1791,7 +1794,11 @@ func (m model) renderInstructionDetail() string {
 
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Instruction: %s", inst.Name)))
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(fmt.Sprintf("Target: %s  |  Size: %d bytes", inst.Filename, len(inst.Content))))
+	target := fmt.Sprintf("Target: %s  |  Size: %d bytes", inst.Filename, len(inst.Content))
+	if inst.SourceProject != "" {
+		target += "  |  Project: " + inst.SourceProject
+	}
+	b.WriteString(dimStyle.Render(target))
 	b.WriteString("\n")
 	{
 		scope := inst.Scope

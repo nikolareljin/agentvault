@@ -486,6 +486,14 @@ Refreshing one referenced file by hand keeps it a referenced file:
 `instructions pull --name notes/x.md --file notes/x.md` records the
 project it is read from, and `instructions set` keeps the stored one.
 
+Each project keeps its own copy of a referenced file: when two projects
+both name `notes/x.md`, the vault holds both, and push writes each project
+its own. `instructions list` shows a copy's project as `from <project>`.
+`instructions show`, `edit`, `remove` and `set` act on the copy of the
+project they run in; outside every project that has one, a name stored
+for two or more projects is refused. `--from-any-project` writes one copy
+per filename, the current project's if it has one.
+
 A directory-scoped instruction whose pattern names another known path of the same repository (its path on the machine a bundle came from, or an older checkout) applies to the directory too.
 
 ### `agentvault instructions diff [directory]`

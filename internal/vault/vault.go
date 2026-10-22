@@ -535,7 +535,7 @@ func (v *Vault) RemoveInstructionByKey(key string) error {
 			return v.Save()
 		}
 	}
-	parts := strings.SplitN(key, "\x00", 3)
+	parts := strings.SplitN(key, "\x00", 4)
 	name, scope, pattern := "", "", ""
 	if len(parts) > 0 {
 		name = parts[0]
