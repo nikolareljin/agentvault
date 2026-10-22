@@ -488,7 +488,7 @@ and refuses to run non-interactively without `--confirm`. Preview any import fir
 ### Scripted use
 
 ```bash
-export AGENTVAULT_PASSWORD=...          # master password, no prompt
+export AGENTVAULT_PASSWORD=...          # master password, no prompt (init too)
 export AGENTVAULT_EXPORT_PASSWORD=...   # bundle password on export
 export AGENTVAULT_IMPORT_PASSWORD=...   # bundle password on import
 

@@ -50,7 +50,9 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 ## 3.1 Vault lifecycle
 
 ### `agentvault init`
-Initialize encrypted vault. No flags.
+Initialize encrypted vault. No flags. The master password is read from
+`AGENTVAULT_PASSWORD` when set (at least 12 characters), so a new machine
+can be set up by script; otherwise init asks for it twice.
 
 ### `agentvault unlock`
 Unlock vault in current terminal session flow. No flags.
