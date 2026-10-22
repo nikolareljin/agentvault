@@ -126,6 +126,8 @@ func TestProseRunsCommands(t *testing.T) {
 		"rules/r.mdc":       "---\n? hooks\n: x\n---\n",
 		"extensions/x.toml": "a = 1",
 		`Commands\G.TOML. `: "a = 1",
+		// UTF-16 frontmatter: the NULs hide "---" from a byte search.
+		"skills/s/SKILL.md.": "\xff\xfe-\x00-\x00-\x00\n\x00",
 	}
 	for n, c := range runs {
 		if !proseRunsCommands(n, []byte(c)) {

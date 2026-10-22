@@ -154,9 +154,14 @@
   `sync`.
 - `instructions pull` resolves a named file from the project root when it
   is not next to the file naming it, so `.github/copilot-instructions.md`
-  naming `.github/instructions/go.instructions.md` stores it. A named file
-  that is not UTF-8 text (an image) is refused and named; before, it was
-  stored with its bytes replaced and `push` wrote that back.
+  naming `.github/instructions/go.instructions.md` stores it. A file
+  that is not UTF-8 text (an image, a UTF-16 `AGENTS.md`) is refused and
+  named, the rest is still pulled, and a skill missing such a file is
+  named as incomplete (`export --project` carries it); `--strict` fails
+  on it. Before, a named one was stored with its bytes replaced and
+  `push` wrote that back, and a UTF-16 well-known file stopped the pull.
+- Import leaves out a bundle file over 1 MiB, the most export writes,
+  and names it.
 - macOS install with Homebrew: `brew install nikolareljin/tap/agentvault`.
   Each release builds one formula for arm64 and amd64 from the release
   asset digests and checks it with `brew style`, `brew test` and
@@ -288,7 +293,7 @@
   refer to, every non-prose file in a skill directory, prose with any
   frontmatter (Claude agents, commands and skills, rules, prompts; it can
   add hooks, tools, MCP servers or a permission mode) or a shell line
-  (`` !`cmd` ``, `!{cmd}`), and every
+  (`` !`cmd` ``, `!{cmd}`), prose that is not UTF-8 text, and every
   TOML file but Codex `config.toml` (checked key by key; Gemini commands
   run `!{cmd}`). Before, all of these were taken from the bundle. Values
   already in a vault are not changed. `.clinerules/hooks/` is never

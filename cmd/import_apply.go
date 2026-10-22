@@ -751,6 +751,11 @@ func proseRunsCommands(name string, content []byte) bool {
 	default:
 		return false
 	}
+	if agent.TextProblem(content) != "" {
+		// UTF-16 hides "---" and "!`" from the checks below behind NUL
+		// bytes, and a tool may still decode it. Not text: ask.
+		return true
+	}
 	if bytes.Contains(content, []byte("!`")) || bytes.Contains(content, []byte("!{")) {
 		return true
 	}
