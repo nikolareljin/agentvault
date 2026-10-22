@@ -463,8 +463,11 @@ Flags:
 
 Agents already in the vault are kept. A blank secret of an added agent is
 dropped and named. Process IDs in the file are cleared. A session equal to
-the vault's session of that name adds nothing; another one of that name is
-imported as `NAME-imported`.
+the vault's session of that name, or to the `NAME-imported` copy an earlier
+import added, adds nothing and leaves the vault file as it is; another one
+of that name is imported as `NAME-imported`, then `NAME-imported-2`. Of an
+agent, rule or role named twice in the file, the first is taken. The file
+must be a regular file of at most 256 MiB, as for every import.
 
 ## 3.7 Instruction management
 
@@ -592,8 +595,8 @@ Flags:
 ### `agentvault generate env [output-file]`
 Flags:
 - `--format <dotenv|shell|json>` (default: `dotenv`)
-- `--no-keys` (default: `false`): leave out API keys and base URLs that
-  carry credentials
+- `--no-keys` (default: `false`): leave out API keys, and write base URLs
+  without user info or secret query parameters
 - `--agent <name>`
 
 Values are written in single quotes, so sourcing or eval-ing the file runs
@@ -611,8 +614,8 @@ Flags:
 - `--shared-only` (default: `false`)
 
 ### `agentvault generate all`
-No flags. Its `.env.agents` leaves out API keys and base URLs that carry
-credentials, as `generate env --no-keys` does.
+No flags. Its `.env.agents` leaves out API keys and writes base URLs
+without credentials, as `generate env --no-keys` does.
 
 ## 3.11 Setup (deprecated)
 

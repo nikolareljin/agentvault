@@ -402,8 +402,11 @@ Flags:
 
 Agents already in the vault are kept. A blank secret of an added agent is
 dropped and named. Process IDs in the file are cleared. A session equal to
-the vault's session of that name adds nothing; another one of that name is
-imported as `NAME-imported`.
+the vault's session of that name, or to the `NAME-imported` copy an earlier
+import added, adds nothing and leaves the vault file as it is; another one
+of that name is imported as `NAME-imported`, then `NAME-imported-2`. Of an
+agent, rule or role named twice in the file, the first is taken. The file
+must be a regular file of at most 256 MiB, as for every import.
 
 ## Instructions (`instructions` alias: `inst`)
 
@@ -532,8 +535,8 @@ Flags:
 ### `agentvault generate env [output-file]`
 Flags:
 - `--format <dotenv|shell|json>` (default: `dotenv`)
-- `--no-keys` (default: `false`): leave out API keys and base URLs that
-  carry credentials
+- `--no-keys` (default: `false`): leave out API keys, and write base URLs
+  without user info or secret query parameters
 - `--agent <name>`
 
 A value that cannot be written safely (`dotenv`: a single quote, `${` or a
@@ -556,8 +559,8 @@ Flags:
 - `--shared-only` (default: `false`)
 
 ### `agentvault generate all`
-No flags. Its `.env.agents` leaves out API keys and base URLs that carry
-credentials, as `generate env --no-keys` does.
+No flags. Its `.env.agents` leaves out API keys and writes base URLs
+without credentials, as `generate env --no-keys` does.
 
 ## Setup (deprecated)
 
@@ -745,7 +748,7 @@ Flags:
   - the vault's router `langgraph_command`, shared and per-agent MCP servers in the vault (a server named in `--mcp-servers` is taken), and `.aider.conf.yml`, files instructions refer to that are not prose, and every file in a skill directory (`.claude/skills/NAME/`) that is not prose;
   - Claude agents, commands and skills, rules and prompts with any frontmatter (it can add hooks, tools, MCP servers or a permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every TOML file but Codex `config.toml` (Gemini commands run `!{cmd}`), in the home, the project and vault instructions. `.clinerules/hooks/` is never written.
 
-  A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
+  A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are kept.
 - `--mcp-servers <a,b|all|none>`: Which MCP servers to take from the bundle, without asking. `all` and `none` stand alone; combined with names they are an error. A name no bundle server has is warned about. MCP servers in `mcpServers`, `servers`, `mcp.servers` (VS Code) and `context_servers` (Zed) of JSON settings (Claude `~/.claude.json` and `settings.json`, Gemini, Copilot, Cursor, Windsurf) and in Codex `config.toml` are merged one by one:
   - only on this machine: kept;
   - the same on both sides, apart from secrets the bundle blanked: this machine's definition stays;

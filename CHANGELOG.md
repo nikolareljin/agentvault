@@ -29,7 +29,7 @@
   saved as confirmed and not asked again for the same target while every
   bundle project under it is a checkout already there with the same
   identity; anything else is asked again. Answering
-  `y` and a work dir row edited in the confirm list now save the mapping.
+  `y` or editing a work dir row in the confirm list saves the mapping.
 - Bundles and the vault record projects by work dir and git identity, so
   import finds a project wherever it is checked out here. SSH and HTTPS
   remotes of one repository are one identity; owner and repo case is
@@ -39,8 +39,8 @@
   exit) and asked about on a terminal; mappings are saved in the vault.
   Targets inside hidden folders are confirmed one by one, even with
   `--accept-matches`. New import flags `--workdir-map`, `--accept-matches`,
-  `--no-match`; new export flag `--workdir`. `--apply-projects` no longer
-  needs `--project-root` when the bundle's project was matched.
+  `--no-match`; new export flag `--workdir`. `--apply-projects` writes to
+  the matched project without `--project-root`.
   `instructions push` applies directory patterns written for another
   checkout of the same repository.
 - `import` rewrites the exporting machine's paths for this one. Its home
@@ -162,15 +162,18 @@
   and `push` wrote that back.
 - Import leaves out a bundle file over 1 MiB, the most export writes,
   and names it.
-- `session import` has `--dry-run`, clears the process IDs a file
-  carries (`session stop` signalled them), adds nothing when the vault
-  holds the same session, and settles the session name before writing.
-  Before, each re-import added another `NAME-imported` copy.
+- `session import` has `--dry-run` and clears the process IDs a file
+  carries (`session stop` signalled them). It adds nothing, and does not
+  rewrite the vault, when the vault holds the same session under its name
+  or as the `NAME-imported` copy an earlier import added; another session
+  of that name becomes `NAME-imported`, then `NAME-imported-2`. Of an
+  agent, rule or role named twice in the file, the first is taken. Before,
+  each re-import added another `NAME-imported` copy. Bundles carry
+  sessions idle, without process IDs, as `session export` does.
 - `instructions import` skips an instruction equal to the vault's, and
-  lists one that is not UTF-8 text as invalid. Before, one NUL
-  instruction kept from 0.14 failed the import. Bundle import no longer
-  stores a non-text instruction with `--keep-bundle-commands`, unless it
-  equals the vault's copy.
+  lists one that is not UTF-8 text as invalid. Bundle import refuses an
+  instruction that is not UTF-8 text, also with `--keep-bundle-commands`,
+  unless it equals the vault's copy (one stored by 0.14).
 - macOS install with Homebrew: `brew install nikolareljin/tap/agentvault`.
   Each release builds one formula for arm64 and amd64 from the release
   asset digests and checks it with `brew style`, `brew test` and
@@ -315,6 +318,12 @@
   with its new `--keep-bundle-commands`, and `instructions import` for
   instructions that run code, with its new `--keep-bundle-commands`.
   `setup apply` names each staged file it leaves out.
+- `generate env --no-keys` and the `.env.agents` of `generate all` write
+  a base URL without its user info and secret parameters. Before, a base
+  URL such as `https://h/v1?api_key=x` was written as stored.
+- `import`, `setup import`, `setup show`, `agent import`, `session import`
+  and `instructions import` read only a regular file of at most 256 MiB,
+  so `/dev/zero` or a huge file cannot exhaust memory.
 - `generate env`, `generate all` and `setup apply --generate` set an
   existing env file to mode 0600 when they write keys into it. Before, a
   file created earlier as 0644 kept that mode.
@@ -393,8 +402,10 @@
   and secret keys and `http_headers` of Codex and Ollama custom settings.
   A URL query parameter counts as a secret by its name under the key rules
   (`?client_secret=`, `?api-key=`, `?sig=`), and so does `X-Api-Key=x` in
-  an argument. The flag has left them in since it was added in 0.7.0;
-  earlier releases had no way to leave them out. They are now blanked as in
+  an argument. A URL carries a credential when it has user info, a user
+  name alone included, or a secret-named query or fragment parameter,
+  percent-encoded or not; ports and IPv6 hosts do not hide one. Before,
+  the flag left them in. They are blanked as in
   provider files and filled on import from this machine's vault when the
   definition is unchanged: for an MCP server the same command, args and `env`
   names; for the router, all its other settings. A blank that is not
@@ -429,9 +440,8 @@
 - `agent export` without `--include-key`, and `session export` without
   `--include-keys`, also blank the agent's MCP server env and secret
   args, secret provider extras and a base URL with credentials; before,
-  `session export` blanked only the API key, and `session import` stored
-  the blanks as empty values. `session import` now drops and names each
-  blank as `agent import` does. `agent import --merge`
+  `session export` blanked only the API key. `session import` drops and
+  names each blank as `agent import` does. `agent import --merge`
   fills blanks back from the local agent under the rules bundle import
   uses, the API key included, and names what it leaves out. Before, a
   profile with another base URL got this machine's key.
@@ -504,9 +514,6 @@
   `settings.json` and `~/.claude.json` with the bundle's indentation.
 
 ### Fixed
-- `import --apply-projects` no longer lists a script or other non-prose
-  project file as left staged when this machine already has the same
-  bytes, so a same-machine round trip reports nothing.
 - Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first
   time: `release.yml` now calls `deb.yml` and `rpm.yml`, which only ran on
   tag pushes that the auto-tag workflow never triggers, and the repo gains

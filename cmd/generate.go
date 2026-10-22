@@ -123,7 +123,7 @@ func init() {
 	generateCodexCmd.Flags().String("project", "", "add current directory as trusted project")
 
 	generateEnvCmd.Flags().String("format", "dotenv", "output format: dotenv, shell, json")
-	generateEnvCmd.Flags().Bool("no-keys", false, "exclude API keys and base URLs with credentials from output")
+	generateEnvCmd.Flags().Bool("no-keys", false, "exclude API keys and the credentials in base URLs from output")
 	generateEnvCmd.Flags().String("agent", "", "generate env for specific agent only")
 
 	generateMCPCmd.Flags().String("agent", "", "include only specific agent's MCP servers")
@@ -412,7 +412,7 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Generated %s (%d agents)\n", outputFile, len(agents))
 	if noKeys {
-		fmt.Println("  Note: API keys and base URLs with credentials excluded (use without --no-keys to include)")
+		fmt.Println("  Note: API keys and the credentials in base URLs excluded (use without --no-keys to include)")
 	}
 	return leftOutError(cmd, left)
 }
