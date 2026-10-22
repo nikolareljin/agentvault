@@ -103,6 +103,9 @@ func (b *PortableBundle) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*b = PortableBundle(in.alias)
+	if b.SchemaVersion != "" && in.Blanked != "" && b.SchemaVersion != in.Blanked {
+		return fmt.Errorf("bundle has schema_version %q and %s %q; it was edited and is not trusted", b.SchemaVersion, blankedSchemaKey, in.Blanked)
+	}
 	if b.SchemaVersion == "" {
 		b.SchemaVersion = in.Blanked
 	}
@@ -417,6 +420,9 @@ func decodePortableBundle(data []byte) (PortableBundle, bundleFormat, error) {
 		var bundle PortableBundle
 		if err := json.Unmarshal(data, &bundle); err != nil {
 			return PortableBundle{}, format, fmt.Errorf("decoding portable bundle: %w", err)
+		}
+		if bundle.SchemaVersion != PortableBundleSchemaVersion && bundle.SchemaVersion != BlankedBundleSchemaVersion {
+			return PortableBundle{}, format, fmt.Errorf("portable bundle schema version %q is not one this release reads (%s, %s); upgrade agentvault", bundle.SchemaVersion, PortableBundleSchemaVersion, BlankedBundleSchemaVersion)
 		}
 		if len(bundle.Profiles) == 0 {
 			return PortableBundle{}, format, errors.New("portable bundle contains no profiles")

@@ -329,6 +329,9 @@
   same reason `setup export` without `--include-secrets` (its default)
   writes such a one-profile bundle instead of the 1.x layout, and
   `setup show` reads every bundle format.
+- Import and `setup show` refuse a portable bundle whose version is not
+  2.0 or 2.1, or whose `schema_version` and `blanked_schema_version`
+  differ. Before, any version was applied as 2.0.
 - `export --vault-only` with `--include-keys=false` or
   `--include-secrets=false` is refused. It wrote the whole vault anyway,
   keys and secrets in plain text, without the confirmation `--plain` needs.

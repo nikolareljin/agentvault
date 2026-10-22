@@ -245,3 +245,27 @@ func TestSetupExportWithoutSecretsWritesBlankedBundle(t *testing.T) {
 		}
 	}
 }
+
+// A bundle of an unknown schema version, or with both version keys
+// disagreeing, is refused instead of applied with rules it may not follow.
+func TestDecodePortableBundleRefusesUnknownOrConflictingVersion(t *testing.T) {
+	prof := `"profiles":[{"name":"default","setup":{"version":"1.0"}}]`
+	for _, tc := range []struct {
+		body string
+		ok   bool
+	}{
+		{`{"schema_version":"2.0",` + prof + `}`, true},
+		{`{"schema_version":"2.1",` + prof + `}`, true},
+		{`{"blanked_schema_version":"2.1",` + prof + `}`, true},
+		{`{"blanked_schema_version":"2.1","schema_version":"2.1",` + prof + `}`, true},
+		{`{"schema_version":"3.0",` + prof + `}`, false},
+		{`{"blanked_schema_version":"2.2",` + prof + `}`, false},
+		{`{"schema_version":"",` + prof + `}`, false},
+		{`{"blanked_schema_version":"2.1","schema_version":"2.0",` + prof + `}`, false},
+	} {
+		_, _, err := decodePortableBundle([]byte(tc.body))
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v, want ok=%v", tc.body, err, tc.ok)
+		}
+	}
+}
