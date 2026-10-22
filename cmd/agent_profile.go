@@ -90,7 +90,7 @@ Examples:
 		}
 
 		if len(args) == 1 {
-			fmt.Println(string(data))
+			fmt.Println(string(escapeC1JSON(data)))
 			return nil
 		}
 

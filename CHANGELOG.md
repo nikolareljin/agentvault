@@ -364,6 +364,16 @@
   instruction, rule, role, session or profile name has a control
   character is refused, and `add` refuses such an agent name. An agent
   saved earlier with such a name can still be edited and removed.
+- Vault fields that came from a bundle reach the terminal without control
+  characters in every command that prints them: `rules`, `roles`,
+  `session`, `instructions` (list, show, preview, export, diff, scan),
+  `config show`, `run`, `generate` and the TUI. JSON output escapes C1
+  control characters as `\u0080`-`\u009f`. Instruction, rule and prompt
+  text keeps its newlines, tabs and CRLF.
+- `run --env` and `generate env --format shell` escape `$` and backticks,
+  so a model or URL such as `$(cmd)` does not run when the output is
+  eval'd. A name saved before control characters were refused cannot
+  start a new line in the generated env file.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older

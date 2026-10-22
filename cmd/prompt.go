@@ -205,7 +205,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if jsonOut {
-			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(map[string]any{
 				"agent":    a.Name,
 				"provider": a.Provider,
 				"runner":   target.Runner,
@@ -281,7 +281,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			if decision != nil {
 				payload["route"] = decision
 			}
-			_ = json.NewEncoder(os.Stdout).Encode(payload)
+			_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 			return nil
 		}
 		if decision != nil {
@@ -357,7 +357,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			if decision != nil {
 				payload["route"] = decision
 			}
-			_ = json.NewEncoder(os.Stdout).Encode(payload)
+			_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 			return nil
 		}
 		return execErr
@@ -371,7 +371,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		if decision != nil {
 			payload["route"] = decision
 		}
-		_ = json.NewEncoder(os.Stdout).Encode(payload)
+		_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 		return nil
 	}
 

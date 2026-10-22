@@ -53,7 +53,7 @@ var rulesListCmd = &cobra.Command{
 
 		if jsonOutput {
 			data, _ := json.MarshalIndent(rules, "", "  ")
-			fmt.Println(string(data))
+			fmt.Println(string(escapeC1JSON(data)))
 			return nil
 		}
 
@@ -67,8 +67,8 @@ var rulesListCmd = &cobra.Command{
 			if !r.Enabled {
 				status = "○"
 			}
-			fmt.Printf("\n  %s [%s] %s (priority: %d)\n", status, r.Category, r.Name, r.Priority)
-			fmt.Printf("    %s\n", r.Description)
+			fmt.Printf("\n  %s [%s] %s (priority: %d)\n", status, printable(r.Category), printable(r.Name), r.Priority)
+			fmt.Printf("    %s\n", printable(r.Description))
 		}
 		fmt.Println()
 		return nil
@@ -91,12 +91,12 @@ var rulesShowCmd = &cobra.Command{
 			return fmt.Errorf("rule %q not found", args[0])
 		}
 
-		fmt.Printf("Rule: %s\n", rule.Name)
-		fmt.Printf("Description: %s\n", rule.Description)
-		fmt.Printf("Category: %s\n", rule.Category)
+		fmt.Printf("Rule: %s\n", printable(rule.Name))
+		fmt.Printf("Description: %s\n", printable(rule.Description))
+		fmt.Printf("Category: %s\n", printable(rule.Category))
 		fmt.Printf("Priority: %d\n", rule.Priority)
 		fmt.Printf("Enabled: %v\n", rule.Enabled)
-		fmt.Printf("\nContent:\n%s\n", rule.Content)
+		fmt.Printf("\nContent:\n%s\n", printableText(rule.Content))
 		return nil
 	},
 }
@@ -388,8 +388,8 @@ This can be included in AGENTS.md, CLAUDE.md, or other instruction files.`,
 			if !r.Enabled {
 				continue
 			}
-			fmt.Printf("### %s\n", r.Description)
-			fmt.Printf("%s\n\n", r.Content)
+			fmt.Printf("### %s\n", printable(r.Description))
+			fmt.Printf("%s\n\n", printableText(r.Content))
 		}
 
 		return nil

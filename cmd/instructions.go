@@ -161,10 +161,10 @@ var instListCmd = &cobra.Command{
 					pattern = "-"
 				}
 				fmt.Printf("  %-12s -> %-35s  %-10s  %-30s  (%d bytes, %s)\n",
-					inst.Name, inst.Filename, scope, pattern, len(inst.Content), age)
+					printable(inst.Name), printable(inst.Filename), printable(scope), printable(pattern), len(inst.Content), age)
 			} else {
 				fmt.Printf("  %-12s -> %-40s  (%d bytes, %s)\n",
-					inst.Name, inst.Filename, len(inst.Content), age)
+					printable(inst.Name), printable(inst.Filename), len(inst.Content), age)
 			}
 		}
 		return nil
@@ -189,7 +189,7 @@ var instShowCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("instruction %q not found", args[0])
 		}
-		fmt.Print(inst.Content)
+		fmt.Print(printableText(inst.Content))
 		if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
 			fmt.Println()
 		}
@@ -245,7 +245,7 @@ Examples:
 
 		// Scan for prompt hijacking
 		if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-			fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+			fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 		}
 
 		inst := agent.InstructionFile{
@@ -259,7 +259,7 @@ Examples:
 		if err := v.SetInstruction(inst); err != nil {
 			return err
 		}
-		fmt.Printf("Instruction %q stored (%d bytes, target: %s).\n", name, len(content), filename)
+		fmt.Printf("Instruction %q stored (%d bytes, target: %s).\n", printable(name), len(content), printable(filename))
 		return nil
 	},
 }
@@ -343,7 +343,7 @@ Examples:
 
 		// Scan for prompt hijacking
 		if warnings := agent.CheckHijacking(newContent); len(warnings) > 0 {
-			fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+			fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 		}
 
 		inst.Content = newContent
@@ -351,7 +351,7 @@ Examples:
 		if err := v.SetInstruction(inst); err != nil {
 			return err
 		}
-		fmt.Printf("Instruction %q updated (%d bytes).\n", name, len(newContent))
+		fmt.Printf("Instruction %q updated (%d bytes).\n", printable(name), len(newContent))
 		return nil
 	},
 }
@@ -389,7 +389,7 @@ otherwise removes the first match by name.`,
 				return err
 			}
 		}
-		fmt.Printf("Instruction %q removed.\n", name)
+		fmt.Printf("Instruction %q removed.\n", printable(name))
 		return nil
 	},
 }
@@ -453,8 +453,8 @@ Examples:
 			}
 			content := string(data)
 			if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-				fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, filename)
-				fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+				fmt.Fprintf(os.Stderr, "  [%s] %s\n", printable(name), printable(filename))
+				fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 			}
 			inst := agent.InstructionFile{
 				Name:      name,
@@ -465,7 +465,7 @@ Examples:
 			if err := v.SetInstruction(inst); err != nil {
 				return err
 			}
-			fmt.Printf("  Pulled %s -> %q (%d bytes)\n", filename, name, len(data))
+			fmt.Printf("  Pulled %s -> %q (%d bytes)\n", printable(filename), printable(name), len(data))
 			pulled++
 		}
 		// also check files in subdirectories
@@ -477,8 +477,8 @@ Examples:
 			if data, err := os.ReadFile(fullPath); err == nil {
 				content := string(data)
 				if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-					fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, relPath)
-					fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+					fmt.Fprintf(os.Stderr, "  [%s] %s\n", printable(name), printable(relPath))
+					fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 				}
 				inst := agent.InstructionFile{
 					Name:      name,
@@ -489,7 +489,7 @@ Examples:
 				if err := v.SetInstruction(inst); err != nil {
 					return err
 				}
-				fmt.Printf("  Pulled %s -> %q (%d bytes)\n", relPath, name, len(data))
+				fmt.Printf("  Pulled %s -> %q (%d bytes)\n", printable(relPath), printable(name), len(data))
 				pulled++
 			}
 		}
@@ -500,7 +500,7 @@ Examples:
 			content := string(data)
 			if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
 				fmt.Fprintf(os.Stderr, "  [aider] .aider.conf.yml\n")
-				fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+				fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 			}
 			inst := agent.InstructionFile{
 				Name:      "aider",
@@ -527,8 +527,8 @@ Examples:
 			}
 			for _, inst := range res.Stored {
 				if warnings := agent.CheckHijacking(inst.Content); len(warnings) > 0 {
-					fmt.Fprintf(os.Stderr, "  [%s] %s\n", inst.Name, inst.Filename)
-					fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+					fmt.Fprintf(os.Stderr, "  [%s] %s\n", printable(inst.Name), printable(inst.Filename))
+					fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 				}
 				fmt.Printf("  Pulled %s -> %q (%d bytes, named by an instruction file)\n",
 					inst.Filename, inst.Name, len(inst.Content))
@@ -539,10 +539,10 @@ Examples:
 			// naming a file that cannot travel is the defect this exists to
 			// end, and it is invisible if the export is quiet about it.
 			for _, r := range res.Refused {
-				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", r.Raw, r.Reason)
+				fmt.Fprintf(os.Stderr, "  refused %s: %s\n", printable(r.Raw), printable(r.Reason))
 			}
 			for _, r := range res.Missing {
-				fmt.Fprintf(os.Stderr, "  named but not present: %s\n", r.Raw)
+				fmt.Fprintf(os.Stderr, "  named but not present: %s\n", printable(r.Raw))
 			}
 			if strict && (len(res.Refused) > 0 || len(res.Missing) > 0) {
 				return fmt.Errorf("--strict: %d reference(s) refused, %d named but not present",
@@ -574,8 +574,8 @@ func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 
 	// Scan for prompt hijacking
 	if warnings := agent.CheckHijacking(content); len(warnings) > 0 {
-		fmt.Fprintf(os.Stderr, "  [%s] %s\n", name, filename)
-		fmt.Fprint(os.Stderr, agent.FormatWarnings(warnings))
+		fmt.Fprintf(os.Stderr, "  [%s] %s\n", printable(name), printable(filename))
+		fmt.Fprint(os.Stderr, printableText(agent.FormatWarnings(warnings)))
 	}
 
 	inst := agent.InstructionFile{
@@ -587,7 +587,7 @@ func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 	if err := v.SetInstruction(inst); err != nil {
 		return err
 	}
-	fmt.Printf("Pulled %s -> %q (%d bytes)\n", filename, name, len(data))
+	fmt.Printf("Pulled %s -> %q (%d bytes)\n", printable(filename), printable(name), len(data))
 	return nil
 }
 
@@ -633,7 +633,7 @@ Examples:
 			if err := writeInstructionFile(dir, inst); err != nil {
 				return err
 			}
-			fmt.Printf("  Pushed %q -> %s (%d bytes)\n", inst.Name, inst.Filename, len(inst.Content))
+			fmt.Printf("  Pushed %q -> %s (%d bytes)\n", printable(inst.Name), printable(inst.Filename), len(inst.Content))
 			pushed++
 		}
 
@@ -676,18 +676,18 @@ Examples:
 		for _, inst := range instructions {
 			diskData, err := readInstructionOnDisk(dir, inst)
 			if errors.Is(err, errUnsafeInstructionFilename) {
-				fmt.Printf("  %-12s  %s  (refused: %v)\n", inst.Name, inst.Filename, err)
+				fmt.Printf("  %-12s  %s  (refused: %v)\n", printable(inst.Name), printable(inst.Filename), err)
 				diffs++
 				continue
 			}
 			if err != nil {
-				fmt.Printf("  %-12s  %s  (not on disk)\n", inst.Name, inst.Filename)
+				fmt.Printf("  %-12s  %s  (not on disk)\n", printable(inst.Name), printable(inst.Filename))
 				diffs++
 				continue
 			}
 			diskContent := string(diskData)
 			if diskContent == inst.Content {
-				fmt.Printf("  %-12s  %s  (identical)\n", inst.Name, inst.Filename)
+				fmt.Printf("  %-12s  %s  (identical)\n", printable(inst.Name), printable(inst.Filename))
 			} else {
 				vaultLines := strings.Count(inst.Content, "\n")
 				diskLines := strings.Count(diskContent, "\n")
@@ -709,7 +709,7 @@ Examples:
 			if !found {
 				p := filepath.Join(dir, filename)
 				if _, err := os.Stat(p); err == nil {
-					fmt.Printf("  %-12s  %s  (on disk, not in vault)\n", name, filename)
+					fmt.Printf("  %-12s  %s  (on disk, not in vault)\n", printable(name), printable(filename))
 					diffs++
 				}
 			}
@@ -771,12 +771,12 @@ Examples:
 		for _, inst := range toScan {
 			warnings := agent.CheckHijacking(inst.Content)
 			if len(warnings) > 0 {
-				fmt.Printf("--- %s (%s) ---\n", inst.Name, inst.Filename)
-				fmt.Print(agent.FormatWarnings(warnings))
+				fmt.Printf("--- %s (%s) ---\n", printable(inst.Name), printable(inst.Filename))
+				fmt.Print(printableText(agent.FormatWarnings(warnings)))
 				fmt.Println()
 				totalWarnings += len(warnings)
 			} else {
-				fmt.Printf("  %-12s  %s  (clean)\n", inst.Name, inst.Filename)
+				fmt.Printf("  %-12s  %s  (clean)\n", printable(inst.Name), printable(inst.Filename))
 			}
 		}
 
@@ -832,8 +832,8 @@ Examples:
 				if scope == "" {
 					scope = agent.InstructionScopeGlobal
 				}
-				fmt.Printf("=== %s (%s, scope: %s) ===\n", inst.Name, inst.Filename, scope)
-				fmt.Println(inst.Content)
+				fmt.Printf("=== %s (%s, scope: %s) ===\n", printable(inst.Name), printable(inst.Filename), printable(scope))
+				fmt.Println(printableText(inst.Content))
 			}
 			return nil
 		}
@@ -845,8 +845,8 @@ Examples:
 				if scope == "" {
 					scope = agent.InstructionScopeGlobal
 				}
-				fmt.Printf("=== %s (%s, scope: %s) ===\n", inst.Name, inst.Filename, scope)
-				fmt.Print(inst.Content)
+				fmt.Printf("=== %s (%s, scope: %s) ===\n", printable(inst.Name), printable(inst.Filename), printable(scope))
+				fmt.Print(printableText(inst.Content))
 				if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
 					fmt.Println()
 				}
@@ -905,7 +905,7 @@ Examples:
 		}
 
 		if len(args) == 0 {
-			fmt.Println(string(data))
+			fmt.Println(string(escapeC1JSON(data)))
 			return nil
 		}
 		if err := os.WriteFile(args[0], data, 0600); err != nil {
@@ -990,9 +990,9 @@ Examples:
 				fmt.Println("Conflicts (existing would win):")
 				for _, c := range conflicts {
 					if c.DirectoryPattern != "" {
-						fmt.Printf("  %s [scope: %s, pattern: %s]: %s\n", c.Name, c.IncomingScope, c.DirectoryPattern, c.ResolutionNote)
+						fmt.Printf("  %s [scope: %s, pattern: %s]: %s\n", printable(c.Name), printable(c.IncomingScope), printable(c.DirectoryPattern), printable(c.ResolutionNote))
 					} else {
-						fmt.Printf("  %s [scope: %s]: %s\n", c.Name, c.IncomingScope, c.ResolutionNote)
+						fmt.Printf("  %s [scope: %s]: %s\n", printable(c.Name), printable(c.IncomingScope), printable(c.ResolutionNote))
 					}
 				}
 			}

@@ -52,7 +52,7 @@ var sessionListCmd = &cobra.Command{
 
 		if jsonOutput {
 			data, _ := json.MarshalIndent(sessions.Sessions, "", "  ")
-			fmt.Println(string(data))
+			fmt.Println(string(escapeC1JSON(data)))
 			return nil
 		}
 
@@ -63,12 +63,12 @@ var sessionListCmd = &cobra.Command{
 			if s.ID == sessions.ActiveSession {
 				active = " [ACTIVE]"
 			}
-			fmt.Printf("\n  %s (%s)%s\n", s.Name, s.ID, active)
-			fmt.Printf("    Status:  %s\n", s.Status)
-			fmt.Printf("    Project: %s\n", s.ProjectDir)
+			fmt.Printf("\n  %s (%s)%s\n", printable(s.Name), s.ID, active)
+			fmt.Printf("    Status:  %s\n", printable(string(s.Status)))
+			fmt.Printf("    Project: %s\n", printable(s.ProjectDir))
 			fmt.Printf("    Agents:  %d\n", len(s.Agents))
 			if s.ActiveRole != "" {
-				fmt.Printf("    Role:    %s\n", s.ActiveRole)
+				fmt.Printf("    Role:    %s\n", printable(s.ActiveRole))
 			}
 		}
 		fmt.Println()
@@ -148,10 +148,10 @@ Examples:
 
 		fmt.Printf("Session %q created with %d agent(s).\n", name, len(agentNames))
 		fmt.Printf("  ID:      %s\n", session.ID)
-		fmt.Printf("  Project: %s\n", session.ProjectDir)
+		fmt.Printf("  Project: %s\n", printable(session.ProjectDir))
 		fmt.Printf("  Agents:  %s\n", strings.Join(agentNames, ", "))
 		if role != "" {
-			fmt.Printf("  Role:    %s\n", role)
+			fmt.Printf("  Role:    %s\n", printable(role))
 		}
 		fmt.Println("\nUse 'agentvault session start " + name + "' to run all agents.")
 		return nil
@@ -173,12 +173,12 @@ var sessionShowCmd = &cobra.Command{
 			return fmt.Errorf("session %q not found", args[0])
 		}
 
-		fmt.Printf("Session: %s\n", session.Name)
+		fmt.Printf("Session: %s\n", printable(session.Name))
 		fmt.Printf("ID: %s\n", session.ID)
-		fmt.Printf("Status: %s\n", session.Status)
-		fmt.Printf("Project: %s\n", session.ProjectDir)
+		fmt.Printf("Status: %s\n", printable(string(session.Status)))
+		fmt.Printf("Project: %s\n", printable(session.ProjectDir))
 		if session.ActiveRole != "" {
-			fmt.Printf("Default Role: %s\n", session.ActiveRole)
+			fmt.Printf("Default Role: %s\n", printable(session.ActiveRole))
 		}
 		fmt.Printf("Created: %s\n", session.CreatedAt.Format("2006-01-02 15:04"))
 		fmt.Printf("Updated: %s\n", session.UpdatedAt.Format("2006-01-02 15:04"))
@@ -191,13 +191,13 @@ var sessionShowCmd = &cobra.Command{
 			}
 			role := ""
 			if a.Role != "" {
-				role = fmt.Sprintf(" [%s]", a.Role)
+				role = fmt.Sprintf(" [%s]", printable(a.Role))
 			}
 			task := ""
 			if a.Task != "" {
-				task = fmt.Sprintf(" - %s", a.Task)
+				task = fmt.Sprintf(" - %s", printable(a.Task))
 			}
-			fmt.Printf("  %s %s%s%s\n", status, a.Name, role, task)
+			fmt.Printf("  %s %s%s%s\n", status, printable(a.Name), printable(role), task)
 		}
 		return nil
 	},
@@ -241,7 +241,7 @@ var sessionStopCmd = &cobra.Command{
 				process, err := os.FindProcess(a.PID)
 				if err == nil {
 					if err := process.Signal(os.Interrupt); err != nil {
-						fmt.Fprintf(os.Stderr, "warning: failed to stop agent %q (pid %d): %v\n", a.Name, a.PID, err)
+						fmt.Fprintf(os.Stderr, "warning: failed to stop agent %q (pid %d): %v\n", printable(a.Name), a.PID, err)
 					}
 					stopped++
 				}
@@ -255,7 +255,7 @@ var sessionStopCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("Stopped %d agent(s) in session %q.\n", stopped, session.Name)
+		fmt.Printf("Stopped %d agent(s) in session %q.\n", stopped, printable(session.Name))
 		return nil
 	},
 }
@@ -395,7 +395,7 @@ var sessionImportCmd = &cobra.Command{
 				if err := v.Add(a); err != nil {
 					return fmt.Errorf("importing agent %q: %w", a.Name, err)
 				}
-				fmt.Printf("  Imported agent: %s\n", a.Name)
+				fmt.Printf("  Imported agent: %s\n", printable(a.Name))
 			}
 		}
 
@@ -410,7 +410,7 @@ var sessionImportCmd = &cobra.Command{
 				r.CreatedAt = time.Now()
 				r.UpdatedAt = time.Now()
 				shared.Rules = append(shared.Rules, r)
-				fmt.Printf("  Imported rule: %s\n", r.Name)
+				fmt.Printf("  Imported rule: %s\n", printable(r.Name))
 			}
 		}
 
@@ -424,7 +424,7 @@ var sessionImportCmd = &cobra.Command{
 				r.CreatedAt = time.Now()
 				r.UpdatedAt = time.Now()
 				shared.Roles = append(shared.Roles, r)
-				fmt.Printf("  Imported role: %s\n", r.Name)
+				fmt.Printf("  Imported role: %s\n", printable(r.Name))
 			}
 		}
 		if err := v.SetSharedConfig(shared); err != nil {
@@ -446,7 +446,7 @@ var sessionImportCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Printf("\nSession %q imported successfully.\n", importData.Session.Name)
+		fmt.Printf("\nSession %q imported successfully.\n", printable(importData.Session.Name))
 		return nil
 	},
 }
@@ -490,14 +490,14 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("Starting %d agent(s) in session %q...\n\n", len(agentsToStart), session.Name)
+	fmt.Printf("Starting %d agent(s) in session %q...\n\n", len(agentsToStart), printable(session.Name))
 
 	if dryRun {
 		fmt.Println("DRY RUN - would start:")
 		for _, sa := range agentsToStart {
 			a, ok := v.Get(sa.Name)
 			if !ok {
-				fmt.Printf("  %s (missing)\n", sa.Name)
+				fmt.Printf("  %s (missing)\n", printable(sa.Name))
 				continue
 			}
 			role := sessionAgentRole(sa, session.ActiveRole)
@@ -505,14 +505,14 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 				a.Role = role
 			}
 			prompt := a.BuildEffectivePrompt(shared)
-			fmt.Printf("  %s (%s)\n", sa.Name, a.Provider)
+			fmt.Printf("  %s (%s)\n", printable(sa.Name), a.Provider)
 			if role != "" {
-				fmt.Printf("    Role: %s\n", role)
+				fmt.Printf("    Role: %s\n", printable(role))
 			}
 			if len(prompt) > 100 {
-				fmt.Printf("    Prompt: %s...\n", prompt[:100])
+				fmt.Printf("    Prompt: %s...\n", printableText(prompt[:100]))
 			} else {
-				fmt.Printf("    Prompt: %s\n", prompt)
+				fmt.Printf("    Prompt: %s\n", printableText(prompt))
 			}
 		}
 		return nil
@@ -530,7 +530,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 		for _, sa := range agentsToStart {
 			pid, err := startAgent(v, session, sa, shared, true)
 			if err != nil {
-				fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
+				fmt.Printf("  Error starting %s: %v\n", printable(sa.Name), err)
 				continue
 			}
 			for i := range session.Agents {
@@ -568,7 +568,7 @@ func runSessionStart(cmd *cobra.Command, args []string) error {
 				}
 				pid, err := startAgent(v, session, sa, shared, false)
 				if err != nil {
-					fmt.Printf("  Error starting %s: %v\n", sa.Name, err)
+					fmt.Printf("  Error starting %s: %v\n", printable(sa.Name), err)
 					return
 				}
 				mu.Lock()
@@ -641,7 +641,7 @@ func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, sh
 		return 0, fmt.Errorf("%s not found in PATH", cmdPath)
 	}
 
-	fmt.Printf("  Starting %s (%s) in %s...\n", sa.Name, a.Provider, session.ProjectDir)
+	fmt.Printf("  Starting %s (%s) in %s...\n", printable(sa.Name), a.Provider, printable(session.ProjectDir))
 
 	// Start the process
 	cmd := exec.Command(cmdPath, cmdArgs...)
@@ -664,7 +664,7 @@ func startAgent(v *vault.Vault, session agent.Session, sa agent.SessionAgent, sh
 		return 0, fmt.Errorf("starting %s: %w", cmdPath, err)
 	}
 
-	fmt.Printf("  Started %s (PID: %d)\n", sa.Name, cmd.Process.Pid)
+	fmt.Printf("  Started %s (PID: %d)\n", printable(sa.Name), cmd.Process.Pid)
 	return cmd.Process.Pid, nil
 }
 

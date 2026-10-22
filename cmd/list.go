@@ -52,7 +52,7 @@ Use --show-keys to include API keys in the output (hidden by default).`,
 				}
 				out = append(out, e)
 			}
-			enc := json.NewEncoder(os.Stdout)
+			enc := json.NewEncoder(c1Writer(os.Stdout))
 			enc.SetIndent("", "  ")
 			return enc.Encode(out)
 		}

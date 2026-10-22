@@ -83,7 +83,7 @@ func runDetect(cmd *cobra.Command, args []string) error {
 
 	if jsonOutput {
 		data, _ := json.MarshalIndent(agents, "", "  ")
-		fmt.Println(string(data))
+		fmt.Println(string(escapeC1JSON(data)))
 		return nil
 	}
 

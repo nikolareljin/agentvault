@@ -93,7 +93,7 @@ func runCapabilityList(cmd *cobra.Command, _ []string) error {
 	entries := v.ListCapabilities()
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	if jsonOut {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(c1Writer(os.Stdout))
 		enc.SetIndent("", "  ")
 		return enc.Encode(entries)
 	}

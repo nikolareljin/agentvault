@@ -59,7 +59,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		report.Cost = statuspkg.CostReportForVault(v)
 	}
 	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(c1Writer(os.Stdout))
 		enc.SetIndent("", "  ")
 		return enc.Encode(report)
 	}
