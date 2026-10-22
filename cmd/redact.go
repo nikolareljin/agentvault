@@ -360,6 +360,10 @@ var (
 
 const secretFlagNames = `[a-z]*[-_]?(token|secret|password|api[-_]?key)|key|pat|pass|passwd|auth|bearer|access[-_]?key|private[-_]?key|client[-_]?secret|credentials?|cookie` // #nosec G101 -- a regexp of flag names, not a credential
 
+// authSchemeProse are words that follow "Basic" or "Bearer" in prose.
+var authSchemeProse = map[string]bool{"authentication": true, "authorization": true, "usage": true,
+	"configuration": true, "credentials": true, "options": true, "schemes": true}
+
 // secretString is a string value that carries a secret in its text.
 func secretString(s string) bool {
 	if s == "" {
@@ -368,9 +372,10 @@ func secretString(s string) bool {
 	if secretValueShapes.MatchString(s) || secretFlagInline.MatchString(s) {
 		return true
 	}
-	// A token with only lower-case letters is a word: "Basic authentication".
+	// Fails closed: only a listed prose word after the scheme is not a
+	// token ("Basic authentication").
 	for _, m := range authSchemeToken.FindAllString(s, -1) {
-		if tok := m[strings.LastIndexAny(m, " \t\r\n")+1:]; strings.Trim(tok, "abcdefghijklmnopqrstuvwxyz") != "" {
+		if !authSchemeProse[strings.ToLower(m[strings.LastIndexAny(m, " \t\r\n")+1:])] {
 			return true
 		}
 	}

@@ -282,3 +282,15 @@ func TestSecretStringAuthSchemeWords(t *testing.T) {
 		}
 	}
 }
+
+// A lower-case token is still a token; only listed prose words are exempt.
+func TestSecretStringAuthSchemeLowercaseToken(t *testing.T) {
+	for _, s := range []string{"Authorization: Bearer abcdefghijklmnopqrstuvwx", "curl -H x bearer abcdefghijklmnop", "basic abcdefghijkl"} {
+		if !secretString(s) {
+			t.Errorf("%q: not treated as a secret", s)
+		}
+	}
+	if secretString("uses Bearer authentication") {
+		t.Error("prose treated as a secret")
+	}
+}
