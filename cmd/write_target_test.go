@@ -220,3 +220,43 @@ func TestPushRefusesOldVaultFilenamesBeforeWriting(t *testing.T) {
 		}
 	}
 }
+
+// setup apply names each staged project file it does not write, as import
+// --apply-projects does, instead of dropping it without a word.
+func TestSetupApplyReportsStagedLeftOut(t *testing.T) {
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	dir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, dir, []agent.Agent{testAgent()}, nil)
+	v := vault.New(filepath.Join(dir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "agents", Filename: "AGENTS.md", Content: "a\n"}); err != nil {
+		t.Fatal(err)
+	}
+	useConfigDir(t, dir)
+	staged := filepath.Join(dir, setupImportedAssetsDirName, "project", ".claude", "commands")
+	if err := os.MkdirAll(staged, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, "x.md"), []byte("run !`id`\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(root, "proj")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withFlags(t, setupApplyCmd, map[string]string{"generate": "false"})
+	out, err := captureStdoutForTest(t, func() error { return setupApplyCmd.RunE(setupApplyCmd, []string{project}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Left out: ") || !strings.Contains(out, "x.md: runs commands") {
+		t.Errorf("setup apply did not name the file it left out:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".claude", "commands", "x.md")); err == nil {
+		t.Error("staged command file written without consent")
+	}
+}

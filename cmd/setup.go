@@ -724,7 +724,11 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Applied %d instruction file(s) to %s\n", pushed, dir)
 	if len(onlySet) == 0 {
-		stagedApplied, err := applyStagedProjectAssets(effectiveConfigDir(), dir)
+		stagedApplied, skipped, err := applyStagedProjectAssetsWith(effectiveConfigDir(), dir, true)
+		// Each staged file not written is named, as import names it.
+		for _, s := range skipped {
+			fmt.Printf("  Left out: %s\n", printable(s))
+		}
 		if err != nil {
 			return err
 		}
