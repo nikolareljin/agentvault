@@ -33,3 +33,47 @@ func TestCleanViewKeepsStyles(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// An SGR code from a bundle is not the TUI's own styling: conceal or
+// black-on-black would hide an endpoint the user is looking at.
+func TestViewDropsSGRFromVaultData(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	m.agents[0].Name = "n\x1b[8mhidden\x1b[0m"
+	m.agents[0].BaseURL = "https://\x1b[30;40mevil.example\x1b[0m"
+	views := []string{m.View()}
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	views = append(views, next.(model).View())
+	for _, view := range views {
+		if strings.Contains(view, "\x1b[8m") || strings.Contains(view, "\x1b[30;40m") {
+			t.Errorf("view keeps SGR from vault data: %q", view)
+		}
+		if !strings.Contains(view, "n?[8mhidden?[0m") {
+			t.Errorf("name missing: %q", view)
+		}
+	}
+	if !strings.Contains(views[1], "evil.example") {
+		t.Errorf("base URL missing from detail view")
+	}
+	if m.agents[0].Name != "n\x1b[8mhidden\x1b[0m" {
+		t.Errorf("View changed the model's data: %q", m.agents[0].Name)
+	}
+}
+
+func TestScrubESCDeepCopies(t *testing.T) {
+	type in struct {
+		S  string
+		L  []string
+		M  map[string]*string
+		hi string
+	}
+	p := "p\x1b"
+	src := in{S: "a\x1b", L: []string{"\x1bb"}, M: map[string]*string{"k\x1b": &p}, hi: "\x1b"}
+	got := scrubESC(src)
+	if got.S != "a?" || got.L[0] != "?b" || *got.M["k?"] != "p?" {
+		t.Errorf("got %+v", got)
+	}
+	if src.L[0] != "\x1bb" || p != "p\x1b" {
+		t.Errorf("source changed")
+	}
+}

@@ -1485,10 +1485,10 @@ func (m *model) setStatus(msg string, isError bool) {
 // ──────────────────────────────────────────────────────────────────
 
 // View renders the screen. Vault fields can come from another machine's
-// bundle, so control characters other than the styles' SGR codes are
-// replaced.
+// bundle: they are rendered with ESC replaced (displayCopy), and the
+// result keeps only the styles' SGR codes and no other control character.
 func (m model) View() string {
-	return cleanView(m.view())
+	return cleanView(m.displayCopy().view())
 }
 
 func (m model) view() string {
@@ -1925,7 +1925,7 @@ func (m model) renderRuleDetail() string {
 func (m model) renderSessions() string {
 	var b strings.Builder
 
-	sessions := m.vault.Sessions()
+	sessions := m.displaySessions()
 	if len(sessions.Sessions) == 0 {
 		b.WriteString(dimStyle.Render("  No sessions configured."))
 		b.WriteString("\n")
@@ -2023,7 +2023,7 @@ func (m model) renderSessions() string {
 }
 
 func (m model) renderSessionDetail() string {
-	sessions := m.vault.Sessions()
+	sessions := m.displaySessions()
 	if m.sessionCursor >= len(sessions.Sessions) {
 		return ""
 	}
@@ -2359,7 +2359,7 @@ func (m model) renderStatus() string {
 	b.WriteString(fmt.Sprintf("    Roles:        %d\n", len(m.shared.Roles)))
 	b.WriteString(fmt.Sprintf("    MCP Servers:  %d (shared)\n", len(m.shared.MCPServers)))
 
-	sessions := m.vault.Sessions()
+	sessions := m.displaySessions()
 	b.WriteString(fmt.Sprintf("    Sessions:     %d\n", len(sessions.Sessions)))
 
 	// Provider configs
