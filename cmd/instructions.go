@@ -692,7 +692,7 @@ Examples:
 				vaultLines := strings.Count(inst.Content, "\n")
 				diskLines := strings.Count(diskContent, "\n")
 				fmt.Printf("  %-12s  %s  (DIFFERS: vault %d lines, disk %d lines)\n",
-					inst.Name, inst.Filename, vaultLines, diskLines)
+					printable(inst.Name), printable(inst.Filename), vaultLines, diskLines)
 				diffs++
 			}
 		}

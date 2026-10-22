@@ -100,11 +100,11 @@ func runDetect(cmd *cobra.Command, args []string) error {
 		if a.InVault {
 			vaultStatus = " ✓ in vault"
 		}
-		fmt.Printf("\n  %s (%s)%s\n", a.Name, a.Provider, vaultStatus)
-		fmt.Printf("    Version:    %s\n", a.Version)
-		fmt.Printf("    Path:       %s\n", a.Path)
+		fmt.Printf("\n  %s (%s)%s\n", printable(a.Name), printable(string(a.Provider)), vaultStatus)
+		fmt.Printf("    Version:    %s\n", printable(a.Version))
+		fmt.Printf("    Path:       %s\n", printable(a.Path))
 		if a.ConfigDir != "" {
-			fmt.Printf("    Config:     %s\n", a.ConfigDir)
+			fmt.Printf("    Config:     %s\n", printable(a.ConfigDir))
 		}
 		if verbose && len(a.Settings) > 0 {
 			fmt.Println("    Settings:")
@@ -150,7 +150,7 @@ func runDetectAdd(cmd *cobra.Command, args []string) error {
 
 		existing, exists := v.Get(detected.Name)
 		if exists && !force {
-			fmt.Printf("  Skipped %s (already in vault, use --force to update)\n", detected.Name)
+			fmt.Printf("  Skipped %s (already in vault, use --force to update)\n", printable(detected.Name))
 			skipped++
 			continue
 		}

@@ -189,7 +189,7 @@ func selectPromptModeAgent(reader *bufio.Reader, agents []agent.Agent) (agent.Ag
 
 	fmt.Fprintln(promptModeOutput, "Select an agent for prompt mode:")
 	for i, a := range agents {
-		fmt.Fprintf(promptModeOutput, "  %d. %s (%s)\n", i+1, a.Name, a.Provider)
+		fmt.Fprintf(promptModeOutput, "  %d. %s (%s)\n", i+1, printable(a.Name), printable(string(a.Provider)))
 	}
 	fmt.Fprint(promptModeOutput, "Enter agent number/name (blank to cancel): ")
 

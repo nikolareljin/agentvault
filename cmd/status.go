@@ -106,7 +106,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(model) == "" {
 				model = "-"
 			}
-			fmt.Printf("  - %s (%s, model=%s): %s\n", a.Name, a.Provider, model, a.Status)
+			fmt.Printf("  - %s (%s, model=%s): %s\n", printable(a.Name), printable(string(a.Provider)), printable(model), printable(a.Status))
 		}
 	}
 

@@ -34,7 +34,7 @@ func runExportWizard(cmd *cobra.Command, opts *exportOptions, discovered []disco
 		if p.IsDefault {
 			marker = "*"
 		}
-		fmt.Fprintf(out, "  %s %-16s %s\n", marker, p.Name, p.ConfigDir)
+		fmt.Fprintf(out, "  %s %-16s %s\n", marker, printable(p.Name), printable(p.ConfigDir))
 	}
 	fmt.Fprintln(out)
 

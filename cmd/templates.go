@@ -125,7 +125,7 @@ func runTemplatesRefresh(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(out, "Initialized %d workflow template(s) in config storage:\n", len(written))
 	for _, t := range written {
-		fmt.Fprintf(out, "  - %s (%s)\n", t.Filename, t.Version)
+		fmt.Fprintf(out, "  - %s (%s)\n", printable(t.Filename), printable(t.Version))
 	}
 	return nil
 }
