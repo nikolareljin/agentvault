@@ -665,7 +665,7 @@ Examples:
 		reportSkippedReferences(os.Stdout, skipped)
 		if specificName != "" && pushed == 0 {
 			if len(skipped) > 0 {
-				return fmt.Errorf("instruction %q is a referenced file from another project; use --from-any-project to write it", specificName)
+				return fmt.Errorf("instruction %q is a referenced file from another or an unknown project; use --from-any-project to write it", specificName)
 			}
 			return fmt.Errorf("instruction %q not found", specificName)
 		}
@@ -700,6 +700,8 @@ Examples:
 			fmt.Println("No instruction files stored.")
 			return nil
 		}
+		// What push would write: another project's referenced files are not.
+		instructions, _ = scopeReferencedFiles(instructions, instructionProjectKey(dir, nil), false)
 
 		diffs := 0
 		for _, inst := range instructions {

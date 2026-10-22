@@ -298,3 +298,23 @@ func TestResolveReferencesFallsBackToTheRoot(t *testing.T) {
 		}
 	}
 }
+
+// An instruction stored under its own filename (pull --name CLAUDE.md
+// --file CLAUDE.md) is an instruction, not a legacy referenced file.
+func TestIsReferencedFileLeavesWellKnownInstructions(t *testing.T) {
+	for _, tc := range []struct {
+		inst InstructionFile
+		want bool
+	}{
+		{InstructionFile{Name: "CLAUDE.md", Filename: "CLAUDE.md"}, false},
+		{InstructionFile{Name: ".github/copilot-instructions.md", Filename: ".github\\copilot-instructions.md"}, false},
+		{InstructionFile{Name: "agents", Filename: "AGENTS.md"}, false},
+		{InstructionFile{Name: "notes/x.md", Filename: "notes/x.md"}, true},
+		{InstructionFile{Name: "notes/x.md", Filename: "notes\\x.md"}, true},
+		{InstructionFile{Name: "AGENTS.md", Filename: "AGENTS.md", SourceProject: "path:/p"}, true},
+	} {
+		if got := IsReferencedFile(tc.inst); got != tc.want {
+			t.Errorf("IsReferencedFile(%+v) = %v, want %v", tc.inst, got, tc.want)
+		}
+	}
+}

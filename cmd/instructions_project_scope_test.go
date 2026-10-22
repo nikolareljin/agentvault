@@ -251,3 +251,21 @@ func TestBundleCarriesSourceProject(t *testing.T) {
 		t.Errorf("source project of an old bundle = %q, want empty", p)
 	}
 }
+
+// diff compares what push would write: another project's referenced file
+// is not a difference in this one.
+func TestDiffLeavesOutAnotherProjectsReferencedFiles(t *testing.T) {
+	scopeTestVault(t)
+	svc, mono := twoProjects(t)
+	if err := instPullCmd.RunE(instPullCmd, []string{svc}); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	writeFile(t, filepath.Join(mono, "AGENTS.md"), "Read `notes/x.md` first.\n")
+	out, err := captureStdoutForTest(t, func() error { return instDiffCmd.RunE(instDiffCmd, []string{mono}) })
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	if strings.Contains(out, "not on disk") || !strings.Contains(out, "in sync") {
+		t.Errorf("diff counted another project's file:\n%s", out)
+	}
+}

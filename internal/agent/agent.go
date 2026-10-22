@@ -156,11 +156,22 @@ type InstructionFile struct {
 // stored by a reference walk, rather than an instruction. Entries stored
 // before SourceProject existed are recognised by their name, which the walk
 // sets to the filename; an instruction's name is a key such as "agents".
+// A well-known instruction file stored under its own filename (pull --name
+// CLAUDE.md --file CLAUDE.md) is still an instruction.
 func IsReferencedFile(inst InstructionFile) bool {
 	if inst.SourceProject != "" {
 		return true
 	}
-	return inst.Name != "" && inst.Name == strings.ReplaceAll(inst.Filename, "\\", "/")
+	filename := strings.ReplaceAll(inst.Filename, "\\", "/")
+	if inst.Name == "" || inst.Name != filename {
+		return false
+	}
+	for _, known := range WellKnownInstructions {
+		if filename == known {
+			return false
+		}
+	}
+	return true
 }
 
 // PromptTokenUsage captures token usage metadata for one prompt execution.
