@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
@@ -31,6 +32,12 @@ func TestMaskURLSecrets(t *testing.T) {
 		{"https://host/v1?a=1;token=abc", "<secret>"},
 		{"https://p%40ss@host/v1", "https://***@host/v1"},
 		{"https://user:p@ss@host/v1", "https://user:***@host/v1"},
+		{"https://abcdef0123456789abcdef0123:x-oauth-basic@github.com/o/r", "https://***@github.com/o/r"},
+		{"https://tok:@host/v1", "https://***@host/v1"},
+		{"https://tok:x@host/v1", "https://***@host/v1"},
+		{"https://abc123def456ghi789jkl:pw@host/v1", "https://***@host/v1"},
+		{"https://oauth2:glpat-secret@gitlab.example/o/r", "https://oauth2:***@gitlab.example/o/r"},
+		{"https://first.last-name_x:pw@host/v1", "https://first.last-name_x:***@host/v1"},
 	}
 	for _, tc := range cases {
 		if got := maskURLSecrets(tc.in); got != tc.want {
@@ -116,6 +123,25 @@ func TestServeMasksBaseURLPassword(t *testing.T) {
 		resp.Body.Close()
 		if strings.Contains(string(body), "Canary7pw") || !strings.Contains(string(body), "https://user:***@host.example/v1") {
 			t.Errorf("%s: base URL not masked: %s", path, body)
+		}
+	}
+}
+
+// A request error quotes its URL; the credentials in it are masked.
+func TestEndpointErrorsMaskURLCredentials(t *testing.T) {
+	const canary = "Canary7pw"
+	errs := map[string]error{
+		"openai validate": validateOpenAIEndpoint("http://127.0.0.1:1/v1?api_key="+canary, "", time.Second),
+		"ollama validate": validateOllamaEndpoint("http://127.0.0.1:1?token="+canary, time.Second, "check"),
+		"openai parse":    func() error { _, err := openAIEndpointURL("http://u:"+canary+"@h\x7f/v1", "models"); return err }(),
+	}
+	for name, err := range errs {
+		if err == nil {
+			t.Errorf("%s: no error", name)
+			continue
+		}
+		if strings.Contains(err.Error(), canary) {
+			t.Errorf("%s: error shows the credential: %v", name, err)
 		}
 	}
 }

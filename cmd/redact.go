@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"path"
@@ -583,11 +584,12 @@ func maskURLSecrets(raw string) string {
 		return "<secret>"
 	}
 	if userinfoIsCredential(scheme, userinfo, rest) {
-		// With a password, the name is a user name: it stays when it is
-		// plain and does not itself look like a key.
-		name, _, hasPass := strings.Cut(userinfo, ":")
+		// With a real password, the name is a user name: it stays when it
+		// is plain and does not look like a key. With an empty or dummy
+		// password (x, x-oauth-basic) the name is the token.
+		name, pass, hasPass := strings.Cut(userinfo, ":")
 		masked := "***"
-		if hasPass && plainLogin(name) && !secretString(name) {
+		if hasPass && !dummyPassword(pass) && plainLogin(name) && !tokenLike(name) && !secretString(name) {
 			masked = name + ":***"
 		}
 		rest = strings.Replace(rest, userinfo+"@", masked+"@", 1)
@@ -603,6 +605,35 @@ func maskURLSecrets(raw string) string {
 		out += "#" + frag
 	}
 	return out
+}
+
+// maskURLError masks the credentials in the URL that a *url.Error in err
+// quotes, as maskURLSecrets does, and returns err.
+func maskURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = maskURLSecrets(ue.URL)
+	}
+	return err
+}
+
+// dummyPassword is a password that marks the user name as the token.
+func dummyPassword(p string) bool {
+	switch strings.ToLower(p) {
+	case "", "x", "x-oauth-basic":
+		return true
+	}
+	return false
+}
+
+// tokenLike reports a name of 20 or more characters with both letters and
+// digits, the shape of a token rather than a login.
+func tokenLike(name string) bool {
+	if len(name) < 20 {
+		return false
+	}
+	return strings.ContainsAny(name, "0123456789") &&
+		strings.ContainsAny(strings.ToLower(name), "abcdefghijklmnopqrstuvwxyz")
 }
 
 // plainLogin reports a non-empty name of only [A-Za-z0-9._-].

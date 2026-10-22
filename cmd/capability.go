@@ -239,11 +239,11 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 func discoverFromModelsEndpoint(ctx context.Context, client *http.Client, baseURL string) ([]agent.ModelCapabilityEntry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models", nil)
 	if err != nil {
-		return nil, err
+		return nil, maskURLError(err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, maskURLError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -280,11 +280,11 @@ func discoverFromModelsEndpoint(ctx context.Context, client *http.Client, baseUR
 func discoverFromHealthEndpoint(ctx context.Context, client *http.Client, baseURL string) ([]agent.ModelCapabilityEntry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
 	if err != nil {
-		return nil, err
+		return nil, maskURLError(err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, maskURLError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {

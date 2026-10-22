@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2672,13 +2673,13 @@ func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/generate", bytes.NewReader(body))
 	if err != nil {
-		return "", gatewayUsage{}, err
+		return "", gatewayUsage{}, maskURLError(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", gatewayUsage{}, fmt.Errorf("calling ollama: %w", err)
+		return "", gatewayUsage{}, fmt.Errorf("calling ollama: %w", maskURLError(err))
 	}
 	defer resp.Body.Close()
 
@@ -3014,6 +3015,16 @@ var MaskURL = func(raw string) string {
 		return "<secret>"
 	}
 	return raw
+}
+
+// maskURLError masks, through MaskURL, the URL that a *url.Error in err
+// quotes, and returns err.
+func maskURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = MaskURL(ue.URL)
+	}
+	return err
 }
 
 // Run starts the TUI application.
