@@ -625,6 +625,11 @@ List effective templates and their source.
 ### `agentvault templates show <name>`
 Show effective template content by key or filename.
 
+Flags:
+- `--raw` (default: `false`): Print content byte-exact, for redirecting to
+  a file. Without it control characters are shown as `?`, also when piped.
+  Raw output can carry terminal escapes; do not print it to a terminal.
+
 ### `agentvault templates refresh`
 Initialize or refresh config-stored templates from built-in defaults.
 

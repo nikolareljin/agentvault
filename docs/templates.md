@@ -17,7 +17,8 @@ replace them per repository, or add your own.
 | `add_issue` | `add_issue.txt` | Add items to a `TODO.txt` or `TODO.md` task list |
 
 `agentvault prompt --workflow implement_issue|implement_pr` uses the first two.
-`agentvault templates show <key>` prints whichever copy is in effect.
+`agentvault templates show <key>` prints whichever copy is in effect, with
+control characters shown as `?`; `--raw` prints it byte-exact.
 
 ## Where a template comes from
 

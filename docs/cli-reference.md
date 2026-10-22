@@ -559,6 +559,7 @@ Flags:
 Flags:
 - `--repo <path>` (default: current directory)
 - `--metadata` (default: `false`)
+- `--raw` (default: `false`)
 
 ### `agentvault templates refresh`
 Flags:

@@ -157,6 +157,14 @@
   `HOMEBREW_TAP_REPO` secrets).
 
 ### Changed
+- Output that scripts may read changed (see Security for why):
+  `instructions show`, `instructions preview`, `rules export` and
+  `templates show` print control characters as `?`, also when piped;
+  add `--raw` for the exact bytes. `generate env` leaves out a value with
+  a control character (dotenv also one with `'` or `${`) and still exits
+  0; the shell format unsets it. Import refuses a bundle whose names hold
+  control characters, and does not add an MCP server whose command was
+  blanked by export.
 - A plaintext export that writes API keys or secrets now needs
   `--confirm`, and is refused without it: `export --plain` (keys are on
   by default, so also with `--include-secrets=false`), `setup export`
@@ -316,9 +324,11 @@
   definition is unchanged: for an MCP server the same command, args and `env`
   names; for the router, all its other settings. A blank that is not
   filled is named as `Left out`, also on a machine without that value: the
-  bundle lists the blanks import cannot tell from an empty value. Claude
-  settings with a secret under a neutral key are left out, and import keeps
-  this machine's. The summary keeps ordinary settings such as
+  bundle lists the blanks import cannot tell from an empty value. An MCP
+  server whose command is a blank that is not filled is not added, or
+  keeps this machine's definition, instead of getting an empty command.
+  Claude settings with a secret under a neutral key are left out, and
+  import keeps this machine's. The summary keeps ordinary settings such as
   `includeCoAuthoredBy`, and the other entries of a list that holds a
   secret.
 - Import fills an agent's blank API key, base URL or provider extras from
@@ -367,20 +377,24 @@
 - Vault fields that came from a bundle reach the terminal without control
   characters in every command that prints them: `rules`, `roles`,
   `session`, `instructions` (list, show, preview, export, diff, scan),
-  `config show`, `run`, `generate` and the TUI. JSON output escapes C1
-  control characters as `\u0080`-`\u009f`. Instruction, rule and prompt
-  text keeps its newlines, tabs and CRLF, also when piped. New `--raw` on
-  `instructions show`, `instructions preview` and `rules export` prints
-  content byte-exact for redirecting to a file (`rules export --raw >
-  RULES.md`); `instructions export FILE` stays byte-exact.
+  `templates` (list, show), `config show`, `run`, `generate` and the TUI.
+  JSON output escapes C1 control characters as `\u0080`-`\u009f`.
+  Instruction, rule and prompt text keeps its newlines, tabs and CRLF,
+  also when piped. New `--raw` on `instructions show`,
+  `instructions preview`, `templates show` and `rules export` prints
+  content byte-exact for redirecting to a file
+  (`rules export --raw > RULES.md`); `instructions export FILE` stays
+  byte-exact.
   The TUI keeps only its own colours: an SGR code from a bundle is shown
   as text, so a field cannot be hidden or drawn black on black.
 - `run --env` and `generate env --format shell` write values in single
   quotes, so a model or URL such as `$(cmd)` does not run when the output
   is eval'd or sourced, and a multi-line system prompt comes back
-  unchanged. A value with a control character is left out with a warning.
-  A name saved before control characters were refused cannot start a new
-  line in the generated env file.
+  unchanged. A value with a control character is left out with a warning
+  and unset, so an older export of that name is not used instead. A name
+  saved before control characters were refused cannot start a new line
+  in the generated env file, and the provider, which import does not
+  check, is cleaned like the name: `claude;cmd;` ran `cmd` when sourced.
 - `generate env` (dotenv, the default) and `generate all` write values in
   single quotes, so sourcing `.env.agents` from a shell runs nothing
   (0.14.0 wrote `"$(cmd)"`, which ran). docker compose reads them
