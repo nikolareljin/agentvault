@@ -117,18 +117,9 @@ func homeAssetRefusal(rel string) string {
 	if reason := agent.SecretBearingReason(folded); reason != "" {
 		return reason
 	}
-	// Windows drops trailing dots from a segment: ".config/fish." is
-	// .config/fish there.
-	segs := strings.Split(folded, "/")
-	for i, seg := range segs {
-		if seg != "." && seg != ".." {
-			segs[i] = strings.TrimRight(seg, ".")
-		}
-	}
-	trimmed := strings.Join(segs, "/")
 	for _, p := range homeStartupPaths {
 		p = strings.ToLower(p)
-		if trimmed == p || strings.HasPrefix(trimmed, p+"/") {
+		if folded == p || strings.HasPrefix(folded, p+"/") {
 			return "a login or shell startup path; never written from a bundle"
 		}
 	}
