@@ -740,10 +740,10 @@ func printBundleProfiles(cmd *cobra.Command, bundle PortableBundle, format bundl
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Format: %s\n", format)
 	fmt.Fprintf(out, "Source: %s (%s), created %s\n",
-		bundleOrigin(bundle), bundle.SourceOS, bundle.CreatedAt.Format("2006-01-02 15:04"))
+		bundleOrigin(bundle), printable(bundle.SourceOS), bundle.CreatedAt.Format("2006-01-02 15:04"))
 	fmt.Fprintf(out, "Profiles: %d\n", len(bundle.Profiles))
 	for _, p := range bundle.Profiles {
-		fmt.Fprintf(out, "  %-16s %s\n", p.Name, p.ConfigDir)
+		fmt.Fprintf(out, "  %-16s %s\n", printable(p.Name), printable(p.ConfigDir))
 		fmt.Fprintf(out, "    Agents: %d, Sessions: %d, Rules: %d, Roles: %d, Instructions: %d\n",
 			len(p.Setup.Agents), len(p.Setup.Sessions.Sessions), len(p.Setup.SharedConfig.Rules),
 			len(p.Setup.SharedConfig.Roles), len(p.Setup.SharedConfig.Instructions))
@@ -772,7 +772,7 @@ func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
 	fmt.Fprintf(out, "    Declined: %d (%d refused by policy, %d not present%s)\n",
 		len(declined), len(byCategory[DeclinedByPolicy]), len(byCategory[DeclinedAbsent]), repoNote)
 	for _, d := range byCategory[DeclinedRepoScope] {
-		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedRepoScope, d.Path, d.Reason)
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedRepoScope, printable(d.Path), printable(d.Reason))
 	}
 	// Policy declines are few and each is a decision somebody can act on, so
 	// they are all printed. Absent ones are mostly prose naming a file that was
@@ -781,7 +781,7 @@ func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
 	// The bundle keeps the full list either way.
 	const maxAbsentPrinted = 5
 	for _, d := range byCategory[DeclinedByPolicy] {
-		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedByPolicy, d.Path, d.Reason)
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedByPolicy, printable(d.Path), printable(d.Reason))
 	}
 	absent := byCategory[DeclinedAbsent]
 	for i, d := range absent {
@@ -790,14 +790,14 @@ func printDeclinedAssets(out io.Writer, declined []DeclinedAsset) {
 				DeclinedAbsent, len(absent)-maxAbsentPrinted)
 			break
 		}
-		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedAbsent, d.Path, d.Reason)
+		fmt.Fprintf(out, "      %-8s %s: %s\n", DeclinedAbsent, printable(d.Path), printable(d.Reason))
 	}
 }
 
 // bundleOrigin names the machine a bundle came from.
 func bundleOrigin(bundle PortableBundle) string {
 	if strings.TrimSpace(bundle.SourceMachine) != "" {
-		return bundle.SourceMachine
+		return printable(bundle.SourceMachine)
 	}
 	return "unknown machine"
 }
@@ -817,9 +817,9 @@ func printInstallGuide(cmd *cobra.Command, profiles []PortableProfile) {
 			if req.Required {
 				status = "required"
 			}
-			fmt.Fprintf(out, "  - %s (%s)\n", req.Name, status)
+			fmt.Fprintf(out, "  - %s (%s)\n", printable(req.Name), status)
 			if req.InstallCmd != "" {
-				fmt.Fprintf(out, "    Install: %s\n", req.InstallCmd)
+				fmt.Fprintf(out, "    Install: %s\n", printable(req.InstallCmd))
 			}
 		}
 		return

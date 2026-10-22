@@ -354,9 +354,10 @@
   `agent import` names a listed blank it does not fill, also for a new
   agent, and drops a blank extra. A profile with nothing blanked keeps
   the 1.0 layout. A listed blank that export never makes is refused.
-- The import report, `agent import` and `setup show` print names, fields
-  and commands from a bundle or profile with control characters replaced
-  by `?`, so a crafted file cannot send terminal escape sequences.
+- The import report, `import --list`, the install guide, `agent import`
+  and `setup show` print names, fields, paths and commands from a bundle
+  or profile with control characters replaced by `?`, so a crafted file
+  cannot send terminal escape sequences.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older
