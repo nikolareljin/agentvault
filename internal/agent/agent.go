@@ -15,6 +15,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -147,6 +148,51 @@ type InstructionFile struct {
 	UpdatedAt        time.Time `json:"updated_at"                  yaml:"updated_at"`
 	Scope            string    `json:"scope,omitempty"             yaml:"scope,omitempty"`             // "global" (default), "directory", or "local"
 	DirectoryPattern string    `json:"directory_pattern,omitempty" yaml:"directory_pattern,omitempty"` // glob for "directory" scope
+	// SourceProject is set on a file an instruction refers to: the project
+	// it was pulled from, so push writes it back to that project only.
+	SourceProject string `json:"source_project,omitempty" yaml:"source_project,omitempty"`
+}
+
+// ReferencedFileClassifier returns whether an entry of all is a file an
+// instruction refers to, stored by a reference walk, rather than an
+// instruction. An entry with a SourceProject is one. An entry stored before
+// SourceProject existed has none: it is one when its name is its filename
+// (the walk stores it so) and another entry of all names it, resolved by
+// path text against the naming file's directory or the root. A file stored
+// by hand under its own filename that nothing names, or a well-known
+// instruction file (pull --name CLAUDE.md --file CLAUDE.md), is an
+// instruction.
+func ReferencedFileClassifier(all []InstructionFile) func(InstructionFile) bool {
+	named := map[string]bool{}
+	for _, e := range all {
+		base := path.Dir(strings.ReplaceAll(e.Filename, "\\", "/"))
+		for _, raw := range FindReferences(e.Content) {
+			clean := strings.TrimPrefix(strings.ReplaceAll(raw, "\\", "/"), "./")
+			if clean == "" || strings.HasSuffix(clean, "/") || strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "~") {
+				continue
+			}
+			for _, p := range []string{path.Join(base, clean), path.Clean(clean)} {
+				if p != ".." && !strings.HasPrefix(p, "../") {
+					named[p] = true
+				}
+			}
+		}
+	}
+	return func(inst InstructionFile) bool {
+		if inst.SourceProject != "" {
+			return true
+		}
+		filename := strings.ReplaceAll(inst.Filename, "\\", "/")
+		if inst.Name == "" || inst.Name != filename {
+			return false
+		}
+		for _, known := range WellKnownInstructions {
+			if filename == known {
+				return false
+			}
+		}
+		return named[path.Clean(filename)]
+	}
 }
 
 // PromptTokenUsage captures token usage metadata for one prompt execution.

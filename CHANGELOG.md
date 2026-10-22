@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Security
+
+- `instructions push` and `setup apply` no longer write one project's
+  referenced files into another
+  (https://github.com/nikolareljin/agentvault/issues/80). `instructions pull`
+  records each referenced file's source project (git remote or root
+  commits, else the path); push writes it only to that project and lists
+  the rest. `--from-any-project` writes them anyway. A referenced file
+  stored before this release has no source project and is skipped until
+  pulled again; a file stored by hand that no instruction names is written
+  as before. `instructions pull --name` and `instructions set` over a
+  referenced file keep it its project's.
+
 ## [0.15.2] - 2026-10-22
 
 ### Fixed

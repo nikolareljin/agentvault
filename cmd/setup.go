@@ -256,6 +256,7 @@ func init() {
 
 	setupApplyCmd.Flags().Bool("generate", false, "also generate .env and provider config files")
 	setupApplyCmd.Flags().StringSlice("only", nil, "apply only specific instructions (e.g., --only agents,claude)")
+	setupApplyCmd.Flags().Bool("from-any-project", false, fromAnyProjectUsage)
 
 	setupPullCmd.Flags().Bool("claude", false, "pull only Claude config")
 	setupPullCmd.Flags().Bool("codex", false, "pull only Codex config")
@@ -703,6 +704,18 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	anyProject, _ := cmd.Flags().GetBool("from-any-project")
+	instructions, skipped := scopeReferencedFiles(instructions, instructionProjectKey(dir, nil), anyProject)
+	if len(onlySet) > 0 {
+		var named []agent.InstructionFile
+		for _, inst := range skipped {
+			if _, ok := onlySet[inst.Name]; ok {
+				named = append(named, inst)
+			}
+		}
+		skipped = named
+	}
+
 	if err := checkInstructionFilenames(instructions, func(i agent.InstructionFile) bool {
 		_, ok := onlySet[i.Name]
 		return len(onlySet) == 0 || ok
@@ -722,6 +735,7 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Pushed %s -> %s\n", printable(inst.Name), printable(inst.Filename))
 		pushed++
 	}
+	reportSkippedReferences(os.Stdout, skipped)
 	fmt.Printf("Applied %d instruction file(s) to %s\n", pushed, dir)
 	if len(onlySet) == 0 {
 		stagedApplied, skipped, err := applyStagedProjectAssetsWith(effectiveConfigDir(), dir, true)

@@ -298,3 +298,49 @@ func TestResolveReferencesFallsBackToTheRoot(t *testing.T) {
 		}
 	}
 }
+
+// An instruction stored under its own filename (pull --name CLAUDE.md
+// --file CLAUDE.md) is an instruction, not a legacy referenced file.
+func TestReferencedFileClassifier(t *testing.T) {
+	for _, tc := range []struct {
+		inst InstructionFile
+		want bool
+	}{
+		{InstructionFile{Name: "CLAUDE.md", Filename: "CLAUDE.md"}, false},
+		{InstructionFile{Name: ".github/copilot-instructions.md", Filename: ".github\\copilot-instructions.md"}, false},
+		{InstructionFile{Name: "agents", Filename: "AGENTS.md"}, false},
+		{InstructionFile{Name: "notes/x.md", Filename: "notes/x.md"}, true},
+		{InstructionFile{Name: "notes/x.md", Filename: "notes\\x.md"}, true},
+		{InstructionFile{Name: "AGENTS.md", Filename: "AGENTS.md", SourceProject: "path:/p"}, true},
+		// Stored by hand, named by nothing: an instruction.
+		{InstructionFile{Name: "docs/style.md", Filename: "docs/style.md"}, false},
+	} {
+		all := []InstructionFile{
+			{Name: "agents", Filename: "AGENTS.md", Content: "Read `notes/x.md` and `CLAUDE.md`.\n"},
+			tc.inst,
+		}
+		if got := ReferencedFileClassifier(all)(tc.inst); got != tc.want {
+			t.Errorf("ReferencedFileClassifier(%+v) = %v, want %v", tc.inst, got, tc.want)
+		}
+	}
+}
+
+// A reference resolves against the naming file's directory and the root,
+// and one that leaves the root names nothing.
+func TestReferencedFileClassifierResolvesRelative(t *testing.T) {
+	all := []InstructionFile{
+		{Name: "docs/a.md", Filename: "docs/a.md", SourceProject: "path:/p", Content: "See `b.md`, `./c.md` and `../../out.md`.\n"},
+		{Name: "docs/b.md", Filename: "docs/b.md"},
+		{Name: "docs/c.md", Filename: "docs/c.md"},
+		{Name: "out.md", Filename: "out.md"},
+	}
+	is := ReferencedFileClassifier(all)
+	for _, tc := range []struct {
+		i    int
+		want bool
+	}{{1, true}, {2, true}, {3, false}} {
+		if got := is(all[tc.i]); got != tc.want {
+			t.Errorf("%s: got %v, want %v", all[tc.i].Filename, got, tc.want)
+		}
+	}
+}

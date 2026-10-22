@@ -455,9 +455,35 @@ Flags:
 
 When the directory is a git checkout, the vault records it by remote (or root commits), so a later import or push can find the same repository at another path.
 
+Each file an instruction refers to is stored with its source project: the
+git remote, else the root commits, plus the directory's path below the
+top level when it is not the top level. A directory that is not a git
+checkout is recorded by its absolute path, symlinks resolved.
+
 ### `agentvault instructions push [directory]`
 Flags:
 - `--name <instruction-name>`
+- `--from-any-project` (default: `false`): also write referenced files
+  pulled from another project, or of unknown project.
+
+Instructions are written to any project. A file an instruction refers to
+(`notes/x.md`) is written only to the project it was pulled from: another
+clone of the same repository counts, another repository does not. Each
+skipped file is listed with its source project:
+
+```
+  Skipped notes/x.md: referenced file from project remote:github.com/acme/svc
+```
+
+A referenced file stored before agentvault recorded source projects has
+project `unknown` and is skipped too. Pull its project again to record it,
+or use `--from-any-project`. Such a file is recognised by its name being
+its filename and a stored instruction naming it; a file stored by hand
+(`instructions set docs/style.md --filename docs/style.md`) that no
+instruction names is an instruction and is written as before.
+Refreshing one referenced file by hand keeps it a referenced file:
+`instructions pull --name notes/x.md --file notes/x.md` records the
+project it is read from, and `instructions set` keeps the stored one.
 
 A directory-scoped instruction whose pattern names another known path of the same repository (its path on the machine a bundle came from, or an older checkout) applies to the directory too.
 
@@ -599,6 +625,10 @@ in turn) or a legacy vault export.
 Flags:
 - `--generate` (default: `false`)
 - `--only <comma-separated-instruction-names>`
+- `--from-any-project` (default: `false`): as for `instructions push`.
+
+Referenced files pulled from another project are skipped and listed, as
+`instructions push` does.
 
 Staged project files from an import that run code are not written; each
 is named as `Left out`.

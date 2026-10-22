@@ -67,6 +67,8 @@ func TestPullFollowsReferencesAndPushRestoresThem(t *testing.T) {
 		t.Error("an absolute reference was stored")
 	}
 
+	// dst is another project, so its referenced files need the flag.
+	withFlags(t, instPushCmd, map[string]string{"from-any-project": "true"})
 	if err := instPushCmd.RunE(instPushCmd, []string{dst}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
