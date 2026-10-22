@@ -153,6 +153,11 @@ func runExport(cmd *cobra.Command, args []string) error {
 	if opts.VaultOnly && len(selected) > 1 {
 		return fmt.Errorf("--vault-only exports a single vault; narrow the selection with --profile")
 	}
+	// The vault-only payload is the whole vault: it cannot leave out keys or
+	// secrets, so asking it to would write them in plain text unasked.
+	if opts.VaultOnly && (!opts.IncludeKeys || !opts.IncludeSecrets) {
+		return fmt.Errorf("--vault-only writes the whole vault, API keys and secrets included; it cannot leave them out (use a portable bundle)")
+	}
 	// Encryption is decided by --encrypt/--plain or the wizard, never by the file
 	// extension, so the same command always produces the same kind of file.
 	if !opts.Encrypt && opts.IncludeSecrets {
@@ -174,6 +179,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 
 	bundle := newPortableBundle(nowFunc())
+	if !opts.IncludeSecrets {
+		bundle.SchemaVersion = BlankedBundleSchemaVersion
+	}
 	for _, profile := range selected {
 		built, err := buildProfileBundle(cmd, profile, opts)
 		if err != nil {

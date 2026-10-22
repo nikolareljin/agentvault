@@ -19,6 +19,16 @@ import (
 // written by `agentvault export`.
 const PortableBundleSchemaVersion = "2.0"
 
+// BlankedBundleSchemaVersion marks a bundle exported without
+// --include-secrets. Its secrets are blanked in place, and only a reader
+// that fills them back may apply it: 0.14.0 and earlier would write the
+// blanks over this machine's values. The version is written under
+// blankedSchemaKey instead of "schema_version", so those releases refuse
+// the file as an unrecognized export format.
+const BlankedBundleSchemaVersion = "2.1"
+
+const blankedSchemaKey = "blanked_schema_version"
+
 // DefaultExportDirName is the directory under the config dir where exports land
 // when no output path is given.
 const DefaultExportDirName = "exports"
@@ -64,13 +74,39 @@ type PortableProfile struct {
 }
 
 // MarshalJSON normalizes a nil profile slice to [] for stable bundle output.
+// A blanked bundle carries its version under blankedSchemaKey.
 func (b PortableBundle) MarshalJSON() ([]byte, error) {
 	type alias PortableBundle
 	out := b
 	if out.Profiles == nil {
 		out.Profiles = []PortableProfile{}
 	}
-	return json.Marshal(alias(out))
+	if out.SchemaVersion != BlankedBundleSchemaVersion {
+		return json.Marshal(alias(out))
+	}
+	out.SchemaVersion = ""
+	return json.Marshal(struct {
+		Blanked string `json:"blanked_schema_version"`
+		alias
+		SchemaVersion string `json:"schema_version,omitempty"`
+	}{Blanked: BlankedBundleSchemaVersion, alias: alias(out)})
+}
+
+// UnmarshalJSON reads the version from either key.
+func (b *PortableBundle) UnmarshalJSON(data []byte) error {
+	type alias PortableBundle
+	var in struct {
+		alias
+		Blanked string `json:"blanked_schema_version"`
+	}
+	if err := json.Unmarshal(data, &in); err != nil {
+		return err
+	}
+	*b = PortableBundle(in.alias)
+	if b.SchemaVersion == "" {
+		b.SchemaVersion = in.Blanked
+	}
+	return nil
 }
 
 // ProfileNames returns the profile names in bundle order.
@@ -350,7 +386,9 @@ func detectBundleFormat(data []byte) bundleFormat {
 		return bundleFormatUnknown
 	}
 	if _, ok := probe["profiles"]; ok {
-		if _, hasSchema := probe["schema_version"]; hasSchema {
+		_, hasSchema := probe["schema_version"]
+		_, blanked := probe[blankedSchemaKey]
+		if hasSchema || blanked {
 			return bundleFormatPortable
 		}
 	}

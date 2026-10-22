@@ -44,6 +44,11 @@ Examples:
 		includeKey, _ := cmd.Flags().GetBool("include-key")
 		if !includeKey {
 			a.APIKey = ""
+			// The other secrets go too, blanked as a bundle blanks them, so
+			// import --merge can fill them back on this machine.
+			b := SetupBundle{Agents: []agent.Agent{a}}
+			redactVaultSecrets(&b)
+			a = b.Agents[0]
 		}
 
 		format, _ := cmd.Flags().GetString("format")
@@ -122,6 +127,20 @@ Examples:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		existing, exists := v.Get(a.Name)
 
+		var left []string
+		if exists && merge {
+			a, left = prepareAgentProfileMerge(existing, a, time.Now())
+		} else if !exists {
+			a, left = restoreAgentSecrets(a, agent.Agent{}, false)
+		}
+		prefix := "Left out"
+		if dryRun {
+			prefix = "Dry-run: would leave out"
+		}
+		for _, f := range left {
+			fmt.Fprintf(os.Stderr, "%s: agent %s %s: blank in the profile, and not filled from this machine's agent\n", prefix, a.Name, f)
+		}
+
 		if dryRun {
 			if exists && !merge {
 				fmt.Printf("Dry-run: agent %q already exists; --merge required to update.\n", a.Name)
@@ -133,11 +152,10 @@ Examples:
 			return nil
 		}
 
+		if exists && !merge {
+			return fmt.Errorf("agent %q already exists; use --merge to update", a.Name)
+		}
 		if exists {
-			if !merge {
-				return fmt.Errorf("agent %q already exists; use --merge to update", a.Name)
-			}
-			a = prepareAgentProfileMerge(existing, a, time.Now())
 			if err := v.Update(a); err != nil {
 				return fmt.Errorf("updating agent: %w", err)
 			}
@@ -152,13 +170,22 @@ Examples:
 	},
 }
 
-func prepareAgentProfileMerge(existing, imported agent.Agent, now time.Time) agent.Agent {
+// prepareAgentProfileMerge fills the profile's blanks from the existing
+// agent, as a bundle import does: only where the profile points at the same
+// endpoint, so a profile cannot send this machine's key elsewhere. left
+// names each blank it did not fill.
+func prepareAgentProfileMerge(existing, imported agent.Agent, now time.Time) (agent.Agent, []string) {
+	imported, left := restoreAgentSecrets(imported, existing, true)
 	imported.CreatedAt = existing.CreatedAt
 	imported.UpdatedAt = now
-	if imported.APIKey == "" {
-		imported.APIKey = existing.APIKey
+	if imported.APIKey == "" && existing.APIKey != "" {
+		if sameAgentEndpoint(imported, existing) {
+			imported.APIKey = existing.APIKey
+		} else {
+			left = append(left, "api_key")
+		}
 	}
-	return imported
+	return imported, left
 }
 
 func init() {
@@ -167,7 +194,7 @@ func init() {
 	agentCmd.AddCommand(agentImportCmd)
 
 	agentExportCmd.Flags().String("format", "", "output format: json or yaml (default: json)")
-	agentExportCmd.Flags().Bool("include-key", false, "include API key in exported profile")
+	agentExportCmd.Flags().Bool("include-key", false, "include the API key and the agent's other secrets (MCP server env and secret args, credential extras, a base URL with credentials) in the exported profile")
 
 	agentImportCmd.Flags().String("format", "", "input format: json or yaml (autodetect)")
 	agentImportCmd.Flags().Bool("merge", false, "update existing agent with same name")

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
-	"github.com/nikolareljin/agentvault/internal/crypto"
 	"github.com/nikolareljin/agentvault/internal/locations"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
@@ -312,7 +311,17 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	}
 	bundle := collected.Bundle
 
-	data, err := json.MarshalIndent(bundle, "", "  ")
+	var data []byte
+	if includeSecrets {
+		data, err = json.MarshalIndent(bundle, "", "  ")
+	} else {
+		// Blanked secrets: older readers of the 1.x layout would write the
+		// blanks over their values, so it goes out as a blanked portable
+		// bundle, which they refuse and setup import reads.
+		wrapped := wrapSetupBundle(bundle)
+		wrapped.SchemaVersion = BlankedBundleSchemaVersion
+		data, err = json.MarshalIndent(wrapped, "", "  ")
+	}
 	if err != nil {
 		return fmt.Errorf("encoding bundle: %w", err)
 	}
@@ -457,30 +466,33 @@ func mergeSharedRouterConfig(dst *agent.SharedConfig, src agent.SharedConfig, me
 }
 
 func runSetupShow(cmd *cobra.Command, args []string) error {
-	data, err := os.ReadFile(args[0])
+	raw, err := os.ReadFile(args[0])
 	if err != nil {
 		return fmt.Errorf("reading bundle: %w", err)
 	}
-
-	var bundle SetupBundle
-	if err := json.Unmarshal(data, &bundle); err != nil {
-		// Might be encrypted
-		if len(data) < crypto.SaltLen {
-			return fmt.Errorf("invalid bundle format")
-		}
-		password, err := readPassword("Bundle password: ")
-		if err != nil {
-			return err
-		}
-		plaintext, err := decryptBundlePayload(data, password)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(plaintext, &bundle); err != nil {
-			return fmt.Errorf("decoding bundle: %w", err)
-		}
+	payload, err := decodeImportPayload(raw)
+	if err != nil {
+		return err
 	}
+	// Any export: a 1.x setup bundle, a portable bundle (what setup export
+	// writes without --include-secrets) or a legacy vault export.
+	bundle, _, err := decodePortableBundle(payload)
+	if err != nil {
+		return err
+	}
+	for i, profile := range bundle.Profiles {
+		if len(bundle.Profiles) > 1 {
+			if i > 0 {
+				fmt.Println()
+			}
+			fmt.Printf("Profile %q:\n", profile.Name)
+		}
+		printSetupBundle(profile.Setup)
+	}
+	return nil
+}
 
+func printSetupBundle(bundle SetupBundle) {
 	fmt.Println("Setup Bundle Contents")
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Printf("Version:     %s\n", bundle.Version)
@@ -543,8 +555,6 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nStatus Snapshot: %s\n", bundle.StatusSnapshot.GeneratedAt.Format("2006-01-02 15:04:05"))
 		fmt.Printf("  Providers: %d\n", len(bundle.StatusSnapshot.Providers))
 	}
-
-	return nil
 }
 
 func selectAgentsForExport(all []agent.Agent, name string) ([]agent.Agent, error) {

@@ -616,7 +616,24 @@ func providerAssetsToApply(setup SetupBundle, homeDir string, keepCommands bool)
 	configAssets := claudeConfigAssets(setup.ProviderConfigs.Claude)
 	codexAssets, codexDropped := codexConfigAssets(setup.ProviderConfigs.Codex, homeDir, keepCommands)
 	configAssets = append(configAssets, codexAssets...)
-	return append(append(configAssets, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...), codexDropped
+	// The bundle's own copy of a file wins over the config's, as it is
+	// applied after it. A copy exported without its content cannot win, so
+	// where this machine has the file, the config's (often older) version
+	// must not replace it either: the file stays as it is.
+	withheld := map[[2]string]bool{}
+	for _, f := range setup.ProviderFiles {
+		if f.Redacted {
+			withheld[[2]string{f.LogicalRoot, f.LogicalPath}] = true
+		}
+	}
+	kept := configAssets[:0]
+	for _, a := range configAssets {
+		if withheld[[2]string{a.LogicalRoot, a.LogicalPath}] && localFileExists(homeDir, a) {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return append(append(kept, setup.ProviderFiles...), providerSkillAssets(setup.SkillAssets)...), codexDropped
 }
 
 func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) error {
@@ -824,6 +841,17 @@ func resolveConflictPolicy(flag conflictPolicy, strategyGiven bool, strategy imp
 		return conflictKeep
 	}
 	return conflictBackupReplace
+}
+
+// localFileExists reports whether the provider file a writes is on this
+// machine. One whose place cannot be resolved counts as present.
+func localFileExists(homeDir string, a SetupAsset) bool {
+	dest, err := providerAssetDestination(homeDir, a)
+	if err != nil {
+		return true
+	}
+	_, err = os.Lstat(dest)
+	return err == nil
 }
 
 // claudeConfigAssets are the files SaveClaudeConfig would write for c, as

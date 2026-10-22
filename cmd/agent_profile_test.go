@@ -150,7 +150,7 @@ func TestPrepareAgentProfileMergePreservesCreatedAtAndBumpsUpdatedAt(t *testing.
 	imported.UpdatedAt = time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 5, 9, 15, 30, 0, 0, time.UTC)
 
-	got := prepareAgentProfileMerge(existing, imported, now)
+	got, _ := prepareAgentProfileMerge(existing, imported, now)
 
 	if !got.CreatedAt.Equal(existing.CreatedAt) {
 		t.Fatalf("CreatedAt = %v, want existing %v", got.CreatedAt, existing.CreatedAt)
@@ -169,7 +169,7 @@ func TestPrepareAgentProfileMergeKeepsImportedAPIKey(t *testing.T) {
 	imported := testAgent()
 	imported.APIKey = "imported-key"
 
-	got := prepareAgentProfileMerge(existing, imported, time.Now())
+	got, _ := prepareAgentProfileMerge(existing, imported, time.Now())
 
 	if got.APIKey != "imported-key" {
 		t.Fatalf("APIKey = %q, want imported key", got.APIKey)
