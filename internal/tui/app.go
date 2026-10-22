@@ -1484,7 +1484,14 @@ func (m *model) setStatus(msg string, isError bool) {
 // View rendering
 // ──────────────────────────────────────────────────────────────────
 
+// View renders the screen. Vault fields can come from another machine's
+// bundle, so control characters other than the styles' SGR codes are
+// replaced.
 func (m model) View() string {
+	return cleanView(m.view())
+}
+
+func (m model) view() string {
 	if m.quitting {
 		return ""
 	}
@@ -3046,4 +3053,35 @@ func (p placeholderModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return p, nil
+}
+
+// cleanView replaces control characters with '?', keeping newlines, tabs
+// and SGR sequences (ESC [ digits/';' m), which is all lipgloss writes.
+func cleanView(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] == ';') {
+				j++
+			}
+			if j < len(s) && s[j] == 'm' {
+				b.WriteString(s[i : j+1])
+				i = j + 1
+				continue
+			}
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r < 0x20 || (r >= 0x7f && r < 0xa0):
+			b.WriteByte('?')
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
 }
