@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
@@ -33,6 +37,7 @@ func init() {
 	statusCmd.Flags().Bool("no-vault", false, "skip vault unlock and report provider status only")
 	statusCmd.Flags().String("vault-password-env", "AGENTVAULT_PASSWORD", "environment variable containing vault password for non-interactive status calls")
 	statusCmd.Flags().Bool("cost-report", false, "include cost breakdown in output")
+	statusCmd.Flags().Bool("csv", false, "print only the cost report, as CSV: provider, total, this month, monthly budget")
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
@@ -54,6 +59,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	costReportFlag, _ := cmd.Flags().GetBool("cost-report")
+	if csvOutput, _ := cmd.Flags().GetBool("csv"); csvOutput {
+		if v == nil {
+			return fmt.Errorf("--csv needs the vault: its pricing and prompt history")
+		}
+		return writeCostCSV(c1Writer(os.Stdout), statuspkg.CostReportForVault(v), v.SharedConfig().Pricing)
+	}
 	report := statuspkg.BuildReport(v, homeDir)
 	if costReportFlag && v != nil {
 		report.Cost = statuspkg.CostReportForVault(v)
@@ -159,4 +170,47 @@ func openVaultForStatus(passwordEnv string) (*vault.Vault, error) {
 		return nil, err
 	}
 	return v, nil
+}
+
+// writeCostCSV writes one row per provider with recorded cost. A provider's
+// budget is its first pricing row with one, as the budget alerts take it.
+func writeCostCSV(w io.Writer, c *statuspkg.CostReport, pricing []agent.ProviderPricing) error {
+	if len(pricing) == 0 {
+		pricing = agent.DefaultPricing()
+	}
+	out := csv.NewWriter(w)
+	if err := out.Write([]string{"provider", "total_usd", "this_month_usd", "monthly_budget_usd"}); err != nil {
+		return err
+	}
+	if c != nil {
+		names := make([]string, 0, len(c.ByProvider))
+		for p := range c.ByProvider {
+			names = append(names, p)
+		}
+		sort.Strings(names)
+		for _, p := range names {
+			budget := ""
+			for _, row := range pricing {
+				if string(row.Provider) == p && row.MonthlyBudgetUSD > 0 {
+					budget = strconv.FormatFloat(row.MonthlyBudgetUSD, 'f', -1, 64)
+					break
+				}
+			}
+			if err := out.Write([]string{csvSafe(p),
+				strconv.FormatFloat(c.ByProvider[p], 'f', 6, 64),
+				strconv.FormatFloat(c.ThisMonth[p], 'f', 6, 64), budget}); err != nil {
+				return err
+			}
+		}
+	}
+	out.Flush()
+	return out.Error()
+}
+
+// csvSafe keeps a spreadsheet from reading a cell as a formula.
+func csvSafe(s string) string {
+	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+		return "'" + s
+	}
+	return s
 }
