@@ -12,25 +12,53 @@ import (
 	"github.com/nikolareljin/agentvault/internal/config"
 )
 
-// generate env --format shell output is meant for eval or source; a model
-// from a bundle must not run commands there.
-func TestShellQuotedValueRunsNothing(t *testing.T) {
+// generate env --format shell and run --env output is eval'd or sourced: a
+// value from a bundle must run nothing and come back byte for byte, in
+// every POSIX shell on the machine.
+func TestShellExportLineRoundTrips(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs sh")
 	}
 	dir := t.TempDir()
 	mark := filepath.Join(dir, "ran")
-	value := "$(touch " + mark + ")`touch " + mark + "`\"\\$HOME"
-	script := "X=" + shellQuotedValue(value) + "\nprintf %s \"$X\""
-	out, err := exec.Command("sh", "-c", script).Output()
-	if err != nil {
-		t.Fatal(err)
+	values := []string{
+		"$(touch " + mark + ")`touch " + mark + "`\"\\$HOME",
+		"it's '' a 'quote'",
+		"line1\nline2\r\n\tend\n",
+		"!! !$ ${HOME} \\n é 日本 \u2028",
+		"",
+	}
+	shells := []string{}
+	for _, sh := range []string{"sh", "bash", "dash", "zsh"} {
+		if _, err := exec.LookPath(sh); err == nil {
+			shells = append(shells, sh)
+		}
+	}
+	for _, value := range values {
+		line := shellExportLine("X", value)
+		file := filepath.Join(dir, "env.sh")
+		if err := os.WriteFile(file, []byte(line), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, sh := range shells {
+			for _, how := range []string{". " + file, "eval \"$(cat " + file + ")\"", line} {
+				out, err := exec.Command(sh, "-c", how+"\nprintf %s \"$X\"").Output()
+				if err != nil {
+					t.Fatalf("%s %q: %v", sh, how, err)
+				}
+				if string(out) != value {
+					t.Errorf("%s %q: value = %q, want %q", sh, how, out, value)
+				}
+			}
+		}
 	}
 	if _, err := os.Stat(mark); err == nil {
 		t.Fatal("quoted value ran a command")
 	}
-	if string(out) != value {
-		t.Errorf("value = %q, want %q", out, value)
+	for _, bad := range []string{"a\x1b[2Jb", "a\rb", "a\u009bb", "a\x00b"} {
+		if got := shellExportLine("X", bad); !strings.HasPrefix(got, "# X left out") {
+			t.Errorf("%q: got %q", bad, got)
+		}
 	}
 }
 
@@ -100,13 +128,14 @@ func TestGenerateDotenvRunsNothing(t *testing.T) {
 	a := testAgent()
 	a.Model = "$(touch " + mark + ")`touch " + mark + "`$HOME\\"
 	a.BaseURL = "https://h.example/it's"
+	a.APIKey = "k${HOME}"
 	root := t.TempDir()
 	setTestHomeDir(t, root)
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
 	dir := filepath.Join(root, config.AppName)
 	seedProfileVault(t, dir, []agent.Agent{a}, nil)
 	useConfigDir(t, dir)
-	withFlags(t, generateEnvCmd, map[string]string{"format": "dotenv", "no-keys": "true"})
+	withFlags(t, generateEnvCmd, map[string]string{"format": "dotenv"})
 	out, err := captureStdoutForTest(t, func() error {
 		return generateEnvCmd.RunE(generateEnvCmd, []string{"-"})
 	})
@@ -114,14 +143,14 @@ func TestGenerateDotenvRunsNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix := envPrefixForAgent(a)
-	got, err := exec.Command("env", "-i", "HOME=/nonexistent", "sh", "-c", out+"\nprintf %s \"$"+prefix+"_MODEL|${"+prefix+"_BASE_URL-unset}\"").Output()
+	got, err := exec.Command("env", "-i", "HOME=/nonexistent", "sh", "-c", out+"\nprintf %s \"$"+prefix+"_MODEL|${"+prefix+"_BASE_URL-unset}|${"+prefix+"_API_KEY-unset}\"").Output()
 	if err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
 	if _, err := os.Stat(mark); err == nil {
 		t.Fatal("sourcing the dotenv file ran a command")
 	}
-	if want := a.Model + "|unset"; string(got) != want {
+	if want := a.Model + "|unset|unset"; string(got) != want {
 		t.Errorf("env = %q, want %q (file %q)", got, want, out)
 	}
 }

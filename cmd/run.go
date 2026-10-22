@@ -34,18 +34,18 @@ Example:
 		asEnv, _ := cmd.Flags().GetBool("env")
 
 		if asEnv {
-			fmt.Printf("export AGENT_NAME=%s\n", shellQuotedValue(a.Name))
-			fmt.Printf("export AGENT_PROVIDER=%s\n", shellQuotedValue(string(a.Provider)))
-			fmt.Printf("export AGENT_MODEL=%s\n", shellQuotedValue(a.Model))
+			fmt.Print(shellExportLine("AGENT_NAME", a.Name))
+			fmt.Print(shellExportLine("AGENT_PROVIDER", string(a.Provider)))
+			fmt.Print(shellExportLine("AGENT_MODEL", a.Model))
 			if a.APIKey != "" {
-				fmt.Printf("export AGENT_API_KEY=%s\n", shellQuotedValue(a.APIKey))
+				fmt.Print(shellExportLine("AGENT_API_KEY", a.APIKey))
 			}
 			if a.BaseURL != "" {
-				fmt.Printf("export AGENT_BASE_URL=%s\n", shellQuotedValue(a.BaseURL))
+				fmt.Print(shellExportLine("AGENT_BASE_URL", a.BaseURL))
 			}
 			prompt := a.EffectiveSystemPrompt(shared)
 			if prompt != "" {
-				fmt.Printf("export AGENT_SYSTEM_PROMPT=%s\n", shellQuotedValue(prompt))
+				fmt.Print(shellExportLine("AGENT_SYSTEM_PROMPT", prompt))
 			}
 			return nil
 		}

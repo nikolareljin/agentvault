@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -364,13 +363,13 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			prefix := envPrefixForAgent(a)
 			output.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", printable(a.Name), printable(string(a.Provider))))
 			if a.Model != "" {
-				output.WriteString(fmt.Sprintf("export %s_MODEL=%s\n", prefix, shellQuotedValue(a.Model)))
+				output.WriteString(shellExportLine(prefix+"_MODEL", a.Model))
 			}
 			if !noKeys && a.APIKey != "" {
-				output.WriteString(fmt.Sprintf("export %s_API_KEY=%s\n", prefix, shellQuotedValue(a.APIKey)))
+				output.WriteString(shellExportLine(prefix+"_API_KEY", a.APIKey))
 			}
 			if a.BaseURL != "" {
-				output.WriteString(fmt.Sprintf("export %s_BASE_URL=%s\n", prefix, shellQuotedValue(a.BaseURL)))
+				output.WriteString(shellExportLine(prefix+"_BASE_URL", a.BaseURL))
 			}
 			output.WriteString("\n")
 		}
@@ -507,24 +506,30 @@ func envPrefixForAgent(a agent.Agent) string {
 	return provider + "_" + cleanName
 }
 
-func shellQuotedValue(value string) string {
-	// strconv.Quote escapes embedded quotes, newlines, backslashes and control
-	// chars. $ and ` are escaped too: the output is eval'd or sourced, and a
-	// model from a bundle such as "$(cmd)" must not run.
-	q := strconv.Quote(value)
-	q = strings.ReplaceAll(q, "$", `\$`)
-	return strings.ReplaceAll(q, "`", "\\`")
+// shellExportLine writes export NAME='value' for output that is eval'd or
+// sourced. Inside single quotes bash, dash and zsh read every byte
+// literally, so $, backticks, backslashes, ! and newlines round-trip and
+// run nothing; a single quote ends the quotes, is escaped and reopens
+// them. A value with a control character other than newline, tab or the
+// CR of a CRLF would reach the terminal raw: it is left out with a warning.
+func shellExportLine(name, value string) string {
+	if textutil.PrintableText(value) != value {
+		fmt.Fprintf(os.Stderr, "warning: %s left out: its value has a control character\n", name)
+		return fmt.Sprintf("# %s left out: its value has a control character\n", name)
+	}
+	return "export " + name + "='" + strings.ReplaceAll(value, "'", `'\''`) + "'\n"
 }
 
 // dotenvLine writes NAME='value'. Single quotes keep the value literal for
-// docker compose, python-dotenv and a shell that sources the file, so a
-// model such as "$(cmd)" from a bundle does not run. A value with a single
-// quote or a control character has no form all three read the same way:
-// it is left out with a warning.
+// docker compose and a shell that sources the file, so a model such as
+// "$(cmd)" from a bundle does not run. python-dotenv expands ${VAR} even in
+// single quotes and has no form for a single quote that a shell also reads.
+// A value with a single quote, "${" or a control character is left out
+// with a warning.
 func dotenvLine(name, value string) string {
-	if strings.Contains(value, "'") || textutil.Printable(value) != value {
-		fmt.Fprintf(os.Stderr, "warning: %s left out: its value has a quote or control character\n", name)
-		return fmt.Sprintf("# %s left out: its value has a quote or control character\n", name)
+	if strings.Contains(value, "'") || strings.Contains(value, "${") || textutil.Printable(value) != value {
+		fmt.Fprintf(os.Stderr, "warning: %s left out: its value has a quote, ${ or control character\n", name)
+		return fmt.Sprintf("# %s left out: its value has a quote, ${ or control character\n", name)
 	}
 	return name + "='" + value + "'\n"
 }
