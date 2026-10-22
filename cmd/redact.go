@@ -389,28 +389,105 @@ func secretString(s string) bool {
 // up to whitespace or a quote.
 var urlInString = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
 
-// urlCarriesCredential reports a URL with userinfo (a user name alone, as
-// in https://token@host, counts) or a query or fragment parameter whose
-// decoded name is a secret key. It parses with net/url, so ports, IPv6
-// hosts and percent-encoding do not hide one. A URL that does not parse,
-// such as http://${HOST}:8080, carries one when its authority holds an "@"
-// or its query a secret name.
+// urlCarriesCredential reports a URL with a credential in its userinfo or
+// a query or fragment parameter whose decoded name is a secret key. A
+// password is always a credential; a user name alone (git@, oauth2@,
+// org@dev.azure.com) is one only when it looks like a token, as in
+// https://ghp_x@github.com, and never for ssh. It parses with net/url, so
+// ports, IPv6 hosts and percent-encoding do not hide one. A URL that does
+// not parse, such as http://${HOST}:8080, is judged by its raw authority
+// and query.
 func urlCarriesCredential(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
-		rest := raw[strings.Index(raw, "://")+3:]
-		authority, tail, _ := strings.Cut(rest, "/")
-		if i := strings.IndexAny(authority, "?#"); i >= 0 {
-			authority, tail = authority[:i], authority[i:]
-		}
-		_, query, _ := strings.Cut(tail, "?")
-		query, frag, _ := strings.Cut(query, "#")
-		return strings.Contains(authority, "@") || secretParams(query) || secretParams(frag)
+		userinfo, _, query, frag := splitURL(raw)
+		scheme, _, _ := strings.Cut(raw, "://")
+		return userinfoIsCredential(scheme, userinfo) || secretParams(query) || secretParams(frag)
 	}
 	if u.User != nil {
-		return true
+		if _, has := u.User.Password(); has {
+			return true
+		}
+		if !loginScheme(u.Scheme) && tokenLike(u.User.Username()) {
+			return true
+		}
 	}
 	return secretParams(u.RawQuery) || secretParams(u.Fragment)
+}
+
+// splitURL cuts raw at "://" into its userinfo (without the "@"), the rest
+// of the authority and path, its query and its fragment, as written.
+func splitURL(raw string) (userinfo, rest, query, frag string) {
+	i := strings.Index(raw, "://")
+	if i < 0 {
+		return "", raw, "", ""
+	}
+	after := raw[i+3:]
+	end := strings.IndexAny(after, "/?#")
+	if end < 0 {
+		end = len(after)
+	}
+	if at := strings.LastIndex(after[:end], "@"); at >= 0 {
+		userinfo = after[:at]
+	}
+	rest, frag, _ = strings.Cut(raw, "#")
+	rest, query, _ = strings.Cut(rest, "?")
+	return userinfo, rest, query, frag
+}
+
+// userinfoIsCredential reports raw userinfo with a password, or a user name
+// that looks like a token.
+func userinfoIsCredential(scheme, userinfo string) bool {
+	if userinfo == "" {
+		return false
+	}
+	if _, _, has := strings.Cut(userinfo, ":"); has {
+		return true
+	}
+	if loginScheme(scheme) {
+		return false
+	}
+	name := userinfo
+	if dec, err := url.PathUnescape(name); err == nil {
+		name = dec
+	}
+	return tokenLike(name)
+}
+
+// loginScheme is a scheme whose user name is a login, never a token:
+// ssh://git@host/repo, git+ssh://git@host/repo.
+func loginScheme(scheme string) bool {
+	switch strings.ToLower(scheme) {
+	case "ssh", "git", "git+ssh", "ssh+git", "sftp", "scp":
+		return true
+	}
+	return false
+}
+
+// tokenLike is a URL user name that is a token rather than a login: a known
+// token prefix, or 20 or more characters mixing letters and digits with no
+// separator a login name uses. git, oauth2, x-access-token and an Azure
+// DevOps organization name are not.
+func tokenLike(name string) bool {
+	if secretValueShapes.MatchString(name) || strings.HasPrefix(name, "glpat-") {
+		return true
+	}
+	if len(name) < 20 || strings.ContainsAny(name, ".@ ") {
+		return false
+	}
+	var letter, digit bool
+	for _, r := range name {
+		switch {
+		case r >= '0' && r <= '9':
+			digit = true
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			letter = true
+		case r == '-' || r == '_':
+		default:
+			return false
+		}
+	}
+	return letter && digit
 }
 
 // secretParams reports a query-shaped string with a secret parameter name,
@@ -428,47 +505,57 @@ func secretParams(q string) bool {
 	return false
 }
 
-// stripURLSecrets is raw without its userinfo and without query and
-// fragment parameters whose name is a secret key, so the rest of the URL
-// stays usable. ok is false when raw is not a URL that parses; the caller
-// then leaves the whole value out.
+// stripURLSecrets is raw without a credential in its userinfo and without
+// query and fragment parameters whose name is a secret key. Everything else
+// stays as written: parameter order, encoding, empty and repeated values. ok
+// is false when raw is not a URL that parses; the caller then leaves the
+// whole value out.
 func stripURLSecrets(raw string) (string, bool) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "", false
 	}
-	u.User = nil
-	strip := func(q string) (string, bool) {
-		if q == "" {
-			return "", true
-		}
-		vals, err := url.ParseQuery(q)
-		if err != nil {
-			return "", false
-		}
-		for k := range vals {
-			if isSecretKey(k) {
-				delete(vals, k)
-			}
-		}
-		return vals.Encode(), true
+	userinfo, rest, query, frag := splitURL(raw)
+	if userinfoIsCredential(u.Scheme, userinfo) {
+		rest = strings.Replace(rest, userinfo+"@", "", 1)
 	}
-	var ok bool
-	if u.RawQuery, ok = strip(u.RawQuery); !ok {
+	out := rest
+	if q := dropSecretParams(query); q != "" {
+		out += "?" + q
+	} else if query == "" && strings.Contains(strings.SplitN(raw, "#", 2)[0], "?") {
+		out += "?"
+	}
+	if strings.Contains(raw, "#") {
+		if strings.Contains(frag, "=") {
+			// Only a parameter-shaped fragment (#access_token=x) is rewritten.
+			frag = dropSecretParams(frag)
+		}
+		if frag != "" {
+			out += "#" + frag
+		}
+	}
+	if secretString(out) {
 		return "", false
 	}
-	if strings.Contains(u.Fragment, "=") {
-		// Only a parameter-shaped fragment (#access_token=x) is rewritten.
-		frag, ok := strip(u.Fragment)
-		if !ok {
-			return "", false
+	return out, true
+}
+
+// dropSecretParams is q without the &-separated parameters whose name,
+// raw or decoded, is a secret key. The rest are kept byte for byte.
+func dropSecretParams(q string) string {
+	if q == "" {
+		return ""
+	}
+	var keep []string
+	for _, part := range strings.Split(q, "&") {
+		name, _, _ := strings.Cut(part, "=")
+		dec, err := url.QueryUnescape(name)
+		if isSecretKey(name) || (err == nil && isSecretKey(dec)) {
+			continue
 		}
-		u.Fragment, u.RawFragment = frag, ""
+		keep = append(keep, part)
 	}
-	if secretString(u.String()) {
-		return "", false
-	}
-	return u.String(), true
+	return strings.Join(keep, "&")
 }
 
 // containsSecretShape reports a value that looks like a secret anywhere in

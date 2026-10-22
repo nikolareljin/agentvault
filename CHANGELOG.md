@@ -319,8 +319,9 @@
   instructions that run code, with its new `--keep-bundle-commands`.
   `setup apply` names each staged file it leaves out.
 - `generate env --no-keys` and the `.env.agents` of `generate all` write
-  a base URL without its user info and secret parameters. Before, a base
-  URL such as `https://h/v1?api_key=x` was written as stored.
+  a base URL without its credential user info and secret parameters; the
+  rest of the URL is kept as written. Before, a base URL such as
+  `https://h/v1?api_key=x` was written as stored.
 - `import`, `setup import`, `setup show`, `agent import`, `session import`
   and `instructions import` read only a regular file of at most 256 MiB,
   so `/dev/zero` or a huge file cannot exhaust memory.
@@ -402,9 +403,11 @@
   and secret keys and `http_headers` of Codex and Ollama custom settings.
   A URL query parameter counts as a secret by its name under the key rules
   (`?client_secret=`, `?api-key=`, `?sig=`), and so does `X-Api-Key=x` in
-  an argument. A URL carries a credential when it has user info, a user
-  name alone included, or a secret-named query or fragment parameter,
-  percent-encoded or not; ports and IPv6 hosts do not hide one. Before,
+  an argument. A URL carries a credential when it has a password, a user
+  name shaped like a token (`https://ghp_x@host`, never on ssh or git
+  URLs), or a secret-named query or fragment parameter, percent-encoded or
+  not; ports and IPv6 hosts do not hide one. A login name such as
+  `ssh://git@host/r.git` or `https://org@dev.azure.com/...` is kept. Before,
   the flag left them in. They are blanked as in
   provider files and filled on import from this machine's vault when the
   definition is unchanged: for an MCP server the same command, args and `env`
