@@ -74,7 +74,7 @@ func TestPushDoesNotWriteAnotherProjectsReferencedFiles(t *testing.T) {
 	if !exists(filepath.Join(mono, "AGENTS.md")) {
 		t.Error("push did not write AGENTS.md")
 	}
-	if !strings.Contains(out, "notes/x.md") || !strings.Contains(out, svc) {
+	if !strings.Contains(out, "notes/x.md") || !strings.Contains(out, instructionProjectKey(svc, nil)) {
 		t.Errorf("push did not name the skipped file and its project:\n%s", out)
 	}
 }
