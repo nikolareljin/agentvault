@@ -48,7 +48,8 @@ Conflict handling is chosen with --strategy:
 A local file that differs from the bundle's is backed up and replaced, or
 kept: import asks on a terminal, and --on-conflict backup-replace|keep decides
 without asking. Commands the bundle adds or changes (hooks, statusLine, MCP
-servers) are left out unless --keep-bundle-commands is given.
+servers, the router's langgraph_command, .aider.conf.yml, scripts that
+instructions refer to) are left out unless --keep-bundle-commands is given.
 
 MCP servers are merged one by one: servers only this machine has stay. On a
 terminal, import lists the bundle's new servers to pick from and asks about
@@ -94,7 +95,7 @@ func init() {
 	importCmd.Flags().StringArray("workdir-map", nil, "place a work dir from the bundle here, OLD=NEW (repeatable); projects under it match by identity")
 	importCmd.Flags().Bool("no-match", false, "do not look for the bundle's projects on this machine; rewrite paths only by --map and the home directory")
 	importCmd.Flags().Bool("accept-matches", false, "apply computed project matches without asking (for non-interactive imports)")
-	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine and MCP server commands that the bundle adds or changes; left out by default")
+	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine, MCP server, router and script commands that the bundle adds or changes; left out by default")
 	importCmd.Flags().String("mcp-servers", "", "MCP servers to take from the bundle, new or changed: a comma-separated list of names, all, or none (default: ask on a terminal, else none)")
 	importCmd.Flags().String("on-conflict", "", "when a local file differs from the bundle: backup-replace or keep (default: ask on a terminal, else backup-replace; --strategy merge means keep)")
 	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
@@ -195,7 +196,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	total := importReport{}
 	for _, profile := range selected {
 		fmt.Fprintf(out, "\nProfile %q:\n", profile.Name)
-		plan := planProfileImport(v, profile.Setup, strategy, now)
+		plan := planProfileImport(v, profile.Setup, strategy, now, importConsent{KeepCommands: assetOpts.Apply.KeepBundleCommands, MCP: assetOpts.Apply.MCPServers})
 		for _, line := range plan.Report.Lines {
 			fmt.Fprintln(out, line)
 		}

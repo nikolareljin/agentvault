@@ -21,7 +21,7 @@ func TestSameAgentEndpointRefusesBlankedPlainEndpoint(t *testing.T) {
 		redactVaultSecrets(&b)
 		b.Agents[0].APIKey = ""
 		move(&b.Agents[0])
-		ops := planAgentOps([]agent.Agent{local}, b.Agents, strategyMirror, local.CreatedAt, &importReport{})
+		ops := planAgentOps([]agent.Agent{local}, b.Agents, strategyMirror, local.CreatedAt, importConsent{}, &importReport{})
 		if s := mustJSON(t, ops); strings.Contains(s, "local-key") || strings.Contains(s, `"tok"`) {
 			t.Errorf("%s: local secret restored into a changed endpoint: %s", name, s)
 		}
@@ -42,7 +42,7 @@ func TestPlanAgentOpsNamesBlankSecretOfNewAgent(t *testing.T) {
 	b := SetupBundle{Agents: []agent.Agent{{Name: "n", ProviderMeta: &agent.AgentProviderMeta{Extra: map[string]string{"api_token": "x"}}}}}
 	redactVaultSecrets(&b)
 	rep := &importReport{}
-	planAgentOps(nil, b.Agents, strategyMirror, b.Agents[0].CreatedAt, rep)
+	planAgentOps(nil, b.Agents, strategyMirror, b.Agents[0].CreatedAt, importConsent{}, rep)
 	s := mustJSON(t, rep)
 	if !strings.Contains(s, "no such agent") || strings.Contains(s, "differs") {
 		t.Errorf("new agent's blank secret reported as a moved agent: %s", s)
@@ -97,7 +97,7 @@ func TestLeftOutReportedOnlyWhenBundleWins(t *testing.T) {
 		}
 		b := SetupBundle{SharedConfig: agent.SharedConfig{MCPServers: []agent.MCPServer{{Name: "gh", Command: "evil", Env: map[string]string{"T": "v"}}}}}
 		redactVaultSecrets(&b)
-		plan := planProfileImport(v, b, tc.strategy, time.Now())
+		plan := planProfileImport(v, b, tc.strategy, time.Now(), importConsent{})
 		if got := strings.Contains(mustJSON(t, plan.Report), "gh env.T"); got != tc.want {
 			t.Errorf("%v: Left out reported=%v, want %v: %s", tc.strategy, got, tc.want, mustJSON(t, plan.Report))
 		}
@@ -106,7 +106,7 @@ func TestLeftOutReportedOnlyWhenBundleWins(t *testing.T) {
 		redactVaultSecrets(&ba)
 		ba.Agents[0].Provider = agent.ProviderCustom
 		rep := &importReport{}
-		planAgentOps([]agent.Agent{la}, ba.Agents, tc.strategy, la.CreatedAt, rep)
+		planAgentOps([]agent.Agent{la}, ba.Agents, tc.strategy, la.CreatedAt, importConsent{}, rep)
 		if got := strings.Contains(mustJSON(t, rep), "base_url"); got != tc.want {
 			t.Errorf("%v: agent Left out reported=%v, want %v: %s", tc.strategy, got, tc.want, mustJSON(t, rep))
 		}

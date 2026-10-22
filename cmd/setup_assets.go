@@ -1067,7 +1067,14 @@ func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite b
 			skipped = append(skipped, fmt.Sprintf("%s: exists and is not a regular file; kept", rel))
 			continue
 		}
-		if same, exists := sameFileContent(srcPath, destPath); exists && !same {
+		same, exists := sameFileContent(srcPath, destPath)
+		if !same && (ctx == nil || !ctx.KeepBundleCommands) {
+			if data, err := os.ReadFile(srcPath); err == nil && proseRunsCommands(rel, data) {
+				skipped = append(skipped, fmt.Sprintf("%s: runs commands (hooks, tools or shell lines) that the bundle adds or changes; left out (use --keep-bundle-commands to take it)", rel))
+				continue
+			}
+		}
+		if exists && !same {
 			if ctx == nil && !overwrite {
 				skipped = append(skipped, fmt.Sprintf("%s: exists and differs; kept (use --strategy replace to overwrite)", rel))
 				continue
@@ -1180,9 +1187,9 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		original, _ := ctx.original(dest)
 		current, _ := readExistingFile(dest)
 		desc := describeSetupAsset(asset)
-		if !ctx.KeepBundleCommands && scriptAsset(asset) && !bytes.Equal(original, content) {
+		if !ctx.KeepBundleCommands && (scriptAsset(asset) || proseRunsCommands(asset.LogicalPath, content)) && !bytes.Equal(original, content) {
 			// A kept hook command would run whatever script is here.
-			warnings = append(warnings, fmt.Sprintf("provider asset %s: left out script, which the bundle adds or changes; kept this machine's file (use --keep-bundle-commands to take it)", desc))
+			warnings = append(warnings, fmt.Sprintf("provider asset %s: left out script (or hooks, tools or shell lines), which the bundle adds or changes; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 			continue
 		}
 		if !ctx.KeepBundleCommands && asset.LogicalRoot == setupAssetRootProviderGemini &&

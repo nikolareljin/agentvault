@@ -734,6 +734,37 @@ func codexCommandsChanged(content, local []byte) bool {
 var proseExtensions = map[string]bool{".md": true, ".markdown": true, ".mdx": true, ".txt": true,
 	".rst": true, ".json": true, ".jsonc": true, ".toml": true}
 
+// proseRunsCommands is whether a prose file carries something an agent runs:
+// a shell line in a Claude command or skill ("!`cmd`"), a Gemini command's
+// shell injection ("!{cmd}"), or frontmatter that adds hooks or grants
+// tools. Such a file from a bundle needs consent like a script.
+func proseRunsCommands(name string, content []byte) bool {
+	ext := strings.ToLower(path.Ext(strings.TrimRight(strings.ReplaceAll(name, `\`, "/"), ". ")))
+	switch ext {
+	case ".md", ".markdown", ".mdx", ".mdc", ".txt", ".toml":
+	default:
+		return false
+	}
+	if bytes.Contains(content, []byte("!`")) || bytes.Contains(content, []byte("!{")) {
+		return true
+	}
+	if ext == ".toml" || !bytes.HasPrefix(bytes.TrimLeft(content, "\ufeff \t\r\n"), []byte("---")) {
+		return false
+	}
+	for _, line := range strings.Split(string(content), "\n")[1:] {
+		t := strings.ToLower(strings.TrimSpace(line))
+		if t == "---" {
+			break
+		}
+		for _, k := range []string{"hooks:", "allowed-tools:", "allowed_tools:"} {
+			if strings.HasPrefix(t, k) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // scriptAsset is a provider file that may run as a program: anything in a
 // hooks directory, and anything that is not prose by extension (an
 // extensionless file can be a script with a #! line, and a kept command can

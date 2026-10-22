@@ -97,7 +97,7 @@ func TestPlanAgentOpsMergeKeepsLocal(t *testing.T) {
 	ops := planAgentOps(
 		[]agent.Agent{{Name: "alpha", Model: "local-model"}},
 		[]agent.Agent{{Name: "alpha", Model: "bundle-model"}, {Name: "beta"}},
-		strategyMerge, now, &rep)
+		strategyMerge, now, importConsent{}, &rep)
 
 	if len(ops) != 1 || ops[0].Kind != "add" || ops[0].Name != "beta" {
 		t.Fatalf("planAgentOps(merge) = %#v, want only an add for beta", ops)
@@ -114,7 +114,7 @@ func TestPlanAgentOpsReplaceKeepsLocalKeyWhenBundleHasNone(t *testing.T) {
 	ops := planAgentOps(
 		[]agent.Agent{{Name: "alpha", APIKey: "local-secret", CreatedAt: created}},
 		[]agent.Agent{{Name: "alpha", Model: "bundle-model"}},
-		strategyReplace, now, &rep)
+		strategyReplace, now, importConsent{}, &rep)
 
 	if len(ops) != 1 || ops[0].Kind != "update" {
 		t.Fatalf("planAgentOps(replace) = %#v, want a single update", ops)
@@ -135,7 +135,7 @@ func TestPlanAgentOpsMirrorRemovesLocalOnly(t *testing.T) {
 	ops := planAgentOps(
 		[]agent.Agent{{Name: "alpha"}, {Name: "stale"}},
 		[]agent.Agent{{Name: "alpha"}},
-		strategyMirror, time.Now(), &rep)
+		strategyMirror, time.Now(), importConsent{}, &rep)
 
 	var removed []string
 	for _, op := range ops {
@@ -278,7 +278,7 @@ func TestPlanAndCommitProfileImportMirrorConverges(t *testing.T) {
 		},
 	}
 
-	plan := planProfileImport(v, setup, strategyMirror, time.Now())
+	plan := planProfileImport(v, setup, strategyMirror, time.Now(), importConsent{})
 	if err := commitProfileImport(v, plan); err != nil {
 		t.Fatalf("commitProfileImport() error = %v", err)
 	}
@@ -307,7 +307,7 @@ func TestPlanAndCommitProfileImportMergeIsNonDestructive(t *testing.T) {
 		{Name: "incoming", Provider: agent.ProviderClaude},
 	}}
 
-	plan := planProfileImport(v, setup, strategyMerge, time.Now())
+	plan := planProfileImport(v, setup, strategyMerge, time.Now(), importConsent{})
 	if err := commitProfileImport(v, plan); err != nil {
 		t.Fatalf("commitProfileImport() error = %v", err)
 	}
@@ -333,7 +333,7 @@ func TestCommitProfileImportReplacesCapabilities(t *testing.T) {
 		EndpointURL: "http://local:11434", ModelName: "new", Capabilities: []string{"coding"},
 	}}}
 
-	plan := planProfileImport(v, setup, strategyMirror, time.Now())
+	plan := planProfileImport(v, setup, strategyMirror, time.Now(), importConsent{})
 	if err := commitProfileImport(v, plan); err != nil {
 		t.Fatalf("commitProfileImport() error = %v", err)
 	}
@@ -356,7 +356,7 @@ func TestPlanProfileImportMergesPricing(t *testing.T) {
 		{Provider: agent.ProviderOllama, InputPer1KTokens: 0},
 	}}}
 
-	plan := planProfileImport(v, setup, strategyReplace, time.Now())
+	plan := planProfileImport(v, setup, strategyReplace, time.Now(), importConsent{})
 	if err := commitProfileImport(v, plan); err != nil {
 		t.Fatalf("commitProfileImport() error = %v", err)
 	}
@@ -386,7 +386,7 @@ func TestPlanProfileImportKeepsLocalPromptSessions(t *testing.T) {
 	}
 
 	// A bundle never carries prompt sessions, so even mirror must leave them alone.
-	plan := planProfileImport(v, SetupBundle{}, strategyMirror, time.Now())
+	plan := planProfileImport(v, SetupBundle{}, strategyMirror, time.Now(), importConsent{})
 	if err := commitProfileImport(v, plan); err != nil {
 		t.Fatalf("commitProfileImport() error = %v", err)
 	}
@@ -421,7 +421,7 @@ func TestPlanProfileImportSkipsWritesWhenNothingChanges(t *testing.T) {
 
 	// A bundle carrying exactly what the vault already holds must plan no writes.
 	setup := SetupBundle{Agents: []agent.Agent{{Name: "alpha", Provider: agent.ProviderClaude}}}
-	plan := planProfileImport(v, setup, strategyMerge, time.Now())
+	plan := planProfileImport(v, setup, strategyMerge, time.Now(), importConsent{})
 
 	if plan.SharedChanged {
 		t.Error("SharedChanged = true, want no shared-config write for an unchanged import")
@@ -445,7 +445,7 @@ func TestCommitProfileImportLeavesParallelLimitUnset(t *testing.T) {
 
 	// Importing a bundle with no session data must not mark the parallel limit as
 	// explicitly configured, which Vault.SetSessions would do on any write.
-	plan := planProfileImport(v, SetupBundle{}, strategyMerge, time.Now())
+	plan := planProfileImport(v, SetupBundle{}, strategyMerge, time.Now(), importConsent{})
 	if err := commitProfileImport(v, plan); err != nil {
 		t.Fatalf("commitProfileImport() error = %v", err)
 	}
@@ -466,7 +466,7 @@ func TestMergeKeyedMirrorReturnsNilWhenEverythingRemoved(t *testing.T) {
 func TestPlanAgentOpsReplaceSkipsIdenticalAgent(t *testing.T) {
 	rep := importReport{}
 	existing := agent.Agent{Name: "alpha", Provider: agent.ProviderClaude, Model: "opus"}
-	ops := planAgentOps([]agent.Agent{existing}, []agent.Agent{existing}, strategyReplace, time.Now(), &rep)
+	ops := planAgentOps([]agent.Agent{existing}, []agent.Agent{existing}, strategyReplace, time.Now(), importConsent{}, &rep)
 	if len(ops) != 0 {
 		t.Fatalf("planAgentOps() = %#v, want no write for an agent that already matches", ops)
 	}
@@ -515,7 +515,7 @@ func TestPlanProfileImportIsIdempotentForInstructionOverrides(t *testing.T) {
 		}},
 	}
 
-	first := planProfileImport(v, setup, strategyMirror, time.Now())
+	first := planProfileImport(v, setup, strategyMirror, time.Now(), importConsent{})
 	if err := commitProfileImport(v, first); err != nil {
 		t.Fatalf("commitProfileImport() error = %v", err)
 	}
@@ -524,7 +524,7 @@ func TestPlanProfileImportIsIdempotentForInstructionOverrides(t *testing.T) {
 	}
 
 	// Re-importing the same bundle later must not rewrite the instruction.
-	second := planProfileImport(v, setup, strategyMirror, time.Now().Add(time.Hour))
+	second := planProfileImport(v, setup, strategyMirror, time.Now().Add(time.Hour), importConsent{})
 	if second.SharedChanged {
 		t.Fatal("SharedChanged = true on a repeat import, want override-derived instructions to be stable")
 	}

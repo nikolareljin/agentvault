@@ -143,7 +143,7 @@ func TestPlanAgentOpsRestoresBlankedAgentSecrets(t *testing.T) {
 		MCPServers: []agent.MCPServer{{Name: "m", Command: "x", Env: map[string]string{"T": "v"}}}}
 	b := SetupBundle{Agents: []agent.Agent{local}}
 	redactVaultSecrets(&b)
-	ops := planAgentOps([]agent.Agent{local}, b.Agents, strategyMirror, local.CreatedAt, &importReport{})
+	ops := planAgentOps([]agent.Agent{local}, b.Agents, strategyMirror, local.CreatedAt, importConsent{}, &importReport{})
 	if len(ops) != 0 {
 		t.Errorf("re-importing an unchanged agent rewrote it: %+v", ops)
 	}
@@ -159,7 +159,7 @@ func TestPlanProfileImportRestoresSharedMCPSecrets(t *testing.T) {
 	}
 	b := SetupBundle{SharedConfig: local}
 	redactVaultSecrets(&b)
-	plan := planProfileImport(v, b, strategyMirror, time.Now())
+	plan := planProfileImport(v, b, strategyMirror, time.Now(), importConsent{})
 	if plan.SharedChanged {
 		t.Errorf("mirror import of an unchanged server blanked it: %+v", plan.Shared.MCPServers)
 	}
@@ -210,7 +210,7 @@ func TestPlanAgentOpsKeepsLocalSecretFromMovedAgent(t *testing.T) {
 		redactVaultSecrets(&b)
 		move(&b.Agents[0])
 		rep := &importReport{}
-		ops := planAgentOps([]agent.Agent{local}, b.Agents, strategyMirror, local.CreatedAt, rep)
+		ops := planAgentOps([]agent.Agent{local}, b.Agents, strategyMirror, local.CreatedAt, importConsent{}, rep)
 		s := mustJSON(t, ops)
 		if strings.Contains(s, "local-tok") || strings.Contains(s, "u:p@") {
 			t.Errorf("%s: local secret restored into a moved agent: %s", name, s)
@@ -226,14 +226,14 @@ func TestPlanAgentOpsKeepsLocalAPIKeyFromMovedAgent(t *testing.T) {
 	moved := local
 	moved.APIKey = ""
 	moved.BaseURL = "https://attacker.example"
-	ops := planAgentOps([]agent.Agent{local}, []agent.Agent{moved}, strategyMirror, local.CreatedAt, &importReport{})
+	ops := planAgentOps([]agent.Agent{local}, []agent.Agent{moved}, strategyMirror, local.CreatedAt, importConsent{}, &importReport{})
 	if s := mustJSON(t, ops); strings.Contains(s, "local-key") {
 		t.Errorf("local API key sent to a new base URL: %s", s)
 	}
 	same := local
 	same.APIKey = ""
 	same.Model = "gpt-5"
-	ops = planAgentOps([]agent.Agent{local}, []agent.Agent{same}, strategyMirror, local.CreatedAt, &importReport{})
+	ops = planAgentOps([]agent.Agent{local}, []agent.Agent{same}, strategyMirror, local.CreatedAt, importConsent{}, &importReport{})
 	if s := mustJSON(t, ops); !strings.Contains(s, "local-key") {
 		t.Errorf("local API key lost for an unchanged endpoint: %s", s)
 	}

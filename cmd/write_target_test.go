@@ -167,7 +167,7 @@ func TestImportSkipsUnsafeInstructionFilenames(t *testing.T) {
 		{Name: "up", Filename: "../up.md", Content: "x"},
 		{Name: "ok", Filename: "OK.md", Content: "fine"},
 	}}}
-	plan := planProfileImport(v, setup, strategyMerge, time.Now())
+	plan := planProfileImport(v, setup, strategyMerge, time.Now(), importConsent{})
 	var names []string
 	for _, inst := range plan.Shared.Instructions {
 		names = append(names, inst.Name)
@@ -177,5 +177,46 @@ func TestImportSkipsUnsafeInstructionFilenames(t *testing.T) {
 	}
 	if plan.Report.Skipped < 2 {
 		t.Errorf("report.Skipped = %d, want the two refused instructions", plan.Report.Skipped)
+	}
+}
+
+// A 0.14 vault entry whose filename is now refused fails push and apply
+// with the allowed forms named, before any file is written.
+func TestPushRefusesOldVaultFilenamesBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	dir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, dir, []agent.Agent{testAgent()}, nil)
+	v := vault.New(filepath.Join(dir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	sc := v.SharedConfig()
+	sc.Instructions = []agent.InstructionFile{
+		{Name: "a", Filename: "AGENTS.md", Content: "ok"},
+		{Name: "z", Filename: "sub/.vscode/tasks.json", Content: "evil"},
+	}
+	if err := v.SetSharedConfig(sc); err != nil {
+		t.Fatal(err)
+	}
+	useConfigDir(t, dir)
+	for name, run := range map[string]func(string) error{
+		"push":  func(p string) error { return instPushCmd.RunE(instPushCmd, []string{p}) },
+		"apply": func(p string) error { return setupApplyCmd.RunE(setupApplyCmd, []string{p}) },
+	} {
+		project := filepath.Join(root, name)
+		if err := os.MkdirAll(project, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		withFlags(t, setupApplyCmd, map[string]string{"generate": "false"})
+		_, err := captureStdoutForTest(t, func() error { return run(project) })
+		if err == nil || !strings.Contains(err.Error(), "allowed:") || !strings.Contains(err.Error(), "nothing written") {
+			t.Errorf("%s: err = %v, want a refusal naming the allowed forms", name, err)
+		}
+		entries, _ := os.ReadDir(project)
+		if len(entries) != 0 {
+			t.Errorf("%s wrote %d entries before refusing", name, len(entries))
+		}
 	}
 }

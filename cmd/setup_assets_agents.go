@@ -1425,6 +1425,10 @@ func projectAssetRefusal(rel string) string {
 			return "runs code or configures git; never written from a bundle"
 		}
 	}
+	// .clinerules/hooks/PreToolUse is a script Cline runs.
+	if strings.HasPrefix(folded, ".clinerules/hooks/") || strings.Contains(folded, "/.clinerules/hooks/") {
+		return "a hooks directory; never written from a bundle"
+	}
 	if strings.HasPrefix(folded, ".github/workflows/") || strings.HasPrefix(folded, ".github/actions/") {
 		return "a CI definition; never written from a bundle"
 	}

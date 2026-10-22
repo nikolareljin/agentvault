@@ -428,7 +428,7 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 		if len(bundle.Profiles) > 1 {
 			fmt.Fprintf(out, "\nProfile %q:\n", profile.Name)
 		}
-		plan := planProfileImport(v, profile.Setup, strategy, now)
+		plan := planProfileImport(v, profile.Setup, strategy, now, importConsent{})
 		for _, line := range plan.Report.Lines {
 			fmt.Fprintln(out, line)
 		}
@@ -703,6 +703,12 @@ func runSetupApply(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if err := checkInstructionFilenames(instructions, func(i agent.InstructionFile) bool {
+		_, ok := onlySet[i.Name]
+		return len(onlySet) == 0 || ok
+	}); err != nil {
+		return err
+	}
 	pushed := 0
 	for _, inst := range instructions {
 		if len(onlySet) > 0 {

@@ -62,7 +62,7 @@ func TestPlanProfileImportRestoresRouterSecrets(t *testing.T) {
 		}
 		b := SetupBundle{SharedConfig: local}
 		redactVaultSecrets(&b)
-		plan := planProfileImport(v, b, s, time.Now())
+		plan := planProfileImport(v, b, s, time.Now(), importConsent{})
 		if plan.Shared.Router != local.Router || strings.Contains(mustJSON(t, plan.Report), "Left out") {
 			t.Errorf("%v: same-machine round trip lost the router secret: %+v %v", s, plan.Shared.Router, plan.Report.Lines)
 		}
@@ -76,7 +76,7 @@ func TestPlanProfileImportRestoresRouterSecrets(t *testing.T) {
 	b := SetupBundle{SharedConfig: local}
 	redactVaultSecrets(&b)
 	b.SharedConfig.Router.LLMRouterModel = "other"
-	plan := planProfileImport(v, b, strategyMirror, time.Now())
+	plan := planProfileImport(v, b, strategyMirror, time.Now(), importConsent{})
 	if strings.Contains(mustJSON(t, plan.Shared), "local-p") || !strings.Contains(mustJSON(t, plan.Report), "llm_router_url") {
 		t.Errorf("changed router got the local secret or no Left out line: %+v %v", plan.Shared.Router, plan.Report.Lines)
 	}
@@ -93,7 +93,7 @@ func TestPlanProfileImportNamesBlanksOnFreshMachine(t *testing.T) {
 		},
 	}
 	redactVaultSecrets(&src)
-	plan := planProfileImport(newTestVault(t), src, strategyMirror, time.Now())
+	plan := planProfileImport(newTestVault(t), src, strategyMirror, time.Now(), importConsent{})
 	r := strings.Join(plan.Report.Lines, "\n")
 	for _, want := range []string{
 		"Left out: agent a base_url:", "Left out: agent a provider_meta.extra.endpoint:",
@@ -115,7 +115,7 @@ func TestPlanProfileImportNamesBlanksOnFreshMachine(t *testing.T) {
 	if err := v.Add(agent.Agent{Name: "a", Provider: agent.ProviderCustom, BaseURL: "https://plain.example"}); err != nil {
 		t.Fatal(err)
 	}
-	plan = planProfileImport(v, src, strategyMirror, time.Now())
+	plan = planProfileImport(v, src, strategyMirror, time.Now(), importConsent{})
 	if r := strings.Join(plan.Report.Lines, "\n"); strings.Count(r, "Left out: agent a base_url:") != 1 {
 		t.Errorf("changed agent's blank base URL not named once:\n%s", r)
 	}

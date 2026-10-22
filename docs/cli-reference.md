@@ -408,9 +408,19 @@ Flags:
 Flags:
 - `--file <path>`
 - `--content <text>`
-- `--filename <target-file-name>`: relative to the project; not under
-  `.git`, `.githooks`, `.husky` or `.github/workflows`, and not an agent
-  or editor settings file such as `.claude/settings.json` or `.mcp.json`
+- `--filename <target-file-name>`: relative to the project. Allowed: a
+  well-known instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+  `codex.md`, `.github/copilot-instructions.md`, `.cursorrules`,
+  `.windsurfrules`, `.clinerules`, `.aider.conf.yml`); `.md`, `.mdc`,
+  `.markdown`, `.txt` or `.rst` in a plain directory or under `.github`,
+  `.github/instructions`, `.github/prompts`, `.cursor/rules`,
+  `.windsurf/rules` or `.clinerules`; or a file an instruction refers to in
+  a plain directory (`scripts/check.sh`, `.env.example`). Any other dot
+  directory or dot file, at any depth, is refused (`.git`, `.vscode`,
+  `.claude`, `pkg/.envrc`), as are `mise.toml`, `CMakeLists.txt`,
+  `devcontainer.json`, `Directory.Build.*`, 8.3 short names and `:`.
+  Import takes `.aider.conf.yml` and referred-to files that the bundle adds
+  or changes only with `--keep-bundle-commands`
 
 ### `agentvault instructions edit [name]`
 No flags.
@@ -692,7 +702,9 @@ Flags:
   - a JSON settings file that does not parse as a plain JSON object (comments, trailing data) and differs: it is not applied. When this machine's copy is the one that does not parse, it is kept as it is;
   - any other top-level key under which a `command`, `args`, `*Command` or `*Helper` field differs (Gemini `tools.discoveryCommand`, `tools.callCommand`);
   - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
-  - trusted projects from the Codex provider config that are new or changed.
+  - trusted projects from the Codex provider config that are new or changed;
+  - the vault's router `langgraph_command`, shared and per-agent MCP servers in the vault (a server named in `--mcp-servers` is taken), and `.aider.conf.yml` and files instructions refer to that are not prose;
+  - Claude agents, commands and skills and Gemini commands whose text adds hooks or `allowed-tools` in its frontmatter, or a shell line (`` !`cmd` ``, `!{cmd}`), in the home and in the project. `.clinerules/hooks/` is never written.
 
   A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
 - `--mcp-servers <a,b|all|none>`: Which MCP servers to take from the bundle, without asking. `all` and `none` stand alone; combined with names they are an error. A name no bundle server has is warned about. MCP servers in `mcpServers`, `servers`, `mcp.servers` (VS Code) and `context_servers` (Zed) of JSON settings (Claude `~/.claude.json` and `settings.json`, Gemini, Copilot, Cursor, Windsurf) and in Codex `config.toml` are merged one by one:

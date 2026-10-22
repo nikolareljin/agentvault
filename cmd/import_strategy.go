@@ -165,11 +165,11 @@ type profileImportPlan struct {
 
 // planProfileImport computes, but does not apply, the vault changes for one
 // bundle profile under the given strategy.
-func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrategy, now time.Time) profileImportPlan {
+func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrategy, now time.Time, consent importConsent) profileImportPlan {
 	plan := profileImportPlan{}
 	rep := &plan.Report
 
-	plan.AgentOps = planAgentOps(v.List(), setup.Agents, strategy, now, rep)
+	plan.AgentOps = planAgentOps(v.List(), setup.Agents, strategy, now, consent, rep)
 
 	shared := cloneSharedConfig(v.SharedConfig())
 	// Prompt sessions are local run history that export deliberately omits, so
@@ -192,6 +192,11 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	routerApplied := false
 	if !incomingShared.Router.IsZero() && (shared.Router.IsZero() || strategy.incomingWins()) {
 		routerApplied = true
+		// The langgraph script runs on route and prompt --router langgraph.
+		if in := incomingShared.Router.LangGraphCmd; in != "" && in != shared.Router.LangGraphCmd && !consent.KeepCommands {
+			incomingShared.Router.LangGraphCmd = shared.Router.LangGraphCmd
+			rep.record("Left out", "shared router config langgraph_command: the bundle adds or changes the router script; kept this machine's (use --keep-bundle-commands to take it)")
+		}
 		shared.Router = incomingShared.Router
 		rep.Lines = append(rep.Lines, "  Applied: shared router config")
 		for _, f := range routerLeft {
@@ -215,12 +220,21 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 		}
 		rep.record("Left out", "shared MCP server %s %s: blank in the bundle, and the server is new or differs from this machine's", l.Server, l.Field)
 	}
+	incomingShared.MCPServers = gateBundleCommands(incomingShared.MCPServers, shared.MCPServers,
+		mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true }, consent.takesMCP,
+		strategy, "shared MCP server", rep)
 	shared.MCPServers = mergeKeyed(shared.MCPServers, incomingShared.MCPServers,
 		func(s agent.MCPServer) string { return s.Name }, strategy, "MCP server", rep)
 	// Stamp override-derived instructions with the bundle's own creation time, not
 	// the wall clock: a timestamp that moves on every run would make re-importing
 	// an unchanged bundle rewrite them forever.
-	shared.Instructions = mergeKeyed(shared.Instructions, validIncomingInstructions(mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)), rep),
+	incomingInstructions := validIncomingInstructions(mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)), rep)
+	// .aider.conf.yml and the scripts instructions refer to run code.
+	incomingInstructions = gateBundleCommands(incomingInstructions, shared.Instructions,
+		agent.InstructionKey, sameInstructionFile,
+		func(i agent.InstructionFile) bool { return agent.InstructionFileRunsCommands(i.Filename) },
+		consent.takes, strategy, "instruction", rep)
+	shared.Instructions = mergeKeyed(shared.Instructions, incomingInstructions,
 		agent.InstructionKey, strategy, "instruction", rep)
 	shared.Rules = mergeKeyed(shared.Rules, incomingShared.Rules,
 		func(r agent.UnifiedRule) string { return r.Name }, strategy, "rule", rep)
@@ -272,7 +286,7 @@ func nilIfEmpty[T any](items []T) []T {
 }
 
 // planAgentOps diffs the vault's agents against the bundle's.
-func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy importStrategy, now time.Time, rep *importReport) []agentOp {
+func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy importStrategy, now time.Time, consent importConsent, rep *importReport) []agentOp {
 	byName := make(map[string]agent.Agent, len(existing))
 	for _, a := range existing {
 		byName[a.Name] = a
@@ -286,6 +300,11 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 		// Values an export without --include-secrets blanked come back from
 		// the local agent, or are dropped.
 		a, left := restoreAgentSecrets(a, current, exists)
+		if !exists || strategy.incomingWins() {
+			a.MCPServers = gateBundleCommands(a.MCPServers, current.MCPServers,
+				mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true }, consent.takesMCP,
+				strategyReplace, "agent "+a.Name+" MCP server", rep)
+		}
 		if !exists {
 			for _, f := range left {
 				rep.record("Left out", "agent %s %s: blank in the bundle, and this machine has no such agent", a.Name, f)
@@ -686,4 +705,83 @@ func dropAgentBlank(a *agent.Agent, field string) bool {
 		a.ProviderMeta = &meta
 	}
 	return v == ""
+}
+
+// importConsent is what the user agreed to take from a bundle that makes
+// this machine run code: --keep-bundle-commands, or servers picked with
+// --mcp-servers.
+type importConsent struct {
+	KeepCommands bool
+	MCP          *mcpSelection
+}
+
+func (c importConsent) takes(string) bool { return c.KeepCommands }
+
+func (c importConsent) takesMCP(name string) bool {
+	if c.KeepCommands {
+		return true
+	}
+	if c.MCP != nil {
+		c.MCP.note(name)
+		return c.MCP.has(name)
+	}
+	return false
+}
+
+func mcpServerName(s agent.MCPServer) string { return s.Name }
+
+// sameMCPCommand is whether a and b run the same thing.
+func sameMCPCommand(a, b agent.MCPServer) bool {
+	if a.Command != b.Command || len(a.Args) != len(b.Args) || len(a.Env) != len(b.Env) {
+		return false
+	}
+	for i := range a.Args {
+		if a.Args[i] != b.Args[i] {
+			return false
+		}
+	}
+	for k, v := range a.Env {
+		if bv, ok := b.Env[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
+}
+
+func sameInstructionFile(a, b agent.InstructionFile) bool {
+	return a.Filename == b.Filename && a.Content == b.Content
+}
+
+// gateBundleCommands leaves out what in adds or changes that runs code on
+// this machine, unless take consents to it: a changed item keeps this
+// machine's copy, a new one is dropped. Under merge an existing local item
+// wins anyway, so it is passed through.
+func gateBundleCommands[T any](in, local []T, keyOf func(T) string, same func(a, b T) bool,
+	runs func(T) bool, take func(string) bool, strategy importStrategy, label string, rep *importReport) []T {
+	if len(in) == 0 {
+		return in
+	}
+	byKey := make(map[string]T, len(local))
+	for _, l := range local {
+		byKey[keyOf(l)] = l
+	}
+	out := make([]T, 0, len(in))
+	for _, item := range in {
+		key := keyOf(item)
+		have, exists := byKey[key]
+		switch {
+		case exists && same(item, have):
+		case exists && !strategy.incomingWins():
+		case !runs(item):
+		case take(key):
+		case exists:
+			item = have
+			rep.record("Left out", "%s %s: the bundle changes what it runs; kept this machine's (use --keep-bundle-commands to take it)", label, displayKey(key))
+		default:
+			rep.record("Left out", "%s %s: the bundle adds something that runs code (use --keep-bundle-commands to take it)", label, displayKey(key))
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
