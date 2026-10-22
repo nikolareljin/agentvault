@@ -150,8 +150,8 @@ func runCapabilityAdd(cmd *cobra.Command, _ []string) error {
 	}
 	if err := v.AddCapability(entry); err != nil {
 		if errors.Is(err, vault.ErrCapabilityExists) {
-			return fmt.Errorf("capability entry for %s/%s already exists; remove it first with 'agentvault capability remove': %w",
-				maskURLSecrets(entry.EndpointURL), entry.ModelName, vault.ErrCapabilityExists)
+			return fmt.Errorf("%w: %s/%s; remove it first with 'agentvault capability remove'",
+				vault.ErrCapabilityExists, maskURLSecrets(entry.EndpointURL), entry.ModelName)
 		}
 		return err
 	}
@@ -170,7 +170,7 @@ func runCapabilityRemove(cmd *cobra.Command, _ []string) error {
 	model = strings.TrimSpace(model)
 	if err := v.RemoveCapability(endpoint, model); err != nil {
 		if errors.Is(err, vault.ErrCapabilityNotFound) {
-			return fmt.Errorf("no capability entry found for %s/%s: %w", maskURLSecrets(endpoint), model, vault.ErrCapabilityNotFound)
+			return fmt.Errorf("%w: %s/%s", vault.ErrCapabilityNotFound, maskURLSecrets(endpoint), model)
 		}
 		return err
 	}
