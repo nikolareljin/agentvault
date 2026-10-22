@@ -371,6 +371,9 @@ func secretString(s string) bool {
 			return true
 		}
 	}
+	if schemelessPassword(s) {
+		return true
+	}
 	for _, q := range queryParam.FindAllStringSubmatch(s, -1) {
 		if isSecretKey(q[1]) {
 			return true
@@ -383,6 +386,24 @@ func secretString(s string) bool {
 	}
 	m := headerArg.FindStringSubmatch(s)
 	return m != nil && isSecretKey(m[1])
+}
+
+// schemelessUserinfo is user:password@host with no scheme in front: a
+// MySQL DSN root:pw@tcp(db:3306)/app or a Postgres user:pw@db:5432/app.
+// The password part has no "/" or "@", so git@host:o/r does not match.
+var schemelessUserinfo = regexp.MustCompile(`(?:^|[\s=,;'"(<])([^\s/:@=,;'"(<>]*):([^\s/@]+)@(\S*)`)
+
+// schemelessPassword reports a schemeless user:password@host in s. An image
+// digest such as node:20@sha256:... and a mailto: address are not one.
+func schemelessPassword(s string) bool {
+	for _, m := range schemelessUserinfo.FindAllStringSubmatch(s, -1) {
+		user, host := strings.ToLower(m[1]), strings.ToLower(m[3])
+		if user == "mailto" || strings.HasPrefix(host, "sha256:") || strings.HasPrefix(host, "sha512:") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // urlInString finds each URL in a string: a scheme, "://" and what follows

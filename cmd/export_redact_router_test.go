@@ -120,3 +120,23 @@ func TestPlanProfileImportNamesBlanksOnFreshMachine(t *testing.T) {
 		t.Errorf("changed agent's blank base URL not named once:\n%s", r)
 	}
 }
+
+// A DSN with a password and no scheme is a credential; an scp remote, an
+// image digest and a mailto address are not.
+func TestSecretStringSchemelessUserinfo(t *testing.T) {
+	for s, want := range map[string]bool{
+		"root:pw@tcp(db:3306)/app":    true,
+		"user:pw@db.example:5432/app": true,
+		"--dsn=user:pw@host/db":       true,
+		":pw@redis:6379":              true,
+		"git@github.com:o/r.git":      false,
+		"node:20@sha256:abc":          false,
+		"mailto:me@example.org":       false,
+		"npx -y @scope/pkg@1.2.3":     false,
+		"Bash(git status:*)":          false,
+	} {
+		if got := secretString(s); got != want {
+			t.Errorf("secretString(%q) = %v, want %v", s, got, want)
+		}
+	}
+}
