@@ -211,7 +211,7 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 				Name:     a.Name,
 				Provider: string(a.Provider),
 				Model:    a.Model,
-				BaseURL:  a.BaseURL,
+				BaseURL:  maskURLSecrets(a.BaseURL),
 				Tags:     a.Tags,
 				Role:     a.Role,
 			})
@@ -250,7 +250,7 @@ func newServeMux(v *vault.Vault, vaultPath, apiKey string) *http.ServeMux {
 			Name:         a.Name,
 			Provider:     string(a.Provider),
 			Model:        a.Model,
-			BaseURL:      a.BaseURL,
+			BaseURL:      maskURLSecrets(a.BaseURL),
 			SystemPrompt: a.BuildEffectivePrompt(shared),
 			TaskDesc:     a.TaskDesc,
 			Tags:         a.Tags,

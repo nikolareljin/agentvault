@@ -663,11 +663,11 @@ func validateOllamaEndpoint(baseURL string, timeout time.Duration, operationName
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest(http.MethodGet, baseURL+"/api/tags", nil)
 	if err != nil {
-		return err
+		return maskURLError(err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s failed: %w", operationName, err)
+		return fmt.Errorf("%s failed: %w", operationName, maskURLError(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -696,13 +696,13 @@ func executeOllamaPrompt(ctx context.Context, a agent.Agent, prompt string, time
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/generate", bytes.NewReader(body))
 	if err != nil {
-		return promptResult{}, err
+		return promptResult{}, maskURLError(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return promptResult{}, fmt.Errorf("calling ollama: %w", err)
+		return promptResult{}, fmt.Errorf("calling ollama: %w", maskURLError(err))
 	}
 	defer resp.Body.Close()
 
@@ -750,7 +750,7 @@ func executeOpenAIPrompt(ctx context.Context, a agent.Agent, prompt string, time
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(body))
 	if err != nil {
-		return promptResult{}, err
+		return promptResult{}, maskURLError(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if key := strings.TrimSpace(a.APIKey); key != "" {
@@ -758,7 +758,7 @@ func executeOpenAIPrompt(ctx context.Context, a agent.Agent, prompt string, time
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return promptResult{}, fmt.Errorf("calling openai: %w", err)
+		return promptResult{}, fmt.Errorf("calling openai: %w", maskURLError(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -800,14 +800,14 @@ func validateOpenAIEndpoint(baseURL, apiKey string, timeout time.Duration) error
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest(http.MethodGet, endpointURL, nil)
 	if err != nil {
-		return err
+		return maskURLError(err)
 	}
 	if key := strings.TrimSpace(apiKey); key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("openai validation failed: %w", err)
+		return fmt.Errorf("openai validation failed: %w", maskURLError(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -824,7 +824,7 @@ func openAIEndpointURL(baseURL, endpoint string) (string, error) {
 	}
 	parsed, err := url.Parse(normalized)
 	if err != nil {
-		return "", fmt.Errorf("parsing openai base URL: %w", err)
+		return "", fmt.Errorf("parsing openai base URL: %w", maskURLError(err))
 	}
 	if parsed.Scheme == "" || parsed.Host == "" {
 		return "", fmt.Errorf("openai base URL must include scheme and host")

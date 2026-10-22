@@ -159,14 +159,14 @@ func callLLMServer(ctx context.Context, baseURL, systemPrompt, userMsg, model st
 	url := strings.TrimRight(strings.TrimSpace(baseURL), "/") + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return LLMRouterDecision{}, fmt.Errorf("llm-router: create request: %w", err)
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: create request: %w", maskURLError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return LLMRouterDecision{}, fmt.Errorf("llm-router: call server: %w", err)
+		return LLMRouterDecision{}, fmt.Errorf("llm-router: call server: %w", maskURLError(err))
 	}
 	defer resp.Body.Close()
 

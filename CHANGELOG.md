@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+- `run`, `list --json`, `capability list`, `capability add`/`discover`,
+  `serve` and the TUI mask base URL credentials
+  (https://github.com/nikolareljin/agentvault/issues/81): a password in the
+  userinfo and secret query parameters print as `***`
+  (`https://user:***@host/v1`). A token used as the user name (empty or
+  dummy password, or a token-shaped name) is masked whole. Request errors
+  from `prompt`, `capability discover`, the TUI, the router (`--llm-router-url`,
+  local-AI analysis) and `routing-model download` mask the URL they quote,
+  and `capability add`/`remove` mask it in their output and errors.
+  `list --show-keys` and `run --env` print the URL as stored.
+
 ## [0.15.1] - 2026-10-22
 
 ### Fixed

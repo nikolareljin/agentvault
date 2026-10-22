@@ -100,19 +100,19 @@ func runRoutingModelDownload(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "downloading %s\n  from: %s\n  to:   %s\n\n",
-		bitnetModelFilename, modelURL, destPath)
+		bitnetModelFilename, maskURLSecrets(modelURL), destPath)
 
 	dlReq, err := http.NewRequestWithContext(cmd.Context(), http.MethodGet, modelURL, nil)
 	if err != nil {
-		return fmt.Errorf("create download request: %w", err)
+		return fmt.Errorf("create download request: %w", maskURLError(err))
 	}
 	resp, err := modelDownloadClient.Do(dlReq)
 	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
+		return fmt.Errorf("download failed: %w", maskURLError(err))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download failed: HTTP %d from %s", resp.StatusCode, modelURL)
+		return fmt.Errorf("download failed: HTTP %d from %s", resp.StatusCode, maskURLSecrets(modelURL))
 	}
 
 	tmp := destPath + ".part"

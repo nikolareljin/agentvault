@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1685,7 +1686,7 @@ func (m model) renderAgentDetail() string {
 		field("API Key", "")
 	}
 
-	field("Base URL", runtimeCfg.BaseURL.Value+sourceSuffix(runtimeCfg.BaseURL.Source))
+	field("Base URL", MaskURL(runtimeCfg.BaseURL.Value)+sourceSuffix(runtimeCfg.BaseURL.Source))
 	field("Role", a.Role)
 
 	effectivePrompt := a.EffectiveSystemPrompt(m.shared)
@@ -2385,7 +2386,7 @@ func (m model) renderStatus() string {
 
 	ollamaStatus := dimStyle.Render("not configured")
 	if m.providerCfgs.Ollama != nil {
-		ollamaStatus = successStyle.Render(fmt.Sprintf("configured (base: %s)", m.providerCfgs.Ollama.BaseURL))
+		ollamaStatus = successStyle.Render(fmt.Sprintf("configured (base: %s)", MaskURL(m.providerCfgs.Ollama.BaseURL)))
 	}
 	b.WriteString(fmt.Sprintf("    Ollama: %s\n", ollamaStatus))
 
@@ -2672,13 +2673,13 @@ func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (
 	client := &http.Client{Timeout: timeout}
 	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/generate", bytes.NewReader(body))
 	if err != nil {
-		return "", gatewayUsage{}, err
+		return "", gatewayUsage{}, maskURLError(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", gatewayUsage{}, fmt.Errorf("calling ollama: %w", err)
+		return "", gatewayUsage{}, fmt.Errorf("calling ollama: %w", maskURLError(err))
 	}
 	defer resp.Body.Close()
 
@@ -3004,6 +3005,26 @@ func truncate(s string, max int) string {
 		return s[:max]
 	}
 	return s[:max-3] + "..."
+}
+
+// MaskURL masks the credentials in a URL before it is shown. The cmd
+// package sets it to its redaction helper; the default hides any value
+// with an "@", which covers userinfo.
+var MaskURL = func(raw string) string {
+	if strings.Contains(raw, "@") {
+		return "<secret>"
+	}
+	return raw
+}
+
+// maskURLError masks, through MaskURL, the URL that a *url.Error in err
+// quotes, and returns err.
+func maskURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = MaskURL(ue.URL)
+	}
+	return err
 }
 
 // Run starts the TUI application.
