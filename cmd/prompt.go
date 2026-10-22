@@ -21,6 +21,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/envutil"
 	routerpkg "github.com/nikolareljin/agentvault/internal/router"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/nikolareljin/agentvault/internal/workspace"
 	"github.com/spf13/cobra"
@@ -551,7 +552,7 @@ func readOptionalPromptInput(cmd *cobra.Command) (string, bool, error) {
 		return "", false, errors.New("use either --text or --file, not both")
 	}
 	if file != "" {
-		data, err := os.ReadFile(file)
+		data, err := safefile.Read(file)
 		if err != nil {
 			return "", false, fmt.Errorf("reading prompt file: %w", err)
 		}

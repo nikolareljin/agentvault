@@ -41,6 +41,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/envutil"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/nikolareljin/agentvault/internal/workspace"
@@ -440,7 +441,7 @@ func (m *model) refreshLocalInstructions() {
 			if err != nil || info.IsDir() {
 				continue
 			}
-			data, err := os.ReadFile(fullPath)
+			data, err := safefile.Read(fullPath)
 			if err != nil {
 				continue
 			}

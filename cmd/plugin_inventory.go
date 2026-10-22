@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/nikolareljin/agentvault/internal/safefile"
 )
 
 // PluginInventory lists the Claude Code plugins and marketplaces of the
@@ -136,7 +138,7 @@ func withoutURLCredentials(raw string) string {
 // that does not parse is an error, so a damaged inventory is not exported as
 // an empty one.
 func readJSONIfPresent(path string, v any) error {
-	data, err := os.ReadFile(path)
+	data, err := safefile.Read(path)
 	if os.IsNotExist(err) {
 		return nil
 	}

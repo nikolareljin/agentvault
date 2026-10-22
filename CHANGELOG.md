@@ -326,7 +326,10 @@
   `https://h/v1?api_key=x` was written as stored.
 - `import`, `setup import`, `setup show`, `agent import`, `session import`
   and `instructions import` read only a regular file of at most 256 MiB,
-  so `/dev/zero` or a huge file cannot exhaust memory.
+  so `/dev/zero` or a huge file cannot exhaust memory. `instructions pull`,
+  `detect`, `setup pull` and `export` read local files the same way: a
+  pipe or device in place of `CLAUDE.md`, `~/.claude/settings.json` or
+  `~/.codex/config.toml` is skipped instead of blocking the command.
 - `generate env`, `generate all` and `setup apply --generate` set an
   existing env file to mode 0600 when they write keys into it. Before, a
   file created earlier as 0644 kept that mode.
@@ -363,8 +366,10 @@
   scripts are redacted without `--include-secrets`. Scripts that
   `settings.json` runs and that cannot be carried are listed as declined.
   `*.env` files are refused like `.env`. A symlinked optional file (for
-  example `~/.gemini/GEMINI.md`, `~/.claude/settings.json` or
-  `CONVENTIONS.md`) is skipped with a warning instead of failing the export.
+  example `~/.gemini/GEMINI.md`, `~/.claude/settings.json`,
+  `CONVENTIONS.md` or a project `CLAUDE.md` linked to `AGENTS.md`), or one
+  that is a pipe or device, is skipped with a warning instead of failing
+  the export.
   Credential and startup directories match with trailing dots and spaces
   too (`~/.aws./config`), which Windows drops.
 - The plugin inventory drops the user and password from a marketplace URL,

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/nikolareljin/agentvault/internal/fsname"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 )
 
 // ProviderConfig holds provider-specific configuration that can be synced
@@ -81,7 +82,7 @@ func LoadClaudeConfig() (*ClaudeConfig, error) {
 
 	// Read settings.json
 	settingsPath := filepath.Join(claudeDir, "settings.json")
-	if data, err := os.ReadFile(settingsPath); err == nil {
+	if data, err := safefile.Read(settingsPath); err == nil {
 		var settings map[string]any
 		if json.Unmarshal(data, &settings) == nil {
 			ApplyClaudeSettings(config, settings)
@@ -90,7 +91,7 @@ func LoadClaudeConfig() (*ClaudeConfig, error) {
 
 	// Read keybindings.json
 	keybindingsPath := filepath.Join(claudeDir, "keybindings.json")
-	if data, err := os.ReadFile(keybindingsPath); err == nil {
+	if data, err := safefile.Read(keybindingsPath); err == nil {
 		json.Unmarshal(data, &config.Keybindings)
 	}
 
@@ -206,7 +207,7 @@ func LoadCodexConfig() (*CodexConfig, error) {
 
 	// Read config.toml (simple parsing for trusted projects)
 	configPath := filepath.Join(codexDir, "config.toml")
-	if data, err := os.ReadFile(configPath); err == nil {
+	if data, err := safefile.Read(configPath); err == nil {
 		lines := strings.Split(string(data), "\n")
 		currentProject := ""
 		for _, line := range lines {
@@ -241,7 +242,7 @@ func LoadCodexConfig() (*CodexConfig, error) {
 		for _, e := range entries {
 			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
 				rulePath := filepath.Join(rulesDir, e.Name())
-				if data, err := os.ReadFile(rulePath); err == nil {
+				if data, err := safefile.Read(rulePath); err == nil {
 					name := strings.TrimSuffix(e.Name(), ".md")
 					config.Rules[name] = string(data)
 				}
@@ -309,7 +310,7 @@ func SaveCodexConfig(config *CodexConfig) error {
 	// Build config.toml (write even when empty so overwrite/clear is possible).
 	existingConfig := ""
 	configPath := filepath.Join(codexDir, "config.toml")
-	if data, err := os.ReadFile(configPath); err == nil {
+	if data, err := safefile.Read(configPath); err == nil {
 		existingConfig = string(data)
 	} else if !os.IsNotExist(err) {
 		return err

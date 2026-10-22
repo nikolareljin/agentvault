@@ -16,6 +16,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/fsname"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 )
 
 const (
@@ -920,7 +921,7 @@ func readTemplateFile(path string) (string, bool, string) {
 
 func readMetadata(configDir string) (metadataFile, error) {
 	path := filepath.Join(configTemplatesDir(configDir), metadataFileName)
-	data, err := os.ReadFile(path)
+	data, err := safefile.Read(path)
 	if err != nil {
 		return metadataFile{}, err
 	}

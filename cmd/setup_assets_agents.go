@@ -419,15 +419,22 @@ func restoreLoginKeys(local, doc map[string]any) {
 	}
 }
 
-// symlinkedAsset reports a symlink where a single optional file is expected.
-// loadSetupAsset refuses symlinks with an error, which would end the whole
-// export over one dotfiles link; these are skipped with a warning instead.
+// symlinkedAsset reports a symlink, or anything else that is not a regular
+// file, where a single optional file is expected. loadSetupAsset refuses
+// them with an error, which would end the whole export over one dotfiles
+// link or a CLAUDE.md linked to AGENTS.md; they are skipped with a warning
+// instead.
 func symlinkedAsset(path string) (string, bool) {
 	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+	if err != nil || info.Mode().IsRegular() {
 		return "", false
 	}
-	return fmt.Sprintf("skipping symlink asset %q; copy its target by hand if you want it", path), true
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Sprintf("skipping symlink asset %q; copy its target by hand if you want it", path), true
+	}
+	// A pipe or device would block the export or never end; a directory is
+	// not a file to carry.
+	return fmt.Sprintf("skipping %q: not a regular file", path), true
 }
 
 // quietMissingRoots drops the "not found" note for optional directories. Most

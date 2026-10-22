@@ -15,6 +15,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
@@ -715,7 +716,7 @@ func writeMCPConfigFile(outputFile string, data []byte) error {
 // the file has stays, a generated one wins. The default output is Claude
 // Desktop's own config, which holds the app's other settings too.
 func mergeMCPServersIntoFile(path string, generated []byte) ([]byte, error) {
-	existing, err := os.ReadFile(path)
+	existing, err := safefile.Read(path)
 	if os.IsNotExist(err) {
 		return generated, nil
 	}

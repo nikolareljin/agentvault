@@ -234,7 +234,7 @@ Examples:
 		}
 
 		if filePath != "" {
-			data, err := os.ReadFile(filePath)
+			data, err := readImportFile(filePath)
 			if err != nil {
 				return fmt.Errorf("reading file: %w", err)
 			}
@@ -483,9 +483,9 @@ Examples:
 		}
 		sort.Strings(known)
 		for _, filename := range known {
-			data, err := os.ReadFile(filepath.Join(dir, filename))
-			if err != nil {
-				continue // file doesn't exist, skip
+			data := readLocalInstruction(filepath.Join(dir, filename), &refusedHere)
+			if data == nil {
+				continue
 			}
 			if err := store(knownFilenameToName[filename], filename, data); err != nil {
 				return err
@@ -496,8 +496,8 @@ Examples:
 			{filepath.Join(".github", "copilot-instructions.md"), "copilot"},
 			{".aider.conf.yml", "aider"},
 		} {
-			data, err := os.ReadFile(filepath.Join(dir, extra[0]))
-			if err != nil {
+			data := readLocalInstruction(filepath.Join(dir, extra[0]), &refusedHere)
+			if data == nil {
 				continue
 			}
 			if err := store(extra[1], extra[0], data); err != nil {
@@ -569,7 +569,7 @@ Examples:
 
 func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 	p := filepath.Join(dir, filename)
-	data, err := os.ReadFile(p)
+	data, err := readImportFile(p)
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", p, err)
 	}
@@ -1252,7 +1252,21 @@ func readInstructionOnDisk(dir string, inst agent.InstructionFile) ([]byte, erro
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", errUnsafeInstructionFilename, err)
 	}
-	return os.ReadFile(p)
+	return readImportFile(p)
+}
+
+// readLocalInstruction reads an instruction file pull looks for. A missing
+// one is nil. One that is not a regular file of at most
+// maxImportFileBytes (a pipe, /dev/zero behind a symlink) is reported,
+// counted in refused and nil, so it neither blocks pull nor stops it.
+func readLocalInstruction(path string, refused *int) []byte {
+	data, err := readImportFile(path)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		return data
+	}
+	fmt.Fprintf(os.Stderr, "  refused %s\n", printable(err.Error()))
+	*refused++
+	return nil
 }
 
 // ensureNoSymlinkBelow rejects symlinks in the components of p below root.

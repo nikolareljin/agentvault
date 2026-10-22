@@ -454,6 +454,10 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 	missingInstructionFiles := 0
 	for _, filename := range sortedInstructionFilenames() {
 		absPath := filepath.Join(projectDir, filepath.FromSlash(filename))
+		if warn, skip := symlinkedAsset(absPath); skip {
+			instructionWarnings = append(instructionWarnings, warn)
+			continue
+		}
 		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
 			return nil, nil, warnings, projectDeclined, err
@@ -497,6 +501,10 @@ func collectProjectAssets(projectDir string, includeSecrets bool, includeLocal [
 			continue
 		}
 		absPath := filepath.Join(projectDir, filename)
+		if warn, skip := symlinkedAsset(absPath); skip {
+			workflowWarnings = append(workflowWarnings, warn)
+			continue
+		}
 		asset, warn, err := loadSetupAsset(absPath, setupAssetKindProjectFile, setupAssetOriginProjectLocal, setupAssetRootProject, filepath.ToSlash(filename), filepath.ToSlash(filename), false, includeSecrets, true)
 		if err != nil {
 			return nil, nil, warnings, projectDeclined, err

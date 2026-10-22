@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/safefile"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -255,7 +256,7 @@ func detectClaude() DetectedAgent {
 
 		// Read settings.json
 		settingsPath := filepath.Join(configDir, "settings.json")
-		if data, err := os.ReadFile(settingsPath); err == nil {
+		if data, err := safefile.Read(settingsPath); err == nil {
 			var settings map[string]any
 			if json.Unmarshal(data, &settings) == nil {
 				if plugins, ok := settings["enabledPlugins"].(map[string]any); ok {
@@ -409,7 +410,7 @@ func detectCodex() DetectedAgent {
 
 		// Read config.toml (simple parsing)
 		configPath := filepath.Join(configDir, "config.toml")
-		if data, err := os.ReadFile(configPath); err == nil {
+		if data, err := safefile.Read(configPath); err == nil {
 			// Parse trusted projects; only include sections explicitly marked as trusted.
 			lines := strings.Split(string(data), "\n")
 			trustedProjects := []string{}
