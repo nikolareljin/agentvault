@@ -393,7 +393,8 @@ func findNewestJSONL(root string) (string, error) {
 		if walkErr != nil {
 			return nil
 		}
-		if d.IsDir() || !strings.HasSuffix(d.Name(), ".jsonl") {
+		// Only a regular file: a pipe named x.jsonl would block the read.
+		if !d.Type().IsRegular() || !strings.HasSuffix(d.Name(), ".jsonl") {
 			return nil
 		}
 		fi, err := d.Info()

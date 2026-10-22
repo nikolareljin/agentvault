@@ -1047,8 +1047,9 @@ func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite b
 		if d.IsDir() {
 			return nil
 		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("staged project asset %q must not be a symlink", path)
+		if !d.Type().IsRegular() {
+			// A symlink or a pipe: the stage holds only files it wrote.
+			return fmt.Errorf("staged project asset %q is not a regular file", path)
 		}
 		rel, err := safeSubpath(projectRoot, path)
 		if err != nil {
