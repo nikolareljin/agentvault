@@ -87,12 +87,12 @@ var homeStartupPaths = []string{
 	".pam_environment", ".gitconfig", ".config/git",
 }
 
-// homeAssetRefusal returns why a home-relative path may not be carried or
-// written, or "". Only .claude.json may sit at the home root: every other
-// dotfile there is shell or login state.
 // shortName is an 8.3 alias such as GIT~1 or PROGRA~2.TXT.
 var shortName = regexp.MustCompile(`~[0-9]+(\.[^.]*)?$`)
 
+// homeAssetRefusal returns why a home-relative path may not be carried or
+// written, or "". Only .claude.json may sit at the home root: every other
+// dotfile there is shell or login state.
 func homeAssetRefusal(rel string) string {
 	slashed := filepath.ToSlash(filepath.Clean(rel))
 	for _, seg := range strings.Split(slashed, "/") {
