@@ -287,7 +287,8 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		if decision != nil {
 			printRoutingDecision(cmd.ErrOrStderr(), a, target, decision)
 		}
-		fmt.Println(effectivePrompt)
+		// Rules and roles in the prompt can come from a bundle.
+		fmt.Println(printableText(effectivePrompt))
 		return nil
 	}
 

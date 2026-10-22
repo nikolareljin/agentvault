@@ -177,3 +177,26 @@ func TestInstructionsExportImportByteExact(t *testing.T) {
 	}
 	t.Error("instruction not imported")
 }
+
+// prompt --dry-run prints the effective prompt, which holds the vault's
+// rules: a rule from a bundle must not reach the terminal as an escape.
+func TestPromptDryRunIsClean(t *testing.T) {
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	dir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, dir, []agent.Agent{testAgent()}, []agent.UnifiedRule{{Name: "r", Description: "d",
+		Content: "x\x1b]0;PWN\a\x1b[31mred\u009b", Category: "general", Enabled: true}})
+	useConfigDir(t, dir)
+	withFlags(t, promptCmd, map[string]string{"dry-run": "true", "text": "hi", "workspace": root})
+	out, err := captureStdoutForTest(t, func() error { return promptCmd.RunE(promptCmd, []string{"test-claude"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "hi") {
+		t.Fatalf("no prompt printed: %q", out)
+	}
+	if strings.ContainsAny(out, "\x1b\a\u009b") {
+		t.Errorf("dry run printed control characters: %q", out)
+	}
+}

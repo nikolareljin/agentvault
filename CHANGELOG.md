@@ -434,7 +434,8 @@
   `session`, `instructions` (list, show, preview, export, diff, scan),
   `sync preview`,
   `templates` (list, show), `config show`, `run`, `generate`, `status`,
-  `detect`, `setup apply`, `setup export`, prompt mode and the TUI.
+  `detect`, `setup apply`, `setup export`, `prompt --dry-run`, prompt
+  mode and the TUI.
   JSON output escapes C1 control characters as `\u0080`-`\u009f`.
   Instruction, rule and prompt text keeps its newlines, tabs and CRLF,
   also when piped. New `--raw` on `instructions show`,
