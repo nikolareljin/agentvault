@@ -246,15 +246,35 @@
   a crafted bundle could make `push` write outside the project. The write
   also refuses symlinked path components below the target directory, and
   `instructions diff` reports such an entry as refused instead of reading
-  the file it names. A filename that git or an agent reads as
-  configuration or runs is refused the same way: anything under `.git`,
-  `.githooks` or `.husky`, `.github/workflows` and `.github/actions`,
-  `.claude/settings*.json`, `.mcp.json`, `.gemini/settings.json`,
-  `.codex/config.toml`, `.cursor/mcp.json`, `.vscode/mcp.json`,
-  `.vscode/settings.json`, `.vscode/tasks.json` and `.envrc`. Before, a
-  bundle instruction named `.git/config` was pushed there, and its
+  the file it names. Instruction filenames are an allow list: the
+  well-known instruction files, prose (`.md`, `.mdc`, `.markdown`, `.txt`,
+  `.rst`) in plain directories or under `.github`, `.github/instructions`,
+  `.github/prompts`, `.cursor/rules`, `.windsurf/rules` or `.clinerules`,
+  and files instructions refer to in plain directories. Any other dot
+  directory or dot file at any depth (`.git`, `.vscode`, `.claude`,
+  `.devcontainer`, `pkg/.envrc`), files tools load on their own
+  (`mise.toml`, `CMakeLists.txt`, `Directory.Build.props`), 8.3 short names
+  and `:` streams are refused; names are checked as Windows reads them
+  (case, `\`, trailing dots and spaces; a segment of only dots and
+  spaces such as `.. ` is refused). A refused vault entry fails `push` and
+  `apply` with the allowed forms named, before any file is written.
+  Before, a bundle instruction named `.git/config` was pushed there, and its
   `core.fsmonitor` ran on the next `git status`. Import skips such an
   instruction and names it; before, import stored any filename.
+- Import leaves out what a bundle adds or changes that runs code later,
+  names it, and takes it only with `--keep-bundle-commands`: the router's
+  `langgraph_command` (run by `route` and `prompt --router langgraph`),
+  shared and per-agent MCP servers in the vault (written to agent configs
+  by `generate`; `--mcp-servers` picks count), `.aider.conf.yml` (its
+  `lint-cmd` runs) and the scripts and other non-prose files instructions
+  refer to, and Claude agents, commands and skills or Gemini commands whose
+  text adds hooks, `allowed-tools`, or shell lines (`` !`cmd` ``,
+  `!{cmd}`). Before, all of these were taken from the bundle. Values
+  already in a vault are not changed. `.clinerules/hooks/` is never
+  written from a bundle. The deprecated `setup import` has no flag and
+  leaves them out.
+- The model reaches `codex`, `claude` and `gemini` as `--model=<name>`.
+  Before, a bundle model such as `--yolo` was parsed as a CLI flag.
 - Prompts reach `codex` and `claude` after `--`, and `gemini` as
   `--prompt=<text>`. Before, a prompt such as `--help` sent to
   `POST /api/v1/prompt` was parsed as a CLI option.
