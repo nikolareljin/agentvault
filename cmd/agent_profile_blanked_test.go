@@ -304,9 +304,9 @@ func TestListPrintsNoEscapes(t *testing.T) {
 // ones are left out unless --keep-bundle-commands.
 func TestAgentProfileImportLeavesOutMCPCommands(t *testing.T) {
 	local := testAgent()
-	local.MCPServers = []agent.MCPServer{{Name: "fs", Command: "npx"}}
+	local.MCPServers = []agent.MCPServer{{Name: "fs", Command: "npx", Env: map[string]string{"FS_TOKEN": "sec"}}}
 	in := local
-	in.MCPServers = []agent.MCPServer{{Name: "fs", Command: "evil"}, {Name: "new", Command: "evil2"}}
+	in.MCPServers = []agent.MCPServer{{Name: "fs", Command: "evil", Env: map[string]string{"FS_TOKEN": ""}}, {Name: "new", Command: "evil2"}}
 	data, err := marshalBlankedAgentProfile(in, nil, "json")
 	if err != nil {
 		t.Fatal(err)
@@ -326,14 +326,14 @@ func TestAgentProfileImportLeavesOutMCPCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := v.Get(local.Name)
-	if len(got.MCPServers) != 1 || got.MCPServers[0].Command != "npx" || !strings.Contains(stderr, "MCP server new") {
+	if len(got.MCPServers) != 1 || got.MCPServers[0].Command != "npx" || !strings.Contains(stderr, "MCP server new") || strings.Contains(stderr, "blank in the profile") {
 		t.Errorf("MCP servers = %+v, stderr %q", got.MCPServers, stderr)
 	}
 	withFlags(t, agentImportCmd, map[string]string{"merge": "true", "keep-bundle-commands": "true"})
 	captureStderrForTest(t, func() error { return agentImportCmd.RunE(agentImportCmd, []string{path}) })
 	v, _ = openVault()
 	got, _ = v.Get(local.Name)
-	if len(got.MCPServers) != 2 || got.MCPServers[0].Command != "evil" {
+	if len(got.MCPServers) != 2 || got.MCPServers[0].Command != "evil" || got.MCPServers[0].Env["FS_TOKEN"] == "sec" {
 		t.Errorf("--keep-bundle-commands did not take the servers: %+v", got.MCPServers)
 	}
 }

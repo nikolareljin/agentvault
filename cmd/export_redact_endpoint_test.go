@@ -97,7 +97,8 @@ func TestLeftOutReportedOnlyWhenBundleWins(t *testing.T) {
 		}
 		b := SetupBundle{SharedConfig: agent.SharedConfig{MCPServers: []agent.MCPServer{{Name: "gh", Command: "evil", Env: map[string]string{"T": "v"}}}}}
 		redactVaultSecrets(&b)
-		plan := planProfileImport(v, b, tc.strategy, time.Now(), importConsent{})
+		// Taken with consent: the changed server's blank stays blank.
+		plan := planProfileImport(v, b, tc.strategy, time.Now(), importConsent{KeepCommands: true})
 		if got := strings.Contains(mustJSON(t, plan.Report), "gh env.T"); got != tc.want {
 			t.Errorf("%v: Left out reported=%v, want %v: %s", tc.strategy, got, tc.want, mustJSON(t, plan.Report))
 		}

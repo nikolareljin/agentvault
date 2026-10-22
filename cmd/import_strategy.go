@@ -209,20 +209,29 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 
 	var mcpLeft []mcpBlankLeft
 	incomingShared.MCPServers, mcpLeft = restoreMCPServerSecrets(incomingShared.MCPServers, shared.MCPServers)
-	localMCP := make(map[string]bool, len(shared.MCPServers))
+	incomingShared.MCPServers = gateBundleCommands(incomingShared.MCPServers, shared.MCPServers,
+		mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true }, consent.takesMCP,
+		strategy, "shared MCP server", rep)
+	localMCP := make(map[string]agent.MCPServer, len(shared.MCPServers))
 	for _, s := range shared.MCPServers {
-		localMCP[s.Name] = true
+		localMCP[s.Name] = s
+	}
+	finalMCP := make(map[string]agent.MCPServer, len(incomingShared.MCPServers))
+	for _, s := range incomingShared.MCPServers {
+		finalMCP[s.Name] = s
 	}
 	for _, l := range mcpLeft {
+		have, isLocal := localMCP[l.Server]
 		// Under merge a changed local server stays as it is: nothing left out.
-		if localMCP[l.Server] && !strategy.incomingWins() {
+		if isLocal && !strategy.incomingWins() {
+			continue
+		}
+		// A server left out, or kept as this machine's, is reported once above.
+		if f, ok := finalMCP[l.Server]; !ok || (isLocal && reflect.DeepEqual(f, have)) {
 			continue
 		}
 		rep.record("Left out", "shared MCP server %s %s: blank in the bundle, and the server is new or differs from this machine's", l.Server, l.Field)
 	}
-	incomingShared.MCPServers = gateBundleCommands(incomingShared.MCPServers, shared.MCPServers,
-		mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true }, consent.takesMCP,
-		strategy, "shared MCP server", rep)
 	shared.MCPServers = mergeKeyed(shared.MCPServers, incomingShared.MCPServers,
 		func(s agent.MCPServer) string { return s.Name }, strategy, "MCP server", rep)
 	// Stamp override-derived instructions with the bundle's own creation time, not
@@ -306,6 +315,13 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 			a.MCPServers = gateBundleCommands(a.MCPServers, current.MCPServers,
 				mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true }, consent.takesMCP,
 				strategyReplace, "agent "+a.Name+" MCP server", rep)
+			kept := left[:0]
+			for _, f := range left {
+				if !mcpBlankOfKeptServer(f, a.MCPServers, current.MCPServers) {
+					kept = append(kept, f)
+				}
+			}
+			left = kept
 		}
 		if !exists {
 			for _, f := range left {

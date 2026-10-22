@@ -179,6 +179,14 @@ Examples:
 			for _, l := range rep.Lines {
 				fmt.Fprintf(os.Stderr, "%s\n", strings.Replace(strings.TrimSpace(l), "Left out", prefix, 1))
 			}
+			// A server kept as this machine's has its own secrets back.
+			kept := left[:0]
+			for _, f := range left {
+				if !mcpBlankOfKeptServer(f, a.MCPServers, existing.MCPServers) {
+					kept = append(kept, f)
+				}
+			}
+			left = kept
 		}
 		for _, f := range left {
 			fmt.Fprintf(os.Stderr, "%s: agent %s %s: blank in the profile, and not filled from this machine's agent\n", prefix, printable(a.Name), printable(f))
@@ -244,4 +252,22 @@ func init() {
 	agentImportCmd.Flags().Bool("merge", false, "update existing agent with same name")
 	agentImportCmd.Flags().Bool("dry-run", false, "validate and report without writing")
 	agentImportCmd.Flags().Bool("keep-bundle-commands", false, "keep MCP server commands that the profile adds or changes; left out by default")
+}
+
+// mcpBlankOfKeptServer is whether blank names a field of an MCP server that
+// was left out, or that is now exactly this machine's server: either way it
+// is reported once by the command gate, not as a blank.
+func mcpBlankOfKeptServer(blank string, final, local []agent.MCPServer) bool {
+	for _, f := range final {
+		if !strings.HasPrefix(blank, "MCP server "+f.Name+" ") {
+			continue
+		}
+		for _, l := range local {
+			if l.Name == f.Name && reflect.DeepEqual(l, f) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.HasPrefix(blank, "MCP server ")
 }

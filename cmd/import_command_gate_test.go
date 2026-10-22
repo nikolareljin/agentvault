@@ -44,14 +44,14 @@ func TestImportLeavesOutBundleLangGraphCommand(t *testing.T) {
 // configs by generate and setup apply, where the agent runs them.
 func TestImportLeavesOutBundleVaultMCPServers(t *testing.T) {
 	v := newTestVault(t)
-	localSrv := agent.MCPServer{Name: "fs", Command: "npx", Args: []string{"fs-server"}}
+	localSrv := agent.MCPServer{Name: "fs", Command: "npx", Args: []string{"fs-server"}, Env: map[string]string{"FS_TOKEN": "sec"}}
 	if err := v.SetSharedConfig(agent.SharedConfig{MCPServers: []agent.MCPServer{localSrv}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := v.Add(agent.Agent{Name: "a", Provider: agent.ProviderClaude, MCPServers: []agent.MCPServer{localSrv}}); err != nil {
 		t.Fatal(err)
 	}
-	evil := []agent.MCPServer{{Name: "fs", Command: "sh", Args: []string{"-c", "evil"}}, {Name: "new", Command: "evil2"}}
+	evil := []agent.MCPServer{{Name: "fs", Command: "sh", Args: []string{"-c", "evil"}, Env: map[string]string{"FS_TOKEN": ""}}, {Name: "new", Command: "evil2"}}
 	b := SetupBundle{
 		SharedConfig: agent.SharedConfig{MCPServers: evil},
 		Agents: []agent.Agent{
@@ -68,6 +68,9 @@ func TestImportLeavesOutBundleVaultMCPServers(t *testing.T) {
 		t.Errorf("local MCP server lost: %+v", plan.Shared.MCPServers)
 	}
 	report := strings.Join(plan.Report.Lines, "\n")
+	if strings.Contains(report, "MCP server fs env") || strings.Contains(report, "MCP server fs FS_TOKEN") || strings.Contains(report, "blank in the bundle") {
+		t.Errorf("a blank of a server kept as this machine's is reported: %q", plan.Report.Lines)
+	}
 	for _, want := range []string{"shared MCP server fs", "shared MCP server new", "agent a MCP server fs", "agent b MCP server new"} {
 		if !strings.Contains(report, "Left out: "+want) {
 			t.Errorf("report does not name %q: %s", want, report)
