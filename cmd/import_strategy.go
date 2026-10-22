@@ -72,7 +72,8 @@ func (r *importReport) record(action string, format string, args ...any) {
 	case "Removed":
 		r.Removed++
 	}
-	r.Lines = append(r.Lines, fmt.Sprintf("  %s: %s", action, fmt.Sprintf(format, args...)))
+	// Names and fields come from the bundle: no terminal escapes.
+	r.Lines = append(r.Lines, printable(fmt.Sprintf("  %s: %s", action, fmt.Sprintf(format, args...))))
 }
 
 // mergeKeyed reconciles two keyed collections under a strategy and returns the
@@ -582,7 +583,7 @@ func reportVaultBlanks(plan *profileImportPlan, blanks []VaultBlank, local agent
 		subject := b.subject()
 		named := false
 		for _, l := range rep.Lines {
-			if strings.HasPrefix(l, "  Left out: "+subject+":") {
+			if strings.HasPrefix(l, printable("  Left out: "+subject+":")) {
 				named = true
 				break
 			}

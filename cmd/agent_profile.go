@@ -158,7 +158,7 @@ Examples:
 			prefix = "Dry-run: would leave out"
 		}
 		for _, f := range left {
-			fmt.Fprintf(os.Stderr, "%s: agent %s %s: blank in the profile, and not filled from this machine's agent\n", prefix, a.Name, f)
+			fmt.Fprintf(os.Stderr, "%s: agent %s %s: blank in the profile, and not filled from this machine's agent\n", prefix, printable(a.Name), printable(f))
 		}
 
 		if dryRun {

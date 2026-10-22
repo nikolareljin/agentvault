@@ -131,3 +131,63 @@ func captureStderrForTest(t *testing.T, fn func() error) string {
 	}
 	return out
 }
+
+// Blanks come from the profile: only fields export can blank are read.
+func TestDecodeAgentProfileRefusesForeignBlanks(t *testing.T) {
+	for _, f := range []string{"api_key", "provider_meta.extra.\x1b]0;x\a", "provider_meta.extra.", "\x1b[2Jbase_url"} {
+		raw, _ := json.Marshal(map[string]any{"blanked_schema_version": "1.1",
+			"blanked_agent": map[string]string{"name": "a", "provider": "claude"}, "blanks": []string{f}})
+		if _, _, _, err := decodeAgentProfile(raw, "json"); err == nil {
+			t.Errorf("blank %q accepted", f)
+		}
+	}
+}
+
+// Agent names and fields from a profile or bundle reach the terminal
+// without control characters.
+func TestImportReportsPrintNoEscapes(t *testing.T) {
+	a := testAgent()
+	a.Name = "ev\x1b[2Jil"
+	a.ProviderMeta.Extra = map[string]string{"api_token": ""}
+	data, err := marshalBlankedAgentProfile(a, nil, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	dir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, dir, nil, nil)
+	useConfigDir(t, dir)
+	path := filepath.Join(root, "p.json")
+	mustWriteFile(t, path, string(data))
+	stderr := captureStderrForTest(t, func() error {
+		return agentImportCmd.RunE(agentImportCmd, []string{path})
+	})
+	if !strings.Contains(stderr, "agent ev?[2Jil provider_meta.extra.api_token") {
+		t.Errorf("no sanitized Left out line: %q", stderr)
+	}
+	if strings.ContainsAny(stderr, "\x1b\a") {
+		t.Errorf("agent import printed control characters: %q", stderr)
+	}
+
+	var rep importReport
+	plan := profileImportPlan{}
+	reportVaultBlanks(&plan, []VaultBlank{{Section: blankRouter, Field: "x\x1b[2J"}}, agent.ProviderConfig{}, true, &rep)
+	rep.record("Left out", "agent %s %s", "n\x1b]0;t\a", "f\x9b2J")
+	for _, l := range rep.Lines {
+		if strings.ContainsAny(l, "\x1b\a\u009b") {
+			t.Errorf("report line has control characters: %q", l)
+		}
+	}
+}
+
+// setup show prints another machine's names: no control characters.
+func TestSetupShowPrintsNoEscapes(t *testing.T) {
+	b := SetupBundle{SourceMachine: "m\x1b]0;x\a", Agents: []agent.Agent{{Name: "a\x1b[2J", Provider: "claude\x9b"}},
+		SharedConfig: agent.SharedConfig{MCPServers: []agent.MCPServer{{Name: "s\x1b[1m", Command: "c\x07"}}}}
+	out, _ := captureStdoutForTest(t, func() error { printSetupBundle(b); return nil })
+	if strings.ContainsAny(out, "\x1b\a\u009b") {
+		t.Errorf("setup show printed control characters: %q", out)
+	}
+}

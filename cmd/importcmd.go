@@ -567,7 +567,7 @@ func previewProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsse
 		fmt.Fprintf(out, "  would: %s\n", printable(line))
 	}
 	for _, line := range dry.MCPReport {
-		fmt.Fprintf(out, "  MCP servers: %s\n", line)
+		fmt.Fprintf(out, "  MCP servers: %s\n", printable(line))
 	}
 }
 
@@ -723,7 +723,7 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 	}
 	for _, line := range ctx.MCPReport {
-		fmt.Fprintf(cmd.OutOrStdout(), "  MCP servers: %s\n", line)
+		fmt.Fprintf(cmd.OutOrStdout(), "  MCP servers: %s\n", printable(line))
 	}
 	ctx.MCPReport = nil
 	return nil

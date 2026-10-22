@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -492,34 +493,45 @@ func runSetupShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// printfClean is fmt.Printf with every string argument made printable: the
+// bundle's names and commands come from another machine.
+func printfClean(format string, args ...any) {
+	for i, a := range args {
+		if v := reflect.ValueOf(a); v.IsValid() && v.Kind() == reflect.String {
+			args[i] = printable(v.String())
+		}
+	}
+	fmt.Printf(format, args...)
+}
+
 func printSetupBundle(bundle SetupBundle) {
 	fmt.Println("Setup Bundle Contents")
 	fmt.Println(strings.Repeat("─", 50))
-	fmt.Printf("Version:     %s\n", bundle.Version)
-	fmt.Printf("Created:     %s\n", bundle.CreatedAt.Format("2006-01-02 15:04:05"))
-	fmt.Printf("Source:      %s (%s)\n", bundle.SourceMachine, bundle.SourceOS)
+	printfClean("Version:     %s\n", bundle.Version)
+	printfClean("Created:     %s\n", bundle.CreatedAt.Format("2006-01-02 15:04:05"))
+	printfClean("Source:      %s (%s)\n", bundle.SourceMachine, bundle.SourceOS)
 
-	fmt.Printf("\nAgents (%d):\n", len(bundle.Agents))
+	printfClean("\nAgents (%d):\n", len(bundle.Agents))
 	for _, a := range bundle.Agents {
 		hasKey := "no key"
 		if a.APIKey != "" {
 			hasKey = "has key"
 		}
-		fmt.Printf("  • %s (%s, %s) [%s]\n", a.Name, a.Provider, a.Model, hasKey)
+		printfClean("  • %s (%s, %s) [%s]\n", a.Name, a.Provider, a.Model, hasKey)
 	}
 
-	fmt.Printf("\nInstructions (%d):\n", len(bundle.SharedConfig.Instructions))
+	printfClean("\nInstructions (%d):\n", len(bundle.SharedConfig.Instructions))
 	for _, inst := range bundle.SharedConfig.Instructions {
-		fmt.Printf("  • %s -> %s (%d bytes)\n", inst.Name, inst.Filename, len(inst.Content))
+		printfClean("  • %s -> %s (%d bytes)\n", inst.Name, inst.Filename, len(inst.Content))
 	}
 	if len(bundle.Templates.Assets) > 0 {
-		fmt.Printf("\nWorkflow Templates (%d):\n", len(bundle.Templates.Assets))
+		printfClean("\nWorkflow Templates (%d):\n", len(bundle.Templates.Assets))
 		for _, tpl := range bundle.Templates.Assets {
-			fmt.Printf("  • %s (%s, version=%s)\n", tpl.Filename, tpl.Key, tpl.Version)
+			printfClean("  • %s (%s, version=%s)\n", tpl.Filename, tpl.Key, tpl.Version)
 		}
 	}
 	if len(bundle.ProviderFiles) > 0 || len(bundle.ProjectFiles) > 0 || len(bundle.InstructionOverrides) > 0 || len(bundle.SkillAssets) > 0 {
-		fmt.Printf("\nPortable Assets:\n")
+		printfClean("\nPortable Assets:\n")
 		printSetupAssetSummary("Provider Files", bundle.ProviderFiles)
 		printSetupAssetSummary("Project Files", bundle.ProjectFiles)
 		printSetupAssetSummary("Instruction Overrides", bundle.InstructionOverrides)
@@ -531,29 +543,29 @@ func printSetupBundle(bundle SetupBundle) {
 		if len(prompt) > 60 {
 			prompt = prompt[:57] + "..."
 		}
-		fmt.Printf("\nShared Prompt: %s\n", prompt)
+		printfClean("\nShared Prompt: %s\n", prompt)
 	}
 
-	fmt.Printf("\nMCP Servers (%d):\n", len(bundle.SharedConfig.MCPServers))
+	printfClean("\nMCP Servers (%d):\n", len(bundle.SharedConfig.MCPServers))
 	for _, s := range bundle.SharedConfig.MCPServers {
-		fmt.Printf("  • %s: %s\n", s.Name, s.Command)
+		printfClean("  • %s: %s\n", s.Name, s.Command)
 	}
 
 	if len(bundle.DetectedAgents) > 0 {
-		fmt.Printf("\nDetected Agents on Source Machine:\n")
+		printfClean("\nDetected Agents on Source Machine:\n")
 		for _, a := range bundle.DetectedAgents {
 			if a.Status != "not_found" {
-				fmt.Printf("  • %s v%s (%s)\n", a.Name, a.Version, a.Status)
+				printfClean("  • %s v%s (%s)\n", a.Name, a.Version, a.Status)
 			}
 		}
 	}
-	fmt.Printf("\nSessions (%d):\n", len(bundle.Sessions.Sessions))
+	printfClean("\nSessions (%d):\n", len(bundle.Sessions.Sessions))
 	for _, s := range bundle.Sessions.Sessions {
-		fmt.Printf("  • %s (%d agents, %s)\n", s.Name, len(s.Agents), s.ProjectDir)
+		printfClean("  • %s (%d agents, %s)\n", s.Name, len(s.Agents), s.ProjectDir)
 	}
 	if bundle.StatusSnapshot != nil {
-		fmt.Printf("\nStatus Snapshot: %s\n", bundle.StatusSnapshot.GeneratedAt.Format("2006-01-02 15:04:05"))
-		fmt.Printf("  Providers: %d\n", len(bundle.StatusSnapshot.Providers))
+		printfClean("\nStatus Snapshot: %s\n", bundle.StatusSnapshot.GeneratedAt.Format("2006-01-02 15:04:05"))
+		printfClean("  Providers: %d\n", len(bundle.StatusSnapshot.Providers))
 	}
 }
 
