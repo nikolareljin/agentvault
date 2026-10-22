@@ -169,9 +169,12 @@ func runCapabilityRemove(cmd *cobra.Command, _ []string) error {
 	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
 	model = strings.TrimSpace(model)
 	if err := v.RemoveCapability(endpoint, model); err != nil {
+		if errors.Is(err, vault.ErrCapabilityNotFound) {
+			return fmt.Errorf("no capability entry found for %s/%s: %w", maskURLSecrets(endpoint), model, vault.ErrCapabilityNotFound)
+		}
 		return err
 	}
-	fmt.Printf("Removed: %s / %s\n", endpoint, model)
+	fmt.Printf("Removed: %s / %s\n", maskURLSecrets(endpoint), model)
 	return nil
 }
 

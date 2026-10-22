@@ -344,6 +344,10 @@ func (v *Vault) ListCapabilities() []agent.ModelCapabilityEntry {
 // that are already listed.
 var ErrCapabilityExists = errors.New("capability entry already exists")
 
+// ErrCapabilityNotFound is RemoveCapability's error for an endpoint and
+// model that are not listed.
+var ErrCapabilityNotFound = errors.New("no capability entry found")
+
 // AddCapability adds a new model capability entry. Returns an error if an entry
 // for the same endpoint+model combination already exists.
 func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
@@ -444,7 +448,8 @@ func (v *Vault) RemoveCapability(endpointURL, modelName string) error {
 			return v.Save()
 		}
 	}
-	return fmt.Errorf("no capability entry found for %s/%s", endpointURL, modelName)
+	// No URL in the text, as in AddCapability.
+	return fmt.Errorf("%w for model %s", ErrCapabilityNotFound, modelName)
 }
 
 // GetInstruction returns a stored instruction file by name. When multiple

@@ -115,6 +115,22 @@ func TestCommandsMaskBaseURLPassword(t *testing.T) {
 	if strings.Contains(err.Error(), canary) || !strings.Contains(err.Error(), masked) {
 		t.Errorf("capability add duplicate error: %v", err)
 	}
+
+	// capability remove: neither the not-found error nor the success line
+	// quotes the password.
+	withFlags(t, capabilityRemoveCmd, map[string]string{"endpoint": raw, "model": "other"})
+	_, err = captureStdoutForTest(t, func() error { return capabilityRemoveCmd.RunE(capabilityRemoveCmd, nil) })
+	if err == nil || !errors.Is(err, vault.ErrCapabilityNotFound) || strings.Contains(err.Error(), canary) {
+		t.Errorf("capability remove of a missing entry: err = %v", err)
+	}
+	withFlags(t, capabilityRemoveCmd, map[string]string{"endpoint": raw, "model": "m"})
+	out, err = captureStdoutForTest(t, func() error { return capabilityRemoveCmd.RunE(capabilityRemoveCmd, nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, canary) || !strings.Contains(out, masked) {
+		t.Errorf("capability remove printed: %s", out)
+	}
 }
 
 func TestServeMasksBaseURLPassword(t *testing.T) {
