@@ -407,9 +407,14 @@ func schemelessPassword(s string) bool {
 		user := strings.ToLower(s[off+m[2] : off+m[3]])
 		pass := s[off+m[4] : off+m[5]]
 		host := strings.ToLower(s[off+m[6] : off+m[7]])
-		drivePath := len(user) == 1 && user[0] >= 'a' && user[0] <= 'z' &&
-			strings.HasPrefix(pass, `\`) && !strings.Contains(pass, ":")
-		if user != "mailto" && !drivePath && !strings.HasPrefix(host, "sha256:") && !strings.HasPrefix(host, "sha512:") {
+		// An exempt shape has no second ":" in its password part, so
+		// mailto:root:pw@db, C:\a:pw@db and root:p:w@sha256:x are still
+		// credentials.
+		plain := !strings.Contains(pass, ":")
+		drivePath := plain && len(user) == 1 && user[0] >= 'a' && user[0] <= 'z' && strings.HasPrefix(pass, `\`)
+		mailto := plain && user == "mailto"
+		digest := plain && (strings.HasPrefix(host, "sha256:") || strings.HasPrefix(host, "sha512:"))
+		if !mailto && !drivePath && !digest {
 			return true
 		}
 		off += m[5] + 1 // just past the "@"

@@ -138,6 +138,8 @@ func TestSecretStringSchemelessUserinfo(t *testing.T) {
 		`C:\Users\me\npm\node_modules\@scope\pkg\index.js`: false,
 		`C:\a\@x;root:pw@tcp(db:3306)/app`:                 true,
 		`C:\a\@x root:pw@db`:                               true,
+		"root:p:w@sha256:abc":                              true,
+		"mailto:root:pw@db":                                true,
 		"mailto:a@b.example,root:pw@db":                    true,
 		"node:20@sha256:abc;root:pw@db":                    true,
 		`C:\a:pw@db`:                                       true,
