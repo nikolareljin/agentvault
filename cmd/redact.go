@@ -391,19 +391,28 @@ func secretString(s string) bool {
 // schemelessUserinfo is user:password@host with no scheme in front: a
 // MySQL DSN root:pw@tcp(db:3306)/app or a Postgres user:pw@db:5432/app.
 // The password part has no "/" or "@", so git@host:o/r does not match.
-var schemelessUserinfo = regexp.MustCompile(`(?:^|[\s=,;'"(<])([^\s/:@=,;'"(<>]*):([^\s/@]+)@(\S*)`)
+var schemelessUserinfo = regexp.MustCompile(`(?:^|[\s=,;'"(<])([^\s/:@=,;'"(<>]*):([^\s/@]+)@([^\s,;'"<>]*)`)
 
 // schemelessPassword reports a schemeless user:password@host in s. An image
 // digest such as node:20@sha256:..., a mailto: address and a Windows path
-// such as C:\npm\node_modules\@scope\pkg are not one.
+// such as C:\npm\node_modules\@scope\pkg are not one. After such a match
+// the search resumes just past its "@", so a DSN written after it in the
+// same token, as in C:\a\@x;root:pw@db, is still found.
 func schemelessPassword(s string) bool {
-	for _, m := range schemelessUserinfo.FindAllStringSubmatch(s, -1) {
-		user, host := strings.ToLower(m[1]), strings.ToLower(m[3])
-		drivePath := len(user) == 1 && user[0] >= 'a' && user[0] <= 'z' && strings.HasPrefix(m[2], `\`)
-		if user == "mailto" || drivePath || strings.HasPrefix(host, "sha256:") || strings.HasPrefix(host, "sha512:") {
-			continue
+	for off := 0; off < len(s); {
+		m := schemelessUserinfo.FindStringSubmatchIndex(s[off:])
+		if m == nil {
+			return false
 		}
-		return true
+		user := strings.ToLower(s[off+m[2] : off+m[3]])
+		pass := s[off+m[4] : off+m[5]]
+		host := strings.ToLower(s[off+m[6] : off+m[7]])
+		drivePath := len(user) == 1 && user[0] >= 'a' && user[0] <= 'z' &&
+			strings.HasPrefix(pass, `\`) && !strings.Contains(pass, ":")
+		if user != "mailto" && !drivePath && !strings.HasPrefix(host, "sha256:") && !strings.HasPrefix(host, "sha512:") {
+			return true
+		}
+		off += m[5] + 1 // just past the "@"
 	}
 	return false
 }
