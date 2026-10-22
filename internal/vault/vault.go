@@ -340,6 +340,10 @@ func (v *Vault) ListCapabilities() []agent.ModelCapabilityEntry {
 	return out
 }
 
+// ErrCapabilityExists is AddCapability's error for an endpoint and model
+// that are already listed.
+var ErrCapabilityExists = errors.New("capability entry already exists")
+
 // AddCapability adds a new model capability entry. Returns an error if an entry
 // for the same endpoint+model combination already exists.
 func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
@@ -353,7 +357,9 @@ func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
 	}
 	for _, e := range v.modelCapabilities {
 		if e.EndpointURL == entry.EndpointURL && e.ModelName == entry.ModelName {
-			return fmt.Errorf("capability entry for %s/%s already exists; remove it first with 'agentvault capability remove'", entry.EndpointURL, entry.ModelName)
+			// No URL in the text: it may carry credentials. Callers that
+			// print it mask it first.
+			return fmt.Errorf("%w for model %s", ErrCapabilityExists, entry.ModelName)
 		}
 	}
 	if entry.UpdatedAt.IsZero() {

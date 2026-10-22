@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
+	"github.com/nikolareljin/agentvault/internal/router"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -101,6 +104,17 @@ func TestCommandsMaskBaseURLPassword(t *testing.T) {
 	if !strings.Contains(out, raw) {
 		t.Errorf("list --show-keys did not print the stored URL: %s", out)
 	}
+
+	// Adding the same endpoint and model again fails without quoting the
+	// password.
+	withFlags(t, capabilityAddCmd, map[string]string{"endpoint": raw, "model": "m"})
+	_, err = captureStdoutForTest(t, func() error { return capabilityAddCmd.RunE(capabilityAddCmd, nil) })
+	if err == nil || !errors.Is(err, vault.ErrCapabilityExists) {
+		t.Fatalf("capability add of a duplicate: err = %v, want ErrCapabilityExists", err)
+	}
+	if strings.Contains(err.Error(), canary) || !strings.Contains(err.Error(), masked) {
+		t.Errorf("capability add duplicate error: %v", err)
+	}
 }
 
 func TestServeMasksBaseURLPassword(t *testing.T) {
@@ -134,6 +148,27 @@ func TestEndpointErrorsMaskURLCredentials(t *testing.T) {
 		"openai validate": validateOpenAIEndpoint("http://127.0.0.1:1/v1?api_key="+canary, "", time.Second),
 		"ollama validate": validateOllamaEndpoint("http://127.0.0.1:1?token="+canary, time.Second, "check"),
 		"openai parse":    func() error { _, err := openAIEndpointURL("http://u:"+canary+"@h\x7f/v1", "models"); return err }(),
+		"local-ai call": func() error {
+			_, err := router.AnalyzeWithLocalAI("p", "http://127.0.0.1:1?token="+canary, "m", time.Second)
+			return err
+		}(),
+		"local-ai parse": func() error {
+			_, err := router.AnalyzeWithLocalAI("p", "http://u:"+canary+"@h\x7f", "m", time.Second)
+			return err
+		}(),
+		"model download": func() error {
+			srv := httptest.NewServer(http.NotFoundHandler())
+			defer srv.Close()
+			withFlags(t, routingModelDownloadCmd, map[string]string{"url": srv.URL + "/m?token=" + canary, "output": t.TempDir()})
+			var out bytes.Buffer
+			routingModelDownloadCmd.SetOut(&out)
+			defer routingModelDownloadCmd.SetOut(nil)
+			err := routingModelDownloadCmd.RunE(routingModelDownloadCmd, nil)
+			if strings.Contains(out.String(), canary) {
+				t.Errorf("model download printed the credential: %s", out.String())
+			}
+			return err
+		}(),
 	}
 	for name, err := range errs {
 		if err == nil {

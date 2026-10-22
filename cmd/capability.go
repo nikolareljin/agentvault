@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -147,6 +149,10 @@ func runCapabilityAdd(cmd *cobra.Command, _ []string) error {
 		UpdatedAt:    time.Now().UTC(),
 	}
 	if err := v.AddCapability(entry); err != nil {
+		if errors.Is(err, vault.ErrCapabilityExists) {
+			return fmt.Errorf("capability entry for %s/%s already exists; remove it first with 'agentvault capability remove': %w",
+				maskURLSecrets(entry.EndpointURL), entry.ModelName, vault.ErrCapabilityExists)
+		}
 		return err
 	}
 	fmt.Printf("Added: %s / %s\n", maskURLSecrets(entry.EndpointURL), entry.ModelName)

@@ -11,6 +11,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/nikolareljin/agentvault/internal/router"
+	"github.com/nikolareljin/agentvault/internal/tui"
 )
 
 // A settings file that can hold a token used to be redacted whole without
@@ -605,6 +608,13 @@ func maskURLSecrets(raw string) string {
 		out += "#" + frag
 	}
 	return out
+}
+
+// The TUI and the router print URLs and request errors too; they mask with
+// the same rules from any entry point.
+func init() {
+	tui.MaskURL = maskURLSecrets
+	router.MaskURL = maskURLSecrets
 }
 
 // maskURLError masks the credentials in the URL that a *url.Error in err

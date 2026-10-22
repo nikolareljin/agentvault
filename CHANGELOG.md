@@ -9,7 +9,9 @@
   userinfo and secret query parameters print as `***`
   (`https://user:***@host/v1`). A token used as the user name (empty or
   dummy password, or a token-shaped name) is masked whole. Request errors
-  from `prompt`, `capability discover` and the TUI mask the URL they quote.
+  from `prompt`, `capability discover`, the TUI, the router (`--llm-router-url`,
+  local-AI analysis) and `routing-model download` mask the URL they quote,
+  and `capability add` no longer quotes it in its duplicate-entry error.
   `list --show-keys` and `run --env` print the URL as stored.
 
 ## [0.15.1] - 2026-10-22

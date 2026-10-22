@@ -62,14 +62,14 @@ func AnalyzeWithLocalAI(prompt, ollamaBaseURL, model string, timeout time.Durati
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/generate", bytes.NewReader(body))
 	if err != nil {
-		return LocalAIAnalysis{}, fmt.Errorf("local-ai: create request: %w", err)
+		return LocalAIAnalysis{}, fmt.Errorf("local-ai: create request: %w", maskURLError(err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return LocalAIAnalysis{}, fmt.Errorf("local-ai: call ollama: %w", err)
+		return LocalAIAnalysis{}, fmt.Errorf("local-ai: call ollama: %w", maskURLError(err))
 	}
 	defer resp.Body.Close()
 

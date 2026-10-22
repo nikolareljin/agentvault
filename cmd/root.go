@@ -211,7 +211,6 @@ func applyEarlyPersistentFlags(args []string) error {
 }
 
 func launchTUI(target string) error {
-	tui.MaskURL = maskURLSecrets
 	v, err := openVault()
 	if err != nil {
 		if !isVaultNotFoundError(err) {
