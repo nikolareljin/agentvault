@@ -67,8 +67,9 @@ Examples:
 			}
 		}
 
-		marshal := marshalAgentProfile
+		marshal, version := marshalAgentProfile, agentProfileSchemaVersion
 		if blanked {
+			version = blankedAgentProfileSchemaVersion
 			marshal = func(a agent.Agent, format string) ([]byte, error) {
 				return marshalBlankedAgentProfile(a, blanks, format)
 			}
@@ -86,7 +87,7 @@ Examples:
 		if err := os.WriteFile(args[1], data, 0600); err != nil {
 			return fmt.Errorf("writing profile: %w", err)
 		}
-		fmt.Printf("Agent %q exported to %s (schema version %s).\n", name, args[1], agentProfileSchemaVersion)
+		fmt.Printf("Agent %q exported to %s (schema version %s).\n", name, args[1], version)
 		return nil
 	},
 }

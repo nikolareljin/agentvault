@@ -32,12 +32,20 @@ func TestAgentProfileBlankedLayout(t *testing.T) {
 
 	keys := func(name string) map[string]json.RawMessage {
 		path := filepath.Join(root, name+".json")
-		if err := agentExportCmd.RunE(agentExportCmd, []string{name, path}); err != nil {
+		stdout, err := captureStdoutForTest(t, func() error { return agentExportCmd.RunE(agentExportCmd, []string{name, path}) })
+		if err != nil {
 			t.Fatal(err)
 		}
 		var m map[string]json.RawMessage
 		if err := json.Unmarshal(mustRead(t, path), &m); err != nil {
 			t.Fatal(err)
+		}
+		want := "schema version 1.0"
+		if _, ok := m["blanked_agent"]; ok {
+			want = "schema version 1.1"
+		}
+		if !strings.Contains(stdout, want) {
+			t.Errorf("export of %s says %q, want %q", name, stdout, want)
 		}
 		return m
 	}
