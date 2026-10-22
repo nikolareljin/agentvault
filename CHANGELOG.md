@@ -341,10 +341,20 @@
   agent under the rules bundle import uses, the API key included, and
   names what it leaves out. Before, a profile with another base URL got
   this machine's key.
+- A profile with such blanks is written as `blanked_schema_version: 1.1`
+  with the agent under `blanked_agent` and the blanked base URL and extras
+  listed in `blanks`, so 0.14.0 refuses it ("agent name is required")
+  instead of writing the blanks over this machine's agent on `--merge`.
+  `agent import` names a listed blank it does not fill, also for a new
+  agent, and drops a blank extra. A profile with nothing blanked keeps
+  the 1.0 layout.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older
   than the file, replaced it, and a local `apiKeyHelper` could be lost.
+- A provider file that equals this machine's as JSON keeps this machine's
+  bytes. Before, importing a bundle on the machine that made it rewrote
+  `settings.json` and `~/.claude.json` with the bundle's indentation.
 
 ### Fixed
 - Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first

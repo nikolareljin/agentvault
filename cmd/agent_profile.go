@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -42,13 +43,19 @@ Examples:
 		}
 
 		includeKey, _ := cmd.Flags().GetBool("include-key")
+		blanked := false
+		var blanks []string
 		if !includeKey {
 			a.APIKey = ""
 			// The other secrets go too, blanked as a bundle blanks them, so
 			// import --merge can fill them back on this machine.
 			b := SetupBundle{Agents: []agent.Agent{a}}
 			redactVaultSecrets(&b)
+			blanked = !reflect.DeepEqual(a, b.Agents[0])
 			a = b.Agents[0]
+			for _, vb := range b.VaultBlanks {
+				blanks = append(blanks, vb.Field)
+			}
 		}
 
 		format, _ := cmd.Flags().GetString("format")
@@ -60,7 +67,13 @@ Examples:
 			}
 		}
 
-		data, err := marshalAgentProfile(a, format)
+		marshal := marshalAgentProfile
+		if blanked {
+			marshal = func(a agent.Agent, format string) ([]byte, error) {
+				return marshalBlankedAgentProfile(a, blanks, format)
+			}
+		}
+		data, err := marshal(a, format)
 		if err != nil {
 			return err
 		}
@@ -110,7 +123,7 @@ Examples:
 			}
 		}
 
-		a, schemaVersion, err := unmarshalAgentProfile(raw, format)
+		a, schemaVersion, blanks, err := decodeAgentProfile(raw, format)
 		if err != nil {
 			return err
 		}
@@ -132,6 +145,13 @@ Examples:
 			a, left = prepareAgentProfileMerge(existing, a, time.Now())
 		} else if !exists {
 			a, left = restoreAgentSecrets(a, agent.Agent{}, false)
+		}
+		if !exists || merge {
+			for _, f := range blanks {
+				if !containsString(left, f) && dropAgentBlank(&a, f) {
+					left = append(left, f)
+				}
+			}
 		}
 		prefix := "Left out"
 		if dryRun {

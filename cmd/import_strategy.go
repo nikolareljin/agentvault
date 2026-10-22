@@ -602,25 +602,7 @@ func planLeavesBlank(plan *profileImportPlan, b VaultBlank, local agent.Provider
 			if op.Kind == "remove" || op.Agent.Name != b.Name {
 				continue
 			}
-			if b.Field == "base_url" {
-				return op.Agent.BaseURL == ""
-			}
-			k := strings.TrimPrefix(b.Field, "provider_meta.extra.")
-			if op.Agent.ProviderMeta == nil {
-				return true
-			}
-			v, ok := op.Agent.ProviderMeta.Extra[k]
-			if ok && v == "" {
-				meta := *op.Agent.ProviderMeta
-				meta.Extra = make(map[string]string, len(op.Agent.ProviderMeta.Extra))
-				for ek, ev := range op.Agent.ProviderMeta.Extra {
-					if ek != k {
-						meta.Extra[ek] = ev
-					}
-				}
-				op.Agent.ProviderMeta = &meta
-			}
-			return v == ""
+			return dropAgentBlank(&op.Agent, b.Field)
 		}
 	case blankRouter:
 		if !routerApplied {
@@ -664,4 +646,28 @@ func planLeavesBlank(plan *profileImportPlan, b VaultBlank, local agent.Provider
 		return !ok || !jsonEqual(got[k], hv)
 	}
 	return false
+}
+
+// dropAgentBlank reports whether a's field, as a VaultBlank names it, is
+// still blank, and removes a blank extra so no tool reads "" as its value.
+func dropAgentBlank(a *agent.Agent, field string) bool {
+	if field == "base_url" {
+		return a.BaseURL == ""
+	}
+	k := strings.TrimPrefix(field, "provider_meta.extra.")
+	if a.ProviderMeta == nil {
+		return true
+	}
+	v, ok := a.ProviderMeta.Extra[k]
+	if ok && v == "" {
+		meta := *a.ProviderMeta
+		meta.Extra = make(map[string]string, len(a.ProviderMeta.Extra))
+		for ek, ev := range a.ProviderMeta.Extra {
+			if ek != k {
+				meta.Extra[ek] = ev
+			}
+		}
+		a.ProviderMeta = &meta
+	}
+	return v == ""
 }
