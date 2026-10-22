@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -192,5 +193,27 @@ func TestImportLeavesOutProseThatRunsCommands(t *testing.T) {
 	}
 	if readString(t, filepath.Join(target, ".claude", "commands", "c.md")) != "!`evil`" {
 		t.Error("--keep-bundle-commands did not take the command")
+	}
+}
+
+// A project file already in place with the bundle's bytes is left alone:
+// importing a machine's own bundle does not reset its mode.
+func TestApplyProjectLeavesIdenticalFileAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX modes")
+	}
+	cfg := t.TempDir()
+	target := t.TempDir()
+	mustWriteFile(t, filepath.Join(cfg, setupImportedAssetsDirName, "project", "AGENTS.md"), "rules")
+	dest := filepath.Join(target, "AGENTS.md")
+	mustWriteFile(t, dest, "rules")
+	if err := os.Chmod(dest, 0o664); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := applyStagedProjectAssetsCtx(cfg, target, true, fixedCtx("")); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(dest); err != nil || info.Mode().Perm() != 0o664 {
+		t.Errorf("mode = %v, %v; want 0664", info.Mode(), err)
 	}
 }

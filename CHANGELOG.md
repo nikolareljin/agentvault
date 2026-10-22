@@ -57,6 +57,8 @@
 - `import --apply-projects --project-root DIR` writes the bundle's project
   instructions into DIR. Git internals, CI, hook directories, repository
   settings, credential files and other non-prose files are not written.
+  A file already there with the same content is left as it is, mode
+  included.
 - JSON settings exported without `--include-secrets` travel with only their
   secret values blanked (keys with token, secret, password, key and the like,
   and everything under `env`, `headers` and `http_headers`). Import fills each

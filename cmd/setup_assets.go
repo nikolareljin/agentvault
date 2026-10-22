@@ -1083,6 +1083,11 @@ func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite b
 			continue
 		}
 		same, exists := sameFileContent(srcPath, destPath)
+		if exists && same {
+			// Already in place: rewriting it would only reset its mode.
+			applied++
+			continue
+		}
 		if !same && (ctx == nil || !ctx.KeepBundleCommands) {
 			if data, err := os.ReadFile(srcPath); err == nil && proseRunsCommands(rel, data) {
 				skipped = append(skipped, fmt.Sprintf("%s: runs commands (hooks, tools or shell lines) that the bundle adds or changes; left out (use --keep-bundle-commands to take it)", rel))
