@@ -544,8 +544,8 @@ Examples:
 			for _, r := range res.Missing {
 				fmt.Fprintf(os.Stderr, "  named but not present: %s\n", printable(r.Raw))
 			}
-			if strict && (len(res.Refused) > 0 || len(res.Missing) > 0 || refusedHere > 0) {
-				return fmt.Errorf("--strict: %d reference(s) refused, %d named but not present",
+			if strict && (len(res.Refused) > 0 || len(res.Missing) > 0) {
+				return fmt.Errorf("--strict: %d file(s) refused, %d named but not present",
 					len(res.Refused)+refusedHere, len(res.Missing))
 			}
 		}
