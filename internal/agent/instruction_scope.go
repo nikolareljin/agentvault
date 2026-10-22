@@ -108,6 +108,7 @@ const InstructionFilenameForms = "an instruction file (AGENTS.md, CLAUDE.md, GEM
 	"or .md, .mdc, .markdown, .txt, .rst) in the project, in a plain directory or under " +
 	".github/instructions, .github/prompts, .cursor/rules, .windsurf/rules, .clinerules, " +
 	".claude/agents, .claude/commands, .claude/skills or .gemini/commands (also .toml there); " +
+	"any file in a skill directory (.claude/skills/NAME/...); " +
 	"or a file an instruction refers to, in a plain directory"
 
 // instructionDirs are the dot directories an instruction may sit under, at
@@ -244,6 +245,11 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 		if n == 0 {
 			return false, "under a tool's settings directory; refused"
 		}
+		if n == 2 && dirs[i] == ".claude" && dirs[i+1] == "skills" && i+2 < len(dirs) {
+			// A skill is a directory: the scripts, references and assets it
+			// bundles are part of it. Anything not prose can run.
+			return skillFileRuns(base), ""
+		}
 		inToolDir = true
 		inGeminiCommands = dirs[i] == ".gemini"
 		i += n
@@ -278,6 +284,16 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 		return false, "a tool's settings file; refused"
 	}
 	return true, ""
+}
+
+// skillFileRuns is whether a file inside a skill directory can run code:
+// anything but prose. A SKILL.md with frontmatter is gated by its content.
+func skillFileRuns(base string) bool {
+	switch path.Ext(base) {
+	case ".md", ".mdc", ".markdown", ".txt", ".rst":
+		return false
+	}
+	return true
 }
 
 // matchInstructionDir is how many leading segments of dirs form a known

@@ -309,7 +309,9 @@ func TestValidateInstructionFilenameRefusesConfigTargets(t *testing.T) {
 func TestValidateInstructionFilenameAllowList(t *testing.T) {
 	refused := []string{
 		"sub/.vscode/settings.json", "pkg/.envrc", ".envrc", "a/b/.claude/settings.json",
-		".claude/agents/x.json", ".claude/skills/s/run.sh", ".claude/commands/x.toml", "sub/.claude/CLAUDE.md",
+		".claude/agents/x.json", ".claude/skills/run.sh", ".claude/commands/x.toml",
+		".claude/skills/s/.git/config", ".claude/skills/s/.githooks/pre-commit", ".claude/skills/s/.husky/x",
+		".claude/skills/s/GIT~1/config", ".claude/skills/s/scripts/x.py:evil", ".claude/skills/../../.envrc", "sub/.claude/CLAUDE.md",
 		".claude/hooks/x.md", ".gemini/commands/x.json", ".gemini/x.toml", ".claude/agents.md/x.md",
 		".devcontainer/devcontainer.json", ".devcontainer/x.md", ".vscode/x.md", ".idea/runConfigurations/x.xml",
 		".pre-commit-config.yaml", ".tool-versions", "mise.toml", ".mise.toml", "sub/.npmrc", ".yarnrc.yml",
@@ -348,6 +350,23 @@ func TestValidateInstructionFilenameAllowList(t *testing.T) {
 		}
 		if !InstructionFileRunsCommands(n) {
 			t.Errorf("reference file %q not flagged as running code", n)
+		}
+	}
+	// A skill is a directory: every file it bundles travels, and anything not
+	// prose is code.
+	for _, n := range []string{".claude/skills/s/scripts/x.py", ".claude/skills/s/run.sh", ".claude/skills/s/assets/logo.png",
+		".claude/skills/s/templates/t.json", `.Claude\Skills\s\scripts\x.py.`, "pkg/.claude/skills/s/bin/tool",
+		".claude/skills/s/.envrc", ".claude/skills/s/node/package.json"} {
+		if err := ValidateInstructionFilename(n); err != nil {
+			t.Errorf("skill file %q refused: %v", n, err)
+		}
+		if !InstructionFileRunsCommands(n) {
+			t.Errorf("skill file %q not flagged as running code", n)
+		}
+	}
+	for _, n := range []string{".claude/skills/s/SKILL.md", ".claude/skills/s/references/a.md", ".claude/skills/s/notes.txt"} {
+		if InstructionFileRunsCommands(n) {
+			t.Errorf("%q flagged as running code by name", n)
 		}
 	}
 	for _, n := range []string{"AGENTS.md", ".cursorrules", "docs/a.md", ".github/copilot-instructions.md"} {
