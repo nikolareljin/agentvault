@@ -249,6 +249,15 @@ Examples:
 		}
 
 		if filename == "" {
+			// A stored entry keeps its target: set notes/x.md --content must
+			// not move a referenced file to notes/x.md.md.
+			if existing, ok, err := findInstruction(v, name, scope, dirPattern); err != nil {
+				return err
+			} else if ok {
+				filename = existing.Filename
+			}
+		}
+		if filename == "" {
 			filename = agent.FilenameForInstruction(name)
 		}
 

@@ -142,3 +142,30 @@ func TestRemapInstructionProjectsDedupes(t *testing.T) {
 		}
 	}
 }
+
+// set with --content alone updates a stored entry in place: its filename
+// is kept, not derived from the name (notes/x.md.md).
+func TestSetKeepsStoredFilename(t *testing.T) {
+	scopeTestVault(t)
+	_, mono := sharedNameProjects(t)
+	t.Chdir(mono)
+	if err := instSetCmd.Flags().Set("content", "edited\n"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = instSetCmd.Flags().Set("content", "") })
+	if _, err := captureStdoutForTest(t, func() error { return instSetCmd.RunE(instSetCmd, []string{"notes/x.md"}) }); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := os.Remove(filepath.Join(mono, "notes", "x.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := captureStdoutForTest(t, func() error { return instPushCmd.RunE(instPushCmd, []string{mono}) }); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(mono, "notes", "x.md")); err != nil || string(got) != "edited\n" {
+		t.Errorf("notes/x.md after set and push = %q %v", got, err)
+	}
+	if exists(filepath.Join(mono, "notes", "x.md.md")) {
+		t.Error("set moved the file to notes/x.md.md")
+	}
+}

@@ -14,7 +14,8 @@
   other project's push skipped the file. `instructions list` shows each
   copy's project; `show`, `edit`, `remove` and `set` act on the current
   directory's copy. A vault with two copies read by an older agentvault
-  sees one of them.
+  sees one of them. `instructions set NAME --content ...` keeps a stored
+  entry's filename instead of deriving `NAME.md`.
 
 ### Security
 
