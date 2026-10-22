@@ -1324,6 +1324,10 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			}
 			continue
 		}
+		// Equal JSON in another layout: keep this machine's bytes.
+		if exists && sameFileBytes(current, content) {
+			content = current
+		}
 		// Only servers the user already settled differ: no second question.
 		serversOnly := mcpRep.changed() && (codexServersOnly || (!codexConfig && sameApartFromMCP(current, content)))
 		if exists && !sameFileBytes(current, content) {

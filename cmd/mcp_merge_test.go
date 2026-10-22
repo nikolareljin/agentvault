@@ -199,8 +199,8 @@ func TestImportMCPDefaultNonInteractive(t *testing.T) {
 	if _, _, err := applyProviderAssetsWith(home, []SetupAsset{mcpClaudeJSONAsset()}, ctx); err != nil {
 		t.Fatal(err)
 	}
-	got := readString(t, cj)
-	if strings.Contains(got, "n1") || strings.Contains(got, `"new"`) || !strings.Contains(got, "local1") || !strings.Contains(got, `"TOKEN": "tok"`) {
+	got := compactJSON(t, readString(t, cj))
+	if strings.Contains(got, "n1") || strings.Contains(got, `"new"`) || !strings.Contains(got, "local1") || !strings.Contains(got, `"TOKEN":"tok"`) {
 		t.Errorf("got %s", got)
 	}
 }
