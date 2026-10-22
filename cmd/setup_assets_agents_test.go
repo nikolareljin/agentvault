@@ -701,6 +701,7 @@ func TestWithoutURLCredentials(t *testing.T) {
 		{"https://tok@github.com/o/r", "https://github.com/o/r"},
 		{"ssh://u:pw@host/o/r", "ssh://host/o/r"},
 		{"tok%41@host:o/r", ""},
+		{"-oProxyCommand@host:o/r", ""},
 		{"git@github.com:o/r.git", "git@github.com:o/r.git"},
 		{"user:tok@host:path", ""},
 		{"https:tok@host", ""},

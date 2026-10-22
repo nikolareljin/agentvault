@@ -98,8 +98,8 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 // with a host, loses its query and fragment, and loses its user when
 // userinfoIsCredential says it is one, so ssh://git@host/o/r keeps its
 // login. An scp form user@host:path is ssh: it stays as it is when the user
-// is a plain login name, and is dropped otherwise. owner/repo and local
-// paths pass as they are.
+// is a plain login name not starting with "-", and is dropped otherwise.
+// owner/repo and local paths pass as they are.
 func withoutURLCredentials(raw string) string {
 	if raw == "" {
 		return ""
@@ -133,7 +133,7 @@ func withoutURLCredentials(raw string) string {
 		return raw
 	}
 	user, rest := raw[:at], raw[at+1:]
-	if !strings.Contains(rest, ":") || userinfoIsCredential("ssh", user, "@"+rest) {
+	if !strings.Contains(rest, ":") || strings.HasPrefix(user, "-") || userinfoIsCredential("ssh", user, "@"+rest) {
 		return ""
 	}
 	return raw
