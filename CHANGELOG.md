@@ -330,6 +330,8 @@
   `detect`, `setup pull` and `export` read local files the same way: a
   pipe or device in place of `CLAUDE.md`, `~/.claude/settings.json` or
   `~/.codex/config.toml` is skipped instead of blocking the command.
+  `status` skips a pipe named like a Codex session log, and
+  `--apply-projects` refuses a staged file that is not a regular file.
 - `generate env`, `generate all` and `setup apply --generate` set an
   existing env file to mode 0600 when they write keys into it. Before, a
   file created earlier as 0644 kept that mode.
@@ -372,10 +374,12 @@
   the export.
   Credential and startup directories match with trailing dots and spaces
   too (`~/.aws./config`), which Windows drops.
-- The plugin inventory drops the user and password from a marketplace URL,
-  so `https://token@host/repo` does not carry the token. Only http, https,
-  ssh and git URLs with a host are kept, without query or fragment;
-  `user@host:path` keeps `host:path`; any other source with an `@` is dropped.
+- The plugin inventory drops a credential user and password from a
+  marketplace URL, so `https://token@host/repo` does not carry the token;
+  a login such as `ssh://git@host/o/r` is kept, by the URL rule below.
+  Only http, https, ssh, git, git+ssh and ssh+git URLs with a host are
+  kept, without query or fragment; `git@host:o/r` is kept as it is; any
+  other source with an `@` is dropped.
 - Plugin install commands are printed only for IDs and sources that cannot
   carry shell syntax. Anything else is printed quoted, as a comment.
 - A credential file by name (`.env`, `*.pem`, ...) inside a tool or rule
@@ -412,10 +416,13 @@
   (`?client_secret=`, `?api-key=`, `?sig=`), and so does `X-Api-Key=x` in
   an argument. A URL carries a credential when it has a password, a
   secret-named query or fragment parameter (percent-encoded or not), or a
-  user name alone on any scheme but ssh, git, git+ssh and sftp; ports and
-  IPv6 hosts do not hide one. The user names `git`, `oauth2` and
+  user name alone on any scheme but ssh, git, git+ssh, ssh+git and sftp;
+  ports and IPv6 hosts do not hide one. The user names `git`, `oauth2` and
   `x-access-token`, and an Azure DevOps organization
-  (`https://org@dev.azure.com/org/...`), are kept as logins. Before,
+  (`https://org@dev.azure.com/org/...`), are kept as logins. A
+  `user:password@host` without a scheme, as in a DSN
+  `root:pw@tcp(db:3306)/app`, is a credential too; `git@host:o/r` is not.
+  Before,
   the flag left them in. They are blanked as in
   provider files and filled on import from this machine's vault when the
   definition is unchanged: for an MCP server the same command, args and `env`
