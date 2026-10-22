@@ -309,13 +309,14 @@ func TestValidateInstructionFilenameRefusesConfigTargets(t *testing.T) {
 func TestValidateInstructionFilenameAllowList(t *testing.T) {
 	refused := []string{
 		"sub/.vscode/settings.json", "pkg/.envrc", ".envrc", "a/b/.claude/settings.json",
-		".claude/agents/r.md", ".claude/commands/x.md", "sub/.claude/CLAUDE.md",
+		".claude/agents/x.json", ".claude/skills/s/run.sh", ".claude/commands/x.toml", "sub/.claude/CLAUDE.md",
+		".claude/hooks/x.md", ".gemini/commands/x.json", ".gemini/x.toml", ".claude/agents.md/x.md",
 		".devcontainer/devcontainer.json", ".devcontainer/x.md", ".vscode/x.md", ".idea/runConfigurations/x.xml",
 		".pre-commit-config.yaml", ".tool-versions", "mise.toml", ".mise.toml", "sub/.npmrc", ".yarnrc.yml",
-		".husky/x.md", ".githooks/x.md", "sub/.aider.conf.yml", ".gemini/commands/x.toml",
+		".husky/x.md", ".githooks/x.md", "sub/.aider.conf.yml",
 		"CMakeLists.txt", "sub/cmakelists.txt", "a/devcontainer.json", "Directory.Build.props",
 		"sub/.vscode./settings.json", ".vscode /tasks.json", `sub\.vscode\tasks.json`,
-		`.Claude\agents\r.md`, "AGENTS.md:evil", "a.md:x", "a.md::$DATA",
+		"AGENTS.md:evil", "a.md:x", "a.md::$DATA",
 		"CLAUDE~1/agents/x.md", "VSCODE~1/x.md", ".. /x.md", "a/.. /../x.md", "... /x.md", "a/ /x.md", ".envrc.", ".envrc ", "x.md/.envrc",
 		".GitHub/Workflows/ci.yml", ".github/workflows/ci.yml", ".github/x.md", ".github/workflows/x.md",
 		".github/ISSUE_TEMPLATE/bug.md", "sub/.github/agents/a.md",
@@ -329,7 +330,10 @@ func TestValidateInstructionFilenameAllowList(t *testing.T) {
 			t.Errorf("ValidateInstructionFilename(%q) = %v, want the allowed forms named", name, err)
 		}
 	}
-	allowed := []string{"AGENTS.md.", "AGENTS.md ", `docs\a.md`, ".GITHUB/Copilot-Instructions.md", "README.MD", "sub/.github/copilot-instructions.md"}
+	allowed := []string{"AGENTS.md.", "AGENTS.md ", `docs\a.md`, ".GITHUB/Copilot-Instructions.md", "README.MD", "sub/.github/copilot-instructions.md",
+		// The project files setup export carries and instructions pull follows.
+		".claude/agents/r.md", ".claude/commands/x.md", `.Claude\agents\r.md`, ".claude/skills/sk/SKILL.md",
+		".claude/skills/sk/ref/notes.md", ".gemini/commands/x.toml", ".gemini/commands/git/c.TOML", "pkg/.claude/commands/x.md"}
 	for _, name := range allowed {
 		if err := ValidateInstructionFilename(name); err != nil {
 			t.Errorf("ValidateInstructionFilename(%q) = %v, want nil", name, err)

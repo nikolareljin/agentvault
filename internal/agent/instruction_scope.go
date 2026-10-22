@@ -106,7 +106,8 @@ func ValidateInstructionScope(inst InstructionFile) error {
 const InstructionFilenameForms = "an instruction file (AGENTS.md, CLAUDE.md, GEMINI.md, codex.md, " +
 	".github/copilot-instructions.md, .cursorrules, .windsurfrules, .clinerules, .aider.conf.yml, " +
 	"or .md, .mdc, .markdown, .txt, .rst) in the project, in a plain directory or under " +
-	".github/instructions, .github/prompts, .cursor/rules, .windsurf/rules or .clinerules; " +
+	".github/instructions, .github/prompts, .cursor/rules, .windsurf/rules, .clinerules, " +
+	".claude/agents, .claude/commands, .claude/skills or .gemini/commands (also .toml there); " +
 	"or a file an instruction refers to, in a plain directory"
 
 // instructionDirs are the dot directories an instruction may sit under, at
@@ -117,6 +118,10 @@ var instructionDirs = [][]string{
 	{".cursor", "rules"},
 	{".windsurf", "rules"},
 	{".clinerules"},
+	{".claude", "agents"},
+	{".claude", "commands"},
+	{".claude", "skills"},
+	{".gemini", "commands"},
 }
 
 // instructionDotFiles are rule files without a prose extension that tools
@@ -224,7 +229,7 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 		return true, ""
 	}
 	dirs, base := segs[:len(segs)-1], segs[len(segs)-1]
-	inToolDir := false
+	inToolDir, inGeminiCommands := false, false
 	for i := 0; i < len(dirs); {
 		if !strings.HasPrefix(dirs[i], ".") {
 			i++
@@ -240,6 +245,7 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 			return false, "under a tool's settings directory; refused"
 		}
 		inToolDir = true
+		inGeminiCommands = dirs[i] == ".gemini"
 		i += n
 	}
 	if instructionDotFiles[base] {
@@ -251,6 +257,11 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 	switch path.Ext(base) {
 	case ".md", ".mdc", ".markdown", ".txt", ".rst":
 		return false, ""
+	case ".toml":
+		if inGeminiCommands {
+			// A Gemini command; import gates its "!{cmd}" lines.
+			return false, ""
+		}
 	}
 	if inToolDir {
 		// .github/workflows/ci.yml runs in CI; only prose is carried there.
