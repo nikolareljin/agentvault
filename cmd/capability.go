@@ -190,7 +190,7 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 		var healthErr error
 		entries, healthErr = discoverFromHealthEndpoint(ctx, client, baseURL)
 		if healthErr != nil {
-			return fmt.Errorf("discover: could not query %s — /v1/models: %v; /health: %v", maskURLSecrets(baseURL), modelsErr, healthErr)
+			return fmt.Errorf("discover: could not query %s: /v1/models: %v; /health: %v", maskURLSecrets(baseURL), modelsErr, healthErr)
 		}
 	}
 
