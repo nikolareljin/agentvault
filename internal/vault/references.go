@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 )
@@ -72,6 +73,14 @@ func (v *Vault) PullReferenceClosure(dir string) (ClosureResult, error) {
 				// this is a race or a permission problem, not prose naming a
 				// file that is not there.
 				return result, fmt.Errorf("reading referenced %s: %w", ref.Rel, err)
+			}
+			if !utf8.Valid(data) {
+				// The vault holds text: a PNG would come back with every
+				// invalid byte replaced, and push would write that back.
+				ref.Status = agent.ReferenceRefused
+				ref.Reason = "not UTF-8 text; a binary file cannot be stored"
+				result.Refused = append(result.Refused, ref)
+				continue
 			}
 			inst := agent.InstructionFile{
 				Name:      ref.Rel,

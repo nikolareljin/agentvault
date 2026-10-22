@@ -224,3 +224,31 @@ func TestClosureReportsSettingsFileAndContinues(t *testing.T) {
 		t.Fatalf("refused %+v, want .vscode/tasks.json", res.Refused)
 	}
 }
+
+// The vault holds text. A binary file a skill names is refused by pull, not
+// stored with its invalid bytes replaced and pushed back over the original.
+func TestClosureRefusesBinaryFiles(t *testing.T) {
+	src := t.TempDir()
+	write(t, src, "AGENTS.md", "Logo `logo.png`, notes `notes.md`.\n")
+	write(t, src, "logo.png", "\x89PNG\r\n\x1a\n\xff\xfe")
+	write(t, src, "notes.md", "notes\n")
+	v := New(tempVaultPath(t))
+	_ = v.Init("master")
+	if err := v.SetInstruction(agent.InstructionFile{Name: "agents", Filename: "AGENTS.md",
+		Content: mustRead(t, filepath.Join(src, "AGENTS.md"))}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := v.PullReferenceClosure(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Stored) != 1 || res.Stored[0].Filename != "notes.md" {
+		t.Errorf("stored %+v, want notes.md only", res.Stored)
+	}
+	if len(res.Refused) != 1 || res.Refused[0].Raw != "logo.png" {
+		t.Errorf("refused %+v, want logo.png", res.Refused)
+	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "b", Filename: "b.md", Content: "\xff"}); err == nil {
+		t.Error("SetInstruction stored content that is not UTF-8")
+	}
+}

@@ -266,3 +266,35 @@ func TestHardLinkCountFailsClosed(t *testing.T) {
 		t.Errorf("unreadable link count = %d, want >= 2", n)
 	}
 }
+
+// .github/copilot-instructions.md names its siblings from the project root.
+// Missing next to the file, the root is tried; found next to it, it wins.
+func TestResolveReferencesFallsBackToTheRoot(t *testing.T) {
+	dir := t.TempDir()
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
+	for _, d := range []string{".github/instructions", "skills/s/scripts", "scripts"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(t, filepath.Join(dir, ".github/instructions/go.instructions.md"), "x")
+	mustWrite(t, filepath.Join(dir, "skills/s/scripts/x.py"), "local")
+	mustWrite(t, filepath.Join(dir, "scripts/x.py"), "root")
+	got := map[string]Reference{}
+	for _, r := range ResolveReferences(dir, ".github", "`.github/instructions/go.instructions.md` `absent.md`") {
+		got[r.Raw] = r
+	}
+	if r := got[".github/instructions/go.instructions.md"]; r.Status != ReferenceTaken || r.Rel != ".github/instructions/go.instructions.md" {
+		t.Errorf("root-relative reference: %+v", r)
+	}
+	if r := got["absent.md"]; r.Status != ReferenceNotFound {
+		t.Errorf("absent file: %+v", r)
+	}
+	for _, r := range ResolveReferences(dir, "skills/s", "`scripts/x.py`") {
+		if r.Rel != "skills/s/scripts/x.py" {
+			t.Errorf("a file next to the instruction lost to the root: %+v", r)
+		}
+	}
+}
