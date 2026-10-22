@@ -414,8 +414,8 @@
   args, secret provider extras and a base URL with credentials; before,
   `session export` blanked only the API key. `agent import --merge`
   fills blanks back from the local agent under the rules bundle import
-  uses, the API key included, and names what it leaves out. Before, a profile with another base URL got
-  this machine's key.
+  uses, the API key included, and names what it leaves out. Before, a
+  profile with another base URL got this machine's key.
 - A profile with such blanks is written as `blanked_schema_version: 1.1`
   with the agent under `blanked_agent` and the blanked base URL and extras
   listed in `blanks`, so 0.14.0 refuses it ("agent name is required")
