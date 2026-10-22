@@ -983,7 +983,22 @@ Examples:
 		validIncoming = deduped
 
 		existing := v.ListInstructions()
+		keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
+		validIncoming, unchanged, leftOut, notText := screenImportedInstructions(validIncoming, existing, merge, keep)
+		invalidIncoming = append(invalidIncoming, notText...)
 		conflicts := agent.CheckInstructionConflicts(existing, validIncoming)
+		defer func() {
+			if unchanged > 0 {
+				fmt.Printf("Unchanged: %d instruction(s) already match this vault.\n", unchanged)
+			}
+			prefix := "Left out"
+			if dryRun {
+				prefix = "Dry-run: would leave out"
+			}
+			for _, l := range leftOut {
+				fmt.Printf("%s: %s\n", prefix, printable(l))
+			}
+		}()
 
 		if dryRun {
 			wouldImport := len(validIncoming)
@@ -994,7 +1009,7 @@ Examples:
 			if len(invalidIncoming) > 0 {
 				fmt.Println("Invalid (would be skipped):")
 				for _, e := range invalidIncoming {
-					fmt.Printf("  %v\n", e)
+					fmt.Printf("  %s\n", printable(e.Error()))
 				}
 			}
 			if len(conflicts) > 0 {
@@ -1042,11 +1057,41 @@ Examples:
 		if len(invalidIncoming) > 0 {
 			fmt.Println("Invalid (skipped):")
 			for _, e := range invalidIncoming {
-				fmt.Printf("  %v\n", e)
+				fmt.Printf("  %s\n", printable(e.Error()))
 			}
 		}
 		return nil
 	},
+}
+
+// screenImportedInstructions sorts what instructions import may write, as
+// a bundle import does: an instruction equal to this vault's is unchanged
+// and not written again, content that is not UTF-8 text is refused, and one
+// that runs code (a command file, frontmatter, a shell line) and would add
+// or replace an instruction is left out without keep.
+func screenImportedInstructions(in, existing []agent.InstructionFile, merge, keep bool) (out []agent.InstructionFile, unchanged int, leftOut []string, notText []error) {
+	byKey := make(map[string]agent.InstructionFile, len(existing))
+	for _, e := range existing {
+		byKey[agent.InstructionKey(e)] = e
+	}
+	for _, inst := range in {
+		have, exists := byKey[agent.InstructionKey(inst)]
+		if exists && sameInstructionFile(have, inst) {
+			unchanged++
+			continue
+		}
+		if problem := agent.TextProblem([]byte(inst.Content)); problem != "" {
+			notText = append(notText, fmt.Errorf("instruction %q: %s", inst.Name, problem))
+			continue
+		}
+		writes := !exists || merge
+		if writes && !keep && (agent.InstructionFileRunsCommands(inst.Filename) || proseRunsCommands(inst.Filename, []byte(inst.Content))) {
+			leftOut = append(leftOut, fmt.Sprintf("instruction %s (%s): the file adds or changes something that runs code (use --keep-bundle-commands to take it)", inst.Name, inst.Filename))
+			continue
+		}
+		out = append(out, inst)
+	}
+	return out, unchanged, leftOut, notText
 }
 
 func marshalInstructions(instructions []agent.InstructionFile, format string, args []string) ([]byte, error) {
@@ -1135,6 +1180,7 @@ func init() {
 	instImportCmd.Flags().String("format", "", "input format: json or yaml (autodetect by extension)")
 	instImportCmd.Flags().Bool("merge", false, "update existing instructions by name+scope+directory_pattern")
 	instImportCmd.Flags().Bool("dry-run", false, "validate and report conflicts without writing")
+	instImportCmd.Flags().Bool("keep-bundle-commands", false, "take instructions that run code (command files, frontmatter, shell lines); left out by default")
 
 	instRemoveCmd.Flags().String("scope", "", "target scope: global, directory, or local")
 	instRemoveCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")

@@ -542,6 +542,21 @@ func validIncomingInstructions(in, local []agent.InstructionFile, rep *importRep
 			rep.record("Skipped", "instruction %s: %v", inst.Name, err)
 			continue
 		}
+		if problem := agent.TextProblem([]byte(inst.Content)); problem != "" {
+			// The vault holds UTF-8 text, as pull and instructions import
+			// store it. An equal copy (a vault from 0.14) still matches.
+			l, ok := byKey[agent.InstructionKey(inst)]
+			switch {
+			case ok && sameInstructionFile(l, inst):
+				out = append(out, inst)
+			case ok:
+				rep.record("Skipped", "instruction %s: %s; kept this machine's", inst.Name, problem)
+				out = append(out, l)
+			default:
+				rep.record("Left out", "instruction %s: %s", inst.Name, problem)
+			}
+			continue
+		}
 		out = append(out, inst)
 	}
 	return out
