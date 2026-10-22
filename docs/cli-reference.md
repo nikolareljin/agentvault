@@ -388,10 +388,16 @@ No flags.
 No flags.
 
 ### `agentvault session export [name] [file]`
-No flags.
+Flags:
+- `--include-keys` (default: `false`): include the agents' API keys and
+  other secrets; without it they are blanked.
+- `--confirm` (default: `false`): allow `--include-keys` to write them in
+  plain text.
 
 ### `agentvault session import [file]`
-No flags.
+Flags:
+- `--keep-bundle-commands` (default: `false`): keep the MCP server commands
+  of the agents the file adds; left out by default.
 
 ## Instructions (`instructions` alias: `inst`)
 

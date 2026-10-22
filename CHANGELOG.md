@@ -179,9 +179,10 @@
 - A plaintext export that writes API keys or secrets now needs
   `--confirm`, and is refused without it: `export --plain` (keys are on
   by default, so also with `--include-secrets=false`), `setup export`
-  with `--include-keys` or `--include-secrets` and no `--encrypted`, and
-  `agent export --include-key`. Scripts using `--plain` with keys must
-  add `--confirm`. The export wizard asks instead.
+  with `--include-keys` or `--include-secrets` and no `--encrypted`,
+  `agent export --include-key` and `session export --include-keys`.
+  Scripts using `--plain` with keys must add `--confirm`. The export
+  wizard asks instead.
 - New dependency `github.com/BurntSushi/toml` v1.5.0: import parses Codex
   `config.toml` to compare its commands.
 - `actions/checkout` and `actions/github-script` are pinned to commit SHAs.
@@ -295,6 +296,8 @@
   leaves them out. `agent import` leaves out a profile's new or changed MCP
   server commands the same way and takes them with its new
   `--keep-bundle-commands`.
+  `session import` does the same for the agents a session file adds,
+  with its new `--keep-bundle-commands`.
 - `generate env`, `generate all` and `setup apply --generate` set an
   existing env file to mode 0600 when they write keys into it. Before, a
   file created earlier as 0644 kept that mode.
@@ -406,11 +409,12 @@
 - `export --vault-only` with `--include-keys=false` or
   `--include-secrets=false` is refused. It wrote the whole vault anyway,
   keys and secrets in plain text, without the confirmation `--plain` needs.
-- `agent export` without `--include-key` also blanks the agent's MCP server
-  env and secret args, secret provider extras and a base URL with
-  credentials. `agent import --merge` fills blanks back from the local
-  agent under the rules bundle import uses, the API key included, and
-  names what it leaves out. Before, a profile with another base URL got
+- `agent export` without `--include-key`, and `session export` without
+  `--include-keys`, also blank the agent's MCP server env and secret
+  args, secret provider extras and a base URL with credentials; before,
+  `session export` blanked only the API key. `agent import --merge`
+  fills blanks back from the local agent under the rules bundle import
+  uses, the API key included, and names what it leaves out. Before, a profile with another base URL got
   this machine's key.
 - A profile with such blanks is written as `blanked_schema_version: 1.1`
   with the agent under `blanked_agent` and the blanked base URL and extras

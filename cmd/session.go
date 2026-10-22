@@ -318,6 +318,12 @@ var sessionExportCmd = &cobra.Command{
 			return err
 		}
 		includeKeys, _ := cmd.Flags().GetBool("include-keys")
+		if includeKeys {
+			confirm, _ := cmd.Flags().GetBool("confirm")
+			if err := confirmPlaintextExport(confirm, "API keys and secrets", args[1], "drop --include-keys"); err != nil {
+				return err
+			}
+		}
 
 		session, ok := v.GetSessionByName(args[0])
 		if !ok {
@@ -341,7 +347,13 @@ var sessionExportCmd = &cobra.Command{
 		for _, sa := range session.Agents {
 			if a, ok := v.Get(sa.Name); ok {
 				if !includeKeys {
+					// The other secrets go too, as agent export blanks them:
+					// MCP server env and secret args, credential extras, a
+					// base URL with credentials.
 					a.APIKey = ""
+					b := SetupBundle{Agents: []agent.Agent{a}}
+					redactVaultSecrets(&b)
+					a = b.Agents[0]
 				}
 				exportData.Agents = append(exportData.Agents, a)
 			}
@@ -387,9 +399,21 @@ var sessionImportCmd = &cobra.Command{
 			return fmt.Errorf("decoding session: %w", err)
 		}
 
-		// Import agents
+		// Import agents. MCP server commands run in the agent: they need
+		// --keep-bundle-commands, as on agent import.
+		keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
 		for _, a := range importData.Agents {
 			if _, exists := v.Get(a.Name); !exists {
+				if err := a.Validate(); err != nil {
+					return fmt.Errorf("importing agent %q: %w", printable(a.Name), err)
+				}
+				rep := &importReport{}
+				a.MCPServers = gateBundleCommands(a.MCPServers, nil,
+					mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true },
+					importConsent{KeepCommands: keep}.takesMCP, strategyReplace, "agent "+a.Name+" MCP server", rep)
+				for _, l := range rep.Lines {
+					fmt.Fprintf(os.Stderr, "%s\n", printable(strings.TrimSpace(l)))
+				}
 				a.CreatedAt = time.Now()
 				a.UpdatedAt = time.Now()
 				if err := v.Add(a); err != nil {
@@ -696,5 +720,7 @@ func init() {
 	sessionStartCmd.Flags().Bool("sequential", false, "start agents sequentially instead of parallel")
 	sessionStartCmd.Flags().String("agent", "", "start only a specific agent")
 	sessionStartCmd.Flags().Bool("dry-run", false, "show what would be started without starting")
-	sessionExportCmd.Flags().Bool("include-keys", false, "include API keys in exported agent entries")
+	sessionExportCmd.Flags().Bool("include-keys", false, "include the agents' API keys and other secrets (MCP server env and secret args, credential extras, a base URL with credentials)")
+	sessionExportCmd.Flags().Bool("confirm", false, "allow --include-keys to write the keys and secrets in plain text")
+	sessionImportCmd.Flags().Bool("keep-bundle-commands", false, "keep MCP server commands of the agents the file adds; left out by default")
 }
