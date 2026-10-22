@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-22
+
+### Fixed
+
+- The `.deb` is built into `dist/` and uploaded from there. 0.15.1's `.deb`
+  job failed: upload-artifact refuses the shared workflow's default
+  `../*.deb`.
+
 ## [0.15.1] - 2026-10-22
 
 ### Fixed

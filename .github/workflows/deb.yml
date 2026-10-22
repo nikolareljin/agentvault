@@ -55,6 +55,8 @@ jobs:
       prebuild_command: "CGO_ENABLED=0 GOFLAGS=-mod=readonly make build"
       build_command: "bash scripts/package_deb.sh"
       artifact_name: "agentvault-deb"
+      # The default "../*.deb" is refused by upload-artifact (no "..").
+      artifact_glob: "dist/*.deb"
       # deb-build's own release upload also rewrites the release body from
       # CHANGELOG.md, which drops the "Download Binaries" table go-release
       # wrote. The upload job below attaches the file and leaves the body.
