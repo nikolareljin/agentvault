@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The release run starts again: the `.deb` job grants `contents: write`, which
+  the shared `deb-build` workflow now asks for. 0.15.0's release run stopped
+  with `startup_failure` and built nothing.
+
 ## [0.15.0] - 2026-10-21
 
 ### Added

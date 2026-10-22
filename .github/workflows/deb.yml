@@ -43,8 +43,11 @@ jobs:
 
   deb:
     needs: check
+    # deb-build has a release job that asks for contents: write. GitHub
+    # checks that grant at startup even when upload_to_release skips the job,
+    # so read here fails the whole release run (startup_failure).
     permissions:
-      contents: read
+      contents: write
     uses: nikolareljin/ci-helpers/.github/workflows/deb-build.yml@production
     with:
       # Static like the release binaries, so the .deb needs no Depends. The
