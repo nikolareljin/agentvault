@@ -388,8 +388,8 @@ This can be included in AGENTS.md, CLAUDE.md, or other instruction files.`,
 			if !r.Enabled {
 				continue
 			}
-			fmt.Printf("### %s\n", printable(r.Description))
-			fmt.Printf("%s\n\n", printableText(r.Content))
+			fmt.Printf("### %s\n", contentLine(r.Description))
+			fmt.Printf("%s\n\n", contentText(r.Content))
 		}
 
 		return nil

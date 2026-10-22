@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"io"
+	"os"
+
+	"golang.org/x/term"
 
 	"github.com/nikolareljin/agentvault/internal/textutil"
 )
@@ -22,4 +25,27 @@ func c1Writer(w io.Writer) io.Writer {
 // already escapes them) printed to the terminal.
 func escapeC1JSON(data []byte) []byte {
 	return textutil.EscapeC1JSON(data)
+}
+
+// stdoutIsTerminal reports whether stdout is a terminal; tests replace it.
+var stdoutIsTerminal = func() bool {
+	return term.IsTerminal(int(os.Stdout.Fd())) // #nosec G115 -- fd fits in int
+}
+
+// contentText is for content a user redirects into a file, such as
+// `instructions show > CLAUDE.md` or `rules export > RULES.md`: it is
+// byte-exact unless stdout is a terminal, where it is printableText.
+func contentText(s string) string {
+	if stdoutIsTerminal() {
+		return printableText(s)
+	}
+	return s
+}
+
+// contentLine is contentText for a single line, such as a heading.
+func contentLine(s string) string {
+	if stdoutIsTerminal() {
+		return printable(s)
+	}
+	return s
 }

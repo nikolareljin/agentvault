@@ -369,16 +369,23 @@
   `session`, `instructions` (list, show, preview, export, diff, scan),
   `config show`, `run`, `generate` and the TUI. JSON output escapes C1
   control characters as `\u0080`-`\u009f`. Instruction, rule and prompt
-  text keeps its newlines, tabs and CRLF.
-- `run --env` and `generate env --format shell` escape `$` and backticks,
-  so a model or URL such as `$(cmd)` does not run when the output is
-  eval'd. A name saved before control characters were refused cannot
-  start a new line in the generated env file.
+  text keeps its newlines, tabs and CRLF. `instructions show`,
+  `instructions preview` and `rules export` print content byte-exact when
+  stdout is not a terminal, so `rules export > RULES.md` loses nothing.
+  The TUI keeps only its own colours: an SGR code from a bundle is shown
+  as text, so a field cannot be hidden or drawn black on black.
+- `run --env` and `generate env --format shell` write values in single
+  quotes, so a model or URL such as `$(cmd)` does not run when the output
+  is eval'd or sourced, and a multi-line system prompt comes back
+  unchanged. A value with a control character is left out with a warning.
+  A name saved before control characters were refused cannot start a new
+  line in the generated env file.
 - `generate env` (dotenv, the default) and `generate all` write values in
   single quotes, so sourcing `.env.agents` from a shell runs nothing
   (0.14.0 wrote `"$(cmd)"`, which ran). docker compose reads them
-  literally; python-dotenv still expands `${VAR}`. A value with a single
-  quote or a control character is left out with a warning.
+  literally. A value with a single quote, `${` (python-dotenv expands it
+  even in single quotes) or a control character is left out of the file
+  with a warning on stderr.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older

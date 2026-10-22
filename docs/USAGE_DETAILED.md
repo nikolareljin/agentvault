@@ -369,7 +369,8 @@ Flags:
 - `--force` (default: `false`): Add defaults even when rules already exist.
 
 ### `agentvault rules export`
-No flags.
+No flags. Redirected to a file, the output is byte-exact; on a terminal,
+control characters are shown as `?`.
 
 ## 3.5 Roles
 
@@ -459,7 +460,8 @@ Aliases:
 No flags.
 
 ### `agentvault instructions show [name]`
-No flags.
+No flags. Redirected to a file, the content is byte-exact; on a terminal,
+control characters are shown as `?`.
 
 ### `agentvault instructions set [name]`
 Flags:
@@ -541,6 +543,11 @@ Flags:
 - `--format <dotenv|shell|json>` (default: `dotenv`)
 - `--no-keys` (default: `false`)
 - `--agent <name>`
+
+Values are written in single quotes, so sourcing or eval-ing the file runs
+nothing. `dotenv` leaves out a value with a single quote, `${` or a control
+character, and `shell` one with a control character; each is named in a
+comment in the file and in a warning on stderr.
 
 ### `agentvault generate mcp [output-file]`
 Flags:

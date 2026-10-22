@@ -189,7 +189,7 @@ var instShowCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("instruction %q not found", args[0])
 		}
-		fmt.Print(printableText(inst.Content))
+		fmt.Print(contentText(inst.Content))
 		if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
 			fmt.Println()
 		}
@@ -833,7 +833,7 @@ Examples:
 					scope = agent.InstructionScopeGlobal
 				}
 				fmt.Printf("=== %s (%s, scope: %s) ===\n", printable(inst.Name), printable(inst.Filename), printable(scope))
-				fmt.Println(printableText(inst.Content))
+				fmt.Println(contentText(inst.Content))
 			}
 			return nil
 		}
@@ -846,7 +846,7 @@ Examples:
 					scope = agent.InstructionScopeGlobal
 				}
 				fmt.Printf("=== %s (%s, scope: %s) ===\n", printable(inst.Name), printable(inst.Filename), printable(scope))
-				fmt.Print(printableText(inst.Content))
+				fmt.Print(contentText(inst.Content))
 				if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
 					fmt.Println()
 				}
