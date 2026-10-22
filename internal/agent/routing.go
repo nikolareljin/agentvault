@@ -315,7 +315,7 @@ func IsGitWorktree(dir string) bool {
 func BuildCodexExecArgs(model, outputPath, cwd, prompt string) []string {
 	args := []string{"exec", "--json", "--output-last-message", outputPath, "--full-auto"}
 	if strings.TrimSpace(model) != "" {
-		args = append(args, "--model", strings.TrimSpace(model))
+		args = append(args, "--model="+strings.TrimSpace(model))
 	}
 	if strings.TrimSpace(cwd) != "" && !IsGitWorktree(cwd) {
 		args = append(args, "--skip-git-repo-check")
@@ -331,7 +331,7 @@ func BuildCodexExecArgs(model, outputPath, cwd, prompt string) []string {
 func BuildCodexStreamArgs(model, cwd, prompt string) []string {
 	args := []string{"exec", "--full-auto"}
 	if strings.TrimSpace(model) != "" {
-		args = append(args, "--model", strings.TrimSpace(model))
+		args = append(args, "--model="+strings.TrimSpace(model))
 	}
 	if strings.TrimSpace(cwd) != "" && !IsGitWorktree(cwd) {
 		args = append(args, "--skip-git-repo-check")
@@ -347,7 +347,7 @@ func BuildCodexStreamArgs(model, cwd, prompt string) []string {
 func BuildClaudeExecArgs(model, prompt string) []string {
 	args := []string{"-p", "--output-format", "json", "--permission-mode", "auto"}
 	if strings.TrimSpace(model) != "" {
-		args = append(args, "--model", strings.TrimSpace(model))
+		args = append(args, "--model="+strings.TrimSpace(model))
 	}
 	// "--" ends option parsing: a prompt such as "--help" stays a prompt.
 	args = append(args, "--", prompt)
@@ -360,7 +360,7 @@ func BuildClaudeExecArgs(model, prompt string) []string {
 func BuildGeminiExecArgs(model, prompt string) []string {
 	args := []string{"--prompt=" + prompt, "--output-format", "json", "--approval-mode", "auto_edit"}
 	if strings.TrimSpace(model) != "" {
-		args = append(args, "--model", strings.TrimSpace(model))
+		args = append(args, "--model="+strings.TrimSpace(model))
 	}
 	return args
 }
@@ -370,7 +370,7 @@ func BuildGeminiExecArgs(model, prompt string) []string {
 func BuildClaudeStreamArgs(model, prompt string) []string {
 	args := []string{"-p", "--permission-mode", "auto"}
 	if strings.TrimSpace(model) != "" {
-		args = append(args, "--model", strings.TrimSpace(model))
+		args = append(args, "--model="+strings.TrimSpace(model))
 	}
 	// "--" ends option parsing: a prompt such as "--help" stays a prompt.
 	args = append(args, "--", prompt)
@@ -382,7 +382,7 @@ func BuildClaudeStreamArgs(model, prompt string) []string {
 func BuildGeminiStreamArgs(model, prompt string) []string {
 	args := []string{"--prompt=" + prompt, "--approval-mode", "auto_edit"}
 	if strings.TrimSpace(model) != "" {
-		args = append(args, "--model", strings.TrimSpace(model))
+		args = append(args, "--model="+strings.TrimSpace(model))
 	}
 	return args
 }
