@@ -527,11 +527,41 @@ func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle
 	return setup, report, nil
 }
 
+// dropOversizedProfileAssets leaves out every file over the size export
+// uses: a bundle holding one was not made by export. Returns one line each.
+func dropOversizedProfileAssets(setup *SetupBundle) []string {
+	var report, r []string
+	for _, list := range []*[]SetupAsset{&setup.ProviderFiles, &setup.ProjectFiles, &setup.SkillAssets, &setup.InstructionOverrides} {
+		*list, r = dropOversizedAssets(*list)
+		report = append(report, r...)
+	}
+	return report
+}
+
+// dropOversizedAssets leaves out every asset whose content is over the
+// export ceiling, and names each one.
+func dropOversizedAssets(assets []SetupAsset) ([]SetupAsset, []string) {
+	var kept []SetupAsset
+	var report []string
+	for _, a := range assets {
+		if len(a.Content) > maxSetupAssetBytes {
+			report = append(report, fmt.Sprintf("%s: %d bytes, over the %d byte limit export uses",
+				describeSetupAsset(a), len(a.Content), maxSetupAssetBytes))
+			continue
+		}
+		kept = append(kept, a)
+	}
+	return kept, report
+}
+
 // previewProfileAssets is the --dry-run view of importProfileAssets: the
 // path rewrites, and with --apply-projects or --apply-provider-configs each
 // file it would write, replace, keep or leave out. It writes nothing.
 func previewProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) {
 	out := cmd.OutOrStdout()
+	for _, line := range dropOversizedProfileAssets(&setup) {
+		fmt.Fprintf(out, "  Left out: %s\n", printable(line))
+	}
 	setup, report, err := remapProfileAssets(setup, opts)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(err.Error()))
@@ -645,6 +675,9 @@ func providerAssetsToApply(setup SetupBundle, homeDir string, keepCommands bool)
 
 func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAssetOptions) error {
 	applyConfigs := opts.ApplyConfigs
+	for _, line := range dropOversizedProfileAssets(&setup) {
+		fmt.Fprintf(cmd.OutOrStdout(), "  Left out: %s\n", printable(line))
+	}
 	setup, remapReport, err := remapProfileAssets(setup, opts)
 	if err != nil {
 		return err

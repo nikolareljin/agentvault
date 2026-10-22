@@ -558,6 +558,11 @@ func mergeInstructionSources(instructions []agent.InstructionFile, overrides []S
 		if name == "" || asset.Missing || !asset.ContentPresent {
 			continue
 		}
+		if agent.TextProblem(asset.Content) != "" || len(asset.Content) > maxSetupAssetBytes {
+			// The vault holds text, and export never writes more. The file
+			// itself is still staged with the other project files.
+			continue
+		}
 		filename := asset.ProjectRelativePath
 		if filename == "" {
 			filename = asset.LogicalPath
