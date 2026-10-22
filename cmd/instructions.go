@@ -511,7 +511,7 @@ Examples:
 		follow, _ := cmd.Flags().GetBool("follow-references")
 		strict, _ := cmd.Flags().GetBool("strict")
 		if follow && pulled > 0 {
-			res, err := v.PullReferenceClosure(dir)
+			res, err := v.PullReferenceClosure(dir, instructionProjectKey(dir, nil))
 			if err != nil {
 				return err
 			}
@@ -631,6 +631,20 @@ Examples:
 			return nil
 		}
 
+		// A file one project's instructions refer to belongs to that project:
+		// notes/x.md pulled from one repository must not appear in another.
+		anyProject, _ := cmd.Flags().GetBool("from-any-project")
+		instructions, skipped := scopeReferencedFiles(instructions, instructionProjectKey(dir, nil), anyProject)
+		if specificName != "" {
+			var named []agent.InstructionFile
+			for _, inst := range skipped {
+				if inst.Name == specificName {
+					named = append(named, inst)
+				}
+			}
+			skipped = named
+		}
+
 		if err := checkInstructionFilenames(instructions, func(i agent.InstructionFile) bool {
 			return specificName == "" || i.Name == specificName
 		}); err != nil {
@@ -648,7 +662,11 @@ Examples:
 			pushed++
 		}
 
+		reportSkippedReferences(os.Stdout, skipped)
 		if specificName != "" && pushed == 0 {
+			if len(skipped) > 0 {
+				return fmt.Errorf("instruction %q is a referenced file from another project; use --from-any-project to write it", specificName)
+			}
 			return fmt.Errorf("instruction %q not found", specificName)
 		}
 		fmt.Printf("Pushed %d instruction file(s) to %s.\n", pushed, dir)
@@ -1169,6 +1187,7 @@ func init() {
 		"fail if a named file is refused or not present, instead of reporting it")
 
 	instPushCmd.Flags().String("name", "", "push only a specific instruction name")
+	instPushCmd.Flags().Bool("from-any-project", false, fromAnyProjectUsage)
 
 	instPreviewCmd.Flags().String("dir", "", "directory to resolve scope against (default: cwd)")
 	instPreviewCmd.Flags().Bool("all", false, "show all resolved instructions")

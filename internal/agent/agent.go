@@ -147,6 +147,20 @@ type InstructionFile struct {
 	UpdatedAt        time.Time `json:"updated_at"                  yaml:"updated_at"`
 	Scope            string    `json:"scope,omitempty"             yaml:"scope,omitempty"`             // "global" (default), "directory", or "local"
 	DirectoryPattern string    `json:"directory_pattern,omitempty" yaml:"directory_pattern,omitempty"` // glob for "directory" scope
+	// SourceProject is set on a file an instruction refers to: the project
+	// it was pulled from, so push writes it back to that project only.
+	SourceProject string `json:"source_project,omitempty" yaml:"source_project,omitempty"`
+}
+
+// IsReferencedFile is whether inst is a file an instruction refers to,
+// stored by a reference walk, rather than an instruction. Entries stored
+// before SourceProject existed are recognised by their name, which the walk
+// sets to the filename; an instruction's name is a key such as "agents".
+func IsReferencedFile(inst InstructionFile) bool {
+	if inst.SourceProject != "" {
+		return true
+	}
+	return inst.Name != "" && inst.Name == strings.ReplaceAll(inst.Filename, "\\", "/")
 }
 
 // PromptTokenUsage captures token usage metadata for one prompt execution.

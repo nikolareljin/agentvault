@@ -234,6 +234,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 			previewProfileAssets(cmd, profile.Setup, profileOpts)
 			continue
 		}
+		// A referenced file of a project with no git identity names the
+		// project by its path on the exporting machine.
+		if remaps, err := profileRemaps(profile.Setup, profileOpts, exportSourceHome()); err == nil {
+			if insts, changed := remapInstructionProjects(plan.Shared.Instructions, profile.Setup.SharedConfig.Instructions, remaps); changed {
+				plan.Shared.Instructions, plan.SharedChanged = insts, true
+			}
+		}
 		if err := commitProfileImport(v, plan); err != nil {
 			return err
 		}
@@ -496,17 +503,27 @@ func importAssetOptionsFromFlags(cmd *cobra.Command, applyConfigs bool) (importA
 	return opts, nil
 }
 
-// remapProfileAssets rewrites the exporting machine's paths in every file of
-// one profile for this machine, and returns what it changed.
-func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle, []string, error) {
-	targetHome := exportSourceHome()
+// profileRemaps is the path rewrites for one profile: --map, the bundle's
+// project and home, and the accepted project matches.
+func profileRemaps(setup SetupBundle, opts importAssetOptions, targetHome string) ([]pathRemap, error) {
 	remaps, err := buildPathRemaps(setup.SourceHome, targetHome, setup.SourceProject, opts.ProjectRoot, opts.Maps)
 	if err != nil {
-		return setup, nil, err
+		return nil, err
 	}
 	if len(opts.Computed) > 0 {
 		userMaps, _ := buildPathRemaps("", "", "", "", opts.Maps)
 		remaps = mergeComputedRemaps(remaps, opts.Computed, userMaps)
+	}
+	return remaps, nil
+}
+
+// remapProfileAssets rewrites the exporting machine's paths in every file of
+// one profile for this machine, and returns what it changed.
+func remapProfileAssets(setup SetupBundle, opts importAssetOptions) (SetupBundle, []string, error) {
+	targetHome := exportSourceHome()
+	remaps, err := profileRemaps(setup, opts, targetHome)
+	if err != nil {
+		return setup, nil, err
 	}
 	var report, r []string
 	setup.ProviderFiles, r = remapAssets(setup.ProviderFiles, remaps, targetHome)

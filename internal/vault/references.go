@@ -19,7 +19,8 @@ type ClosureResult struct {
 }
 
 // PullReferenceClosure stores every file the vault's instructions name, and
-// every file those name in turn, reading them from dir.
+// every file those name in turn, reading them from dir. project is dir's
+// project key; each stored file records it as its source project.
 //
 // An instruction file is not self-contained: one that names other files as
 // required reading exports, without this, a rule that points at nothing on the
@@ -27,12 +28,18 @@ type ClosureResult struct {
 //
 // The visited set is what terminates a cycle. Two documents naming each other
 // is an ordinary thing for documentation to do, and the walk must not care.
-func (v *Vault) PullReferenceClosure(dir string) (ClosureResult, error) {
+func (v *Vault) PullReferenceClosure(dir, project string) (ClosureResult, error) {
 	var result ClosureResult
 
 	visited := map[string]bool{}
 	var queue []agent.InstructionFile
 	for _, inst := range v.ListInstructions() {
+		// Another project's copy of a referenced file is not this project's:
+		// it is neither walked nor taken as already pulled, so dir's own
+		// file of the same name replaces it.
+		if agent.IsReferencedFile(inst) && inst.SourceProject != project {
+			continue
+		}
 		visited[filepath.ToSlash(inst.Filename)] = true
 		queue = append(queue, inst)
 	}
@@ -82,10 +89,11 @@ func (v *Vault) PullReferenceClosure(dir string) (ClosureResult, error) {
 				continue
 			}
 			inst := agent.InstructionFile{
-				Name:      ref.Rel,
-				Filename:  ref.Rel,
-				Content:   string(data),
-				UpdatedAt: time.Now(),
+				Name:          ref.Rel,
+				Filename:      ref.Rel,
+				Content:       string(data),
+				UpdatedAt:     time.Now(),
+				SourceProject: project,
 			}
 			if err := v.SetInstruction(inst); err != nil {
 				return result, err

@@ -36,7 +36,7 @@ func TestClosureStoresWhatTheInstructionsName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := v.PullReferenceClosure(src)
+	res, err := v.PullReferenceClosure(src, "path:test")
 	if err != nil {
 		t.Fatalf("PullReferenceClosure: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestClosureTerminatesOnACycle(t *testing.T) {
 	var res ClosureResult
 	var err error
 	go func() {
-		res, err = v.PullReferenceClosure(src)
+		res, err = v.PullReferenceClosure(src, "path:test")
 		close(done)
 	}()
 	select {
@@ -123,7 +123,7 @@ func TestClosureResolvesRelativeToTheReferencingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := v.PullReferenceClosure(src)
+	res, err := v.PullReferenceClosure(src, "path:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestClosureReportsWhatItWillNotTake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := v.PullReferenceClosure(src)
+	res, err := v.PullReferenceClosure(src, "path:test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestClosureReportsSettingsFileAndContinues(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := v.PullReferenceClosure(src)
+	res, err := v.PullReferenceClosure(src, "path:test")
 	if err != nil {
 		t.Fatalf("PullReferenceClosure: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestClosureRefusesBinaryFiles(t *testing.T) {
 		Content: mustRead(t, filepath.Join(src, "AGENTS.md"))}); err != nil {
 		t.Fatal(err)
 	}
-	res, err := v.PullReferenceClosure(src)
+	res, err := v.PullReferenceClosure(src, "path:test")
 	if err != nil {
 		t.Fatal(err)
 	}
