@@ -28,7 +28,7 @@ If no file is given, the profile is printed to stdout.
 Examples:
   agentvault agent export claude-prod
   agentvault agent export claude-prod profile.yaml --format yaml
-  agentvault agent export claude-prod profile.json --include-key`,
+  agentvault agent export claude-prod profile.json --include-key --confirm`,
 	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		v, err := openVault()
@@ -43,6 +43,16 @@ Examples:
 		}
 
 		includeKey, _ := cmd.Flags().GetBool("include-key")
+		if includeKey {
+			confirm, _ := cmd.Flags().GetBool("confirm")
+			out := "the output"
+			if len(args) == 2 {
+				out = args[1]
+			}
+			if err := confirmPlaintextExport(confirm, "the API key and secrets", out, "drop --include-key"); err != nil {
+				return err
+			}
+		}
 		blanked := false
 		var blanks []string
 		if !includeKey {
@@ -215,6 +225,7 @@ func init() {
 	agentCmd.AddCommand(agentImportCmd)
 
 	agentExportCmd.Flags().String("format", "", "output format: json or yaml (default: json)")
+	agentExportCmd.Flags().Bool("confirm", false, "allow --include-key to write the key and secrets in plain text")
 	agentExportCmd.Flags().Bool("include-key", false, "include the API key and the agent's other secrets (MCP server env and secret args, credential extras, a base URL with credentials) in the exported profile")
 
 	agentImportCmd.Flags().String("format", "", "input format: json or yaml (autodetect)")

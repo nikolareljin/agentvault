@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,7 +14,6 @@ import (
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 // SetupBundle represents a complete portable agent configuration bundle.
@@ -247,8 +244,8 @@ func init() {
 	setupExportCmd.Flags().Bool("include-keys", false, "include API keys in export, also resolving keys from environment variables (use with caution)")
 	setupExportCmd.Flags().Bool("detect", false, "include detected agent information")
 	setupExportCmd.Flags().Bool("include-status", false, "include provider token/quota status snapshot in bundle")
-	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content; plaintext exports require interactive confirmation unless --confirm is set or --encrypted is used")
-	setupExportCmd.Flags().Bool("confirm", false, "skip interactive confirmation for sensitive export options (for scripted/CI use)")
+	setupExportCmd.Flags().Bool("include-secrets", false, "include secret-bearing provider and asset files in bundle content; plaintext exports of keys or secrets require --confirm")
+	setupExportCmd.Flags().Bool("confirm", false, "allow writing API keys or secrets in plain text")
 	setupExportCmd.Flags().Bool("encrypted", false, "encrypt the bundle (prompted for password)")
 	setupExportCmd.Flags().Bool("plain", false, "force plaintext JSON output")
 	setupExportCmd.Flags().String("agent", "", "export only one named agent")
@@ -289,8 +286,9 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	if strings.HasSuffix(outputFile, ".bundle") && !plain {
 		encrypted = true
 	}
-	if includeSecrets && !encrypted {
-		if err := confirmPlaintextExport(confirmFlag, term.IsTerminal(stdinFD()), os.Stdin, cmd.ErrOrStderr(), "--encrypted"); err != nil {
+	if !encrypted {
+		what := plaintextSecretsWhat(includeKeys, includeSecrets)
+		if err := confirmPlaintextExport(confirmFlag, what, outputFile, "drop --include-keys/--include-secrets, or add --encrypted"); err != nil {
 			return err
 		}
 	}
@@ -915,29 +913,27 @@ func generateInstallGuide(bundle SetupBundle) InstallGuide {
 	return guide
 }
 
-// confirmPlaintextExport gates a plaintext --include-secrets export.
-// encryptFlag names the flag that would encrypt the output, because `export` and
-// the deprecated `setup export` spell it differently.
-// It returns nil when export should proceed (confirmFlag set or user typed y/yes).
-// isTerminal and r are injected so the function is testable without a real TTY.
-func confirmPlaintextExport(confirmFlag bool, isTerminal bool, r io.Reader, w io.Writer, encryptFlag string) error {
-	if confirmFlag {
+// confirmPlaintextExport refuses to write API keys or secrets in plain
+// text unless --confirm is set. what names them ("API keys", "secrets");
+// file is the output; fix says how to leave them out or encrypt.
+func confirmPlaintextExport(confirmFlag bool, what, file, fix string) error {
+	if confirmFlag || what == "" {
 		return nil
 	}
-	if !isTerminal {
-		return fmt.Errorf("--include-secrets without %s requires interactive confirmation; use --confirm to bypass in non-interactive environments", encryptFlag)
+	return fmt.Errorf("refusing to write %s in plain text: anyone who can read %s gets them. Add --confirm to write them anyway, or %s", what, file, fix)
+}
+
+// plaintextSecretsWhat names what a plaintext export would carry, or "".
+func plaintextSecretsWhat(keys, secrets bool) string {
+	switch {
+	case keys && secrets:
+		return "API keys and secrets"
+	case keys:
+		return "API keys"
+	case secrets:
+		return "secrets"
 	}
-	fmt.Fprintln(w, "warning: --include-secrets will embed sensitive asset content in plaintext")
-	fmt.Fprint(w, "Confirm export with sensitive content? [y/N]: ")
-	line, err := bufio.NewReader(r).ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("reading confirmation: %w", err)
-	}
-	answer := strings.ToLower(strings.TrimSpace(line))
-	if answer != "y" && answer != "yes" {
-		return fmt.Errorf("export cancelled: add %s to protect sensitive content, or use --confirm to bypass this check", encryptFlag)
-	}
-	return nil
+	return ""
 }
 
 // resolveAgentEnvAPIKey returns the API key for the agent from standard environment

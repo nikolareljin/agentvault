@@ -730,7 +730,7 @@ rm ~/.config/agentvault/vault.enc
 # Enter export password
 
 # Export plaintext (careful!)
-./agentvault export backup.json --plain
+./agentvault export backup.json --plain --confirm
 
 # Import encrypted
 ./agentvault import backup.enc

@@ -157,6 +157,12 @@
   `HOMEBREW_TAP_REPO` secrets).
 
 ### Changed
+- A plaintext export that writes API keys or secrets now needs
+  `--confirm`, and is refused without it: `export --plain` (keys are on
+  by default, so also with `--include-secrets=false`), `setup export`
+  with `--include-keys` or `--include-secrets` and no `--encrypted`, and
+  `agent export --include-key`. Scripts using `--plain` with keys must
+  add `--confirm`. The export wizard asks instead.
 - New dependency `github.com/BurntSushi/toml` v1.5.0: import parses Codex
   `config.toml` to compare its commands.
 - `actions/checkout` and `actions/github-script` are pinned to commit SHAs.

@@ -115,7 +115,7 @@ func init() {
 	exportCmd.Flags().Bool("encrypt", defaults.Encrypt, "encrypt the bundle with a password")
 	exportCmd.Flags().Bool("plain", false, "write plaintext JSON (turns off encryption)")
 	exportCmd.Flags().Bool("vault-only", false, "write the legacy single-vault export instead of a portable bundle")
-	exportCmd.Flags().Bool("confirm", false, "skip interactive confirmations (for scripted use)")
+	exportCmd.Flags().Bool("confirm", false, "skip interactive confirmations, and allow writing API keys or secrets in plain text")
 }
 
 func runExport(cmd *cobra.Command, args []string) error {
@@ -160,8 +160,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 	}
 	// Encryption is decided by --encrypt/--plain or the wizard, never by the file
 	// extension, so the same command always produces the same kind of file.
-	if !opts.Encrypt && opts.IncludeSecrets {
-		if err := confirmPlaintextExport(opts.Confirm, isTerminal, os.Stdin, cmd.ErrOrStderr(), "--encrypt"); err != nil {
+	if !opts.Encrypt {
+		what := plaintextSecretsWhat(opts.IncludeKeys, opts.IncludeSecrets)
+		if err := confirmPlaintextExport(opts.Confirm, what, opts.Output, "use --include-keys=false --include-secrets=false, or drop --plain to encrypt"); err != nil {
 			return err
 		}
 	}

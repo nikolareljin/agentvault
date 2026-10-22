@@ -98,6 +98,14 @@ func runExportWizard(cmd *cobra.Command, opts *exportOptions, discovered []disco
 		}
 		opts.Encrypt = value
 	}
+	// Answering here is the --confirm the plaintext gate asks for.
+	if what := plaintextSecretsWhat(opts.IncludeKeys, opts.IncludeSecrets); !opts.Encrypt && what != "" && !opts.Confirm {
+		value, err := askBool(out, reader, "Write "+what+" in plain text (anyone who can read the file gets them)", false)
+		if err != nil {
+			return err
+		}
+		opts.Confirm = value
+	}
 
 	fmt.Fprintln(out)
 	return nil

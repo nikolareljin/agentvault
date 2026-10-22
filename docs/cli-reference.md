@@ -513,8 +513,8 @@ which 0.14.0 and earlier refuse.
 ### `agentvault setup export [file]`
 Flags:
 - `--include-keys` (default: `false`): Include API keys; also resolves keys from env vars when vault key is empty.
-- `--include-secrets` (default: `false`): Include sensitive asset files; requires `--confirm` or interactive consent when not encrypted.
-- `--confirm` (default: `false`): Bypass interactive confirmation for sensitive export options (CI/scripted use).
+- `--include-secrets` (default: `false`): Include sensitive asset files.
+- `--confirm` (default: `false`): Allow `--include-keys` or `--include-secrets` without `--encrypted`. Without it such an export is refused: anyone who can read the file gets the keys.
 - `--detect` (default: `false`)
 - `--include-status` (default: `false`)
 - `--encrypted` (default: `false`)
@@ -594,7 +594,7 @@ Flags:
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
 - `--vault-only` (default: `false`): Write the legacy single-vault export instead. It is the whole vault, API keys and secrets included, so it refuses `--include-keys=false` and `--include-secrets=false`.
-- `--confirm` (default: `false`): Skip interactive confirmations.
+- `--confirm` (default: `false`): Skip interactive confirmations, and allow a `--plain` export with `--include-keys` or `--include-secrets` (both on by default). Without it such an export is refused, because anyone who can read the file gets the keys; the wizard asks instead.
 
 Environment:
 - `AGENTVAULT_PASSWORD`: Master password tried before prompting, per profile.

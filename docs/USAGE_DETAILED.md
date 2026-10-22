@@ -562,8 +562,8 @@ instead, which 0.14.0 and earlier refuse.
 ### `agentvault setup export [file]`
 Flags:
 - `--include-keys` (default: `false`): Include API keys. Also captures keys sourced from environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`) when the vault-stored key is empty.
-- `--include-secrets` (default: `false`): Include sensitive provider asset file content. **Requires interactive confirmation or `--confirm` when `--encrypted` is not set.**
-- `--confirm` (default: `false`): Skip the interactive confirmation prompt for sensitive export options. Use in CI/scripted contexts.
+- `--include-secrets` (default: `false`): Include sensitive provider asset file content.
+- `--confirm` (default: `false`): Allow `--include-keys` or `--include-secrets` without `--encrypted`. Without it such an export is refused: anyone who can read the file gets the keys.
 - `--detect` (default: `false`)
 - `--include-status` (default: `false`): Include provider usage/quota snapshot.
 - `--encrypted` (default: `false`)
@@ -641,7 +641,7 @@ Flags:
 - `-y`, `--yes` (default: `false`): Accept every default and skip the wizard.
 - `--profile <name>` (repeatable; default: every discovered profile). `--profile all` is explicit.
 - `--include-keys` (default: `true`): Include API keys, filling empty vault keys from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY`.
-- `--include-secrets` (default: `true`): Include secret-bearing provider and asset file content. Plaintext output with secrets requires interactive confirmation or `--confirm`.
+- `--include-secrets` (default: `true`): Include secret-bearing provider and asset file content. Plaintext output with keys or secrets requires `--confirm`.
 - `--include-sessions` (default: `true`)
 - `--include-templates` (default: `true`): Workflow templates from the profile's config storage.
 - `--include-provider-files` (default: `true`): user-level setup of Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor and Windsurf, and the files it references. The full list is in `docs/cli-reference.md`, "What a bundle carries".
@@ -653,7 +653,7 @@ Flags:
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
 - `--vault-only` (default: `false`): Write the legacy single-vault payload instead of a bundle. One profile only. It is the whole vault, keys and secrets included, so it refuses `--include-keys=false` and `--include-secrets=false`.
-- `--confirm` (default: `false`): Skip interactive confirmations.
+- `--confirm` (default: `false`): Skip interactive confirmations, and allow a `--plain` export with `--include-keys` or `--include-secrets` (both on by default). Without it such an export is refused; the wizard asks instead.
 
 Bundle contents, per profile: agents, shared config (system prompt, MCP servers, rules,
 roles, instructions, router, provider pricing), provider configs, model capability
