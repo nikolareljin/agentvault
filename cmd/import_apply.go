@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"io"
 	"os"
 	"path"
@@ -740,12 +741,12 @@ var proseExtensions = map[string]bool{".md": true, ".markdown": true, ".mdx": tr
 // byte check), any file with frontmatter (hooks, tools, mcpServers,
 // permissionMode and other keys), and a shell line ("!`cmd`", "!{cmd}").
 func proseRunsCommands(name string, content []byte) bool {
-	slashed := strings.ToLower(strings.TrimRight(strings.ReplaceAll(name, `\`, "/"), ". "))
+	slashed := strings.TrimPrefix(agent.NormalizePathForMatch(name), "./")
 	ext := path.Ext(slashed)
 	switch ext {
 	case ".toml":
-		// Settings TOML (Codex config.toml) is checked key by key elsewhere.
-		return strings.HasPrefix(slashed, "commands/") || strings.Contains(slashed, "/commands/")
+		// Only Codex config.toml is checked key by key elsewhere.
+		return slashed != "config.toml"
 	case ".md", ".markdown", ".mdx", ".mdc", ".txt", ".prompt":
 	default:
 		return false
@@ -764,7 +765,7 @@ func scriptAsset(asset SetupAsset) bool {
 	if execAllowed(asset) {
 		return true
 	}
-	p := strings.ToLower(strings.ReplaceAll(strings.TrimRight(asset.LogicalPath, ". "), `\`, "/"))
+	p := agent.NormalizePathForMatch(asset.LogicalPath)
 	if strings.HasPrefix(p, "hooks/") || strings.Contains(p, "/hooks/") {
 		return true
 	}

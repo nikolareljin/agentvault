@@ -319,6 +319,8 @@ func TestValidateInstructionFilenameAllowList(t *testing.T) {
 		"CLAUDE~1/agents/x.md", "VSCODE~1/x.md", ".. /x.md", "a/.. /../x.md", "... /x.md", "a/ /x.md", ".envrc.", ".envrc ", "x.md/.envrc",
 		".GitHub/Workflows/ci.yml", ".github/workflows/ci.yml", ".github/x.md", ".github/workflows/x.md",
 		".github/ISSUE_TEMPLATE/bug.md", "sub/.github/agents/a.md",
+		".vscode/.github/copilot-instructions.md", ".git/.github/copilot-instructions.md",
+		".claude/.github/copilot-instructions.md", ".github/.github/x.md",
 	}
 	for _, name := range refused {
 		if err := ValidateInstructionFilename(name); err == nil {

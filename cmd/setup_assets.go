@@ -1193,12 +1193,12 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			continue
 		}
 		if !ctx.KeepBundleCommands && asset.LogicalRoot == setupAssetRootProviderGemini &&
-			strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "trustedFolders.json") && !sameFileBytes(original, content) {
+			agent.NormalizePathForMatch(asset.LogicalPath) == "trustedfolders.json" && !sameFileBytes(original, content) {
 			// Trust lets Gemini act in a folder without asking.
 			warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, the bundle adds or changes trusted folders; kept this machine's file (use --keep-bundle-commands to take it)", desc))
 			continue
 		}
-		codexConfig := asset.LogicalRoot == setupAssetRootProviderCodex && strings.EqualFold(strings.TrimRight(asset.LogicalPath, ". "), "config.toml")
+		codexConfig := asset.LogicalRoot == setupAssetRootProviderCodex && agent.NormalizePathForMatch(asset.LogicalPath) == "config.toml"
 		var mcpRep mcpMergeReport
 		codexServersOnly := false
 		codexMerged := false

@@ -146,6 +146,20 @@ func InstructionFileRunsCommands(name string) bool {
 	return reason == "" && runs
 }
 
+// NormalizePathForMatch returns name as Windows resolves it, for matching
+// only: slash separated, lower case, each segment without trailing dots and
+// spaces. Every path check uses it so the checks never diverge.
+func NormalizePathForMatch(name string) string {
+	segs := strings.Split(strings.ReplaceAll(name, "\\", "/"), "/")
+	for i, seg := range segs {
+		if seg == "." || seg == ".." {
+			continue
+		}
+		segs[i] = strings.ToLower(strings.TrimRight(seg, ". "))
+	}
+	return strings.Join(segs, "/")
+}
+
 // normalizeInstructionFilename returns name as Windows would resolve it:
 // slash separated, lower case, each segment without trailing dots and spaces.
 func normalizeInstructionFilename(name string) (string, error) {
@@ -157,19 +171,13 @@ func normalizeInstructionFilename(name string) (string, error) {
 	if path.IsAbs(slashed) || filepath.IsAbs(name) || filepath.VolumeName(name) != "" || strings.Contains(slashed, ":") {
 		return "", fmt.Errorf("filename %q must be relative", name)
 	}
-	segs := strings.Split(slashed, "/")
-	for i, seg := range segs {
-		if seg == "." || seg == ".." {
-			continue
-		}
-		t := strings.TrimRight(seg, ". ")
-		if t == "" && seg != "" {
+	for _, seg := range strings.Split(slashed, "/") {
+		if t := strings.TrimRight(seg, ". "); t == "" && seg != "" && seg != "." && seg != ".." {
 			// "... " or ".. " can read as a parent directory on Windows.
 			return "", fmt.Errorf("filename %q has a segment of dots and spaces", name)
 		}
-		segs[i] = strings.ToLower(t)
 	}
-	cleaned := path.Clean(strings.Join(segs, "/"))
+	cleaned := path.Clean(NormalizePathForMatch(slashed))
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return "", fmt.Errorf("filename %q escapes the target directory", name)
 	}
@@ -215,11 +223,6 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 	if rel == ".aider.conf.yml" {
 		return true, ""
 	}
-	// Under .github only Copilot's own instruction file and its
-	// instructions and prompts directories.
-	if strings.HasSuffix(rel, "/.github/copilot-instructions.md") || rel == ".github/copilot-instructions.md" {
-		return false, ""
-	}
 	dirs, base := segs[:len(segs)-1], segs[len(segs)-1]
 	inToolDir := false
 	for i := 0; i < len(dirs); {
@@ -228,6 +231,11 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 			continue
 		}
 		n := matchInstructionDir(dirs[i:])
+		if n == 0 && dirs[i] == ".github" && i == len(dirs)-1 && base == "copilot-instructions.md" {
+			// Directly under .github only Copilot's own instruction file.
+			i++
+			continue
+		}
 		if n == 0 {
 			return false, "under a tool's settings directory; refused"
 		}

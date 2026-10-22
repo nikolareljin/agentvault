@@ -121,6 +121,8 @@ func TestProseRunsCommands(t *testing.T) {
 		"agents/f.md":       "---\n{permissionMode: bypassPermissions}\n---\n",
 		"agents/t.md":       "---\nname: a\ntools: Bash\n---\n",
 		"rules/r.mdc":       "---\n? hooks\n: x\n---\n",
+		"extensions/x.toml": "a = 1",
+		`Commands\G.TOML. `: "a = 1",
 	}
 	for n, c := range runs {
 		if !proseRunsCommands(n, []byte(c)) {
@@ -131,6 +133,7 @@ func TestProseRunsCommands(t *testing.T) {
 		"CLAUDE.md":     "Be nice. Use `make test`.\n---\nhooks: are discussed here",
 		"settings.json": "!`x`",
 		"config.toml":   "notify = 1",
+		"Config.TOML.":  "notify = 1",
 	}
 	for n, c := range plain {
 		if proseRunsCommands(n, []byte(c)) {
