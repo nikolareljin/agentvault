@@ -412,7 +412,7 @@ Flags:
   well-known instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
   `codex.md`, `.github/copilot-instructions.md`, `.cursorrules`,
   `.windsurfrules`, `.clinerules`, `.aider.conf.yml`); `.md`, `.mdc`,
-  `.markdown`, `.txt` or `.rst` in a plain directory or under `.github`,
+  `.markdown`, `.txt` or `.rst` in a plain directory or under
   `.github/instructions`, `.github/prompts`, `.cursor/rules`,
   `.windsurf/rules` or `.clinerules`; or a file an instruction refers to in
   a plain directory (`scripts/check.sh`, `.env.example`). Any other dot
@@ -704,7 +704,7 @@ Flags:
   - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
   - trusted projects from the Codex provider config that are new or changed;
   - the vault's router `langgraph_command`, shared and per-agent MCP servers in the vault (a server named in `--mcp-servers` is taken), and `.aider.conf.yml` and files instructions refer to that are not prose;
-  - Claude agents, commands and skills and Gemini commands whose text adds hooks or `allowed-tools` in its frontmatter, or a shell line (`` !`cmd` ``, `!{cmd}`), in the home and in the project. `.clinerules/hooks/` is never written.
+  - Claude agents, commands and skills, rules and prompts with any frontmatter (it can add hooks, tools, MCP servers or a permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every Gemini TOML command, in the home, the project and vault instructions. `.clinerules/hooks/` is never written.
 
   A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.
 - `--mcp-servers <a,b|all|none>`: Which MCP servers to take from the bundle, without asking. `all` and `none` stand alone; combined with names they are an error. A name no bundle server has is warned about. MCP servers in `mcpServers`, `servers`, `mcp.servers` (VS Code) and `context_servers` (Zed) of JSON settings (Claude `~/.claude.json` and `settings.json`, Gemini, Copilot, Cursor, Windsurf) and in Codex `config.toml` are merged one by one:

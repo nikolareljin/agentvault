@@ -248,7 +248,7 @@
   `instructions diff` reports such an entry as refused instead of reading
   the file it names. Instruction filenames are an allow list: the
   well-known instruction files, prose (`.md`, `.mdc`, `.markdown`, `.txt`,
-  `.rst`) in plain directories or under `.github`, `.github/instructions`,
+  `.rst`) in plain directories or under `.github/instructions`,
   `.github/prompts`, `.cursor/rules`, `.windsurf/rules` or `.clinerules`,
   and files instructions refer to in plain directories. Any other dot
   directory or dot file at any depth (`.git`, `.vscode`, `.claude`,
@@ -267,9 +267,10 @@
   shared and per-agent MCP servers in the vault (written to agent configs
   by `generate`; `--mcp-servers` picks count), `.aider.conf.yml` (its
   `lint-cmd` runs) and the scripts and other non-prose files instructions
-  refer to, and Claude agents, commands and skills or Gemini commands whose
-  text adds hooks, `allowed-tools`, or shell lines (`` !`cmd` ``,
-  `!{cmd}`). Before, all of these were taken from the bundle. Values
+  refer to, prose with any frontmatter (Claude agents, commands and
+  skills, rules, prompts; it can add hooks, tools, MCP servers or a
+  permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every
+  Gemini TOML command. Before, all of these were taken from the bundle. Values
   already in a vault are not changed. `.clinerules/hooks/` is never
   written from a bundle. The deprecated `setup import` has no flag and
   leaves them out.

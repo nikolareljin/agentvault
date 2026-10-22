@@ -476,7 +476,7 @@ Flags:
   well-known instruction file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
   `codex.md`, `.github/copilot-instructions.md`, `.cursorrules`,
   `.windsurfrules`, `.clinerules`, `.aider.conf.yml`); `.md`, `.mdc`,
-  `.markdown`, `.txt` or `.rst` in a plain directory or under `.github`,
+  `.markdown`, `.txt` or `.rst` in a plain directory or under
   `.github/instructions`, `.github/prompts`, `.cursor/rules`,
   `.windsurf/rules` or `.clinerules`; or a file an instruction refers to in
   a plain directory (`scripts/check.sh`, `.env.example`). Any other dot
