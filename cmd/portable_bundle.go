@@ -13,6 +13,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/crypto"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 // PortableBundleSchemaVersion is the schema version of multi-profile bundles
@@ -413,7 +414,7 @@ func detectBundleFormat(data []byte) bundleFormat {
 // decodePortableBundle parses any supported export payload into the v2 shape.
 // v1 setup bundles and legacy vault exports are wrapped in a single "default"
 // profile so downstream import logic only handles one structure.
-func decodePortableBundle(data []byte) (PortableBundle, bundleFormat, error) {
+func decodePortableBundleUnchecked(data []byte) (PortableBundle, bundleFormat, error) {
 	format := detectBundleFormat(data)
 	switch format {
 	case bundleFormatPortable:
@@ -495,4 +496,59 @@ func setupBundleFromVaultExport(data []byte) (SetupBundle, error) {
 		}
 	}
 	return bundle, nil
+}
+
+// decodePortableBundle decodes a bundle and refuses one whose names carry
+// control characters: export never writes them, and a name is printed by
+// later commands such as list.
+func decodePortableBundle(data []byte) (PortableBundle, bundleFormat, error) {
+	bundle, format, err := decodePortableBundleUnchecked(data)
+	if err != nil {
+		return bundle, format, err
+	}
+	for _, p := range bundle.Profiles {
+		if name, bad := controlCharName(p); bad {
+			if len(name) > 80 {
+				name = name[:80] + "..."
+			}
+			return PortableBundle{}, format, fmt.Errorf("bundle names %q with control characters; it was edited and is not trusted", name)
+		}
+	}
+	return bundle, format, nil
+}
+
+// controlCharName returns the first name in p with a control character.
+func controlCharName(p PortableProfile) (string, bool) {
+	s := p.Setup
+	names := []string{p.Name}
+	for _, a := range s.Agents {
+		names = append(names, a.Name)
+		for _, m := range a.MCPServers {
+			names = append(names, m.Name)
+		}
+	}
+	for _, m := range s.SharedConfig.MCPServers {
+		names = append(names, m.Name)
+	}
+	for _, in := range s.SharedConfig.Instructions {
+		names = append(names, in.Name, in.Filename)
+	}
+	for _, r := range s.SharedConfig.Rules {
+		names = append(names, r.Name)
+	}
+	for _, r := range s.SharedConfig.Roles {
+		names = append(names, r.Name)
+	}
+	for _, ps := range s.SharedConfig.PromptSessions {
+		names = append(names, ps.Name)
+	}
+	for _, se := range s.Sessions.Sessions {
+		names = append(names, se.Name)
+	}
+	for _, n := range names {
+		if textutil.Printable(n) != n {
+			return n, true
+		}
+	}
+	return "", false
 }

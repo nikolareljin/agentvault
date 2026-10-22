@@ -353,11 +353,15 @@
   instead of writing the blanks over this machine's agent on `--merge`.
   `agent import` names a listed blank it does not fill, also for a new
   agent, and drops a blank extra. A profile with nothing blanked keeps
-  the 1.0 layout. A listed blank that export never makes is refused.
+  the 1.0 layout. A listed blank that export never makes is refused, as
+  is a profile of an unknown `schema_version` (before: a warning).
 - The import report, `import --list`, the install guide, `agent import`
   and `setup show` print names, fields, paths and commands from a bundle
   or profile with control characters replaced by `?`, so a crafted file
-  cannot send terminal escape sequences.
+  cannot send terminal escape sequences. A bundle or profile whose agent,
+  MCP server, instruction, rule, role, session or profile name has a
+  control character is refused, and `add` and `edit` refuse such an agent
+  name: `list` printed it raw.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older

@@ -105,6 +105,7 @@ func TestDecodeAgentProfileRefusesEditedOrUnknownBlanked(t *testing.T) {
 		"no agent":        `{"blanked_schema_version":"1.1"}`,
 		"blanks on plain": `{"schema_version":"1.0","agent":{"name":"a","provider":"claude"},"blanks":["base_url"]}`,
 		"unknown version": `{"blanked_schema_version":"1.9","blanked_agent":{"name":"a","provider":"claude"}}`,
+		"unknown plain":   `{"schema_version":"2.0","agent":{"name":"a","provider":"claude"}}`,
 	} {
 		if _, _, _, err := decodeAgentProfile([]byte(raw), "json"); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -155,8 +156,8 @@ func TestDecodeAgentProfileRefusesForeignBlanks(t *testing.T) {
 // without control characters.
 func TestImportReportsPrintNoEscapes(t *testing.T) {
 	a := testAgent()
-	a.Name = "ev\x1b[2Jil"
-	a.ProviderMeta.Extra = map[string]string{"api_token": ""}
+	a.Name = "evil"
+	a.ProviderMeta.Extra = map[string]string{"api_token\x1b[2J": ""}
 	data, err := marshalBlankedAgentProfile(a, nil, "json")
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +173,7 @@ func TestImportReportsPrintNoEscapes(t *testing.T) {
 	stderr := captureStderrForTest(t, func() error {
 		return agentImportCmd.RunE(agentImportCmd, []string{path})
 	})
-	if !strings.Contains(stderr, "agent ev?[2Jil provider_meta.extra.api_token") {
+	if !strings.Contains(stderr, "agent evil provider_meta.extra.api_token?[2J") {
 		t.Errorf("no sanitized Left out line: %q", stderr)
 	}
 	if strings.ContainsAny(stderr, "\x1b\a") {
@@ -197,5 +198,32 @@ func TestSetupShowPrintsNoEscapes(t *testing.T) {
 	out, _ := captureStdoutForTest(t, func() error { printSetupBundle(b); return nil })
 	if strings.ContainsAny(out, "\x1b\a\u009b") {
 		t.Errorf("setup show printed control characters: %q", out)
+	}
+}
+
+// A name with control characters is refused: list prints names raw.
+func TestImportRefusesControlCharacterNames(t *testing.T) {
+	a := testAgent()
+	a.Name = "ev\x1b[2Jil"
+	if err := a.Validate(); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Errorf("Validate() = %v, want a refusal", err)
+	}
+	a.Name = "evil"
+	a.MCPServers = []agent.MCPServer{{Name: "m\x9b2J", Command: "x"}}
+	if err := a.Validate(); err == nil {
+		t.Error("Validate() accepted an MCP server name with control characters")
+	}
+	for _, p := range []PortableProfile{
+		{Name: "p\x1b]0;t\a"},
+		{Name: "p", Setup: SetupBundle{Agents: []agent.Agent{{Name: "a\r"}}}},
+		{Name: "p", Setup: SetupBundle{SharedConfig: agent.SharedConfig{MCPServers: []agent.MCPServer{{Name: "s\x1b"}}}}},
+		{Name: "p", Setup: SetupBundle{SharedConfig: agent.SharedConfig{Instructions: []agent.InstructionFile{{Name: "i", Filename: "f\x07"}}}}},
+	} {
+		if _, bad := controlCharName(p); !bad {
+			t.Errorf("controlCharName(%+v) = clean", p)
+		}
+	}
+	if _, bad := controlCharName(PortableProfile{Name: "p", Setup: SetupBundle{Agents: []agent.Agent{{Name: "caf\u00e9"}}}}); bad {
+		t.Error("controlCharName() refused a plain non-ASCII name")
 	}
 }

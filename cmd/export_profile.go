@@ -108,6 +108,12 @@ func decodeAgentProfile(data []byte, format string) (agent.Agent, string, []stri
 	}
 	blanked := export.BlankedSchemaVersion != "" || export.BlankedAgent != nil || len(export.Blanks) > 0
 	if !blanked {
+		// A later layout may carry blanks this release would write over
+		// local values; only an unversioned hand-written file is let in.
+		if export.SchemaVersion != "" && export.SchemaVersion != agentProfileSchemaVersion {
+			return agent.Agent{}, "", nil, fmt.Errorf("agent profile version %q is not one this release reads (%s, %s); upgrade agentvault",
+				export.SchemaVersion, agentProfileSchemaVersion, blankedAgentProfileSchemaVersion)
+		}
 		var a agent.Agent
 		if export.Agent != nil {
 			a = *export.Agent
