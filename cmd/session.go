@@ -63,7 +63,7 @@ var sessionListCmd = &cobra.Command{
 			if s.ID == sessions.ActiveSession {
 				active = " [ACTIVE]"
 			}
-			fmt.Printf("\n  %s (%s)%s\n", printable(s.Name), s.ID, active)
+			fmt.Printf("\n  %s (%s)%s\n", printable(s.Name), printable(s.ID), active)
 			fmt.Printf("    Status:  %s\n", printable(string(s.Status)))
 			fmt.Printf("    Project: %s\n", printable(s.ProjectDir))
 			fmt.Printf("    Agents:  %d\n", len(s.Agents))
@@ -147,7 +147,7 @@ Examples:
 		}
 
 		fmt.Printf("Session %q created with %d agent(s).\n", name, len(agentNames))
-		fmt.Printf("  ID:      %s\n", session.ID)
+		fmt.Printf("  ID:      %s\n", printable(session.ID))
 		fmt.Printf("  Project: %s\n", printable(session.ProjectDir))
 		fmt.Printf("  Agents:  %s\n", strings.Join(agentNames, ", "))
 		if role != "" {
@@ -174,7 +174,7 @@ var sessionShowCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Session: %s\n", printable(session.Name))
-		fmt.Printf("ID: %s\n", session.ID)
+		fmt.Printf("ID: %s\n", printable(session.ID))
 		fmt.Printf("Status: %s\n", printable(string(session.Status)))
 		fmt.Printf("Project: %s\n", printable(session.ProjectDir))
 		if session.ActiveRole != "" {

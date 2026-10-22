@@ -38,7 +38,7 @@ func TestCommandsPrintNoControlCharacters(t *testing.T) {
 	if err := v.SetInstruction(agent.InstructionFile{Name: "i" + e, Filename: "AGENTS.md", Content: "body" + e}); err != nil {
 		t.Fatal(err)
 	}
-	if err := v.AddSession(agent.Session{ID: "s1", Name: "s" + e, ProjectDir: root, ActiveRole: "ro" + e, Agents: []agent.SessionAgent{{Name: a.Name, Enabled: true, Task: "k" + e}}}); err != nil {
+	if err := v.AddSession(agent.Session{ID: "s1" + e, Name: "s" + e, ProjectDir: root, ActiveRole: "ro" + e, Agents: []agent.SessionAgent{{Name: a.Name, Enabled: true, Task: "k" + e}}}); err != nil {
 		t.Fatal(err)
 	}
 	useConfigDir(t, dir)
