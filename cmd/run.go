@@ -34,18 +34,18 @@ Example:
 		asEnv, _ := cmd.Flags().GetBool("env")
 
 		if asEnv {
-			fmt.Printf("export AGENT_NAME=%q\n", a.Name)
-			fmt.Printf("export AGENT_PROVIDER=%q\n", a.Provider)
-			fmt.Printf("export AGENT_MODEL=%q\n", a.Model)
+			fmt.Printf("export AGENT_NAME=%s\n", shellQuotedValue(a.Name))
+			fmt.Printf("export AGENT_PROVIDER=%s\n", shellQuotedValue(string(a.Provider)))
+			fmt.Printf("export AGENT_MODEL=%s\n", shellQuotedValue(a.Model))
 			if a.APIKey != "" {
-				fmt.Printf("export AGENT_API_KEY=%q\n", a.APIKey)
+				fmt.Printf("export AGENT_API_KEY=%s\n", shellQuotedValue(a.APIKey))
 			}
 			if a.BaseURL != "" {
-				fmt.Printf("export AGENT_BASE_URL=%q\n", a.BaseURL)
+				fmt.Printf("export AGENT_BASE_URL=%s\n", shellQuotedValue(a.BaseURL))
 			}
 			prompt := a.EffectiveSystemPrompt(shared)
 			if prompt != "" {
-				fmt.Printf("export AGENT_SYSTEM_PROMPT=%q\n", prompt)
+				fmt.Printf("export AGENT_SYSTEM_PROMPT=%s\n", shellQuotedValue(prompt))
 			}
 			return nil
 		}
@@ -66,7 +66,7 @@ Example:
 			SystemPrompt: a.EffectiveSystemPrompt(shared),
 			TaskDesc:     a.TaskDesc,
 		}
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(c1Writer(os.Stdout))
 		enc.SetIndent("", "  ")
 		return enc.Encode(out)
 	},
