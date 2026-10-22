@@ -392,12 +392,20 @@ var urlInString = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
 // urlCarriesCredential reports a URL with userinfo (a user name alone, as
 // in https://token@host, counts) or a query or fragment parameter whose
 // decoded name is a secret key. It parses with net/url, so ports, IPv6
-// hosts and percent-encoding do not hide one. A URL that does not parse
-// counts as carrying one.
+// hosts and percent-encoding do not hide one. A URL that does not parse,
+// such as http://${HOST}:8080, carries one when its authority holds an "@"
+// or its query a secret name.
 func urlCarriesCredential(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return true
+		rest := raw[strings.Index(raw, "://")+3:]
+		authority, tail, _ := strings.Cut(rest, "/")
+		if i := strings.IndexAny(authority, "?#"); i >= 0 {
+			authority, tail = authority[:i], authority[i:]
+		}
+		_, query, _ := strings.Cut(tail, "?")
+		query, frag, _ := strings.Cut(query, "#")
+		return strings.Contains(authority, "@") || secretParams(query) || secretParams(frag)
 	}
 	if u.User != nil {
 		return true
@@ -449,11 +457,14 @@ func stripURLSecrets(raw string) (string, bool) {
 	if u.RawQuery, ok = strip(u.RawQuery); !ok {
 		return "", false
 	}
-	frag, ok := strip(u.Fragment)
-	if !ok {
-		return "", false
+	if strings.Contains(u.Fragment, "=") {
+		// Only a parameter-shaped fragment (#access_token=x) is rewritten.
+		frag, ok := strip(u.Fragment)
+		if !ok {
+			return "", false
+		}
+		u.Fragment, u.RawFragment = frag, ""
 	}
-	u.Fragment, u.RawFragment = frag, ""
 	if secretString(u.String()) {
 		return "", false
 	}

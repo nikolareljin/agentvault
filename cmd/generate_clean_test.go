@@ -277,6 +277,9 @@ func TestSecretStringParsesURLs(t *testing.T) {
 		"run --url=https://tok@h.example/x now": true,
 		"https://h.example/v1?model=x":          false,
 		"https://h.example:8443/v1":             false,
+		"http://${HOST}:8080/v1":                false,
+		"http://tok@${HOST}:8080/v1":            true,
+		"http://${HOST}:8080/v1?token=x":        true,
 	} {
 		if got := secretString(s); got != want {
 			t.Errorf("secretString(%q) = %v, want %v", s, got, want)
