@@ -274,7 +274,9 @@
   run `!{cmd}`). Before, all of these were taken from the bundle. Values
   already in a vault are not changed. `.clinerules/hooks/` is never
   written from a bundle. The deprecated `setup import` has no flag and
-  leaves them out.
+  leaves them out. `agent import` leaves out a profile's new or changed MCP
+  server commands the same way and takes them with its new
+  `--keep-bundle-commands`.
 - `generate env`, `generate all` and `setup apply --generate` set an
   existing env file to mode 0600 when they write keys into it. Before, a
   file created earlier as 0644 kept that mode.
