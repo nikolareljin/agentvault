@@ -1441,8 +1441,10 @@ func projectAssetRefusal(rel string) string {
 	if isProseFile(slashed) || isProjectInstructionPath(slashed) {
 		return ""
 	}
-	return "not prose; left staged for review"
+	return notProseReason
 }
+
+const notProseReason = "not prose; left staged for review"
 
 // plainTextRuleFiles are instruction files with no extension that hold rule
 // text and nothing a tool executes.

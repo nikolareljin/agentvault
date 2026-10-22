@@ -1046,6 +1046,10 @@ func applyStagedProjectAssetsCtx(configDir string, targetDir string, overwrite b
 	var skipped []string
 	for _, rel := range relPaths {
 		if reason := projectAssetRefusal(rel); reason != "" {
+			if reason == notProseReason && sameStagedAsTarget(projectRoot, targetDir, rel) {
+				// Already in place, as on the machine that exported it.
+				continue
+			}
 			skipped = append(skipped, fmt.Sprintf("%s: %s", rel, reason))
 			continue
 		}
@@ -1679,4 +1683,22 @@ func copyRegularFile(srcPath string, root string, destPath string, perm os.FileM
 	}
 	tmpPath = ""
 	return fsname.CheckAfterWrite(root, destPath)
+}
+
+// sameStagedAsTarget is whether the staged rel already sits in targetDir
+// with the same bytes, read without following a symlink at the target.
+func sameStagedAsTarget(projectRoot, targetDir, rel string) bool {
+	src, err := safeJoinUnder(projectRoot, rel)
+	if err != nil {
+		return false
+	}
+	dest, err := safeJoinUnder(targetDir, rel)
+	if err != nil || ensureNoSymlinkBelow(targetDir, dest) != nil {
+		return false
+	}
+	if info, err := os.Lstat(dest); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	same, exists := sameFileContent(src, dest)
+	return exists && same
 }
