@@ -220,3 +220,32 @@ func TestEnvWritersExitOneWhenLeftOut(t *testing.T) {
 		}
 	}
 }
+
+// generate env --no-keys leaves out a base URL that carries a key, in
+// every format, as it leaves out the API key; a plain one stays.
+func TestGenerateEnvNoKeysDropsCredentialedBaseURL(t *testing.T) {
+	a := testAgent()
+	a.Name = "withkey"
+	a.BaseURL = "https://api.example/v1?api_key=CANARYURL1"
+	b := testAgent()
+	b.Name = "plain"
+	b.BaseURL = "https://plain.example/v1"
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	dir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, dir, []agent.Agent{a, b}, nil)
+	useConfigDir(t, dir)
+	for _, format := range []string{"dotenv", "shell", "json"} {
+		withFlags(t, generateEnvCmd, map[string]string{"format": format, "no-keys": "true"})
+		out, err := captureStdoutForTest(t, func() error {
+			return generateEnvCmd.RunE(generateEnvCmd, []string{"-"})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "CANARYURL1") || !strings.Contains(out, "plain.example") {
+			t.Errorf("%s: output = %q", format, out)
+		}
+	}
+}

@@ -532,7 +532,8 @@ Flags:
 ### `agentvault generate env [output-file]`
 Flags:
 - `--format <dotenv|shell|json>` (default: `dotenv`)
-- `--no-keys` (default: `false`)
+- `--no-keys` (default: `false`): leave out API keys and base URLs that
+  carry credentials
 - `--agent <name>`
 
 A value that cannot be written safely (`dotenv`: a single quote, `${` or a
@@ -555,7 +556,8 @@ Flags:
 - `--shared-only` (default: `false`)
 
 ### `agentvault generate all`
-No flags.
+No flags. Its `.env.agents` leaves out API keys and base URLs that carry
+credentials, as `generate env --no-keys` does.
 
 ## Setup (deprecated)
 

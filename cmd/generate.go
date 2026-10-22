@@ -123,7 +123,7 @@ func init() {
 	generateCodexCmd.Flags().String("project", "", "add current directory as trusted project")
 
 	generateEnvCmd.Flags().String("format", "dotenv", "output format: dotenv, shell, json")
-	generateEnvCmd.Flags().Bool("no-keys", false, "exclude API keys from output")
+	generateEnvCmd.Flags().Bool("no-keys", false, "exclude API keys and base URLs with credentials from output")
 	generateEnvCmd.Flags().String("agent", "", "generate env for specific agent only")
 
 	generateMCPCmd.Flags().String("agent", "", "include only specific agent's MCP servers")
@@ -369,7 +369,7 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			if !noKeys && a.APIKey != "" {
 				output.WriteString(countLeftOut(&left, shellExportLine(prefix+"_API_KEY", a.APIKey)))
 			}
-			if a.BaseURL != "" {
+			if a.BaseURL != "" && (!noKeys || !secretString(a.BaseURL)) {
 				output.WriteString(countLeftOut(&left, shellExportLine(prefix+"_BASE_URL", a.BaseURL)))
 			}
 			output.WriteString("\n")
@@ -385,7 +385,7 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			if !noKeys && a.APIKey != "" {
 				agentEnv["api_key"] = a.APIKey
 			}
-			if a.BaseURL != "" {
+			if a.BaseURL != "" && (!noKeys || !secretString(a.BaseURL)) {
 				agentEnv["base_url"] = a.BaseURL
 			}
 			envMap[a.Name] = agentEnv
@@ -412,13 +412,15 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Generated %s (%d agents)\n", outputFile, len(agents))
 	if noKeys {
-		fmt.Println("  Note: API keys excluded (use without --no-keys to include)")
+		fmt.Println("  Note: API keys and base URLs with credentials excluded (use without --no-keys to include)")
 	}
 	return leftOutError(cmd, left)
 }
 
 // writeAgentDotenv writes one agent's dotenv block: a comment naming it,
-// then MODEL, API_KEY (when withKey) and BASE_URL through dotenvLine.
+// then MODEL, API_KEY (when withKey) and BASE_URL through dotenvLine. A
+// base URL that carries credentials is a key too: without withKey it is
+// left out.
 func writeAgentDotenv(out *strings.Builder, a agent.Agent, withKey bool, left *int) {
 	prefix := envPrefixForAgent(a)
 	out.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", printable(a.Name), printable(string(a.Provider))))
@@ -428,7 +430,7 @@ func writeAgentDotenv(out *strings.Builder, a agent.Agent, withKey bool, left *i
 	if withKey && a.APIKey != "" {
 		out.WriteString(countLeftOut(left, dotenvLine(prefix+"_API_KEY", a.APIKey)))
 	}
-	if a.BaseURL != "" {
+	if a.BaseURL != "" && (withKey || !secretString(a.BaseURL)) {
 		out.WriteString(countLeftOut(left, dotenvLine(prefix+"_BASE_URL", a.BaseURL)))
 	}
 	out.WriteString("\n")
