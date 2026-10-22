@@ -219,7 +219,9 @@
   the new format on its next save, and unlocking alone changes nothing. The
   first such save keeps the old file as `<vault>.v1.bak`. A header asking for
   more than t=8, 256 MiB or 16 lanes is refused before Argon2 runs.
-  Compatibility: earlier releases cannot open AVK2 vaults or bundles.
+  Compatibility: earlier releases cannot open AVK2 vaults or bundles; 0.14.0
+  reports them as "wrong password or corrupted". The `.v1.bak` still opens
+  with it.
 - New vault and bundle passwords need 12 characters (was 8). Existing ones
   keep working.
 - An instruction whose filename escapes the target directory, such as
@@ -319,6 +321,27 @@
   blank matches only a value export blanks. Otherwise the value is left
   out and named. Since 0.13.0 a bundle exported without keys could point
   an agent at another base URL and receive this machine's API key.
+- A bundle exported without `--include-secrets` names its version
+  `blanked_schema_version: 2.1` in place of `schema_version`, so 0.14.0 and
+  earlier refuse it ("not a recognized agentvault export"). Before, 0.14.0
+  imported a plain one and wrote its blanks over this machine's
+  `settings.json` env, shared MCP server args and other secrets. For the
+  same reason `setup export` without `--include-secrets` (its default)
+  writes such a one-profile bundle instead of the 1.x layout, and
+  `setup show` reads every bundle format.
+- `export --vault-only` with `--include-keys=false` or
+  `--include-secrets=false` is refused. It wrote the whole vault anyway,
+  keys and secrets in plain text, without the confirmation `--plain` needs.
+- `agent export` without `--include-key` also blanks the agent's MCP server
+  env and secret args, secret provider extras and a base URL with
+  credentials. `agent import --merge` fills blanks back from the local
+  agent under the rules bundle import uses, the API key included, and
+  names what it leaves out. Before, a profile with another base URL got
+  this machine's key.
+- Import with `--apply-provider-configs` keeps this machine's
+  `settings.json` or Codex `config.toml` when the bundle carries that file
+  redacted whole. Before, the provider config's copy, which can be older
+  than the file, replaced it, and a local `apiKeyHelper` could be lost.
 
 ### Fixed
 - Releases attach a `.deb` and an `.rpm` for linux/amd64 for the first

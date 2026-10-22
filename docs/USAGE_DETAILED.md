@@ -555,7 +555,9 @@ No flags.
 `setup export` and `setup import` are superseded by `agentvault export` and
 `agentvault import` (section 3.13). They keep working and keep reading and writing the
 schema 1.x bundle, but they only ever see the single config directory `--config` points
-at, and `setup import` has no `mirror` strategy.
+at, and `setup import` has no `mirror` strategy. Without `--include-secrets` (the
+default), `setup export` writes a one-profile portable bundle with its secrets blanked
+instead, which 0.14.0 and earlier refuse.
 
 ### `agentvault setup export [file]`
 Flags:
@@ -583,7 +585,8 @@ one profile rather than folding several machines' configurations into one vault.
 `agentvault import <file> --profile NAME` for those.
 
 ### `agentvault setup show [file]`
-No flags.
+No flags. Reads any export: a setup bundle, a portable bundle (each profile in turn) or
+a legacy vault export.
 
 ### `agentvault setup apply [directory]`
 Flags:
@@ -649,7 +652,7 @@ Flags:
 - `--project <dir>`: Also capture project-local instruction, workflow and skill assets.
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
-- `--vault-only` (default: `false`): Write the legacy single-vault payload instead of a bundle. One profile only.
+- `--vault-only` (default: `false`): Write the legacy single-vault payload instead of a bundle. One profile only. It is the whole vault, keys and secrets included, so it refuses `--include-keys=false` and `--include-secrets=false`.
 - `--confirm` (default: `false`): Skip interactive confirmations.
 
 Bundle contents, per profile: agents, shared config (system prompt, MCP servers, rules,

@@ -506,6 +506,9 @@ No flags.
 `setup export` and `setup import` are superseded by `agentvault export` and
 `agentvault import`. They still work and still read and write the schema 1.x
 bundle, but they only ever see the single config directory `--config` points at.
+Without `--include-secrets` (the default), `setup export` writes a one-profile
+portable bundle with its secrets blanked instead (see `agentvault export`),
+which 0.14.0 and earlier refuse.
 
 ### `agentvault setup export [file]`
 Flags:
@@ -526,7 +529,8 @@ Refuses a portable bundle holding more than one profile, since this command has 
 selection; use `agentvault import <file> --profile NAME` instead.
 
 ### `agentvault setup show [file]`
-No flags.
+No flags. Reads any export: a setup bundle, a portable bundle (each profile
+in turn) or a legacy vault export.
 
 ### `agentvault setup apply [directory]`
 Flags:
@@ -589,7 +593,7 @@ Flags:
 - `--workdir <dir>` (repeatable): Record a folder of projects. Projects under it are recorded relative to it, so import can place them in the folder of the same name on the other machine.
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
-- `--vault-only` (default: `false`): Write the legacy single-vault export instead.
+- `--vault-only` (default: `false`): Write the legacy single-vault export instead. It is the whole vault, API keys and secrets included, so it refuses `--include-keys=false` and `--include-secrets=false`.
 - `--confirm` (default: `false`): Skip interactive confirmations.
 
 Environment:
@@ -629,6 +633,10 @@ Windows names:
 Without `--include-secrets`, JSON settings files that can hold tokens (`~/.copilot/config.json` included) travel with their secret values blanked, as described below. Other settings files that can hold tokens are redacted whole. So are `~/.claude/hooks/` scripts, which are code and cannot be blanked field by field, files in project rule directories that are neither prose nor TOML, credential-named files in any carried directory, files with a second hard link inside a tool's directory, and referenced files that are not prose, such as scripts and config files. Import names each redacted file it could not write. Markdown and text are carried as is.
 
 The vault's own copies are blanked the same way: the Claude settings `setup pull` stored (`env`, `apiKeyHelper`, MCP `headers` and the like; with a secret under a neutral key, such as `--token x` in a command, the settings are left out and import keeps this machine's), every `env` value and secret-shaped argument of shared and per-agent MCP servers, secret-shaped agent and Ollama base URLs, agent provider extras under a secret key, `env` or `headers` or with a secret-shaped value, the shared router's `langgraph_command`, `llm_router_url` and `local_ai_ollama_url` when secret-shaped, and secret keys and `http_headers` of Codex and Ollama custom settings (these are dropped, not blanked). Import fills each blank from this machine's vault when the definition is unchanged, and otherwise leaves the value out and names it as `Left out`. An MCP server is unchanged when it keeps this machine's command, args and `env` names; Codex and Ollama custom settings and the router when they are exactly what export makes of this machine's, and for Ollama the base URL is this machine's. For an agent this covers its API key too: the agent must keep this machine's provider, backend, base URL, provider settings and provider extras names, and a blank matches only a value export blanks, or the blank value is left out and named. The detected-agents summary drops `env`, `headers`, `http_headers`, secret keys and secret-shaped values. A URL query parameter is a secret when its name is a secret key (`?client_secret=`, `?api-key=`, `?sig=`, `#access_token=`), and so is `NAME=value` in an argument or command when `NAME` is one (`X-Api-Key=x`).
+
+A bundle exported without `--include-secrets` carries its version as `blanked_schema_version` (`2.1`) instead of `schema_version`. Only a reader that fills blanks back may apply it; 0.14.0 and earlier refuse it as "not a recognized agentvault export".
+
+With `--apply-provider-configs`, a provider file the bundle carries redacted whole is not written, and neither is the provider config's copy of it (`settings.json`, Codex `config.toml`) when this machine has the file.
 
 Files referenced outside the tools' own directories are written back on import only when they are prose. They are written 0600 and never executable. `~/.claude.json` only gets its `mcpServers` key merged in. Referenced scripts and config files are staged under `<config dir>/imported-assets/provider/provider_home/` for review, and never written to the home directory: placed on `PATH` or named by a hook, a file from a bundle runs code.
 
