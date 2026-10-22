@@ -168,6 +168,18 @@ Examples:
 		if dryRun {
 			prefix = "Dry-run: would leave out"
 		}
+		if !exists || merge {
+			// MCP server commands run in the agent: new or changed ones need
+			// --keep-bundle-commands, as on import.
+			keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
+			rep := &importReport{}
+			a.MCPServers = gateBundleCommands(a.MCPServers, existing.MCPServers,
+				mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true },
+				importConsent{KeepCommands: keep}.takesMCP, strategyReplace, "agent "+a.Name+" MCP server", rep)
+			for _, l := range rep.Lines {
+				fmt.Fprintf(os.Stderr, "%s\n", strings.Replace(strings.TrimSpace(l), "Left out", prefix, 1))
+			}
+		}
 		for _, f := range left {
 			fmt.Fprintf(os.Stderr, "%s: agent %s %s: blank in the profile, and not filled from this machine's agent\n", prefix, printable(a.Name), printable(f))
 		}
@@ -231,4 +243,5 @@ func init() {
 	agentImportCmd.Flags().String("format", "", "input format: json or yaml (autodetect)")
 	agentImportCmd.Flags().Bool("merge", false, "update existing agent with same name")
 	agentImportCmd.Flags().Bool("dry-run", false, "validate and report without writing")
+	agentImportCmd.Flags().Bool("keep-bundle-commands", false, "keep MCP server commands that the profile adds or changes; left out by default")
 }

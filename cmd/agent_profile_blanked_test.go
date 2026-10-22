@@ -299,3 +299,41 @@ func TestListPrintsNoEscapes(t *testing.T) {
 		t.Errorf("name missing: %q", b.String())
 	}
 }
+
+// An agent profile's MCP server commands run in the agent: new or changed
+// ones are left out unless --keep-bundle-commands.
+func TestAgentProfileImportLeavesOutMCPCommands(t *testing.T) {
+	local := testAgent()
+	local.MCPServers = []agent.MCPServer{{Name: "fs", Command: "npx"}}
+	in := local
+	in.MCPServers = []agent.MCPServer{{Name: "fs", Command: "evil"}, {Name: "new", Command: "evil2"}}
+	data, err := marshalBlankedAgentProfile(in, nil, "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	dir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, dir, []agent.Agent{local}, nil)
+	useConfigDir(t, dir)
+	path := filepath.Join(root, "p.json")
+	mustWriteFile(t, path, string(data))
+	withFlags(t, agentImportCmd, map[string]string{"merge": "true"})
+	stderr := captureStderrForTest(t, func() error { return agentImportCmd.RunE(agentImportCmd, []string{path}) })
+	v, err := openVault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := v.Get(local.Name)
+	if len(got.MCPServers) != 1 || got.MCPServers[0].Command != "npx" || !strings.Contains(stderr, "MCP server new") {
+		t.Errorf("MCP servers = %+v, stderr %q", got.MCPServers, stderr)
+	}
+	withFlags(t, agentImportCmd, map[string]string{"merge": "true", "keep-bundle-commands": "true"})
+	captureStderrForTest(t, func() error { return agentImportCmd.RunE(agentImportCmd, []string{path}) })
+	v, _ = openVault()
+	got, _ = v.Get(local.Name)
+	if len(got.MCPServers) != 2 || got.MCPServers[0].Command != "evil" {
+		t.Errorf("--keep-bundle-commands did not take the servers: %+v", got.MCPServers)
+	}
+}
