@@ -106,7 +106,7 @@ func ValidateInstructionScope(inst InstructionFile) error {
 const InstructionFilenameForms = "an instruction file (AGENTS.md, CLAUDE.md, GEMINI.md, codex.md, " +
 	".github/copilot-instructions.md, .cursorrules, .windsurfrules, .clinerules, .aider.conf.yml, " +
 	"or .md, .mdc, .markdown, .txt, .rst) in the project, in a plain directory or under " +
-	".github, .github/instructions, .github/prompts, .cursor/rules, .windsurf/rules or .clinerules; " +
+	".github/instructions, .github/prompts, .cursor/rules, .windsurf/rules or .clinerules; " +
 	"or a file an instruction refers to, in a plain directory"
 
 // instructionDirs are the dot directories an instruction may sit under, at
@@ -116,7 +116,6 @@ var instructionDirs = [][]string{
 	{".github", "prompts"},
 	{".cursor", "rules"},
 	{".windsurf", "rules"},
-	{".github"},
 	{".clinerules"},
 }
 
@@ -215,6 +214,11 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 	}
 	if rel == ".aider.conf.yml" {
 		return true, ""
+	}
+	// Under .github only Copilot's own instruction file and its
+	// instructions and prompts directories.
+	if strings.HasSuffix(rel, "/.github/copilot-instructions.md") || rel == ".github/copilot-instructions.md" {
+		return false, ""
 	}
 	dirs, base := segs[:len(segs)-1], segs[len(segs)-1]
 	inToolDir := false

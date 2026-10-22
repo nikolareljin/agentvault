@@ -232,7 +232,9 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	// .aider.conf.yml and the scripts instructions refer to run code.
 	incomingInstructions = gateBundleCommands(incomingInstructions, shared.Instructions,
 		agent.InstructionKey, sameInstructionFile,
-		func(i agent.InstructionFile) bool { return agent.InstructionFileRunsCommands(i.Filename) },
+		func(i agent.InstructionFile) bool {
+			return agent.InstructionFileRunsCommands(i.Filename) || proseRunsCommands(i.Filename, []byte(i.Content))
+		},
 		consent.takes, strategy, "instruction", rep)
 	shared.Instructions = mergeKeyed(shared.Instructions, incomingInstructions,
 		agent.InstructionKey, strategy, "instruction", rep)

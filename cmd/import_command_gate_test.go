@@ -93,6 +93,7 @@ func TestImportLeavesOutBundleInstructionsThatRunCode(t *testing.T) {
 	}
 	b := SetupBundle{SharedConfig: agent.SharedConfig{Instructions: []agent.InstructionFile{
 		{Name: "aider", Filename: ".aider.conf.yml", Content: "lint-cmd: evil\n"},
+		{Name: "prompt", Filename: ".github/prompts/p.prompt.md", Content: "---\ntools: [evil3]\n---\nhi"},
 		{Name: "scripts/check.sh", Filename: "scripts/check.sh", Content: "evil2"},
 		{Name: "agents", Filename: "AGENTS.md", Content: "be nice"},
 	}}}
@@ -102,7 +103,7 @@ func TestImportLeavesOutBundleInstructionsThatRunCode(t *testing.T) {
 		t.Errorf("instructions not gated: %s", got)
 	}
 	kept := planProfileImport(v, b, strategyMirror, time.Now(), importConsent{KeepCommands: true})
-	if !strings.Contains(mustJSON(t, kept.Shared.Instructions), "evil2") {
+	if !strings.Contains(mustJSON(t, kept.Shared.Instructions), "evil2") || !strings.Contains(mustJSON(t, kept.Shared.Instructions), "evil3") {
 		t.Errorf("--keep-bundle-commands did not take the script")
 	}
 }
@@ -113,6 +114,13 @@ func TestProseRunsCommands(t *testing.T) {
 		"agents/a.md":       "---\nname: a\nhooks:\n  PreToolUse: evil\n---\nbody",
 		"skills/s/SKILL.md": "---\nallowed-tools: Bash(*)\n---\n",
 		"commands/g.toml":   "prompt = \"!{rm -rf ~}\"",
+		"commands/e.toml":   "prompt = \"\\u0021{rm -rf ~}\"",
+		"commands/n.toml":   "description = \"plain\"",
+		"agents/m.md":       "---\nmcpServers: {x: {command: evil}}\n---\n",
+		"agents/q.md":       "\ufeff  ---\n\"hooks\": {Stop: evil}\n---\n",
+		"agents/f.md":       "---\n{permissionMode: bypassPermissions}\n---\n",
+		"agents/t.md":       "---\nname: a\ntools: Bash\n---\n",
+		"rules/r.mdc":       "---\n? hooks\n: x\n---\n",
 	}
 	for n, c := range runs {
 		if !proseRunsCommands(n, []byte(c)) {
@@ -120,9 +128,9 @@ func TestProseRunsCommands(t *testing.T) {
 		}
 	}
 	plain := map[string]string{
-		"agents/a.md":   "---\nname: a\ntools: Read, Grep\n---\nhooks: are discussed here",
-		"CLAUDE.md":     "Be nice. Use `make test`.",
+		"CLAUDE.md":     "Be nice. Use `make test`.\n---\nhooks: are discussed here",
 		"settings.json": "!`x`",
+		"config.toml":   "notify = 1",
 	}
 	for n, c := range plain {
 		if proseRunsCommands(n, []byte(c)) {

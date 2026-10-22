@@ -317,7 +317,8 @@ func TestValidateInstructionFilenameAllowList(t *testing.T) {
 		"sub/.vscode./settings.json", ".vscode /tasks.json", `sub\.vscode\tasks.json`,
 		`.Claude\agents\r.md`, "AGENTS.md:evil", "a.md:x", "a.md::$DATA",
 		"CLAUDE~1/agents/x.md", "VSCODE~1/x.md", ".. /x.md", "a/.. /../x.md", "... /x.md", "a/ /x.md", ".envrc.", ".envrc ", "x.md/.envrc",
-		".GitHub/Workflows/ci.yml", ".github/workflows/ci.yml",
+		".GitHub/Workflows/ci.yml", ".github/workflows/ci.yml", ".github/x.md", ".github/workflows/x.md",
+		".github/ISSUE_TEMPLATE/bug.md", "sub/.github/agents/a.md",
 	}
 	for _, name := range refused {
 		if err := ValidateInstructionFilename(name); err == nil {
@@ -326,7 +327,7 @@ func TestValidateInstructionFilenameAllowList(t *testing.T) {
 			t.Errorf("ValidateInstructionFilename(%q) = %v, want the allowed forms named", name, err)
 		}
 	}
-	allowed := []string{"AGENTS.md.", "AGENTS.md ", `docs\a.md`, ".GITHUB/Copilot-Instructions.md", "README.MD"}
+	allowed := []string{"AGENTS.md.", "AGENTS.md ", `docs\a.md`, ".GITHUB/Copilot-Instructions.md", "README.MD", "sub/.github/copilot-instructions.md"}
 	for _, name := range allowed {
 		if err := ValidateInstructionFilename(name); err != nil {
 			t.Errorf("ValidateInstructionFilename(%q) = %v, want nil", name, err)
