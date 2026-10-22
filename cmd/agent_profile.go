@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -56,16 +57,7 @@ Examples:
 		blanked := false
 		var blanks []string
 		if !includeKey {
-			a.APIKey = ""
-			// The other secrets go too, blanked as a bundle blanks them, so
-			// import --merge can fill them back on this machine.
-			b := SetupBundle{Agents: []agent.Agent{a}}
-			redactVaultSecrets(&b)
-			blanked = !reflect.DeepEqual(a, b.Agents[0])
-			a = b.Agents[0]
-			for _, vb := range b.VaultBlanks {
-				blanks = append(blanks, vb.Field)
-			}
+			a, blanked, blanks = blankAgentForExport(a)
 		}
 
 		format, _ := cmd.Flags().GetString("format")
@@ -151,45 +143,13 @@ Examples:
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		existing, exists := v.Get(a.Name)
 
-		var left []string
-		if exists && merge {
-			a, left = prepareAgentProfileMerge(existing, a, time.Now())
-		} else if !exists {
-			a, left = restoreAgentSecrets(a, agent.Agent{}, false)
-		}
-		if !exists || merge {
-			for _, f := range blanks {
-				if !containsString(left, f) && dropAgentBlank(&a, f) {
-					left = append(left, f)
-				}
-			}
-		}
 		prefix := "Left out"
 		if dryRun {
 			prefix = "Dry-run: would leave out"
 		}
 		if !exists || merge {
-			// MCP server commands run in the agent: new or changed ones need
-			// --keep-bundle-commands, as on import.
 			keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
-			rep := &importReport{}
-			a.MCPServers = gateBundleCommands(a.MCPServers, existing.MCPServers,
-				mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true },
-				importConsent{KeepCommands: keep}.takesMCP, strategyReplace, "agent "+a.Name+" MCP server", rep)
-			for _, l := range rep.Lines {
-				fmt.Fprintf(os.Stderr, "%s\n", strings.Replace(strings.TrimSpace(l), "Left out", prefix, 1))
-			}
-			// A server kept as this machine's has its own secrets back.
-			kept := left[:0]
-			for _, f := range left {
-				if !mcpBlankOfKeptServer(f, a.MCPServers, existing.MCPServers) {
-					kept = append(kept, f)
-				}
-			}
-			left = kept
-		}
-		for _, f := range left {
-			fmt.Fprintf(os.Stderr, "%s: agent %s %s: blank in the profile, and not filled from this machine's agent\n", prefix, printable(a.Name), printable(f))
+			a = prepareImportedAgent(os.Stderr, a, existing, exists, blanks, keep, prefix)
 		}
 
 		if dryRun {
@@ -237,6 +197,56 @@ func prepareAgentProfileMerge(existing, imported agent.Agent, now time.Time) (ag
 		}
 	}
 	return imported, left
+}
+
+// blankAgentForExport is a without its API key and its other secrets,
+// blanked as a bundle blanks them, so an import on this machine can fill
+// them back. blanked is whether anything changed; blanks names each field.
+func blankAgentForExport(a agent.Agent) (out agent.Agent, blanked bool, blanks []string) {
+	a.APIKey = ""
+	b := SetupBundle{Agents: []agent.Agent{a}}
+	redactVaultSecrets(&b)
+	for _, vb := range b.VaultBlanks {
+		blanks = append(blanks, vb.Field)
+	}
+	return b.Agents[0], !reflect.DeepEqual(a, b.Agents[0]), blanks
+}
+
+// prepareImportedAgent is the agent an import adds, or with exists the one
+// it merges over existing: blanks filled from existing where it points at
+// the same endpoint and dropped otherwise, MCP server commands it adds or
+// changes left out without keep. It writes one prefix line per field it
+// leaves out to w.
+func prepareImportedAgent(w io.Writer, a, existing agent.Agent, exists bool, blanks []string, keep bool, prefix string) agent.Agent {
+	var left []string
+	if exists {
+		a, left = prepareAgentProfileMerge(existing, a, time.Now())
+	} else {
+		existing = agent.Agent{}
+		a, left = restoreAgentSecrets(a, agent.Agent{}, false)
+	}
+	for _, f := range blanks {
+		if !containsString(left, f) && dropAgentBlank(&a, f) {
+			left = append(left, f)
+		}
+	}
+	// MCP server commands run in the agent: new or changed ones need
+	// --keep-bundle-commands, as on import.
+	rep := &importReport{}
+	a.MCPServers = gateBundleCommands(a.MCPServers, existing.MCPServers,
+		mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true },
+		importConsent{KeepCommands: keep}.takesMCP, strategyReplace, "agent "+a.Name+" MCP server", rep)
+	for _, l := range rep.Lines {
+		fmt.Fprintf(w, "%s\n", strings.Replace(strings.TrimSpace(l), "Left out", prefix, 1))
+	}
+	for _, f := range left {
+		// A server kept as this machine's has its own secrets back.
+		if mcpBlankOfKeptServer(f, a.MCPServers, existing.MCPServers) {
+			continue
+		}
+		fmt.Fprintf(w, "%s: agent %s %s: blank in the profile, and not filled from this machine's agent\n", prefix, printable(a.Name), printable(f))
+	}
+	return a
 }
 
 func init() {

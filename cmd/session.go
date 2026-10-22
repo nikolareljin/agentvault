@@ -332,12 +332,13 @@ var sessionExportCmd = &cobra.Command{
 
 		// Bundle the session with its agents, rules, and roles so the
 		// recipient can import everything needed to recreate the session.
-		exportData := struct {
-			Session agent.Session       `json:"session"`
-			Agents  []agent.Agent       `json:"agents"`
-			Rules   []agent.UnifiedRule `json:"rules"`
-			Roles   []agent.Role        `json:"roles"`
-		}{
+		// Process IDs are this machine's: they mean nothing elsewhere.
+		session.Agents = append([]agent.SessionAgent(nil), session.Agents...)
+		for i := range session.Agents {
+			session.Agents[i].PID = 0
+		}
+		session.Status = agent.SessionStatusIdle
+		exportData := sessionExport{
 			Session: session,
 			Rules:   v.SharedConfig().Rules,
 			Roles:   v.SharedConfig().Roles,
@@ -349,11 +350,15 @@ var sessionExportCmd = &cobra.Command{
 				if !includeKeys {
 					// The other secrets go too, as agent export blanks them:
 					// MCP server env and secret args, credential extras, a
-					// base URL with credentials.
-					a.APIKey = ""
-					b := SetupBundle{Agents: []agent.Agent{a}}
-					redactVaultSecrets(&b)
-					a = b.Agents[0]
+					// base URL with credentials. Import names each blank.
+					var blanks []string
+					a, _, blanks = blankAgentForExport(a)
+					if len(blanks) > 0 {
+						if exportData.Blanks == nil {
+							exportData.Blanks = map[string][]string{}
+						}
+						exportData.Blanks[a.Name] = blanks
+					}
 				}
 				exportData.Agents = append(exportData.Agents, a)
 			}
@@ -373,6 +378,17 @@ var sessionExportCmd = &cobra.Command{
 	},
 }
 
+// sessionExport is the file session export writes: the session, its
+// agents, and the rules and roles. Blanks names, per agent, each secret
+// export blanked, so import can say what it left out.
+type sessionExport struct {
+	Session agent.Session       `json:"session"`
+	Agents  []agent.Agent       `json:"agents"`
+	Blanks  map[string][]string `json:"blanks,omitempty"`
+	Rules   []agent.UnifiedRule `json:"rules"`
+	Roles   []agent.Role        `json:"roles"`
+}
+
 var sessionImportCmd = &cobra.Command{
 	Use:   "import [file]",
 	Short: "Import a session from a file",
@@ -388,47 +404,77 @@ var sessionImportCmd = &cobra.Command{
 			return fmt.Errorf("reading file: %w", err)
 		}
 
-		var importData struct {
-			Session agent.Session       `json:"session"`
-			Agents  []agent.Agent       `json:"agents"`
-			Rules   []agent.UnifiedRule `json:"rules"`
-			Roles   []agent.Role        `json:"roles"`
-		}
-
+		var importData sessionExport
 		if err := json.Unmarshal(data, &importData); err != nil {
 			return fmt.Errorf("decoding session: %w", err)
 		}
-
-		// Import agents. MCP server commands run in the agent: they need
-		// --keep-bundle-commands, as on agent import.
-		keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
-		for _, a := range importData.Agents {
-			if _, exists := v.Get(a.Name); !exists {
-				if err := a.Validate(); err != nil {
-					return fmt.Errorf("importing agent %q: %w", printable(a.Name), err)
-				}
-				rep := &importReport{}
-				a.MCPServers = gateBundleCommands(a.MCPServers, nil,
-					mcpServerName, sameMCPCommand, func(agent.MCPServer) bool { return true },
-					importConsent{KeepCommands: keep}.takesMCP, strategyReplace, "agent "+a.Name+" MCP server", rep)
-				for _, l := range rep.Lines {
-					fmt.Fprintf(os.Stderr, "%s\n", printable(strings.TrimSpace(l)))
-				}
-				a.CreatedAt = time.Now()
-				a.UpdatedAt = time.Now()
-				if err := v.Add(a); err != nil {
-					return fmt.Errorf("importing agent %q: %w", a.Name, err)
-				}
-				fmt.Printf("  Imported agent: %s\n", printable(a.Name))
-			}
+		// The session is settled before anything is written: a clash found
+		// later would leave its agents, rules and roles imported without it.
+		importData.Session = sessionToImport(v, importData.Session, time.Now())
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		prefix, would := "Left out", ""
+		if dryRun {
+			prefix, would = "Dry-run: would leave out", "Dry-run: would import "
 		}
 
-		// Import rules
+		// Import agents the vault does not have, as agent import adds them:
+		// blanks dropped and named, MCP server commands only with
+		// --keep-bundle-commands.
+		keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
+		var newAgents []agent.Agent
+		for _, a := range importData.Agents {
+			if _, exists := v.Get(a.Name); exists {
+				continue
+			}
+			if err := a.Validate(); err != nil {
+				return fmt.Errorf("importing agent %q: %w", printable(a.Name), err)
+			}
+			var blanks []string
+			for _, f := range importData.Blanks[a.Name] {
+				if profileBlankField(a, f) {
+					blanks = append(blanks, f)
+				}
+			}
+			a = prepareImportedAgent(os.Stderr, a, agent.Agent{}, false, blanks, keep, prefix)
+			a.CreatedAt = time.Now()
+			a.UpdatedAt = time.Now()
+			newAgents = append(newAgents, a)
+		}
+
 		shared := v.SharedConfig()
 		existingRules := make(map[string]bool)
 		for _, r := range shared.Rules {
 			existingRules[r.Name] = true
 		}
+		existingRoles := make(map[string]bool)
+		for _, r := range shared.Roles {
+			existingRoles[r.Name] = true
+		}
+		if dryRun {
+			for _, a := range newAgents {
+				fmt.Printf("  %sagent: %s\n", would, printable(a.Name))
+			}
+			for _, r := range importData.Rules {
+				if !existingRules[r.Name] {
+					fmt.Printf("  %srule: %s\n", would, printable(r.Name))
+				}
+			}
+			for _, r := range importData.Roles {
+				if !existingRoles[r.Name] {
+					fmt.Printf("  %srole: %s\n", would, printable(r.Name))
+				}
+			}
+			fmt.Printf("\n%ssession %q.\n", would, printable(importData.Session.Name))
+			return nil
+		}
+		for _, a := range newAgents {
+			if err := v.Add(a); err != nil {
+				return fmt.Errorf("importing agent %q: %w", printable(a.Name), err)
+			}
+			fmt.Printf("  Imported agent: %s\n", printable(a.Name))
+		}
+
+		// Import rules
 		for _, r := range importData.Rules {
 			if !existingRules[r.Name] {
 				r.CreatedAt = time.Now()
@@ -439,10 +485,6 @@ var sessionImportCmd = &cobra.Command{
 		}
 
 		// Import roles
-		existingRoles := make(map[string]bool)
-		for _, r := range shared.Roles {
-			existingRoles[r.Name] = true
-		}
 		for _, r := range importData.Roles {
 			if !existingRoles[r.Name] {
 				r.CreatedAt = time.Now()
@@ -455,17 +497,6 @@ var sessionImportCmd = &cobra.Command{
 			return fmt.Errorf("saving shared config: %w", err)
 		}
 
-		// Import session
-		importData.Session.CreatedAt = time.Now()
-		importData.Session.UpdatedAt = time.Now()
-		importData.Session.Status = agent.SessionStatusIdle
-
-		// Check if session name exists
-		if _, exists := v.GetSessionByName(importData.Session.Name); exists {
-			importData.Session.ID = agent.GenerateSessionID()
-			importData.Session.Name = importData.Session.Name + "-imported"
-		}
-
 		if err := v.AddSession(importData.Session); err != nil {
 			return err
 		}
@@ -473,6 +504,33 @@ var sessionImportCmd = &cobra.Command{
 		fmt.Printf("\nSession %q imported successfully.\n", printable(importData.Session.Name))
 		return nil
 	},
+}
+
+// sessionToImport is s as import adds it: idle, without the process IDs
+// of the machine it came from (session stop would signal whatever runs
+// under them here), and with a fresh ID and an unused name where the vault
+// has them already.
+func sessionToImport(v *vault.Vault, s agent.Session, now time.Time) agent.Session {
+	s.Agents = append([]agent.SessionAgent(nil), s.Agents...)
+	for i := range s.Agents {
+		s.Agents[i].PID = 0
+	}
+	s.Status = agent.SessionStatusIdle
+	s.CreatedAt, s.UpdatedAt = now, now
+	if _, exists := v.GetSession(s.ID); exists || s.ID == "" {
+		s.ID = agent.GenerateSessionID()
+	}
+	if _, exists := v.GetSessionByName(s.Name); exists {
+		base := s.Name + "-imported"
+		s.Name = base
+		for n := 2; ; n++ {
+			if _, exists := v.GetSessionByName(s.Name); !exists {
+				break
+			}
+			s.Name = fmt.Sprintf("%s-%d", base, n)
+		}
+	}
+	return s
 }
 
 // runSessionStart orchestrates the parallel (or sequential) launch of all
@@ -722,5 +780,6 @@ func init() {
 	sessionStartCmd.Flags().Bool("dry-run", false, "show what would be started without starting")
 	sessionExportCmd.Flags().Bool("include-keys", false, "include the agents' API keys and other secrets (MCP server env and secret args, credential extras, a base URL with credentials)")
 	sessionExportCmd.Flags().Bool("confirm", false, "allow --include-keys to write the keys and secrets in plain text")
+	sessionImportCmd.Flags().Bool("dry-run", false, "show what would be imported without writing")
 	sessionImportCmd.Flags().Bool("keep-bundle-commands", false, "keep MCP server commands of the agents the file adds; left out by default")
 }

@@ -81,3 +81,102 @@ func TestSessionImportGatesMCPCommands(t *testing.T) {
 		}
 	}
 }
+
+func reopenSessionVault(t *testing.T, root string) *vault.Vault {
+	t.Helper()
+	v := vault.New(filepath.Join(root, config.AppName, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// A session exported without keys, imported where the agent is new, drops
+// each blank as agent import does: no empty token or env value is stored.
+func TestSessionImportDropsBlankedSecrets(t *testing.T) {
+	a := testAgent()
+	a.BaseURL = "https://u:CANARY2@h.example/v1"
+	a.ProviderMeta = &agent.AgentProviderMeta{Extra: map[string]string{"api_token": "CANARY5", "region": "us"}}
+	v, root := sessionTestVault(t, []agent.Agent{a})
+	if err := v.AddSession(agent.Session{ID: "s1", Name: "s1", Agents: []agent.SessionAgent{{Name: a.Name, PID: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(root, "s.json")
+	if err := sessionExportCmd.RunE(sessionExportCmd, []string{"s1", out}); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(out)
+	var file sessionExport
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	if len(file.Blanks[a.Name]) != 2 || file.Session.Agents[0].PID != 0 {
+		t.Fatalf("export: blanks %v, pid %d", file.Blanks, file.Session.Agents[0].PID)
+	}
+	if err := v.Remove(a.Name); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessionImportCmd.RunE(sessionImportCmd, []string{out}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := reopenSessionVault(t, root).Get(a.Name)
+	if !ok {
+		t.Fatal("agent not imported")
+	}
+	if _, has := got.ProviderMeta.Extra["api_token"]; has || got.ProviderMeta.Extra["region"] != "us" {
+		t.Errorf("blank extra stored: %v", got.ProviderMeta.Extra)
+	}
+}
+
+// A process ID in the file is not kept: session stop would signal it.
+// Importing the same session twice gives two distinct names.
+func TestSessionImportClearsPIDAndNamesUniquely(t *testing.T) {
+	_, root := sessionTestVault(t, nil)
+	data, _ := json.Marshal(map[string]any{"session": agent.Session{ID: "s2", Name: "s2",
+		Agents: []agent.SessionAgent{{Name: "x", PID: 1}}}})
+	in := filepath.Join(root, "in.json")
+	if err := os.WriteFile(in, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := sessionImportCmd.RunE(sessionImportCmd, []string{in}); err != nil {
+			t.Fatalf("import %d: %v", i, err)
+		}
+	}
+	names := map[string]bool{}
+	for _, s := range reopenSessionVault(t, root).Sessions().Sessions {
+		if names[s.Name] {
+			t.Errorf("duplicate session name %q", s.Name)
+		}
+		names[s.Name] = true
+		for _, sa := range s.Agents {
+			if sa.PID != 0 {
+				t.Errorf("session %q kept pid %d", s.Name, sa.PID)
+			}
+		}
+	}
+	if len(names) != 3 {
+		t.Errorf("sessions: %v", names)
+	}
+}
+
+// session import --dry-run writes nothing.
+func TestSessionImportDryRunWritesNothing(t *testing.T) {
+	_, root := sessionTestVault(t, nil)
+	a := testAgent()
+	a.Name = "incoming"
+	data, _ := json.Marshal(map[string]any{"session": agent.Session{ID: "s3", Name: "s3"}, "agents": []agent.Agent{a},
+		"rules": []agent.UnifiedRule{{Name: "r1", Content: "x"}}})
+	in := filepath.Join(root, "in.json")
+	if err := os.WriteFile(in, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withFlags(t, sessionImportCmd, map[string]string{"dry-run": "true"})
+	if err := sessionImportCmd.RunE(sessionImportCmd, []string{in}); err != nil {
+		t.Fatal(err)
+	}
+	v := reopenSessionVault(t, root)
+	if _, ok := v.Get("incoming"); ok || len(v.Sessions().Sessions) != 0 || len(v.SharedConfig().Rules) != 0 {
+		t.Errorf("dry-run wrote to the vault")
+	}
+}
