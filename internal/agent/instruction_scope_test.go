@@ -311,6 +311,9 @@ func TestValidateInstructionFilenameAllowList(t *testing.T) {
 		"sub/.vscode/settings.json", "pkg/.envrc", ".envrc", "a/b/.claude/settings.json",
 		".claude/agents/x.json", ".claude/skills/run.sh", ".claude/commands/x.toml",
 		".claude/skills/s/.git/config", ".claude/skills/s/.githooks/pre-commit", ".claude/skills/s/.husky/x",
+		".claude/skills/s/.vscode/tasks.json", ".claude/skills/s/.claude/agents/a.md", ".claude/skills/s/x/.github/x.md",
+		".claude/skills/s/.envrc", ".claude/skills/s/.aider.conf.yml", ".claude/skills/s/.cursorrules", ".claude/skills/s/mise.toml",
+		".claude/skills/s/devcontainer.json", ".claude/skills/s/sub/CMakeLists.txt", ".claude/skills/s/.npmrc",
 		".claude/skills/s/GIT~1/config", ".claude/skills/s/scripts/x.py:evil", ".claude/skills/../../.envrc", "sub/.claude/CLAUDE.md",
 		".claude/hooks/x.md", ".gemini/commands/x.json", ".gemini/x.toml", ".claude/agents.md/x.md",
 		".devcontainer/devcontainer.json", ".devcontainer/x.md", ".vscode/x.md", ".idea/runConfigurations/x.xml",
@@ -356,7 +359,7 @@ func TestValidateInstructionFilenameAllowList(t *testing.T) {
 	// prose is code.
 	for _, n := range []string{".claude/skills/s/scripts/x.py", ".claude/skills/s/run.sh", ".claude/skills/s/assets/logo.png",
 		".claude/skills/s/templates/t.json", `.Claude\Skills\s\scripts\x.py.`, "pkg/.claude/skills/s/bin/tool",
-		".claude/skills/s/.envrc", ".claude/skills/s/node/package.json"} {
+		".claude/skills/s/.env.example", ".claude/skills/s/node/package.json"} {
 		if err := ValidateInstructionFilename(n); err != nil {
 			t.Errorf("skill file %q refused: %v", n, err)
 		}

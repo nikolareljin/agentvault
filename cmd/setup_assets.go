@@ -1388,9 +1388,9 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			}
 			warnings = append(warnings, fmt.Sprintf("provider asset %s: %d local secret(s) not restored because the definition holding them changed; the old values are in %s", desc, declined, where))
 		}
-		if execAllowed(asset) || skillAsset(asset) {
-			// A skill's script reaches here only when it is unchanged or
-			// taken with consent; it runs as the skill names it.
+		if execAllowed(asset) || (skillAsset(asset) && scriptAsset(asset) && agent.InstructionFileRunsCommands(".claude/skills/"+asset.LogicalPath)) {
+			// A skill script reaches here only when it matches this
+			// machine's or was taken with consent. Prose never gets +x.
 			perm = assetPerm(asset, perm)
 		}
 		if err := writeRegularFileAtomic(homeDir, dest, content, perm); err != nil {

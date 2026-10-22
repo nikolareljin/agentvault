@@ -231,10 +231,14 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 	}
 	dirs, base := segs[:len(segs)-1], segs[len(segs)-1]
 	inToolDir, inGeminiCommands := false, false
+	inSkill := false
 	for i := 0; i < len(dirs); {
 		if !strings.HasPrefix(dirs[i], ".") {
 			i++
 			continue
+		}
+		if inSkill {
+			return false, "under a dot directory in a skill; refused"
 		}
 		n := matchInstructionDir(dirs[i:])
 		if n == 0 && dirs[i] == ".github" && i == len(dirs)-1 && base == "copilot-instructions.md" {
@@ -247,18 +251,24 @@ func classifyInstructionTarget(rel string) (runs bool, reason string) {
 		}
 		if n == 2 && dirs[i] == ".claude" && dirs[i+1] == "skills" && i+2 < len(dirs) {
 			// A skill is a directory: the scripts, references and assets it
-			// bundles are part of it. Anything not prose can run.
-			return skillFileRuns(base), ""
+			// bundles are part of it. Its own dot directories are not.
+			inSkill = true
+			i += n
+			continue
 		}
 		inToolDir = true
 		inGeminiCommands = dirs[i] == ".gemini"
 		i += n
 	}
-	if instructionDotFiles[base] {
+	if instructionDotFiles[base] && !inSkill {
 		return false, ""
 	}
 	if autoLoadedFiles[base] {
 		return false, "a file a tool loads and runs on its own; refused"
+	}
+	if inSkill && !strings.HasPrefix(base, ".") {
+		// Anything not prose can run.
+		return skillFileRuns(base), ""
 	}
 	switch path.Ext(base) {
 	case ".md", ".mdc", ".markdown", ".txt", ".rst":

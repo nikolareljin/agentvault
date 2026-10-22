@@ -46,4 +46,28 @@ func TestImportKeepsSkillScriptModes(t *testing.T) {
 	if err != nil || info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("consented skill script written without its execute bit: %v %v", info, err)
 	}
+
+	// Prose never gets the bundle's execute bit, consent or not.
+	prose := []SetupAsset{
+		{LogicalRoot: setupAssetRootProviderClaudeSkill, LogicalPath: "p/SKILL.md", ContentPresent: true, Content: []byte("hi\n"), Mode: 0o755},
+		{LogicalRoot: setupAssetRootProviderClaudeSkill, LogicalPath: "p/r.mdc", ContentPresent: true, Content: []byte("hi\n"), Mode: 0o755},
+		{LogicalRoot: setupAssetRootProviderClaudeSkill, LogicalPath: "p/n.txt", ContentPresent: true, Content: []byte("hi\n"), Mode: 0o755},
+	}
+	if _, _, err := applyProviderAssetsWith(fresh, prose, ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"SKILL.md", "r.mdc", "n.txt"} {
+		info, err := os.Stat(filepath.Join(fresh, ".claude", "skills", "p", f))
+		if err != nil || info.Mode().Perm()&0o111 != 0 {
+			t.Errorf("prose %s written executable: %v %v", f, info, err)
+		}
+	}
+	// Without consent a new script is not written at all.
+	other := t.TempDir()
+	if _, _, err := applyProviderAssetsWith(other, assets[:1], fixedCtx("")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(other, ".claude", "skills", "s", "scripts", "x.py")); err == nil {
+		t.Error("a new skill script was written without consent")
+	}
 }

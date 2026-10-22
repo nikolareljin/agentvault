@@ -261,7 +261,8 @@
   `.claude/agents`, `.claude/commands`, `.claude/skills` or
   `.gemini/commands` (also `.toml` there), every file in a skill directory
   (`.claude/skills/NAME/`: scripts, references, assets, templates; not
-  `.git`, `.githooks` or `.husky`), and files instructions refer to
+  its dot directories, dot files or `mise.toml`-style files tools load on
+  their own), and files instructions refer to
   in plain directories. Any other dot directory or dot file at any depth
   (`.git`, `.vscode`, `.claude/settings.json`, `.devcontainer`,
   `pkg/.envrc`), files tools load on their own
