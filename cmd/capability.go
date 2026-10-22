@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -91,6 +93,9 @@ func runCapabilityList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	entries := v.ListCapabilities()
+	for i := range entries {
+		entries[i].EndpointURL = maskURLSecrets(entries[i].EndpointURL)
+	}
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	if jsonOut {
 		enc := json.NewEncoder(c1Writer(os.Stdout))
@@ -144,9 +149,13 @@ func runCapabilityAdd(cmd *cobra.Command, _ []string) error {
 		UpdatedAt:    time.Now().UTC(),
 	}
 	if err := v.AddCapability(entry); err != nil {
+		if errors.Is(err, vault.ErrCapabilityExists) {
+			return fmt.Errorf("%w: %s/%s; remove it first with 'agentvault capability remove'",
+				vault.ErrCapabilityExists, maskURLSecrets(entry.EndpointURL), entry.ModelName)
+		}
 		return err
 	}
-	fmt.Printf("Added: %s / %s\n", entry.EndpointURL, entry.ModelName)
+	fmt.Printf("Added: %s / %s\n", maskURLSecrets(entry.EndpointURL), entry.ModelName)
 	return nil
 }
 
@@ -160,9 +169,12 @@ func runCapabilityRemove(cmd *cobra.Command, _ []string) error {
 	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
 	model = strings.TrimSpace(model)
 	if err := v.RemoveCapability(endpoint, model); err != nil {
+		if errors.Is(err, vault.ErrCapabilityNotFound) {
+			return fmt.Errorf("%w: %s/%s", vault.ErrCapabilityNotFound, maskURLSecrets(endpoint), model)
+		}
 		return err
 	}
-	fmt.Printf("Removed: %s / %s\n", endpoint, model)
+	fmt.Printf("Removed: %s / %s\n", maskURLSecrets(endpoint), model)
 	return nil
 }
 
@@ -187,7 +199,7 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 		var healthErr error
 		entries, healthErr = discoverFromHealthEndpoint(ctx, client, baseURL)
 		if healthErr != nil {
-			return fmt.Errorf("discover: could not query %s — /v1/models: %v; /health: %v", baseURL, modelsErr, healthErr)
+			return fmt.Errorf("discover: could not query %s: /v1/models: %v; /health: %v", maskURLSecrets(baseURL), modelsErr, healthErr)
 		}
 	}
 
@@ -226,9 +238,9 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	}
 	skipped := total - added
 	if skipped > 0 {
-		fmt.Printf("Added %d of %d model(s) from %s (%d already present or duplicate)\n", added, total, baseURL, skipped)
+		fmt.Printf("Added %d of %d model(s) from %s (%d already present or duplicate)\n", added, total, maskURLSecrets(baseURL), skipped)
 	} else {
-		fmt.Printf("Added %d model(s) from %s\n", added, baseURL)
+		fmt.Printf("Added %d model(s) from %s\n", added, maskURLSecrets(baseURL))
 	}
 	return nil
 }
@@ -236,11 +248,11 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 func discoverFromModelsEndpoint(ctx context.Context, client *http.Client, baseURL string) ([]agent.ModelCapabilityEntry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models", nil)
 	if err != nil {
-		return nil, err
+		return nil, maskURLError(err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, maskURLError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
@@ -277,11 +289,11 @@ func discoverFromModelsEndpoint(ctx context.Context, client *http.Client, baseUR
 func discoverFromHealthEndpoint(ctx context.Context, client *http.Client, baseURL string) ([]agent.ModelCapabilityEntry, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/health", nil)
 	if err != nil {
-		return nil, err
+		return nil, maskURLError(err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, maskURLError(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {

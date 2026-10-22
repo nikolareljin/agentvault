@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"path"
@@ -10,6 +11,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/nikolareljin/agentvault/internal/router"
+	"github.com/nikolareljin/agentvault/internal/tui"
 )
 
 // A settings file that can hold a token used to be redacted whole without
@@ -492,12 +496,8 @@ func userinfoIsCredential(scheme, userinfo, rest string) bool {
 	if strings.Contains(userinfo, ":") {
 		return true
 	}
-	for _, r := range userinfo {
-		ok := r == '.' || r == '_' || r == '-' || (r >= '0' && r <= '9') ||
-			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-		if !ok {
-			return true
-		}
+	if !plainLogin(userinfo) {
+		return true
 	}
 	if loginScheme(scheme) {
 		return false
@@ -570,6 +570,109 @@ func stripURLSecrets(raw string) (string, bool) {
 		return "", false
 	}
 	return out, true
+}
+
+// maskURLSecrets is raw for printing: a credential in its userinfo and the
+// values of secret query and fragment parameters become "***"
+// (https://user:***@host/v1?api_key=***). A user name that is a plain login
+// stays. A value that carries a secret but is not a URL that parses, or
+// that keeps one outside those places, is "<secret>".
+func maskURLSecrets(raw string) string {
+	scheme, _, _ := strings.Cut(raw, "://")
+	userinfo, rest, query, frag := splitURL(raw)
+	if !secretString(raw) && !userinfoIsCredential(scheme, userinfo, rest) {
+		return raw
+	}
+	if _, ok := stripURLSecrets(raw); !ok {
+		return "<secret>"
+	}
+	if userinfoIsCredential(scheme, userinfo, rest) {
+		// With a real password, the name is a user name: it stays when it
+		// is plain and does not look like a key. With an empty or dummy
+		// password (x, x-oauth-basic) the name is the token.
+		name, pass, hasPass := strings.Cut(userinfo, ":")
+		masked := "***"
+		if hasPass && !dummyPassword(pass) && plainLogin(name) && !tokenLike(name) && !secretString(name) {
+			masked = name + ":***"
+		}
+		rest = strings.Replace(rest, userinfo+"@", masked+"@", 1)
+	}
+	out := rest
+	if strings.Contains(strings.SplitN(raw, "#", 2)[0], "?") {
+		out += "?" + maskSecretParams(query)
+	}
+	if strings.Contains(raw, "#") {
+		if strings.Contains(frag, "=") {
+			frag = maskSecretParams(frag)
+		}
+		out += "#" + frag
+	}
+	return out
+}
+
+// The TUI and the router print URLs and request errors too; they mask with
+// the same rules from any entry point.
+func init() {
+	tui.MaskURL = maskURLSecrets
+	router.MaskURL = maskURLSecrets
+}
+
+// maskURLError masks the credentials in the URL that a *url.Error in err
+// quotes, as maskURLSecrets does, and returns err.
+func maskURLError(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = maskURLSecrets(ue.URL)
+	}
+	return err
+}
+
+// dummyPassword is a password that marks the user name as the token.
+func dummyPassword(p string) bool {
+	switch strings.ToLower(p) {
+	case "", "x", "x-oauth-basic":
+		return true
+	}
+	return false
+}
+
+// tokenLike reports a name of 20 or more characters with both letters and
+// digits, the shape of a token rather than a login.
+func tokenLike(name string) bool {
+	if len(name) < 20 {
+		return false
+	}
+	return strings.ContainsAny(name, "0123456789") &&
+		strings.ContainsAny(strings.ToLower(name), "abcdefghijklmnopqrstuvwxyz")
+}
+
+// plainLogin reports a non-empty name of only [A-Za-z0-9._-].
+func plainLogin(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		ok := r == '.' || r == '_' || r == '-' || (r >= '0' && r <= '9') ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// maskSecretParams is q with the value of each &-separated parameter whose
+// name, raw or decoded, is a secret key replaced by "***".
+func maskSecretParams(q string) string {
+	parts := strings.Split(q, "&")
+	for i, part := range parts {
+		name, _, _ := strings.Cut(part, "=")
+		dec, err := url.QueryUnescape(name)
+		if isSecretKey(name) || (err == nil && isSecretKey(dec)) {
+			parts[i] = name + "=***"
+		}
+	}
+	return strings.Join(parts, "&")
 }
 
 // dropSecretParams is q without the &-separated parameters whose name,

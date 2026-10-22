@@ -15,7 +15,8 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all configured agents",
 	Long: `List all agents stored in the vault. Use --json for machine-readable output.
-Use --show-keys to include API keys in the output (hidden by default).`,
+Use --show-keys to include API keys and base URL credentials in the output
+(hidden by default).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		v, err := openVault()
 		if err != nil {
@@ -45,10 +46,11 @@ Use --show-keys to include API keys in the output (hidden by default).`,
 					Name:     a.Name,
 					Provider: string(a.Provider),
 					Model:    a.Model,
-					BaseURL:  a.BaseURL,
+					BaseURL:  maskURLSecrets(a.BaseURL),
 				}
 				if showKeys {
 					e.APIKey = a.APIKey
+					e.BaseURL = a.BaseURL
 				}
 				out = append(out, e)
 			}
@@ -80,5 +82,5 @@ func printAgentTable(out io.Writer, agents []agent.Agent) error {
 func init() {
 	rootCmd.AddCommand(listCmd)
 	listCmd.Flags().Bool("json", false, "output as JSON")
-	listCmd.Flags().Bool("show-keys", false, "include API keys in output")
+	listCmd.Flags().Bool("show-keys", false, "include API keys and base URL credentials in output")
 }
