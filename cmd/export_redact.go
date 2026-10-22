@@ -291,8 +291,8 @@ func restoreMCPServerSecrets(incoming, existing []agent.MCPServer) ([]agent.MCPS
 	for _, s := range existing {
 		byName[s.Name] = s
 	}
-	out := make([]agent.MCPServer, len(incoming))
-	for i, s := range incoming {
+	out := make([]agent.MCPServer, 0, len(incoming))
+	for _, s := range incoming {
 		e, ok := byName[s.Name]
 		same := ok && sameMCPApartFromBlanks(s, e)
 		if same {
@@ -309,9 +309,17 @@ func restoreMCPServerSecrets(incoming, existing []agent.MCPServer) ([]agent.MCPS
 				s.Args = args
 			}
 		} else {
-			// A server new here with a blank command lost it to redaction.
+			// A blank command was lost to redaction and cannot run: a
+			// server new here is left out, a changed one stays as it is
+			// here rather than be written with an empty command.
 			if s.Command == "" && (!ok || e.Command != "") {
-				left = append(left, mcpBlankLeft{s.Name, "command"})
+				if ok {
+					left = append(left, mcpBlankLeft{s.Name, "command (this machine's server kept)"})
+					out = append(out, e)
+				} else {
+					left = append(left, mcpBlankLeft{s.Name, "command (server not added)"})
+				}
+				continue
 			}
 			for j, a := range s.Args {
 				if a == "" {
@@ -335,7 +343,7 @@ func restoreMCPServerSecrets(incoming, existing []agent.MCPServer) ([]agent.MCPS
 			}
 			s.Env = env
 		}
-		out[i] = s
+		out = append(out, s)
 	}
 	return out, left
 }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -242,8 +243,27 @@ func TestPlanAgentOpsKeepsLocalAPIKeyFromMovedAgent(t *testing.T) {
 // cannot be filled; import must name it rather than add it silently.
 func TestRestoreMCPServerSecretsNamesBlankCommandOfNewServer(t *testing.T) {
 	in := blankMCPServerSecrets([]agent.MCPServer{{Name: "s", Command: "https://u:p@host/x"}})
-	_, left := restoreMCPServerSecrets(in, nil)
-	if len(left) != 1 || left[0] != (mcpBlankLeft{"s", "command"}) {
+	out, left := restoreMCPServerSecrets(in, nil)
+	if len(left) != 1 || left[0] != (mcpBlankLeft{"s", "command (server not added)"}) {
+		t.Errorf("left = %v", left)
+	}
+	// An empty command written into ~/.claude.json or config.toml breaks
+	// the tool: the server is not added at all.
+	if len(out) != 0 {
+		t.Errorf("out = %+v, want no server", out)
+	}
+}
+
+// A changed server whose command was blanked keeps this machine's whole
+// definition, also under --strategy replace, instead of an empty command.
+func TestRestoreMCPServerSecretsKeepsLocalServerForBlankCommand(t *testing.T) {
+	local := []agent.MCPServer{{Name: "s", Command: "srv", Args: []string{"-a"}}, {Name: "t", Command: "t1"}}
+	in := blankMCPServerSecrets([]agent.MCPServer{{Name: "s", Command: "https://u:p@host/x", Args: []string{"-b"}}, {Name: "t", Command: "t2"}})
+	out, left := restoreMCPServerSecrets(in, local)
+	if len(out) != 2 || !reflect.DeepEqual(out[0], local[0]) || out[1].Command != "t2" {
+		t.Errorf("out = %+v", out)
+	}
+	if len(left) != 1 || left[0] != (mcpBlankLeft{"s", "command (this machine's server kept)"}) {
 		t.Errorf("left = %v", left)
 	}
 }
