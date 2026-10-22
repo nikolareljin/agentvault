@@ -338,7 +338,8 @@ type InstructionConflict struct {
 
 // InstructionKey returns the composite identity key for an instruction.
 // Unique identity is Name + Scope + DirectoryPattern, so a global and a
-// directory-scoped instruction with the same name can coexist.
+// directory-scoped instruction with the same name can coexist. A referenced
+// file adds its SourceProject, so two projects' notes/x.md are two entries.
 func InstructionKey(inst InstructionFile) string {
 	scope := inst.Scope
 	if scope == "" {
@@ -348,7 +349,11 @@ func InstructionKey(inst InstructionFile) string {
 	if scope == InstructionScopeDirectory {
 		pattern = NormalizeDirectoryPattern(pattern)
 	}
-	return inst.Name + "\x00" + scope + "\x00" + pattern
+	key := inst.Name + "\x00" + scope + "\x00" + pattern
+	if inst.SourceProject != "" {
+		key += "\x00" + inst.SourceProject
+	}
+	return key
 }
 
 // scopeRank returns the precedence level for a scope string.
@@ -427,6 +432,7 @@ func matchesDirectorySuffix(pattern, workDir string) bool {
 // local > directory > global. For each unique Name, the highest-rank applicable
 // instruction wins. Directory-scoped instructions only apply when their pattern
 // matches workDir; an empty workDir disables all directory-scope matching.
+// Each project's copy of a referenced file is its own entry.
 func ResolveEffectiveInstructions(instructions []InstructionFile, workDir string) []InstructionFile {
 	type candidate struct {
 		inst InstructionFile
@@ -446,12 +452,13 @@ func ResolveEffectiveInstructions(instructions []InstructionFile, workDir string
 		}
 
 		rank := scopeRank(scope)
-		if existing, ok := best[inst.Name]; !ok || rank > existing.rank ||
+		id := inst.Name + "\x00" + inst.SourceProject
+		if existing, ok := best[id]; !ok || rank > existing.rank ||
 			(rank == existing.rank && len(inst.DirectoryPattern) > len(existing.inst.DirectoryPattern)) ||
 			(rank == existing.rank &&
 				len(inst.DirectoryPattern) == len(existing.inst.DirectoryPattern) &&
 				inst.DirectoryPattern < existing.inst.DirectoryPattern) {
-			best[inst.Name] = candidate{inst: inst, rank: rank}
+			best[id] = candidate{inst: inst, rank: rank}
 		}
 	}
 
@@ -459,7 +466,12 @@ func ResolveEffectiveInstructions(instructions []InstructionFile, workDir string
 	for _, c := range best {
 		result = append(result, c.inst)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name != result[j].Name {
+			return result[i].Name < result[j].Name
+		}
+		return result[i].SourceProject < result[j].SourceProject
+	})
 	return result
 }
 

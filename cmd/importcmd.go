@@ -237,7 +237,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		// A referenced file of a project with no git identity names the
 		// project by its path on the exporting machine.
 		if remaps, err := profileRemaps(profile.Setup, profileOpts, exportSourceHome()); err == nil {
-			if insts, changed := remapInstructionProjects(plan.Shared.Instructions, profile.Setup.SharedConfig.Instructions, remaps); changed {
+			if insts, changed := remapInstructionProjects(plan.Shared.Instructions, profile.Setup.SharedConfig.Instructions, remaps, strategy != strategyMerge); changed {
 				plan.Shared.Instructions, plan.SharedChanged = insts, true
 			}
 		}

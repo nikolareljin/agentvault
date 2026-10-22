@@ -204,7 +204,7 @@ func TestRemapInstructionProjectsRewritesPathKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, changed := remapInstructionProjects(append(append([]agent.InstructionFile(nil), bundle...), local), bundle, remaps)
+	got, changed := remapInstructionProjects(append(append([]agent.InstructionFile(nil), bundle...), local), bundle, remaps, false)
 	if !changed {
 		t.Fatal("nothing rewritten")
 	}
@@ -314,7 +314,7 @@ func TestRemapInstructionProjectsMatchesFoldedKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, changed := remapInstructionProjects(append([]agent.InstructionFile(nil), bundle...), bundle, remaps)
+	got, changed := remapInstructionProjects(append([]agent.InstructionFile(nil), bundle...), bundle, remaps, false)
 	if want := instructionProjectKey(newRoot, nil); !changed || got[0].SourceProject != want {
 		t.Errorf("folded key after import = %q (changed %v), want %q", got[0].SourceProject, changed, want)
 	}
@@ -360,11 +360,14 @@ func TestSetKeepsSourceProject(t *testing.T) {
 	if err := v.SetInstruction(old); err != nil {
 		t.Fatal(err)
 	}
-	got := withSourceProject(v, agent.InstructionFile{Name: "notes/x.md", Filename: "notes/x.md", Content: "b\n"}, "")
+	got, _, err := withSourceProject(v, agent.InstructionFile{Name: "notes/x.md", Filename: "notes/x.md", Content: "b\n"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got.SourceProject != "path:/p" {
 		t.Errorf("set dropped the source project: %q", got.SourceProject)
 	}
-	hand := withSourceProject(v, agent.InstructionFile{Name: "NOTES.md", Filename: "NOTES.md"}, "path:/q")
+	hand, _, _ := withSourceProject(v, agent.InstructionFile{Name: "NOTES.md", Filename: "NOTES.md"}, "path:/q")
 	if hand.SourceProject != "" {
 		t.Errorf("a hand-stored file nothing names got project %q", hand.SourceProject)
 	}

@@ -35,6 +35,14 @@ func (v *Vault) PullReferenceClosure(dir, project string) (ClosureResult, error)
 	var queue []agent.InstructionFile
 	stored := v.ListInstructions()
 	isReferenced := agent.ReferencedFileClassifier(stored)
+	// A copy stored before projects were recorded is replaced by this
+	// project's, not kept beside it as a second, unknown one.
+	legacy := map[string]agent.InstructionFile{}
+	for _, inst := range stored {
+		if isReferenced(inst) && inst.SourceProject == "" {
+			legacy[inst.Name] = inst
+		}
+	}
 	for _, inst := range stored {
 		// Another project's copy of a referenced file is not this project's:
 		// it is neither walked nor taken as already pulled, so dir's own
@@ -99,6 +107,12 @@ func (v *Vault) PullReferenceClosure(dir, project string) (ClosureResult, error)
 			}
 			if err := v.SetInstruction(inst); err != nil {
 				return result, err
+			}
+			if old, ok := legacy[inst.Name]; ok && project != "" {
+				if err := v.RemoveInstructionByKey(agent.InstructionKey(old)); err != nil {
+					return result, err
+				}
+				delete(legacy, inst.Name)
 			}
 			result.Stored = append(result.Stored, inst)
 			queue = append(queue, inst)

@@ -17,17 +17,17 @@ import (
 )
 
 // getInstructionForCmd fetches an instruction by name, optionally targeting a
-// specific scoped variant when scope is provided.
-func getInstructionForCmd(v *vault.Vault, name, scope, pattern string) (agent.InstructionFile, bool) {
-	if scope != "" {
-		key := agent.InstructionKey(agent.InstructionFile{
-			Name:             name,
-			Scope:            scope,
-			DirectoryPattern: pattern,
-		})
-		return v.GetInstructionByKey(key)
+// specific scoped variant when scope is provided. Of a referenced file stored
+// for several projects it is the current directory's project's copy.
+func getInstructionForCmd(v *vault.Vault, name, scope, pattern string) (agent.InstructionFile, error) {
+	inst, ok, err := findByName(v, name, scope, pattern)
+	if err != nil {
+		return inst, err
 	}
-	return v.GetInstruction(name)
+	if !ok {
+		return inst, fmt.Errorf("instruction %q not found", name)
+	}
+	return inst, nil
 }
 
 // validateScopeFlags returns an error if the scope/pattern combination is invalid.
@@ -152,6 +152,10 @@ var instListCmd = &cobra.Command{
 			if !inst.UpdatedAt.IsZero() {
 				age = inst.UpdatedAt.Format("2006-01-02 15:04")
 			}
+			// Two projects' copies of one referenced file differ only here.
+			if inst.SourceProject != "" {
+				age += ", from " + printable(inst.SourceProject)
+			}
 			if hasScope {
 				scope := inst.Scope
 				if scope == "" {
@@ -186,9 +190,9 @@ var instShowCmd = &cobra.Command{
 		if err := validateScopeFlags(scope, pattern); err != nil {
 			return err
 		}
-		inst, ok := getInstructionForCmd(v, args[0], scope, pattern)
-		if !ok {
-			return fmt.Errorf("instruction %q not found", args[0])
+		inst, err := getInstructionForCmd(v, args[0], scope, pattern)
+		if err != nil {
+			return err
 		}
 		fmt.Print(contentText(cmd, inst.Content))
 		if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
@@ -223,7 +227,10 @@ Examples:
 		if filePath == "" && content == "" {
 			// --filename alone moves a stored instruction, such as one an
 			// older version stored under a name push now refuses.
-			existing, ok := findInstruction(v, name, scope, dirPattern)
+			existing, ok, err := findInstruction(v, name, scope, dirPattern)
+			if err != nil {
+				return err
+			}
 			if filename == "" || !ok {
 				return fmt.Errorf("provide --file or --content (or --filename alone to move a stored instruction)")
 			}
@@ -241,6 +248,15 @@ Examples:
 			content = string(data)
 		}
 
+		if filename == "" {
+			// A stored entry keeps its target: set notes/x.md --content must
+			// not move a referenced file to notes/x.md.md.
+			if existing, ok, err := findInstruction(v, name, scope, dirPattern); err != nil {
+				return err
+			} else if ok {
+				filename = existing.Filename
+			}
+		}
 		if filename == "" {
 			filename = agent.FilenameForInstruction(name)
 		}
@@ -262,7 +278,10 @@ Examples:
 			Scope:            scope,
 			DirectoryPattern: dirPattern,
 		}
-		inst = withSourceProject(v, inst, "")
+		inst, _, err = withSourceProject(v, inst, "")
+		if err != nil {
+			return err
+		}
 		if err := v.SetInstruction(inst); err != nil {
 			return err
 		}
@@ -296,9 +315,9 @@ Examples:
 		if err := validateScopeFlags(scope, pattern); err != nil {
 			return err
 		}
-		inst, ok := getInstructionForCmd(v, name, scope, pattern)
-		if !ok {
-			return fmt.Errorf("instruction %q not found", name)
+		inst, err := getInstructionForCmd(v, name, scope, pattern)
+		if err != nil {
+			return err
 		}
 
 		// Write content to a temp file
@@ -382,19 +401,12 @@ otherwise removes the first match by name.`,
 			return err
 		}
 		name := args[0]
-		if scope != "" {
-			key := agent.InstructionKey(agent.InstructionFile{
-				Name:             name,
-				Scope:            scope,
-				DirectoryPattern: pattern,
-			})
-			if err := v.RemoveInstructionByKey(key); err != nil {
-				return fmt.Errorf("removing instruction %q (scope %s): %w", name, scope, err)
-			}
-		} else {
-			if err := v.RemoveInstruction(name); err != nil {
-				return err
-			}
+		inst, err := getInstructionForCmd(v, name, scope, pattern)
+		if err != nil {
+			return err
+		}
+		if err := v.RemoveInstructionByKey(agent.InstructionKey(inst)); err != nil {
+			return fmt.Errorf("removing instruction %q: %w", name, err)
 		}
 		fmt.Printf("Instruction %q removed.\n", printable(name))
 		return nil
@@ -591,9 +603,17 @@ func pullSingleFile(v *vault.Vault, dir, filename, name string) error {
 		Content:   content,
 		UpdatedAt: time.Now(),
 	}
-	inst = withSourceProject(v, inst, instructionProjectKey(dir, nil))
+	inst, stale, err := withSourceProject(v, inst, instructionProjectKey(dir, nil))
+	if err != nil {
+		return err
+	}
 	if err := v.SetInstruction(inst); err != nil {
 		return err
+	}
+	if stale != "" {
+		if err := v.RemoveInstructionByKey(stale); err != nil {
+			return err
+		}
 	}
 	fmt.Printf("Pulled %s -> %q (%d bytes)\n", printable(filename), printable(name), len(data))
 	return nil
@@ -786,9 +806,9 @@ Examples:
 		}
 		var toScan []agent.InstructionFile
 		if len(args) > 0 {
-			inst, ok := getInstructionForCmd(v, args[0], scope, pattern)
-			if !ok {
-				return fmt.Errorf("instruction %q not found", args[0])
+			inst, err := getInstructionForCmd(v, args[0], scope, pattern)
+			if err != nil {
+				return err
 			}
 			toScan = append(toScan, inst)
 		} else {
@@ -1322,13 +1342,15 @@ func ensureNoSymlinkBelow(root string, p string) error {
 	return nil
 }
 
-// findInstruction returns the stored instruction with name in scope.
-func findInstruction(v *vault.Vault, name, scope, dirPattern string) (agent.InstructionFile, bool) {
-	key := agent.InstructionKey(agent.InstructionFile{Name: name, Scope: scope, DirectoryPattern: dirPattern})
+// findInstruction returns the stored instruction with name in scope; of a
+// referenced file stored for several projects, the current directory's copy.
+func findInstruction(v *vault.Vault, name, scope, dirPattern string) (agent.InstructionFile, bool, error) {
+	key := baseKey(agent.InstructionFile{Name: name, Scope: scope, DirectoryPattern: dirPattern})
+	var same []agent.InstructionFile
 	for _, inst := range v.ListInstructions() {
-		if agent.InstructionKey(inst) == key {
-			return inst, true
+		if baseKey(inst) == key {
+			same = append(same, inst)
 		}
 	}
-	return agent.InstructionFile{}, false
+	return pickProjectCopy(same, instructionProjectKey(".", nil))
 }
