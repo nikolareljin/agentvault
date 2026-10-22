@@ -85,6 +85,17 @@ func execAllowed(asset SetupAsset) bool {
 	return strings.HasPrefix(filepath.ToSlash(filepath.Clean(asset.LogicalPath)), "hooks/")
 }
 
+// skillAsset is whether asset is a file inside a provider's skill directory.
+func skillAsset(asset SetupAsset) bool {
+	switch asset.LogicalRoot {
+	case setupAssetRootProviderClaudeSkill, setupAssetRootProviderCodexSkill:
+		return true
+	case setupAssetRootProviderClaude, setupAssetRootProviderCodex:
+		return strings.HasPrefix(agent.NormalizePathForMatch(asset.LogicalPath), "skills/")
+	}
+	return false
+}
+
 // assetPerm is base, plus owner execute when the source file was executable.
 func assetPerm(asset SetupAsset, base os.FileMode) os.FileMode {
 	if os.FileMode(asset.Mode)&0o111 != 0 {
@@ -1339,6 +1350,14 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		if exists && sameFileBytes(current, content) {
 			content = current
 		}
+		if exists && bytes.Equal(current, content) && declined == 0 {
+			// Nothing to write. Rewriting would reset the file's mode, and
+			// a skill script would lose its execute bit.
+			if line := formatMCPReport(dest, mcpRep, false); line != "" {
+				ctx.MCPReport = append(ctx.MCPReport, line)
+			}
+			continue
+		}
 		// Only servers the user already settled differ: no second question.
 		serversOnly := mcpRep.changed() && (codexServersOnly || (!codexConfig && sameApartFromMCP(current, content)))
 		if exists && !sameFileBytes(current, content) {
@@ -1369,7 +1388,9 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 			}
 			warnings = append(warnings, fmt.Sprintf("provider asset %s: %d local secret(s) not restored because the definition holding them changed; the old values are in %s", desc, declined, where))
 		}
-		if execAllowed(asset) {
+		if execAllowed(asset) || skillAsset(asset) {
+			// A skill's script reaches here only when it is unchanged or
+			// taken with consent; it runs as the skill names it.
 			perm = assetPerm(asset, perm)
 		}
 		if err := writeRegularFileAtomic(homeDir, dest, content, perm); err != nil {
