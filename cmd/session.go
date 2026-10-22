@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -411,6 +412,7 @@ var sessionImportCmd = &cobra.Command{
 		// The session is settled before anything is written: a clash found
 		// later would leave its agents, rules and roles imported without it.
 		importData.Session = sessionToImport(v, importData.Session, time.Now())
+		_, sameSession := sameSessionInVault(v, importData.Session)
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		prefix, would := "Left out", ""
 		if dryRun {
@@ -464,7 +466,11 @@ var sessionImportCmd = &cobra.Command{
 					fmt.Printf("  %srole: %s\n", would, printable(r.Name))
 				}
 			}
-			fmt.Printf("\n%ssession %q.\n", would, printable(importData.Session.Name))
+			if sameSession {
+				fmt.Printf("\nSession %q already matches this vault.\n", printable(importData.Session.Name))
+			} else {
+				fmt.Printf("\n%ssession %q.\n", would, printable(importData.Session.Name))
+			}
 			return nil
 		}
 		for _, a := range newAgents {
@@ -497,6 +503,10 @@ var sessionImportCmd = &cobra.Command{
 			return fmt.Errorf("saving shared config: %w", err)
 		}
 
+		if sameSession {
+			fmt.Printf("\nSession %q already matches this vault.\n", printable(importData.Session.Name))
+			return nil
+		}
 		if err := v.AddSession(importData.Session); err != nil {
 			return err
 		}
@@ -511,11 +521,11 @@ var sessionImportCmd = &cobra.Command{
 // under them here), and with a fresh ID and an unused name where the vault
 // has them already.
 func sessionToImport(v *vault.Vault, s agent.Session, now time.Time) agent.Session {
-	s.Agents = append([]agent.SessionAgent(nil), s.Agents...)
-	for i := range s.Agents {
-		s.Agents[i].PID = 0
+	s = idleSession(s)
+	if have, same := sameSessionInVault(v, s); same {
+		// A re-import on the machine that exported it adds nothing.
+		return have
 	}
-	s.Status = agent.SessionStatusIdle
 	s.CreatedAt, s.UpdatedAt = now, now
 	if _, exists := v.GetSession(s.ID); exists || s.ID == "" {
 		s.ID = agent.GenerateSessionID()
@@ -531,6 +541,28 @@ func sessionToImport(v *vault.Vault, s agent.Session, now time.Time) agent.Sessi
 		}
 	}
 	return s
+}
+
+// idleSession is s without process IDs and not running.
+func idleSession(s agent.Session) agent.Session {
+	s.Agents = append([]agent.SessionAgent(nil), s.Agents...)
+	for i := range s.Agents {
+		s.Agents[i].PID = 0
+	}
+	s.Status = agent.SessionStatusIdle
+	return s
+}
+
+// sameSessionInVault is the vault's session of s's name, and whether it
+// holds what s holds: the same agents, directory, role and description.
+func sameSessionInVault(v *vault.Vault, s agent.Session) (agent.Session, bool) {
+	have, ok := v.GetSessionByName(s.Name)
+	if !ok {
+		return have, false
+	}
+	a, b := idleSession(have), idleSession(s)
+	return have, a.Description == b.Description && a.ProjectDir == b.ProjectDir &&
+		a.ActiveRole == b.ActiveRole && reflect.DeepEqual(a.Agents, b.Agents)
 }
 
 // runSessionStart orchestrates the parallel (or sequential) launch of all

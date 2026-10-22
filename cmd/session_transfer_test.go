@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,13 +133,15 @@ func TestSessionImportDropsBlankedSecrets(t *testing.T) {
 // Importing the same session twice gives two distinct names.
 func TestSessionImportClearsPIDAndNamesUniquely(t *testing.T) {
 	_, root := sessionTestVault(t, nil)
-	data, _ := json.Marshal(map[string]any{"session": agent.Session{ID: "s2", Name: "s2",
-		Agents: []agent.SessionAgent{{Name: "x", PID: 1}}}})
 	in := filepath.Join(root, "in.json")
-	if err := os.WriteFile(in, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
+		// The first three differ, so each is a new session; the fourth is
+		// the vault's "s2" again and adds nothing.
+		data, _ := json.Marshal(map[string]any{"session": agent.Session{ID: "s2", Name: "s2",
+			Description: fmt.Sprint(i % 3), Agents: []agent.SessionAgent{{Name: "x", PID: 1}}}})
+		if err := os.WriteFile(in, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 		if err := sessionImportCmd.RunE(sessionImportCmd, []string{in}); err != nil {
 			t.Fatalf("import %d: %v", i, err)
 		}
