@@ -3078,6 +3078,10 @@ func cleanView(s string) string {
 			b.WriteRune(r)
 		case r < 0x20 || (r >= 0x7f && r < 0xa0):
 			b.WriteByte('?')
+		case r == utf8.RuneError && size == 1:
+			// A stray byte such as 0x9b is an 8-bit CSI to a terminal
+			// that is not in UTF-8 mode.
+			b.WriteByte('?')
 		default:
 			b.WriteString(s[i : i+size])
 		}

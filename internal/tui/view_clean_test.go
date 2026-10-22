@@ -77,3 +77,41 @@ func TestScrubESCDeepCopies(t *testing.T) {
 		t.Errorf("source changed")
 	}
 }
+
+// Agent output and files read from the working directory are not decoded
+// as JSON, so they can hold bytes that are not UTF-8, such as a raw 0x9b.
+func TestCleanViewReplacesInvalidUTF8(t *testing.T) {
+	if got := cleanView("a\x9b2Jb\xffcé"); got != "a?2Jb?cé" {
+		t.Errorf("got %q", got)
+	}
+}
+
+type scrubNode struct {
+	Name   string
+	hidden string
+	Next   *scrubNode
+	Any    any
+	Ch     chan int
+	Fn     func()
+	ByName map[string]scrubNode
+	Arr    [2]string
+}
+
+// scrubESC must not panic on unexported fields, cycles, interfaces, maps
+// of structs, channels or funcs, and must not change its input: View
+// renders from the copy while Update keeps saving the original.
+func TestScrubESCOddShapes(t *testing.T) {
+	n := &scrubNode{Name: "a\x1b[8m", hidden: "h\x1b", Any: "i\x1b", Ch: make(chan int), Fn: func() {},
+		ByName: map[string]scrubNode{"k\x1b": {Name: "v\x1b"}}, Arr: [2]string{"x\x1b", "y"}}
+	n.Next = n
+	got := scrubESC(n)
+	if got.Name != "a?[8m" || got.Any != "i?" || got.Arr[0] != "x?" || got.ByName["k?"].Name != "v?" {
+		t.Errorf("not scrubbed: %+v", got)
+	}
+	if n.Name != "a\x1b[8m" || n.Any != "i\x1b" || n.Arr[0] != "x\x1b" || n.ByName["k\x1b"].Name != "v\x1b" {
+		t.Errorf("input changed: %+v", n)
+	}
+	if got.hidden != "h\x1b" || got.Ch != n.Ch {
+		t.Errorf("unexported field or channel not carried over")
+	}
+}
