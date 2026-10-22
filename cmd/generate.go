@@ -417,7 +417,6 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 	return leftOutError(cmd, left)
 }
 
-// countLeftOut counts a line that shellExportLine or dotenvLine left out.
 // writeAgentDotenv writes one agent's dotenv block: a comment naming it,
 // then MODEL, API_KEY (when withKey) and BASE_URL through dotenvLine.
 func writeAgentDotenv(out *strings.Builder, a agent.Agent, withKey bool, left *int) {
@@ -447,9 +446,14 @@ func writeEnvFile(root, p, content string) error {
 	} else if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%s is a symlink; not writing through it (pass the path it points to)", printable(p))
 	}
-	return os.WriteFile(p, []byte(content), 0600)
+	if err := os.WriteFile(p, []byte(content), 0600); err != nil {
+		return err
+	}
+	// WriteFile keeps the mode of a file that was already there.
+	return os.Chmod(p, 0600)
 }
 
+// countLeftOut counts a line that shellExportLine or dotenvLine left out.
 func countLeftOut(n *int, line string) string {
 	if strings.HasPrefix(line, "# ") {
 		*n++
