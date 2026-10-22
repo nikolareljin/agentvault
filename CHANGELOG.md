@@ -9,8 +9,10 @@
   (https://github.com/nikolareljin/agentvault/issues/80). `instructions pull`
   records each referenced file's source project (git remote or root
   commits, else the path); push writes it only to that project and lists
-  the rest. `--from-any-project` writes them anyway. Files stored before
-  this release have no source project and are skipped until pulled again.
+  the rest. `--from-any-project` writes them anyway. A referenced file
+  stored before this release has no source project and is skipped until
+  pulled again; a file stored by hand that no instruction names is written
+  as before.
 
 ## [0.15.2] - 2026-10-22
 

@@ -269,3 +269,53 @@ func TestDiffLeavesOutAnotherProjectsReferencedFiles(t *testing.T) {
 		t.Errorf("diff counted another project's file:\n%s", out)
 	}
 }
+
+// A file stored by hand under its own filename (instructions set
+// docs/style.md --filename docs/style.md) that no instruction names is an
+// instruction: push writes it as before.
+func TestPushWritesHandStoredFileNoInstructionNames(t *testing.T) {
+	cfgDir := scopeTestVault(t)
+	v := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	for _, inst := range []agent.InstructionFile{
+		{Name: "agents", Filename: "AGENTS.md", Content: "Be brief.\n", UpdatedAt: time.Now()},
+		{Name: "docs/style.md", Filename: "docs/style.md", Content: "style\n", UpdatedAt: time.Now()},
+		{Name: "NOTES.md", Filename: "NOTES.md", Content: "notes\n", UpdatedAt: time.Now()},
+	} {
+		if err := v.SetInstruction(inst); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dst := t.TempDir()
+	out, err := captureStdoutForTest(t, func() error { return instPushCmd.RunE(instPushCmd, []string{dst}) })
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	for _, f := range []string{"AGENTS.md", filepath.Join("docs", "style.md"), "NOTES.md"} {
+		if !exists(filepath.Join(dst, f)) {
+			t.Errorf("push did not write %s:\n%s", f, out)
+		}
+	}
+	if strings.Contains(out, "Skipped") {
+		t.Errorf("push skipped a hand-stored file:\n%s", out)
+	}
+}
+
+// A key made on macOS or Windows is lower-cased; the bundle's paths keep
+// their case. The rewrite still finds the project.
+func TestRemapInstructionProjectsMatchesFoldedKey(t *testing.T) {
+	bundle := []agent.InstructionFile{
+		{Name: "notes/x.md", Filename: "notes/x.md", SourceProject: "path:/users/dev/work/svc"},
+	}
+	newRoot := t.TempDir()
+	remaps, err := buildPathRemaps("", "", "/Users/Dev/work/svc", newRoot, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, changed := remapInstructionProjects(append([]agent.InstructionFile(nil), bundle...), bundle, remaps)
+	if want := instructionProjectKey(newRoot, nil); !changed || got[0].SourceProject != want {
+		t.Errorf("folded key after import = %q (changed %v), want %q", got[0].SourceProject, changed, want)
+	}
+}

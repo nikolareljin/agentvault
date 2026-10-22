@@ -56,8 +56,9 @@ func foldPathCase(p string) string {
 // project, unless anyProject, and returns them separately. Instructions
 // themselves are shared across projects and always kept.
 func scopeReferencedFiles(insts []agent.InstructionFile, project string, anyProject bool) (keep, skipped []agent.InstructionFile) {
+	isReferenced := agent.ReferencedFileClassifier(insts)
 	for _, inst := range insts {
-		if anyProject || !agent.IsReferencedFile(inst) || inst.SourceProject == project {
+		if anyProject || !isReferenced(inst) || inst.SourceProject == project {
 			keep = append(keep, inst)
 			continue
 		}
@@ -96,6 +97,15 @@ func remapInstructionProjects(insts, fromBundle []agent.InstructionFile, remaps 
 	if len(remaps) == 0 {
 		return insts, false
 	}
+	// A key made on macOS or Windows is lower-cased (foldPathCase) while the
+	// bundle's paths keep their case, so each rewrite is tried folded too.
+	folded := append([]pathRemap(nil), remaps...)
+	for _, r := range remaps {
+		if low := strings.ToLower(r.From); low != r.From {
+			folded = append(folded, pathRemap{From: low, To: r.To})
+		}
+	}
+	remaps = folded
 	bundleKeys := map[string]bool{}
 	for _, inst := range fromBundle {
 		bundleKeys[inst.SourceProject] = true

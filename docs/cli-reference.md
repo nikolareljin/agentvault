@@ -477,7 +477,10 @@ skipped file is listed with its source project:
 
 A referenced file stored before agentvault recorded source projects has
 project `unknown` and is skipped too. Pull its project again to record it,
-or use `--from-any-project`.
+or use `--from-any-project`. Such a file is recognised by its name being
+its filename and a stored instruction naming it; a file stored by hand
+(`instructions set docs/style.md --filename docs/style.md`) that no
+instruction names is an instruction and is written as before.
 
 A directory-scoped instruction whose pattern names another known path of the same repository (its path on the machine a bundle came from, or an older checkout) applies to the directory too.
 

@@ -33,11 +33,13 @@ func (v *Vault) PullReferenceClosure(dir, project string) (ClosureResult, error)
 
 	visited := map[string]bool{}
 	var queue []agent.InstructionFile
-	for _, inst := range v.ListInstructions() {
+	stored := v.ListInstructions()
+	isReferenced := agent.ReferencedFileClassifier(stored)
+	for _, inst := range stored {
 		// Another project's copy of a referenced file is not this project's:
 		// it is neither walked nor taken as already pulled, so dir's own
 		// file of the same name replaces it.
-		if agent.IsReferencedFile(inst) && inst.SourceProject != project {
+		if isReferenced(inst) && inst.SourceProject != project {
 			continue
 		}
 		visited[filepath.ToSlash(inst.Filename)] = true
