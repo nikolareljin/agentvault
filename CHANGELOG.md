@@ -421,9 +421,10 @@
   `x-access-token`, and an Azure DevOps organization
   (`https://org@dev.azure.com/org/...`), are kept as logins. A
   `user:password@host` without a scheme, as in a DSN
-  `root:pw@tcp(db:3306)/app`, is a credential too; `git@host:o/r` is not.
-  Before,
-  the flag left them in. They are blanked as in
+  `root:pw@tcp(db:3306)/app`, is a credential too, wherever it sits in
+  the argument; `git@host:o/r`, an image digest `node:20@sha256:...` and a
+  Windows path such as `C:\npm\@scope\pkg` are not.
+  Before, the flag left them in. They are blanked as in
   provider files and filled on import from this machine's vault when the
   definition is unchanged: for an MCP server the same command, args and `env`
   names; for the router, all its other settings. A blank that is not
