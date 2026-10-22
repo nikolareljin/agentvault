@@ -183,3 +183,68 @@ func TestSessionImportDryRunWritesNothing(t *testing.T) {
 		t.Errorf("dry-run wrote to the vault")
 	}
 }
+
+// Importing the same changed session file again matches the copy the first
+// import added; a file naming an agent or rule twice imports the first; an
+// import that adds nothing leaves the vault file as it was.
+func TestSessionImportRepeatAndDuplicates(t *testing.T) {
+	v, root := sessionTestVault(t, nil)
+	if err := v.AddSession(agent.Session{ID: "s1", Name: "s1", Description: "here"}); err != nil {
+		t.Fatal(err)
+	}
+	a := testAgent()
+	a.Name = "dup"
+	b := a
+	b.Model = "other"
+	data, _ := json.Marshal(map[string]any{"session": agent.Session{ID: "s1", Name: "s1", Description: "there"},
+		"agents": []agent.Agent{a, b},
+		"rules":  []agent.UnifiedRule{{Name: "r", Content: "1"}, {Name: "r", Content: "2"}}})
+	in := filepath.Join(root, "in.json")
+	if err := os.WriteFile(in, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run := func() {
+		t.Helper()
+		if _, err := captureStdoutForTest(t, func() error { return sessionImportCmd.RunE(sessionImportCmd, []string{in}) }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run()
+	vf := filepath.Join(root, config.AppName, config.VaultFile)
+	before, _ := os.ReadFile(vf)
+	run()
+	after, _ := os.ReadFile(vf)
+	if string(before) != string(after) {
+		t.Errorf("a second import of the same file rewrote the vault")
+	}
+	v = reopenSessionVault(t, root)
+	if n := len(v.Sessions().Sessions); n != 2 {
+		t.Errorf("sessions = %d, want 2 (s1 and s1-imported)", n)
+	}
+	if got, _ := v.Get("dup"); got.Model != a.Model {
+		t.Errorf("agent dup model = %q, want the first", got.Model)
+	}
+	if r := v.SharedConfig().Rules; len(r) != 1 || r[0].Content != "1" {
+		t.Errorf("rules = %+v, want the first r only", r)
+	}
+}
+
+// A bundle carries no process IDs or running state, as session export.
+func TestBundleExportIdlesSessions(t *testing.T) {
+	v, root := sessionTestVault(t, nil)
+	if err := v.AddSession(agent.Session{ID: "s1", Name: "s1", Status: agent.SessionStatusRunning,
+		Agents: []agent.SessionAgent{{Name: "x", PID: 4242}}}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := collectSetupBundle(exportCmd, v, filepath.Join(root, config.AppName), setupCollectOptions{IncludeSessions: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := res.Bundle.Sessions.Sessions[0]
+	if s.Status != agent.SessionStatusIdle || s.Agents[0].PID != 0 {
+		t.Errorf("bundle session = %+v", s)
+	}
+	if got := v.Sessions().Sessions[0].Agents[0].PID; got != 4242 {
+		t.Errorf("export changed the vault's session: pid %d", got)
+	}
+}

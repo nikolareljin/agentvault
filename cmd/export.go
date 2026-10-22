@@ -504,6 +504,13 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 	}
 	if opts.IncludeSessions {
 		bundle.Sessions = v.Sessions()
+		// Process IDs and running state are this machine's, as session
+		// export leaves them out.
+		sessions := make([]agent.Session, len(bundle.Sessions.Sessions))
+		for i, s := range bundle.Sessions.Sessions {
+			sessions[i] = idleSession(s)
+		}
+		bundle.Sessions.Sessions = sessions
 	}
 	bundle.Locations = captureBundleLocations(cmd, v, bundle, opts)
 	if strings.TrimSpace(opts.AgentName) != "" {

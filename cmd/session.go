@@ -334,11 +334,7 @@ var sessionExportCmd = &cobra.Command{
 		// Bundle the session with its agents, rules, and roles so the
 		// recipient can import everything needed to recreate the session.
 		// Process IDs are this machine's: they mean nothing elsewhere.
-		session.Agents = append([]agent.SessionAgent(nil), session.Agents...)
-		for i := range session.Agents {
-			session.Agents[i].PID = 0
-		}
-		session.Status = agent.SessionStatusIdle
+		session = idleSession(session)
 		exportData := sessionExport{
 			Session: session,
 			Rules:   v.SharedConfig().Rules,
@@ -400,7 +396,7 @@ var sessionImportCmd = &cobra.Command{
 			return err
 		}
 
-		data, err := os.ReadFile(args[0])
+		data, err := readImportFile(args[0])
 		if err != nil {
 			return fmt.Errorf("reading file: %w", err)
 		}
@@ -424,10 +420,14 @@ var sessionImportCmd = &cobra.Command{
 		// --keep-bundle-commands.
 		keep, _ := cmd.Flags().GetBool("keep-bundle-commands")
 		var newAgents []agent.Agent
+		seen := map[string]bool{}
 		for _, a := range importData.Agents {
-			if _, exists := v.Get(a.Name); exists {
+			if _, exists := v.Get(a.Name); exists || seen[a.Name] {
+				// The first of a name wins, so a file that names an agent
+				// twice cannot fail the import after the first is written.
 				continue
 			}
+			seen[a.Name] = true
 			if err := a.Validate(); err != nil {
 				return fmt.Errorf("importing agent %q: %w", printable(a.Name), err)
 			}
@@ -443,28 +443,19 @@ var sessionImportCmd = &cobra.Command{
 			newAgents = append(newAgents, a)
 		}
 
+		// Rules and roles the vault does not have, the first of a name.
 		shared := v.SharedConfig()
-		existingRules := make(map[string]bool)
-		for _, r := range shared.Rules {
-			existingRules[r.Name] = true
-		}
-		existingRoles := make(map[string]bool)
-		for _, r := range shared.Roles {
-			existingRoles[r.Name] = true
-		}
+		newRules := newByName(shared.Rules, importData.Rules, func(r agent.UnifiedRule) string { return r.Name })
+		newRoles := newByName(shared.Roles, importData.Roles, func(r agent.Role) string { return r.Name })
 		if dryRun {
 			for _, a := range newAgents {
 				fmt.Printf("  %sagent: %s\n", would, printable(a.Name))
 			}
-			for _, r := range importData.Rules {
-				if !existingRules[r.Name] {
-					fmt.Printf("  %srule: %s\n", would, printable(r.Name))
-				}
+			for _, r := range newRules {
+				fmt.Printf("  %srule: %s\n", would, printable(r.Name))
 			}
-			for _, r := range importData.Roles {
-				if !existingRoles[r.Name] {
-					fmt.Printf("  %srole: %s\n", would, printable(r.Name))
-				}
+			for _, r := range newRoles {
+				fmt.Printf("  %srole: %s\n", would, printable(r.Name))
 			}
 			if sameSession {
 				fmt.Printf("\nSession %q already matches this vault.\n", printable(importData.Session.Name))
@@ -479,28 +470,22 @@ var sessionImportCmd = &cobra.Command{
 			}
 			fmt.Printf("  Imported agent: %s\n", printable(a.Name))
 		}
-
-		// Import rules
-		for _, r := range importData.Rules {
-			if !existingRules[r.Name] {
-				r.CreatedAt = time.Now()
-				r.UpdatedAt = time.Now()
-				shared.Rules = append(shared.Rules, r)
-				fmt.Printf("  Imported rule: %s\n", printable(r.Name))
-			}
+		now := time.Now()
+		for _, r := range newRules {
+			r.CreatedAt, r.UpdatedAt = now, now
+			shared.Rules = append(shared.Rules, r)
+			fmt.Printf("  Imported rule: %s\n", printable(r.Name))
 		}
-
-		// Import roles
-		for _, r := range importData.Roles {
-			if !existingRoles[r.Name] {
-				r.CreatedAt = time.Now()
-				r.UpdatedAt = time.Now()
-				shared.Roles = append(shared.Roles, r)
-				fmt.Printf("  Imported role: %s\n", printable(r.Name))
-			}
+		for _, r := range newRoles {
+			r.CreatedAt, r.UpdatedAt = now, now
+			shared.Roles = append(shared.Roles, r)
+			fmt.Printf("  Imported role: %s\n", printable(r.Name))
 		}
-		if err := v.SetSharedConfig(shared); err != nil {
-			return fmt.Errorf("saving shared config: %w", err)
+		// The vault is written only when a rule or role is added.
+		if len(newRules)+len(newRoles) > 0 {
+			if err := v.SetSharedConfig(shared); err != nil {
+				return fmt.Errorf("saving shared config: %w", err)
+			}
 		}
 
 		if sameSession {
@@ -534,6 +519,11 @@ func sessionToImport(v *vault.Vault, s agent.Session, now time.Time) agent.Sessi
 		base := s.Name + "-imported"
 		s.Name = base
 		for n := 2; ; n++ {
+			// The same file imported again matches the copy the first
+			// import added, and adds nothing.
+			if have, same := sameSessionInVault(v, s); same {
+				return have
+			}
 			if _, exists := v.GetSessionByName(s.Name); !exists {
 				break
 			}
@@ -541,6 +531,23 @@ func sessionToImport(v *vault.Vault, s agent.Session, now time.Time) agent.Sessi
 		}
 	}
 	return s
+}
+
+// newByName is each item of in whose name have does not hold, the first
+// of a name only.
+func newByName[T any](have, in []T, name func(T) string) []T {
+	seen := make(map[string]bool, len(have))
+	for _, h := range have {
+		seen[name(h)] = true
+	}
+	var out []T
+	for _, i := range in {
+		if !seen[name(i)] {
+			seen[name(i)] = true
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 // idleSession is s without process IDs and not running.

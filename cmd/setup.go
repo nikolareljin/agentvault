@@ -393,7 +393,7 @@ func runSetupImport(cmd *cobra.Command, args []string) error {
 		strategy = strategyReplace
 	}
 
-	raw, err := os.ReadFile(args[0])
+	raw, err := readImportFile(args[0])
 	if err != nil {
 		return fmt.Errorf("reading bundle: %w", err)
 	}
@@ -465,7 +465,7 @@ func mergeSharedRouterConfig(dst *agent.SharedConfig, src agent.SharedConfig, me
 }
 
 func runSetupShow(cmd *cobra.Command, args []string) error {
-	raw, err := os.ReadFile(args[0])
+	raw, err := readImportFile(args[0])
 	if err != nil {
 		return fmt.Errorf("reading bundle: %w", err)
 	}

@@ -112,7 +112,7 @@ Examples:
 			return err
 		}
 
-		raw, err := os.ReadFile(args[0])
+		raw, err := readImportFile(args[0])
 		if err != nil {
 			return fmt.Errorf("reading profile: %w", err)
 		}

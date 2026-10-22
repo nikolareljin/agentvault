@@ -130,7 +130,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "Using newest bundle: %s\n", inPath)
 	}
 
-	raw, err := os.ReadFile(inPath)
+	raw, err := readImportFile(inPath)
 	if err != nil {
 		return fmt.Errorf("reading import file: %w", err)
 	}
