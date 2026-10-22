@@ -158,8 +158,8 @@
   that is not UTF-8 text (an image, a UTF-16 `AGENTS.md`) is refused and
   named, the rest is still pulled, and a skill missing such a file is
   named as incomplete (`export --project` carries it); `--strict` fails
-  on it. Before, a named one was stored with its bytes replaced and
-  `push` wrote that back, and a UTF-16 well-known file stopped the pull.
+  on it. Before, it was stored with its bytes replaced and `push` wrote
+  that back.
 - Import leaves out a bundle file over 1 MiB, the most export writes,
   and names it.
 - macOS install with Homebrew: `brew install nikolareljin/tap/agentvault`.
