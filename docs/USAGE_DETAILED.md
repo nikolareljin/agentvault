@@ -479,13 +479,14 @@ Flags:
   `.markdown`, `.txt` or `.rst` in a plain directory or under
   `.github/instructions`, `.github/prompts`, `.cursor/rules`,
   `.windsurf/rules`, `.clinerules`, `.claude/agents`, `.claude/commands`,
-  `.claude/skills` or `.gemini/commands` (`.toml` too there); or a file an
+  `.claude/skills` or `.gemini/commands` (`.toml` too there); any file in
+  a skill directory (`.claude/skills/NAME/scripts/x.py`); or a file an
   instruction refers to in a plain directory (`scripts/check.sh`,
   `.env.example`). Any other dot directory or dot file, at any depth, is
   refused (`.git`, `.vscode`, `.claude/settings.json`, `pkg/.envrc`), as are
   `mise.toml`, `CMakeLists.txt`, `devcontainer.json`, `Directory.Build.*`,
-  8.3 short names and `:`. Import takes `.aider.conf.yml`, referred-to files
-  and files with frontmatter, shell lines or TOML that the bundle adds or
+  8.3 short names and `:`. Import takes `.aider.conf.yml`, referred-to files,
+  skill files that are not prose and files with frontmatter, shell lines or TOML that the bundle adds or
   changes only with `--keep-bundle-commands`. With no `--file` or
   `--content`, `--filename` moves a stored instruction to a new name
 

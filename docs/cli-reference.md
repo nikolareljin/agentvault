@@ -415,13 +415,14 @@ Flags:
   `.markdown`, `.txt` or `.rst` in a plain directory or under
   `.github/instructions`, `.github/prompts`, `.cursor/rules`,
   `.windsurf/rules`, `.clinerules`, `.claude/agents`, `.claude/commands`,
-  `.claude/skills` or `.gemini/commands` (`.toml` too there); or a file an
+  `.claude/skills` or `.gemini/commands` (`.toml` too there); any file in
+  a skill directory (`.claude/skills/NAME/scripts/x.py`); or a file an
   instruction refers to in a plain directory (`scripts/check.sh`,
   `.env.example`). Any other dot directory or dot file, at any depth, is
   refused (`.git`, `.vscode`, `.claude/settings.json`, `pkg/.envrc`), as are
   `mise.toml`, `CMakeLists.txt`, `devcontainer.json`, `Directory.Build.*`,
-  8.3 short names and `:`. Import takes `.aider.conf.yml`, referred-to files
-  and files with frontmatter, shell lines or TOML that the bundle adds or
+  8.3 short names and `:`. Import takes `.aider.conf.yml`, referred-to files,
+  skill files that are not prose and files with frontmatter, shell lines or TOML that the bundle adds or
   changes only with `--keep-bundle-commands`. With no `--file` or
   `--content`, `--filename` moves a stored instruction to a new name
 
@@ -706,7 +707,7 @@ Flags:
   - any other top-level key under which a `command`, `args`, `*Command` or `*Helper` field differs (Gemini `tools.discoveryCommand`, `tools.callCommand`);
   - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
   - trusted projects from the Codex provider config that are new or changed;
-  - the vault's router `langgraph_command`, shared and per-agent MCP servers in the vault (a server named in `--mcp-servers` is taken), and `.aider.conf.yml` and files instructions refer to that are not prose;
+  - the vault's router `langgraph_command`, shared and per-agent MCP servers in the vault (a server named in `--mcp-servers` is taken), and `.aider.conf.yml`, files instructions refer to that are not prose, and every file in a skill directory (`.claude/skills/NAME/`) that is not prose;
   - Claude agents, commands and skills, rules and prompts with any frontmatter (it can add hooks, tools, MCP servers or a permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every TOML file but Codex `config.toml` (Gemini commands run `!{cmd}`), in the home, the project and vault instructions. `.clinerules/hooks/` is never written.
 
   A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are no longer deleted.

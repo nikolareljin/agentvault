@@ -70,10 +70,13 @@
   (`--token x` in `args` or a command, `X-API-Key: x` header arguments, URL
   credentials, known token prefixes) is redacted whole, and so is a credential
   file by name or location (`.docker/config.json`, anything under `.aws`).
-- The execute bit travels for a tool's own `hooks/` scripts, so a hook still
-  runs after import. The scripts travel only with `--include-secrets`;
-  without it import names each one it left behind. Import writes a new or
-  changed script only with `--keep-bundle-commands`.
+- The execute bit travels for a tool's own `hooks/` scripts and for skill
+  scripts, so a hook or skill still runs after import. Import leaves a
+  provider file that already matches the bundle untouched; before, it
+  rewrote it as 0600 and a skill script lost its execute bit. The scripts
+  travel only with `--include-secrets`; without it import names each one
+  it left behind. Import writes a new or changed script only with
+  `--keep-bundle-commands`.
 - Import leaves out Claude permissions that let any program run without
   asking (`Bash(bash:*)`, `Bash(python3:*)`, `Bash(*)` and the like) and
   names each one. Only a plain command line is kept: literal words, no
@@ -149,6 +152,11 @@
   installs nothing.
 - `GEMINI.md` is a well-known instruction file for `instructions pull` and
   `sync`.
+- `instructions pull` resolves a named file from the project root when it
+  is not next to the file naming it, so `.github/copilot-instructions.md`
+  naming `.github/instructions/go.instructions.md` stores it. A named file
+  that is not UTF-8 text (an image) is refused and named; before, it was
+  stored with its bytes replaced and `push` wrote that back.
 - macOS install with Homebrew: `brew install nikolareljin/tap/agentvault`.
   Each release builds one formula for arm64 and amd64 from the release
   asset digests and checks it with `brew style`, `brew test` and
@@ -251,7 +259,9 @@
   `.rst`) in plain directories or under `.github/instructions`,
   `.github/prompts`, `.cursor/rules`, `.windsurf/rules`, `.clinerules`,
   `.claude/agents`, `.claude/commands`, `.claude/skills` or
-  `.gemini/commands` (also `.toml` there), and files instructions refer to
+  `.gemini/commands` (also `.toml` there), every file in a skill directory
+  (`.claude/skills/NAME/`: scripts, references, assets, templates; not
+  `.git`, `.githooks` or `.husky`), and files instructions refer to
   in plain directories. Any other dot directory or dot file at any depth
   (`.git`, `.vscode`, `.claude/settings.json`, `.devcontainer`,
   `pkg/.envrc`), files tools load on their own
@@ -272,9 +282,10 @@
   shared and per-agent MCP servers in the vault (written to agent configs
   by `generate`; `--mcp-servers` picks count), `.aider.conf.yml` (its
   `lint-cmd` runs) and the scripts and other non-prose files instructions
-  refer to, prose with any frontmatter (Claude agents, commands and
-  skills, rules, prompts; it can add hooks, tools, MCP servers or a
-  permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every
+  refer to, every non-prose file in a skill directory, prose with any
+  frontmatter (Claude agents, commands and skills, rules, prompts; it can
+  add hooks, tools, MCP servers or a permission mode) or a shell line
+  (`` !`cmd` ``, `!{cmd}`), and every
   TOML file but Codex `config.toml` (checked key by key; Gemini commands
   run `!{cmd}`). Before, all of these were taken from the bundle. Values
   already in a vault are not changed. `.clinerules/hooks/` is never
