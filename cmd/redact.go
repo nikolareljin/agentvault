@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"sort"
@@ -365,6 +366,11 @@ func secretString(s string) bool {
 	if secretValueShapes.MatchString(s) || secretFlagInline.MatchString(s) {
 		return true
 	}
+	for _, u := range urlInString.FindAllString(s, -1) {
+		if urlCarriesCredential(u) {
+			return true
+		}
+	}
 	for _, q := range queryParam.FindAllStringSubmatch(s, -1) {
 		if isSecretKey(q[1]) {
 			return true
@@ -377,6 +383,81 @@ func secretString(s string) bool {
 	}
 	m := headerArg.FindStringSubmatch(s)
 	return m != nil && isSecretKey(m[1])
+}
+
+// urlInString finds each URL in a string: a scheme, "://" and what follows
+// up to whitespace or a quote.
+var urlInString = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s"'<>]+`)
+
+// urlCarriesCredential reports a URL with userinfo (a user name alone, as
+// in https://token@host, counts) or a query or fragment parameter whose
+// decoded name is a secret key. It parses with net/url, so ports, IPv6
+// hosts and percent-encoding do not hide one. A URL that does not parse
+// counts as carrying one.
+func urlCarriesCredential(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return true
+	}
+	if u.User != nil {
+		return true
+	}
+	return secretParams(u.RawQuery) || secretParams(u.Fragment)
+}
+
+// secretParams reports a query-shaped string with a secret parameter name,
+// judged decoded where it decodes and as written where it does not.
+func secretParams(q string) bool {
+	for _, part := range strings.FieldsFunc(q, func(r rune) bool { return r == '&' || r == ';' }) {
+		name, _, _ := strings.Cut(part, "=")
+		if isSecretKey(name) {
+			return true
+		}
+		if dec, err := url.QueryUnescape(name); err == nil && isSecretKey(dec) {
+			return true
+		}
+	}
+	return false
+}
+
+// stripURLSecrets is raw without its userinfo and without query and
+// fragment parameters whose name is a secret key, so the rest of the URL
+// stays usable. ok is false when raw is not a URL that parses; the caller
+// then leaves the whole value out.
+func stripURLSecrets(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", false
+	}
+	u.User = nil
+	strip := func(q string) (string, bool) {
+		if q == "" {
+			return "", true
+		}
+		vals, err := url.ParseQuery(q)
+		if err != nil {
+			return "", false
+		}
+		for k := range vals {
+			if isSecretKey(k) {
+				delete(vals, k)
+			}
+		}
+		return vals.Encode(), true
+	}
+	var ok bool
+	if u.RawQuery, ok = strip(u.RawQuery); !ok {
+		return "", false
+	}
+	frag, ok := strip(u.Fragment)
+	if !ok {
+		return "", false
+	}
+	u.Fragment, u.RawFragment = frag, ""
+	if secretString(u.String()) {
+		return "", false
+	}
+	return u.String(), true
 }
 
 // containsSecretShape reports a value that looks like a secret anywhere in

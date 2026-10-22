@@ -221,20 +221,31 @@ func TestEnvWritersExitOneWhenLeftOut(t *testing.T) {
 	}
 }
 
-// generate env --no-keys leaves out a base URL that carries a key, in
-// every format, as it leaves out the API key; a plain one stays.
-func TestGenerateEnvNoKeysDropsCredentialedBaseURL(t *testing.T) {
-	a := testAgent()
-	a.Name = "withkey"
-	a.BaseURL = "https://api.example/v1?api_key=CANARYURL1"
+// generate env --no-keys strips the credentials from a base URL, in every
+// format, and keeps the rest of it usable; a plain one stays as it is.
+func TestGenerateEnvNoKeysStripsBaseURLCredentials(t *testing.T) {
+	urls := map[string]string{
+		"q":    "https://api.example/v1?api_key=CANARYURL1&model=m",
+		"user": "https://CANARYURL2@user.example/v1",
+		"pw":   "https://u:CANARYURL3@[::1]:8443/v1",
+		"enc":  "https://enc.example/v1?Api%5FKey=CANARYURL4",
+	}
+	var agents []agent.Agent
+	for name, u := range urls {
+		a := testAgent()
+		a.Name = name
+		a.BaseURL = u
+		agents = append(agents, a)
+	}
 	b := testAgent()
 	b.Name = "plain"
 	b.BaseURL = "https://plain.example/v1"
+	agents = append(agents, b)
 	root := t.TempDir()
 	setTestHomeDir(t, root)
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
 	dir := filepath.Join(root, config.AppName)
-	seedProfileVault(t, dir, []agent.Agent{a, b}, nil)
+	seedProfileVault(t, dir, agents, nil)
 	useConfigDir(t, dir)
 	for _, format := range []string{"dotenv", "shell", "json"} {
 		withFlags(t, generateEnvCmd, map[string]string{"format": format, "no-keys": "true"})
@@ -244,8 +255,31 @@ func TestGenerateEnvNoKeysDropsCredentialedBaseURL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(out, "CANARYURL1") || !strings.Contains(out, "plain.example") {
+		for _, want := range []string{"plain.example", "api.example/v1?model=m", "user.example/v1", "[::1]:8443/v1", "enc.example/v1"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: missing %q in %q", format, want, out)
+			}
+		}
+		if strings.Contains(out, "CANARYURL") {
 			t.Errorf("%s: output = %q", format, out)
+		}
+	}
+}
+
+// secretString parses URLs: userinfo of any kind and percent-encoded
+// secret parameter names count.
+func TestSecretStringParsesURLs(t *testing.T) {
+	for s, want := range map[string]bool{
+		"https://token@h.example/v1":            true,
+		"http://user@localhost:11434":           true,
+		"https://u:p@[::1]:8080/":               true,
+		"https://h.example/v1?Api%5FKey=x":      true,
+		"run --url=https://tok@h.example/x now": true,
+		"https://h.example/v1?model=x":          false,
+		"https://h.example:8443/v1":             false,
+	} {
+		if got := secretString(s); got != want {
+			t.Errorf("secretString(%q) = %v, want %v", s, got, want)
 		}
 	}
 }

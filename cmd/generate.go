@@ -369,8 +369,8 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			if !noKeys && a.APIKey != "" {
 				output.WriteString(countLeftOut(&left, shellExportLine(prefix+"_API_KEY", a.APIKey)))
 			}
-			if a.BaseURL != "" && (!noKeys || !secretString(a.BaseURL)) {
-				output.WriteString(countLeftOut(&left, shellExportLine(prefix+"_BASE_URL", a.BaseURL)))
+			if u, ok := envBaseURL(a.BaseURL, !noKeys); ok {
+				output.WriteString(countLeftOut(&left, shellExportLine(prefix+"_BASE_URL", u)))
 			}
 			output.WriteString("\n")
 		}
@@ -385,8 +385,8 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			if !noKeys && a.APIKey != "" {
 				agentEnv["api_key"] = a.APIKey
 			}
-			if a.BaseURL != "" && (!noKeys || !secretString(a.BaseURL)) {
-				agentEnv["base_url"] = a.BaseURL
+			if u, ok := envBaseURL(a.BaseURL, !noKeys); ok {
+				agentEnv["base_url"] = u
 			}
 			envMap[a.Name] = agentEnv
 		}
@@ -417,10 +417,23 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 	return leftOutError(cmd, left)
 }
 
+// envBaseURL is the base URL an env file gets: as stored with withKey,
+// otherwise without its userinfo and secret parameters. ok is false when
+// there is nothing to write, or the URL does not parse and so cannot be
+// stripped.
+func envBaseURL(raw string, withKey bool) (string, bool) {
+	if raw == "" {
+		return "", false
+	}
+	if withKey || !secretString(raw) {
+		return raw, true
+	}
+	return stripURLSecrets(raw)
+}
+
 // writeAgentDotenv writes one agent's dotenv block: a comment naming it,
 // then MODEL, API_KEY (when withKey) and BASE_URL through dotenvLine. A
-// base URL that carries credentials is a key too: without withKey it is
-// left out.
+// base URL's credentials are a key too: without withKey they are stripped.
 func writeAgentDotenv(out *strings.Builder, a agent.Agent, withKey bool, left *int) {
 	prefix := envPrefixForAgent(a)
 	out.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", printable(a.Name), printable(string(a.Provider))))
@@ -430,8 +443,8 @@ func writeAgentDotenv(out *strings.Builder, a agent.Agent, withKey bool, left *i
 	if withKey && a.APIKey != "" {
 		out.WriteString(countLeftOut(left, dotenvLine(prefix+"_API_KEY", a.APIKey)))
 	}
-	if a.BaseURL != "" && (withKey || !secretString(a.BaseURL)) {
-		out.WriteString(countLeftOut(left, dotenvLine(prefix+"_BASE_URL", a.BaseURL)))
+	if u, ok := envBaseURL(a.BaseURL, withKey); ok {
+		out.WriteString(countLeftOut(left, dotenvLine(prefix+"_BASE_URL", u)))
 	}
 	out.WriteString("\n")
 }
