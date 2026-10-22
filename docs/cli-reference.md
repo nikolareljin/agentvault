@@ -319,7 +319,8 @@ Flags:
 - `--force` (default: `false`)
 
 ### `agentvault rules export`
-No flags.
+Flags:
+- `--raw` (default: `false`)
 
 ## Roles (`roles` alias: `role`)
 
@@ -398,7 +399,10 @@ No flags.
 No flags.
 
 ### `agentvault instructions show [name]`
-No flags.
+Flags:
+- `--scope <scope>`
+- `--directory-pattern <pattern>`
+- `--raw` (default: `false`)
 
 ### `agentvault instructions set [name]`
 Flags:

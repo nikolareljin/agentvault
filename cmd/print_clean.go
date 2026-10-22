@@ -2,9 +2,8 @@ package cmd
 
 import (
 	"io"
-	"os"
 
-	"golang.org/x/term"
+	"github.com/spf13/cobra"
 
 	"github.com/nikolareljin/agentvault/internal/textutil"
 )
@@ -27,25 +26,16 @@ func escapeC1JSON(data []byte) []byte {
 	return textutil.EscapeC1JSON(data)
 }
 
-// stdoutIsTerminal reports whether stdout is a terminal; tests replace it.
-var stdoutIsTerminal = func() bool {
-	return term.IsTerminal(int(os.Stdout.Fd())) // #nosec G115 -- fd fits in int
-}
+// rawFlagUsage is the help text of --raw on commands that print content.
+const rawFlagUsage = "print content byte-exact, control characters and terminal escapes included (for redirecting to a file; unsafe on a terminal)"
 
-// contentText is for content a user redirects into a file, such as
-// `instructions show > CLAUDE.md` or `rules export > RULES.md`: it is
-// byte-exact unless stdout is a terminal, where it is printableText.
-func contentText(s string) string {
-	if stdoutIsTerminal() {
-		return printableText(s)
+// contentText prints content through printableText unless the command was
+// given --raw, which a user picks to write the content byte-exact to a file.
+// Whether stdout is a terminal is not a signal: a pipe to less -R or a
+// tmux pane still reaches one.
+func contentText(cmd *cobra.Command, s string) string {
+	if raw, _ := cmd.Flags().GetBool("raw"); raw {
+		return s
 	}
-	return s
-}
-
-// contentLine is contentText for a single line, such as a heading.
-func contentLine(s string) string {
-	if stdoutIsTerminal() {
-		return printable(s)
-	}
-	return s
+	return printableText(s)
 }

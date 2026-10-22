@@ -369,8 +369,10 @@ Flags:
 - `--force` (default: `false`): Add defaults even when rules already exist.
 
 ### `agentvault rules export`
-No flags. Redirected to a file, the output is byte-exact; on a terminal,
-control characters are shown as `?`.
+Flags:
+- `--raw` (default: `false`): Print content byte-exact, for redirecting to
+  a file. Without it control characters are shown as `?`, also when piped.
+  Raw output can carry terminal escapes; do not print it to a terminal.
 
 ## 3.5 Roles
 
@@ -460,8 +462,10 @@ Aliases:
 No flags.
 
 ### `agentvault instructions show [name]`
-No flags. Redirected to a file, the content is byte-exact; on a terminal,
-control characters are shown as `?`.
+Flags:
+- `--raw` (default: `false`): Print content byte-exact, for redirecting to
+  a file. Without it control characters are shown as `?`, also when piped.
+  Raw output can carry terminal escapes; do not print it to a terminal.
 
 ### `agentvault instructions set [name]`
 Flags:

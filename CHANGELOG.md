@@ -369,9 +369,10 @@
   `session`, `instructions` (list, show, preview, export, diff, scan),
   `config show`, `run`, `generate` and the TUI. JSON output escapes C1
   control characters as `\u0080`-`\u009f`. Instruction, rule and prompt
-  text keeps its newlines, tabs and CRLF. `instructions show`,
-  `instructions preview` and `rules export` print content byte-exact when
-  stdout is not a terminal, so `rules export > RULES.md` loses nothing.
+  text keeps its newlines, tabs and CRLF, also when piped. New `--raw` on
+  `instructions show`, `instructions preview` and `rules export` prints
+  content byte-exact for redirecting to a file (`rules export --raw >
+  RULES.md`); `instructions export FILE` stays byte-exact.
   The TUI keeps only its own colours: an SGR code from a bundle is shown
   as text, so a field cannot be hidden or drawn black on black.
 - `run --env` and `generate env --format shell` write values in single

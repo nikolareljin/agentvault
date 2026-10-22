@@ -189,7 +189,7 @@ var instShowCmd = &cobra.Command{
 		if !ok {
 			return fmt.Errorf("instruction %q not found", args[0])
 		}
-		fmt.Print(contentText(inst.Content))
+		fmt.Print(contentText(cmd, inst.Content))
 		if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
 			fmt.Println()
 		}
@@ -833,7 +833,7 @@ Examples:
 					scope = agent.InstructionScopeGlobal
 				}
 				fmt.Printf("=== %s (%s, scope: %s) ===\n", printable(inst.Name), printable(inst.Filename), printable(scope))
-				fmt.Println(contentText(inst.Content))
+				fmt.Println(contentText(cmd, inst.Content))
 			}
 			return nil
 		}
@@ -846,7 +846,7 @@ Examples:
 					scope = agent.InstructionScopeGlobal
 				}
 				fmt.Printf("=== %s (%s, scope: %s) ===\n", printable(inst.Name), printable(inst.Filename), printable(scope))
-				fmt.Print(contentText(inst.Content))
+				fmt.Print(contentText(cmd, inst.Content))
 				if inst.Content != "" && !strings.HasSuffix(inst.Content, "\n") {
 					fmt.Println()
 				}
@@ -1116,6 +1116,7 @@ func init() {
 
 	instPreviewCmd.Flags().String("dir", "", "directory to resolve scope against (default: cwd)")
 	instPreviewCmd.Flags().Bool("all", false, "show all resolved instructions")
+	instPreviewCmd.Flags().Bool("raw", false, rawFlagUsage)
 
 	instExportCmd.Flags().String("format", "", "output format: json or yaml (default: json)")
 	instExportCmd.Flags().String("scope", "", "export only instructions at this scope")
@@ -1129,6 +1130,7 @@ func init() {
 
 	instShowCmd.Flags().String("scope", "", "target scope: global, directory, or local")
 	instShowCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")
+	instShowCmd.Flags().Bool("raw", false, rawFlagUsage)
 
 	instEditCmd.Flags().String("scope", "", "target scope: global, directory, or local")
 	instEditCmd.Flags().String("directory-pattern", "", "target directory pattern (use with --scope directory)")

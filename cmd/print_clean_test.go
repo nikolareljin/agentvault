@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +17,6 @@ import (
 // names from a vault saved before they were refused.
 func TestCommandsPrintNoControlCharacters(t *testing.T) {
 	const e = "\x1b]0;t\a\x1b[2J\u009b1;1H\r"
-	setStdoutTerminal(t, true)
 	a := testAgent()
 	a.Name = "cl" + e
 	a.Model = "m" + e
@@ -85,23 +85,15 @@ func TestCommandsPrintNoControlCharacters(t *testing.T) {
 	}
 }
 
-func setStdoutTerminal(t *testing.T, on bool) {
-	t.Helper()
-	prev := stdoutIsTerminal
-	stdoutIsTerminal = func() bool { return on }
-	t.Cleanup(func() { stdoutIsTerminal = prev })
-}
-
-// Content meant for a file (`instructions show > CLAUDE.md`, `rules export
-// > RULES.md`) is byte-exact when stdout is not a terminal.
-func TestContentRedirectedIsByteExact(t *testing.T) {
+// Content is byte-exact only with --raw; without it, piped output (which
+// can still reach a terminal through less -R or tmux) is cleaned too.
+func TestContentRawFlagIsByteExact(t *testing.T) {
 	const body = "x\x1b[1m\u009b\x07\r\n\tz\u00e9\u2028"
-	setStdoutTerminal(t, false)
 	root := t.TempDir()
 	setTestHomeDir(t, root)
 	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
 	dir := filepath.Join(root, config.AppName)
-	seedProfileVault(t, dir, []agent.Agent{testAgent()}, []agent.UnifiedRule{{Name: "r", Description: "d" + body, Content: body, Category: "general", Enabled: true}})
+	seedProfileVault(t, dir, []agent.Agent{testAgent()}, []agent.UnifiedRule{{Name: "r", Description: "d", Content: body, Category: "general", Enabled: true}})
 	v := vault.New(filepath.Join(dir, config.VaultFile))
 	if err := v.Unlock(e2eMasterPassword); err != nil {
 		t.Fatal(err)
@@ -119,22 +111,68 @@ func TestContentRedirectedIsByteExact(t *testing.T) {
 	}{
 		{"instructions show", instShowCmd, []string{"i"}, nil, body + "\n"},
 		{"instructions preview", instPreviewCmd, []string{"i"}, map[string]string{"dir": root}, body + "\n"},
-		{"rules export", rulesExportCmd, nil, nil, "### d" + body + "\n" + body + "\n\n"},
+		{"rules export", rulesExportCmd, nil, nil, "### d\n" + body + "\n\n"},
 	}
 	for _, tc := range cases {
-		withFlags(t, tc.cmd, tc.flags)
-		out, err := captureStdoutForTest(t, func() error { return tc.cmd.RunE(tc.cmd, tc.args) })
-		if err != nil {
-			t.Fatalf("%s: %v", tc.name, err)
-		}
-		if !strings.Contains(out, tc.want) {
-			t.Errorf("%s: output %q does not contain %q", tc.name, out, tc.want)
+		for _, raw := range []bool{true, false} {
+			flags := map[string]string{"raw": fmt.Sprint(raw)}
+			for k, v := range tc.flags {
+				flags[k] = v
+			}
+			withFlags(t, tc.cmd, flags)
+			out, err := captureStdoutForTest(t, func() error { return tc.cmd.RunE(tc.cmd, tc.args) })
+			if err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if raw && !strings.Contains(out, tc.want) {
+				t.Errorf("%s --raw: output %q does not contain %q", tc.name, out, tc.want)
+			}
+			if !raw && strings.ContainsAny(strings.ReplaceAll(out, "\r\n", "\n"), "\x1b\a\u009b\r") {
+				t.Errorf("%s: piped output kept control characters: %q", tc.name, out)
+			}
 		}
 	}
-	setStdoutTerminal(t, true)
-	withFlags(t, instShowCmd, nil)
-	out, _ := captureStdoutForTest(t, func() error { return instShowCmd.RunE(instShowCmd, []string{"i"}) })
-	if strings.ContainsAny(out, "\x1b\a\u009b") {
-		t.Errorf("terminal output kept control characters: %q", out)
+}
+
+// instructions export to a file and import back keeps content byte for byte.
+func TestInstructionsExportImportByteExact(t *testing.T) {
+	const body = "x\x1b[1m\u009b\x07\r\n\tz\u00e9\u2028\n"
+	root := t.TempDir()
+	setTestHomeDir(t, root)
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	dir := filepath.Join(root, config.AppName)
+	seedProfileVault(t, dir, []agent.Agent{testAgent()}, nil)
+	v := vault.New(filepath.Join(dir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
 	}
+	if err := v.SetInstruction(agent.InstructionFile{Name: "i", Filename: "AGENTS.md", Content: body}); err != nil {
+		t.Fatal(err)
+	}
+	useConfigDir(t, dir)
+	file := filepath.Join(root, "inst.json")
+	withFlags(t, instExportCmd, nil)
+	if _, err := captureStdoutForTest(t, func() error { return instExportCmd.RunE(instExportCmd, []string{file}) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.RemoveInstruction("i"); err != nil {
+		t.Fatal(err)
+	}
+	withFlags(t, instImportCmd, nil)
+	if _, err := captureStdoutForTest(t, func() error { return instImportCmd.RunE(instImportCmd, []string{file}) }); err != nil {
+		t.Fatal(err)
+	}
+	v2 := vault.New(filepath.Join(dir, config.VaultFile))
+	if err := v2.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	for _, inst := range v2.ListInstructions() {
+		if inst.Name == "i" {
+			if inst.Content != body {
+				t.Errorf("content = %q, want %q", inst.Content, body)
+			}
+			return
+		}
+	}
+	t.Error("instruction not imported")
 }

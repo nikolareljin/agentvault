@@ -300,7 +300,7 @@ agentvault rules add no-todos \
   --priority 50
 
 # Export rules as markdown for instruction files
-agentvault rules export > RULES.md
+agentvault rules export --raw > RULES.md
 ```
 
 ## Roles System
