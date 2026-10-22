@@ -91,6 +91,9 @@ func runCapabilityList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	entries := v.ListCapabilities()
+	for i := range entries {
+		entries[i].EndpointURL = maskURLSecrets(entries[i].EndpointURL)
+	}
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	if jsonOut {
 		enc := json.NewEncoder(c1Writer(os.Stdout))
@@ -146,7 +149,7 @@ func runCapabilityAdd(cmd *cobra.Command, _ []string) error {
 	if err := v.AddCapability(entry); err != nil {
 		return err
 	}
-	fmt.Printf("Added: %s / %s\n", entry.EndpointURL, entry.ModelName)
+	fmt.Printf("Added: %s / %s\n", maskURLSecrets(entry.EndpointURL), entry.ModelName)
 	return nil
 }
 
@@ -187,7 +190,7 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 		var healthErr error
 		entries, healthErr = discoverFromHealthEndpoint(ctx, client, baseURL)
 		if healthErr != nil {
-			return fmt.Errorf("discover: could not query %s — /v1/models: %v; /health: %v", baseURL, modelsErr, healthErr)
+			return fmt.Errorf("discover: could not query %s — /v1/models: %v; /health: %v", maskURLSecrets(baseURL), modelsErr, healthErr)
 		}
 	}
 
@@ -226,9 +229,9 @@ func runCapabilityDiscover(cmd *cobra.Command, _ []string) error {
 	}
 	skipped := total - added
 	if skipped > 0 {
-		fmt.Printf("Added %d of %d model(s) from %s (%d already present or duplicate)\n", added, total, baseURL, skipped)
+		fmt.Printf("Added %d of %d model(s) from %s (%d already present or duplicate)\n", added, total, maskURLSecrets(baseURL), skipped)
 	} else {
-		fmt.Printf("Added %d model(s) from %s\n", added, baseURL)
+		fmt.Printf("Added %d model(s) from %s\n", added, maskURLSecrets(baseURL))
 	}
 	return nil
 }

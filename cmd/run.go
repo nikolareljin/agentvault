@@ -63,7 +63,7 @@ Example:
 			Name:         a.Name,
 			Provider:     string(a.Provider),
 			Model:        a.Model,
-			BaseURL:      a.BaseURL,
+			BaseURL:      maskURLSecrets(a.BaseURL),
 			SystemPrompt: a.EffectiveSystemPrompt(shared),
 			TaskDesc:     a.TaskDesc,
 		}

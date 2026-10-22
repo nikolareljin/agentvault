@@ -1685,7 +1685,7 @@ func (m model) renderAgentDetail() string {
 		field("API Key", "")
 	}
 
-	field("Base URL", runtimeCfg.BaseURL.Value+sourceSuffix(runtimeCfg.BaseURL.Source))
+	field("Base URL", MaskURL(runtimeCfg.BaseURL.Value)+sourceSuffix(runtimeCfg.BaseURL.Source))
 	field("Role", a.Role)
 
 	effectivePrompt := a.EffectiveSystemPrompt(m.shared)
@@ -2385,7 +2385,7 @@ func (m model) renderStatus() string {
 
 	ollamaStatus := dimStyle.Render("not configured")
 	if m.providerCfgs.Ollama != nil {
-		ollamaStatus = successStyle.Render(fmt.Sprintf("configured (base: %s)", m.providerCfgs.Ollama.BaseURL))
+		ollamaStatus = successStyle.Render(fmt.Sprintf("configured (base: %s)", MaskURL(m.providerCfgs.Ollama.BaseURL)))
 	}
 	b.WriteString(fmt.Sprintf("    Ollama: %s\n", ollamaStatus))
 
@@ -3004,6 +3004,16 @@ func truncate(s string, max int) string {
 		return s[:max]
 	}
 	return s[:max-3] + "..."
+}
+
+// MaskURL masks the credentials in a URL before it is shown. The cmd
+// package sets it to its redaction helper; the default hides any value
+// with an "@", which covers userinfo.
+var MaskURL = func(raw string) string {
+	if strings.Contains(raw, "@") {
+		return "<secret>"
+	}
+	return raw
 }
 
 // Run starts the TUI application.

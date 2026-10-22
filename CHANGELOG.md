@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- `run`, `list --json`, `capability list`, `capability add`/`discover`,
+  `serve` and the TUI mask base URL credentials
+  (https://github.com/nikolareljin/agentvault/issues/81): a password in the
+  userinfo and secret query parameters print as `***`
+  (`https://user:***@host/v1`). `list --show-keys` and `run --env` print the
+  URL as stored.
+
 ## [0.15.1] - 2026-10-22
 
 ### Fixed
