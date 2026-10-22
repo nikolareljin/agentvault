@@ -532,3 +532,25 @@ func TestPlanProfileImportIsIdempotentForInstructionOverrides(t *testing.T) {
 		t.Fatalf("report.Updated = %d on a repeat import, want 0", second.Report.Updated)
 	}
 }
+
+// Mirror must not delete this machine's instruction because the bundle's
+// copy of it has a filename the vault refuses.
+func TestMirrorKeepsLocalInstructionWhenBundleCopyIsRefused(t *testing.T) {
+	v := newTestVault(t)
+	local := agent.InstructionFile{Name: "notes", Filename: "docs/notes.md", Content: "mine\n"}
+	if err := v.SetInstruction(local); err != nil {
+		t.Fatal(err)
+	}
+	b := SetupBundle{}
+	b.SharedConfig.Instructions = []agent.InstructionFile{{Name: "notes", Filename: ".vscode/notes.md", Content: "theirs\n"}}
+	plan := planProfileImport(v, b, strategyMirror, time.Now(), importConsent{})
+	if len(plan.Shared.Instructions) != 1 || plan.Shared.Instructions[0].Content != "mine\n" {
+		t.Fatalf("instructions after mirror = %+v, want this machine's notes kept", plan.Shared.Instructions)
+	}
+	if plan.SharedChanged {
+		t.Error("shared config changed; want nothing changed")
+	}
+	if strings.Contains(strings.Join(plan.Report.Lines, "\n"), "Removed") {
+		t.Errorf("report names a removal:\n%s", strings.Join(plan.Report.Lines, "\n"))
+	}
+}

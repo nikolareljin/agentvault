@@ -237,7 +237,7 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	// Stamp override-derived instructions with the bundle's own creation time, not
 	// the wall clock: a timestamp that moves on every run would make re-importing
 	// an unchanged bundle rewrite them forever.
-	incomingInstructions := validIncomingInstructions(mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)), rep)
+	incomingInstructions := validIncomingInstructions(mergeInstructionSources(incomingShared.Instructions, setup.InstructionOverrides, instructionStamp(setup, now)), shared.Instructions, rep)
 	// .aider.conf.yml and the scripts instructions refer to run code.
 	incomingInstructions = gateBundleCommands(incomingInstructions, shared.Instructions,
 		agent.InstructionKey, sameInstructionFile,
@@ -523,11 +523,22 @@ func capabilityKey(e agent.ModelCapabilityEntry) string {
 // instruction list so both carriers land in the vault as instructions.
 // validIncomingInstructions drops a bundle instruction the vault would
 // refuse to store or push: a filename such as .git/config or one that
-// escapes the project, or an invalid scope.
-func validIncomingInstructions(in []agent.InstructionFile, rep *importReport) []agent.InstructionFile {
+// escapes the project, or an invalid scope. This machine's entry under the
+// same key is passed on in its place, so mirror never deletes local data
+// because the bundle's copy was refused.
+func validIncomingInstructions(in, local []agent.InstructionFile, rep *importReport) []agent.InstructionFile {
+	byKey := make(map[string]agent.InstructionFile, len(local))
+	for _, l := range local {
+		byKey[agent.InstructionKey(l)] = l
+	}
 	out := in[:0:0]
 	for _, inst := range in {
 		if err := agent.ValidateInstructionScope(inst); err != nil {
+			if l, ok := byKey[agent.InstructionKey(inst)]; ok {
+				rep.record("Skipped", "instruction %s: %v; kept this machine's", inst.Name, err)
+				out = append(out, l)
+				continue
+			}
 			rep.record("Skipped", "instruction %s: %v", inst.Name, err)
 			continue
 		}
