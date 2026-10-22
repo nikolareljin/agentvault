@@ -1382,7 +1382,7 @@ func (m *model) handleCycleClaudeBackend() (tea.Model, tea.Cmd) {
 	}
 	a.Backend = next
 	a.UpdatedAt = time.Now()
-	if err := a.Validate(); err != nil {
+	if err := a.ValidateFields(); err != nil {
 		m.setStatus(fmt.Sprintf("Invalid backend selection: %v", err), true)
 		return m, nil
 	}
