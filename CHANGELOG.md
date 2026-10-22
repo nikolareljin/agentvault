@@ -374,6 +374,11 @@
   so a model or URL such as `$(cmd)` does not run when the output is
   eval'd. A name saved before control characters were refused cannot
   start a new line in the generated env file.
+- `generate env` (dotenv, the default) and `generate all` write values in
+  single quotes, so sourcing `.env.agents` from a shell runs nothing
+  (0.14.0 wrote `"$(cmd)"`, which ran). docker compose reads them
+  literally; python-dotenv still expands `${VAR}`. A value with a single
+  quote or a control character is left out with a warning.
 - Import with `--apply-provider-configs` keeps this machine's
   `settings.json` or Codex `config.toml` when the bundle carries that file
   redacted whole. Before, the provider config's copy, which can be older

@@ -16,6 +16,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
+	"github.com/nikolareljin/agentvault/internal/textutil"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/spf13/cobra"
 )
@@ -399,13 +400,13 @@ func runGenerateEnv(cmd *cobra.Command, args []string) error {
 			output.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", printable(a.Name), printable(string(a.Provider))))
 			prefix := envPrefixForAgent(a)
 			if a.Model != "" {
-				output.WriteString(fmt.Sprintf("%s_MODEL=%s\n", prefix, dotenvQuotedValue(a.Model)))
+				output.WriteString(dotenvLine(prefix+"_MODEL", a.Model))
 			}
 			if !noKeys && a.APIKey != "" {
-				output.WriteString(fmt.Sprintf("%s_API_KEY=%s\n", prefix, dotenvQuotedValue(a.APIKey)))
+				output.WriteString(dotenvLine(prefix+"_API_KEY", a.APIKey))
 			}
 			if a.BaseURL != "" {
-				output.WriteString(fmt.Sprintf("%s_BASE_URL=%s\n", prefix, dotenvQuotedValue(a.BaseURL)))
+				output.WriteString(dotenvLine(prefix+"_BASE_URL", a.BaseURL))
 			}
 			output.WriteString("\n")
 		}
@@ -515,9 +516,17 @@ func shellQuotedValue(value string) string {
 	return strings.ReplaceAll(q, "`", "\\`")
 }
 
-func dotenvQuotedValue(value string) string {
-	// Use quoted output so spaces/#/= and multiline values remain parseable in dotenv.
-	return strconv.Quote(value)
+// dotenvLine writes NAME='value'. Single quotes keep the value literal for
+// docker compose, python-dotenv and a shell that sources the file, so a
+// model such as "$(cmd)" from a bundle does not run. A value with a single
+// quote or a control character has no form all three read the same way:
+// it is left out with a warning.
+func dotenvLine(name, value string) string {
+	if strings.Contains(value, "'") || textutil.Printable(value) != value {
+		fmt.Fprintf(os.Stderr, "warning: %s left out: its value has a quote or control character\n", name)
+		return fmt.Sprintf("# %s left out: its value has a quote or control character\n", name)
+	}
+	return name + "='" + value + "'\n"
 }
 
 func runGenerateMCP(cmd *cobra.Command, args []string) error {
@@ -937,10 +946,10 @@ func runGenerateAll(cmd *cobra.Command, args []string) error {
 			prefix := envPrefixForAgent(a)
 			envContent.WriteString(fmt.Sprintf("# Agent: %s (%s)\n", printable(a.Name), printable(string(a.Provider))))
 			if a.Model != "" {
-				envContent.WriteString(fmt.Sprintf("%s_MODEL=%s\n", prefix, dotenvQuotedValue(a.Model)))
+				envContent.WriteString(dotenvLine(prefix+"_MODEL", a.Model))
 			}
 			if a.BaseURL != "" {
-				envContent.WriteString(fmt.Sprintf("%s_BASE_URL=%s\n", prefix, dotenvQuotedValue(a.BaseURL)))
+				envContent.WriteString(dotenvLine(prefix+"_BASE_URL", a.BaseURL))
 			}
 			envContent.WriteString("\n")
 		}
