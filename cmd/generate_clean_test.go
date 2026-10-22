@@ -154,3 +154,22 @@ func TestGenerateDotenvRunsNothing(t *testing.T) {
 		t.Errorf("env = %q, want %q (file %q)", got, want, out)
 	}
 }
+
+// The provider is not validated on import, so it is as hostile as the
+// name: "claude;cmd;" made generate env print `export CLAUDE;CMD;_X_MODEL=`.
+func TestEnvPrefixForAgentIsAName(t *testing.T) {
+	for _, p := range []string{"claude;touch PWNED;", "$(id)", "a b`c`", "", "-", "9x"} {
+		got := envPrefixForAgent(agent.Agent{Name: "x'y", Provider: agent.Provider(p)})
+		for _, r := range got {
+			if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_') {
+				t.Fatalf("provider %q: prefix %q has %q", p, got, r)
+			}
+		}
+		if got == "" || got[0] >= '0' && got[0] <= '9' || got[0] == '_' {
+			t.Errorf("provider %q: prefix %q is not a variable name", p, got)
+		}
+	}
+	if got := envPrefixForAgent(agent.Agent{Name: "my-claude", Provider: "claude"}); got != "CLAUDE_MY_CLAUDE" {
+		t.Errorf("prefix = %q, want CLAUDE_MY_CLAUDE", got)
+	}
+}

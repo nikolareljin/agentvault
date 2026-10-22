@@ -488,22 +488,32 @@ func cloneCodexConfig(in *agent.CodexConfig) *agent.CodexConfig {
 	return out
 }
 
+// envPrefixForAgent is PROVIDER_NAME with every character other than A-Z
+// and 0-9 replaced by '_'. Both parts can come from a bundle and the
+// result is a variable name in output that is eval'd or sourced, so a
+// provider such as "claude;cmd;" must not reach it as is.
 func envPrefixForAgent(a agent.Agent) string {
-	provider := strings.ToUpper(strings.ReplaceAll(string(a.Provider), "-", "_"))
-	name := strings.ToUpper(a.Name)
+	provider := envNamePart(string(a.Provider))
+	if provider == "" || provider[0] <= '9' {
+		provider = "PROVIDER" + provider
+	}
+	name := envNamePart(a.Name)
+	if name == "" {
+		name = "AGENT"
+	}
+	return provider + "_" + name
+}
+
+func envNamePart(s string) string {
 	var b strings.Builder
-	for _, r := range name {
+	for _, r := range strings.ToUpper(s) {
 		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
 		} else {
 			b.WriteByte('_')
 		}
 	}
-	cleanName := strings.Trim(b.String(), "_")
-	if cleanName == "" {
-		cleanName = "AGENT"
-	}
-	return provider + "_" + cleanName
+	return strings.Trim(b.String(), "_")
 }
 
 // shellExportLine writes export NAME='value' for output that is eval'd or
