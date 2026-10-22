@@ -394,11 +394,13 @@ func secretString(s string) bool {
 var schemelessUserinfo = regexp.MustCompile(`(?:^|[\s=,;'"(<])([^\s/:@=,;'"(<>]*):([^\s/@]+)@(\S*)`)
 
 // schemelessPassword reports a schemeless user:password@host in s. An image
-// digest such as node:20@sha256:... and a mailto: address are not one.
+// digest such as node:20@sha256:..., a mailto: address and a Windows path
+// such as C:\npm\node_modules\@scope\pkg are not one.
 func schemelessPassword(s string) bool {
 	for _, m := range schemelessUserinfo.FindAllStringSubmatch(s, -1) {
 		user, host := strings.ToLower(m[1]), strings.ToLower(m[3])
-		if user == "mailto" || strings.HasPrefix(host, "sha256:") || strings.HasPrefix(host, "sha512:") {
+		drivePath := len(user) == 1 && user[0] >= 'a' && user[0] <= 'z' && strings.HasPrefix(m[2], `\`)
+		if user == "mailto" || drivePath || strings.HasPrefix(host, "sha256:") || strings.HasPrefix(host, "sha512:") {
 			continue
 		}
 		return true
