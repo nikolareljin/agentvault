@@ -273,6 +273,9 @@
   already in a vault are not changed. `.clinerules/hooks/` is never
   written from a bundle. The deprecated `setup import` has no flag and
   leaves them out.
+- `generate env`, `generate all` and `setup apply --generate` set an
+  existing env file to mode 0600 when they write keys into it. Before, a
+  file created earlier as 0644 kept that mode.
 - The model reaches `codex`, `claude` and `gemini` as `--model=<name>`.
   Before, a bundle model such as `--yolo` was parsed as a CLI flag.
 - Prompts reach `codex` and `claude` after `--`, and `gemini` as
