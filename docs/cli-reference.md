@@ -486,6 +486,7 @@ Flags:
 ### `agentvault sync preview`
 Flags:
 - `--provider <provider>`
+- `--raw` (default: `false`)
 
 ## Generate
 

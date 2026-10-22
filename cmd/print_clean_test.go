@@ -112,6 +112,7 @@ func TestContentRawFlagIsByteExact(t *testing.T) {
 		{"instructions show", instShowCmd, []string{"i"}, nil, body + "\n"},
 		{"instructions preview", instPreviewCmd, []string{"i"}, map[string]string{"dir": root}, body + "\n"},
 		{"rules export", rulesExportCmd, nil, nil, "### d\n" + body + "\n\n"},
+		{"sync preview", syncPreviewCmd, nil, nil, "### d\n" + body + "\n\n"},
 	}
 	for _, tc := range cases {
 		for _, raw := range []bool{true, false} {

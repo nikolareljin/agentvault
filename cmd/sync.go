@@ -74,6 +74,7 @@ func init() {
 	syncVaultCmd.Flags().Bool("include-roles", true, "include role descriptions")
 
 	syncPreviewCmd.Flags().String("provider", "", "preview specific provider")
+	syncPreviewCmd.Flags().Bool("raw", false, rawFlagUsage)
 }
 
 func runSyncTo(cmd *cobra.Command, args []string) error {
@@ -215,7 +216,7 @@ func runSyncPreview(cmd *cobra.Command, args []string) error {
 	if providerFilter == "" {
 		fmt.Println("=== AGENTS.md (Universal) ===")
 		fmt.Println()
-		fmt.Println(generateAgentsMD(shared, true))
+		fmt.Println(contentText(cmd, generateAgentsMD(shared, true)))
 		fmt.Println()
 	}
 
@@ -228,7 +229,7 @@ func runSyncPreview(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		fmt.Printf("=== %s ===\n\n", filename)
-		fmt.Println(generateProviderMD(p, shared, true))
+		fmt.Println(contentText(cmd, generateProviderMD(p, shared, true)))
 	}
 
 	return nil

@@ -166,8 +166,9 @@
 
 ### Changed
 - Output that scripts may read changed (see Security for why):
-  `instructions show`, `instructions preview`, `rules export` and
-  `templates show` print control characters as `?`, also when piped;
+  `instructions show`, `instructions preview`, `rules export`,
+  `sync preview` and `templates show` print control characters as `?`,
+  also when piped;
   add `--raw` for the exact bytes, so `rules export > FILE` now needs
   `--raw` to write the rules byte-exact. `generate env`, `generate all`
   and `run --env` leave out a value with a control character (dotenv
@@ -431,12 +432,14 @@
 - Vault fields that came from a bundle reach the terminal without control
   characters in every command that prints them: `rules`, `roles`,
   `session`, `instructions` (list, show, preview, export, diff, scan),
+  `sync preview`,
   `templates` (list, show), `config show`, `run`, `generate`, `status`,
   `detect`, `setup apply`, `setup export`, prompt mode and the TUI.
   JSON output escapes C1 control characters as `\u0080`-`\u009f`.
   Instruction, rule and prompt text keeps its newlines, tabs and CRLF,
   also when piped. New `--raw` on `instructions show`,
-  `instructions preview`, `templates show` and `rules export` prints
+  `instructions preview`, `templates show`, `sync preview` and
+  `rules export` prints
   content byte-exact for redirecting to a file
   (`rules export --raw > RULES.md`); `instructions export FILE` stays
   byte-exact.
