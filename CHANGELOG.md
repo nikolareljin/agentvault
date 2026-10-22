@@ -2,7 +2,16 @@
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-22
+
 ### Fixed
+
+- The `.deb` is built into `dist/` and uploaded from there. 0.15.1's `.deb`
+  job failed: upload-artifact refuses the shared workflow's default
+  `../*.deb`.
+
+### Security
+
 - `run`, `list --json`, `capability list`, `capability add`/`discover`,
   `serve` and the TUI mask base URL credentials
   (https://github.com/nikolareljin/agentvault/issues/81): a password in the

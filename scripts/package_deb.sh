@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds ../agentvault_<VERSION>_<arch>.deb from the ./agentvault binary that
+# Builds dist/agentvault_<VERSION>_<arch>.deb from the ./agentvault binary that
 # `make build` produced. Run by the ci-helpers deb-build workflow as its
 # build_command, in place of dpkg-buildpackage (this repo has no debian/).
 set -euo pipefail
@@ -9,7 +9,8 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version="$(tr -d '[:space:]' < "$repo/VERSION" | tr '-' '~')"
 arch="$(dpkg --print-architecture)"
 bin="$repo/agentvault"
-out="$(dirname "$repo")/agentvault_${version}_${arch}.deb"
+# Inside the workspace: upload-artifact refuses a path with "..".
+out="$repo/dist/agentvault_${version}_${arch}.deb"
 
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+~][0-9A-Za-z.+~-]+)?$ ]] \
   || { echo "package_deb: VERSION '$version' is not a version" >&2; exit 1; }
@@ -33,5 +34,6 @@ Description: CLI and TUI for managing agent configurations and instructions
  Command-line and terminal UI tool that keeps AI agent configuration and
  instruction files in one vault.
 CONTROL
+mkdir -p "$repo/dist"
 dpkg-deb --root-owner-group --build "$stage" "$out"
 echo "package_deb: $out"
