@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `agentvault init` takes the master password from `AGENTVAULT_PASSWORD`
+  when set, as every command that opens the vault does. Without it and
+  without a terminal, init names the variable instead of failing with
+  `reading password: inappropriate ioctl for device`.
+
 ### Security
 
 - `instructions push` and `setup apply` no longer write one project's

@@ -47,7 +47,8 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 ## Vault lifecycle
 
 ### `agentvault init`
-No flags.
+No flags. The master password is read from `AGENTVAULT_PASSWORD` when set
+(at least 12 characters); otherwise init asks for it twice.
 
 ### `agentvault unlock`
 No flags.
