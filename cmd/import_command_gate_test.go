@@ -128,6 +128,9 @@ func TestProseRunsCommands(t *testing.T) {
 		`Commands\G.TOML. `: "a = 1",
 		// UTF-16 frontmatter: the NULs hide "---" from a byte search.
 		"skills/s/SKILL.md.": "\xff\xfe-\x00-\x00-\x00\n\x00",
+		// UTF-16LE without a BOM is valid UTF-8 with NULs.
+		"skills/t/SKILL.md": "-\x00-\x00-\x00\n\x00h\x00o\x00o\x00k\x00s\x00",
+		"commands/y.md":     "!\x00`\x00x\x00`\x00",
 	}
 	for n, c := range runs {
 		if !proseRunsCommands(n, []byte(c)) {

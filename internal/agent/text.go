@@ -10,11 +10,17 @@ import (
 // can. The vault stores instructions as UTF-8 text: anything else would be
 // saved with its invalid bytes replaced and pushed back changed.
 func TextProblem(data []byte) string {
+	if bytes.HasPrefix(data, []byte{0xFF, 0xFE}) || bytes.HasPrefix(data, []byte{0xFE, 0xFF}) ||
+		bytes.HasPrefix(data, []byte{0, 0, 0xFE, 0xFF}) {
+		return "UTF-16 or UTF-32 text; save it as UTF-8 to store it"
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		// Valid UTF-8, but UTF-16 or UTF-32 without a byte order mark looks
+		// like this, and NULs hide "---" and "!`" from a byte search.
+		return "contains NUL bytes (UTF-16 or UTF-32 without a byte order mark, or binary); save it as UTF-8 to store it"
+	}
 	if utf8.Valid(data) {
 		return ""
-	}
-	if bytes.HasPrefix(data, []byte{0xFF, 0xFE}) || bytes.HasPrefix(data, []byte{0xFE, 0xFF}) {
-		return "UTF-16 text; save it as UTF-8 to store it"
 	}
 	return "not UTF-8 text (a binary file or another encoding); the vault stores UTF-8 text only"
 }

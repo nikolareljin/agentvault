@@ -155,9 +155,9 @@
 - `instructions pull` resolves a named file from the project root when it
   is not next to the file naming it, so `.github/copilot-instructions.md`
   naming `.github/instructions/go.instructions.md` stores it. A file
-  that is not UTF-8 text (an image, a UTF-16 `AGENTS.md`) is refused and
-  named, the rest is still pulled, and a skill missing such a file is
-  named as incomplete (`export --project` carries it); `--strict` fails
+  that is not UTF-8 text (an image, a UTF-16 `AGENTS.md`, NUL bytes) is
+  refused and named, the rest is still pulled, and a skill missing such
+  a file is named as incomplete (`export --project` carries it); `--strict` fails
   on it. Before, it was stored with its bytes replaced and `push` wrote
   that back.
 - Import leaves out a bundle file over 1 MiB, the most export writes,
@@ -293,7 +293,8 @@
   refer to, every non-prose file in a skill directory, prose with any
   frontmatter (Claude agents, commands and skills, rules, prompts; it can
   add hooks, tools, MCP servers or a permission mode) or a shell line
-  (`` !`cmd` ``, `!{cmd}`), prose that is not UTF-8 text, and every
+  (`` !`cmd` ``, `!{cmd}`), prose that is not UTF-8 text or holds NUL
+  bytes (UTF-16 with or without a byte order mark), and every
   TOML file but Codex `config.toml` (checked key by key; Gemini commands
   run `!{cmd}`). Before, all of these were taken from the bundle. Values
   already in a vault are not changed. `.clinerules/hooks/` is never
