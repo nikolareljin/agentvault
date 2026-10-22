@@ -162,6 +162,15 @@
   and `push` wrote that back.
 - Import leaves out a bundle file over 1 MiB, the most export writes,
   and names it.
+- `session import` has `--dry-run`, clears the process IDs a file
+  carries (`session stop` signalled them), adds nothing when the vault
+  holds the same session, and settles the session name before writing.
+  Before, each re-import added another `NAME-imported` copy.
+- `instructions import` skips an instruction equal to the vault's, and
+  lists one that is not UTF-8 text as invalid. Before, one NUL
+  instruction kept from 0.14 failed the import. Bundle import no longer
+  stores a non-text instruction with `--keep-bundle-commands`, unless it
+  equals the vault's copy.
 - macOS install with Homebrew: `brew install nikolareljin/tap/agentvault`.
   Each release builds one formula for arm64 and amd64 from the release
   asset digests and checks it with `brew style`, `brew test` and
@@ -303,7 +312,9 @@
   server commands the same way and takes them with its new
   `--keep-bundle-commands`.
   `session import` does the same for the agents a session file adds,
-  with its new `--keep-bundle-commands`.
+  with its new `--keep-bundle-commands`, and `instructions import` for
+  instructions that run code, with its new `--keep-bundle-commands`.
+  `setup apply` names each staged file it leaves out.
 - `generate env`, `generate all` and `setup apply --generate` set an
   existing env file to mode 0600 when they write keys into it. Before, a
   file created earlier as 0644 kept that mode.
@@ -418,7 +429,9 @@
 - `agent export` without `--include-key`, and `session export` without
   `--include-keys`, also blank the agent's MCP server env and secret
   args, secret provider extras and a base URL with credentials; before,
-  `session export` blanked only the API key. `agent import --merge`
+  `session export` blanked only the API key, and `session import` stored
+  the blanks as empty values. `session import` now drops and names each
+  blank as `agent import` does. `agent import --merge`
   fills blanks back from the local agent under the rules bundle import
   uses, the API key included, and names what it leaves out. Before, a
   profile with another base URL got this machine's key.

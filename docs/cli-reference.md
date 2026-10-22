@@ -398,6 +398,12 @@ Flags:
 Flags:
 - `--keep-bundle-commands` (default: `false`): keep the MCP server commands
   of the agents the file adds; left out by default.
+- `--dry-run` (default: `false`): report what would be imported.
+
+Agents already in the vault are kept. A blank secret of an added agent is
+dropped and named. Process IDs in the file are cleared. A session equal to
+the vault's session of that name adds nothing; another one of that name is
+imported as `NAME-imported`.
 
 ## Instructions (`instructions` alias: `inst`)
 
@@ -457,6 +463,22 @@ No flags.
 
 ### `agentvault instructions scan [name]`
 No flags.
+
+### `agentvault instructions export [file]`
+Flags:
+- `--format <json|yaml>`: default from the file extension, else JSON.
+
+### `agentvault instructions import [file]`
+Flags:
+- `--merge` (default: `false`): update instructions with the same name,
+  scope and directory pattern.
+- `--dry-run` (default: `false`): report what would be imported.
+- `--format <json|yaml>`: default from the file extension.
+- `--keep-bundle-commands` (default: `false`): take instructions that run
+  code (command files, frontmatter, shell lines); left out by default.
+
+An instruction equal to the vault's is unchanged. One that is not UTF-8
+text is listed as invalid and not stored.
 
 ## Shared config
 
@@ -570,6 +592,9 @@ in turn) or a legacy vault export.
 Flags:
 - `--generate` (default: `false`)
 - `--only <comma-separated-instruction-names>`
+
+Staged project files from an import that run code are not written; each
+is named as `Left out`.
 
 ### `agentvault setup pull`
 Flags:
