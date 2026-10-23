@@ -26,6 +26,9 @@
   directory's copy. A vault with two copies read by an older agentvault
   sees one of them. `instructions set NAME --content ...` keeps a stored
   entry's filename instead of deriving `NAME.md`.
+- `import` merges a bundle's pricing row into a stored one whose model
+  pattern differs only in case (`Sonnet`, `sonnet`), as cost matching
+  already ignores case. Before, both rows were kept.
 
 ### Security
 
