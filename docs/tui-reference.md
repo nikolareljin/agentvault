@@ -53,11 +53,11 @@ with `j/k` and press `Enter`. `Esc` returns to the screen you came from.
 | `s` | Switch agent: pick the current agent | 3 (`Space s Enter`) |
 | `p` | Prompt the current agent | 3 (`Space p`, type, `Enter`) |
 | `u` | Usage: open the Status tab | 2 (`Space u`) |
-| `:` | Run command: the `:` CLI command bridge | 2 (`Space :`) |
+| `:` or `;` | Run command: the `:` CLI command bridge | 2 (`Space :`) |
 
 Add agent form: `Tab`/`Shift+Tab` move between fields, `Left`/`Right` change
 the provider, `Enter` saves, `Esc` cancels. Input is checked with the same
-rules as `agentvault add`. The form takes no API key; set one with
+rules as `agentvault add`. The form takes no API key; if the agent needs one, set it with
 `agentvault edit NAME --api-key KEY`.
 
 Current agent: shown under the tab bar. It lasts for the TUI session and is
