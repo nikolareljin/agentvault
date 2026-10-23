@@ -330,7 +330,7 @@ func (m *model) submitAddAgent() tea.Cmd {
 	}
 	m.refresh()
 	m.closeOverlay()
-	m.setStatus(fmt.Sprintf("Added %s. Set its key with: agentvault edit %s --api-key KEY", a.Name, a.Name), false)
+	m.setStatus(fmt.Sprintf("Added %s. If it needs an API key: agentvault edit %s --api-key KEY", a.Name, a.Name), false)
 	return nil
 }
 
@@ -370,7 +370,7 @@ func (m model) renderAddAgent() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("  No API key here: set it with agentvault edit NAME --api-key KEY"))
+	b.WriteString(dimStyle.Render("  No API key here: if one is needed, use agentvault edit NAME --api-key KEY"))
 	b.WriteString("\n")
 	return b.String()
 }

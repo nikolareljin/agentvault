@@ -63,7 +63,7 @@ var keys = keyRegistry{
 	ActSwitch:  bind([]string{"s"}, "s", "switch agent"),
 	ActPrompt:  bind([]string{"p"}, "p", "prompt"),
 	ActUsage:   bind([]string{"u"}, "u", "usage"),
-	ActCommand: bind([]string{":"}, ":", "run command"),
+	ActCommand: bind([]string{":", ";"}, ":", "run command"),
 
 	Select:     bind([]string{"enter"}, "enter", "select"),
 	Submit:     bind([]string{"enter"}, "enter", "save"),

@@ -389,3 +389,14 @@ func TestQuickPromptShowsFullWorkspace(t *testing.T) {
 		t.Fatalf("prompt screen does not show %s:\n%s", m.cwd, m.View())
 	}
 }
+
+// ';' opens command entry everywhere else, so the menu takes it too.
+func TestActionsMenuSemicolonOpensCommandMode(t *testing.T) {
+	m := actionsTestModel(t)
+	n := 0
+	m = press(t, m, keySpace, &n)
+	m = press(t, m, runeKey(';'), &n)
+	if !m.commandMode {
+		t.Fatal("; in the actions menu did not open command mode")
+	}
+}
