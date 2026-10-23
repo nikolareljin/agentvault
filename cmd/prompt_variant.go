@@ -62,6 +62,11 @@ func resolveVariantChoice(cmd *cobra.Command, v vaultLike, group, promptText str
 			return agent.Agent{}, nil, err
 		}
 		choice.Tier = t
+		// --tier asks for tier routing, so the default policy routes as balanced for this run.
+		if policy == agent.VariantPolicyDefault {
+			policy = agent.VariantPolicyBalanced
+			choice.Policy = policy
+		}
 	} else {
 		choice.Tier = routerpkg.ScoreComplexity(promptText).Tier
 	}

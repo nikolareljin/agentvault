@@ -242,7 +242,7 @@ Flags:
 - `--history-file <path>`
 - `--timeout <duration>` (default: `5m`)
 - `--variant <agent>`: with a variant group name, run this member instead of the policy's choice; no fallback (error if it is not in the group)
-- `--tier <tier>`: with a variant group name, use `simple|standard|deep` instead of scoring the prompt
+- `--tier <tier>`: with a variant group name, use `simple|standard|deep` instead of scoring the prompt; under the `default` policy that run routes as `balanced`
 
 With a variant group name and a policy other than `default` (or with
 `--variant` or `--tier`), `prompt` prints the choice to stderr before running:
@@ -252,10 +252,14 @@ variant: claude-deep (group claude, policy balanced, tier deep)
 fallback from claude-direct: no anthropic API key (agent key or ANTHROPIC_API_KEY)
 ```
 
+A missing Anthropic key fails the check only for a member with
+`--auth-mode api_key`; otherwise the claude CLI may use its own login.
+
 `--json` output adds `variant`, `group`, `policy`, `tier` and
 `fallback_reason`; history records add `variant`, `variant_group`,
 `variant_policy`, `variant_tier` and `fallback_reason`. `--dry-run` shows the
-choice without running. `--auto` routing does not use groups and refuses
+choice without running. `--validate-only` names the member it checks; with no
+prompt the tier is `simple` unless `--tier` is given. `--auto` routing does not use groups and refuses
 `--variant` and `--tier`.
 
 Routing flags (apply when `--auto` is used or router mode is set):

@@ -203,7 +203,9 @@ func VariantCredentialProblem(a Agent, getenv func(string) string, gatewayExists
 	}
 	switch NormalizeClaudeBackend(a.Backend) {
 	case ClaudeBackendAnthropic:
-		if meta.AuthMode == AuthModeOAuth || meta.AuthMode == AuthModeNone {
+		// Without auth_mode api_key the claude CLI may use its own login, so only a
+		// required key can be checked here.
+		if meta.AuthMode != AuthModeAPIKey {
 			return ""
 		}
 		if strings.TrimSpace(a.APIKey) == "" && strings.TrimSpace(getenv("ANTHROPIC_API_KEY")) == "" {

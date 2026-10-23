@@ -133,6 +133,7 @@ func TestVariantFailover(t *testing.T) {
 	stubLookPath(t)
 	noKey := tierAgent("c-deep-a", "deep", "balanced", true)
 	noKey.APIKey = ""
+	noKey.ProviderMeta = &agent.AgentProviderMeta{AuthMode: agent.AuthModeAPIKey}
 	gwMissing := agent.Agent{Name: "c-deep-b", Provider: agent.ProviderClaude, Backend: "gateway",
 		ProviderMeta: &agent.AgentProviderMeta{GatewayName: "gone"},
 		Variant:      &agent.AgentVariant{Group: "claude", Tier: "deep", Policy: "balanced"}}
@@ -236,7 +237,7 @@ func TestVariantStoreRoundTripAndImport(t *testing.T) {
 			}
 		})
 	}
-	// A local group without a policy takes the bundle's even under merge.
+	// Unset is the default policy, a local choice merge keeps.
 	v2 := newTestVault(t)
 	if err := v2.Add(tierAgent("c-a", "simple", "", true)); err != nil {
 		t.Fatal(err)
@@ -245,8 +246,17 @@ func TestVariantStoreRoundTripAndImport(t *testing.T) {
 	if err := commitProfileImport(v2, plan); err != nil {
 		t.Fatal(err)
 	}
-	if p := agent.VariantPolicyOf(v2.List(), "claude"); p != "cost-first" {
-		t.Fatalf("merge into unset policy = %q", p)
+	if p := agent.VariantPolicyOf(v2.List(), "claude"); p != "" {
+		t.Fatalf("merge into unset policy = %q, want unset (default)", p)
+	}
+	// A group new to this vault takes the bundle's policy under merge.
+	v3 := newTestVault(t)
+	plan = planProfileImport(v3, bundle, strategyMerge, time.Now(), importConsent{})
+	if err := commitProfileImport(v3, plan); err != nil {
+		t.Fatal(err)
+	}
+	if p := agent.VariantPolicyOf(v3.List(), "claude"); p != "cost-first" {
+		t.Fatalf("merge of a new group: policy = %q", p)
 	}
 }
 
@@ -290,7 +300,7 @@ func TestVariantPromptEndToEnd(t *testing.T) {
 		}
 		return out
 	}
-	must("add", "a-claude", "--provider", "claude", "--model", "opus", "--variant-group", "grp", "--variant-default", "--variant-tier", "simple")
+	must("add", "a-claude", "--provider", "claude", "--model", "opus", "--auth-mode", "api_key", "--variant-group", "grp", "--variant-default", "--variant-tier", "simple")
 	must("add", "b-local", "--provider", "ollama", "--model", "llama3", "--base-url", srv.URL, "--variant-group", "grp")
 	must("edit", "b-local", "--variant-tier", "simple")
 	must("add", "c-deep", "--provider", "claude", "--model", "opus", "--api-key", "k", "--variant-group", "grp", "--variant-tier", "deep")
@@ -337,6 +347,11 @@ func TestVariantPromptEndToEnd(t *testing.T) {
 	// A real run writes the choice into history.
 	history := filepath.Join(cfgDir, "h.jsonl")
 	stderr.Reset()
+	stderr.Reset()
+	must("prompt", "grp", "--validate-only")
+	if !strings.Contains(stderr.String(), "variant: b-local (group grp, policy balanced, tier simple)") {
+		t.Fatalf("validate-only stderr:\n%s", stderr.String())
+	}
 	must("prompt", "grp", "--text", "hi", "--history-file", history, "--no-stream")
 	if !strings.Contains(stderr.String(), "variant: b-local (group grp, policy balanced, tier simple)") ||
 		!strings.Contains(stderr.String(), "fallback from a-claude: no anthropic API key") {
@@ -362,5 +377,20 @@ func TestVariantPromptEndToEnd(t *testing.T) {
 	}
 	if c, _ := v.Get("c-deep"); c.Variant == nil || c.Variant.Tier != "deep" || c.Variant.Policy != "balanced" {
 		t.Fatalf("stored c-deep = %#v", c.Variant)
+	}
+}
+
+func TestVariantTierFlagRoutesUnderDefaultPolicy(t *testing.T) {
+	stubLookPath(t)
+	v := stubPromptVault{agents: []agent.Agent{
+		tierAgent("c-simple", "simple", "", true),
+		tierAgent("c-deep", "deep", "", false),
+	}}
+	got, choice, err := resolveVariantChoice(newVariantPromptCmd("", "deep"), v, "claude", "hi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "c-deep" || choice.Policy != agent.VariantPolicyBalanced {
+		t.Fatalf("ran %s with policy %s, want c-deep with balanced", got.Name, choice.Policy)
 	}
 }

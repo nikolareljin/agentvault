@@ -134,7 +134,8 @@ func TestVariantCredentialProblem(t *testing.T) {
 		env  map[string]string
 		want string
 	}{
-		{"anthropic no key", Agent{Provider: ProviderClaude}, nil, "no anthropic API key"},
+		{"anthropic api_key mode no key", Agent{Provider: ProviderClaude, ProviderMeta: &AgentProviderMeta{AuthMode: AuthModeAPIKey}}, nil, "no anthropic API key"},
+		{"anthropic no key, CLI login possible", Agent{Provider: ProviderClaude}, nil, ""},
 		{"anthropic env key", Agent{Provider: ProviderClaude}, map[string]string{"ANTHROPIC_API_KEY": "k"}, ""},
 		{"anthropic agent key", Agent{Provider: ProviderClaude, APIKey: "k"}, nil, ""},
 		{"anthropic oauth", Agent{Provider: ProviderClaude, ProviderMeta: &AgentProviderMeta{AuthMode: AuthModeOAuth}}, nil, ""},

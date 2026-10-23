@@ -206,9 +206,13 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	}
 
 	if validateOnly {
-		a, _, runtimeCfg, _, err := resolvePromptAgentChoice(cmd, v, args, "")
+		a, _, runtimeCfg, choice, err := resolvePromptAgentChoice(cmd, v, args, "")
 		if err != nil {
 			return err
+		}
+		// With no prompt the tier is scored as simple: name the member checked.
+		if showVariantChoice(choice) && !jsonOut {
+			printVariantChoice(cmd.ErrOrStderr(), choice)
 		}
 		a.Model = runtimeCfg.Model.Value
 		a.APIKey = runtimeCfg.APIKey.Value
