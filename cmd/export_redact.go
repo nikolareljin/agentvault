@@ -500,6 +500,14 @@ func restoreGatewaySecrets(existing, incoming []agent.Gateway, strategy importSt
 	}
 	out := make([]agent.Gateway, 0, len(incoming))
 	for _, g := range incoming {
+		// A bad bundle entry changes nothing here, not even under mirror.
+		if err := g.ValidateTarget(); err != nil {
+			rep.record("Skipped", "gateway %s: %v", g.Name, err)
+			if have, ok := byName[g.Name]; ok {
+				out = append(out, have)
+			}
+			continue
+		}
 		have, exists := byName[g.Name]
 		if exists {
 			sameURL := g.URL == have.URL

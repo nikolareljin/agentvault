@@ -290,7 +290,10 @@ At least one of:
 - `--token <value>` or `--generate` (32 random bytes, base64url)
 - `--basic-auth-user <user>` with `--basic-auth-password <password>`
 
-A name that exists is refused.
+Secrets given as flags land in shell history. Without `--token`, the token
+is read from `AGENTVAULT_GATEWAY_TOKEN`; without `--basic-auth-password`,
+the password is read from `AGENTVAULT_GATEWAY_PASSWORD`, else asked on a
+terminal. A name that exists is refused.
 
 ### `agentvault gateway list`
 Prints name, URL, whether a token and a previous token are set, the basic

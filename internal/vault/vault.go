@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -56,10 +57,11 @@ type Vault struct {
 	modelCapabilities []agent.ModelCapabilityEntry
 	locations         locations.Set // work dirs and projects, by identity
 	gateways          []agent.Gateway
-	key               []byte        // derived key, set after Init or Unlock
-	header            crypto.Header // key-derivation header written ahead of the ciphertext
-	legacyOnDisk      bool          // file on disk is format 1; back it up before the first write
-	legacySalt        []byte        // salt of that format 1 file, to recognise it at backup time
+	unknown           map[string]json.RawMessage // top-level fields a newer agentvault wrote; kept on save
+	key               []byte                     // derived key, set after Init or Unlock
+	header            crypto.Header              // key-derivation header written ahead of the ciphertext
+	legacyOnDisk      bool                       // file on disk is format 1; back it up before the first write
+	legacySalt        []byte                     // salt of that format 1 file, to recognise it at backup time
 }
 
 // New creates a Vault instance at the given path.
@@ -145,6 +147,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 		}
 		vd = vaultData{Agents: agents}
 	}
+	unknown := unknownVaultFields(plaintext)
 	v.header = header
 	v.key = key
 	v.legacyOnDisk = wasLegacy
@@ -156,6 +159,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.modelCapabilities = normalizeCapabilityEntries(vd.ModelCapabilities)
 	v.locations = vd.Locations
 	v.gateways = vd.Gateways
+	v.unknown = unknown
 	if v.sessions.ParallelLimit != 0 {
 		v.sessions.ParallelLimitSet = true
 	} else if sessionParallelLimitDefined(plaintext) {
@@ -943,12 +947,51 @@ func sessionParallelLimitDefined(data []byte) bool {
 	return ok
 }
 
+// unknownVaultFields returns the top-level fields of a decoded vault that
+// vaultData does not know: a newer agentvault wrote them. Saving keeps them,
+// so a field added later survives this version's writes.
+func unknownVaultFields(plaintext []byte) map[string]json.RawMessage {
+	var all map[string]json.RawMessage
+	if json.Unmarshal(plaintext, &all) != nil {
+		return nil // legacy plain agent array
+	}
+	t := reflect.TypeFor[vaultData]()
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		delete(all, name)
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	return all
+}
+
+// keepUnknownVaultFields adds the unknown fields back to an encoded vault.
+func keepUnknownVaultFields(plaintext []byte, unknown map[string]json.RawMessage) ([]byte, error) {
+	if len(unknown) == 0 {
+		return plaintext, nil
+	}
+	var all map[string]json.RawMessage
+	if err := json.Unmarshal(plaintext, &all); err != nil {
+		return nil, err
+	}
+	for k, raw := range unknown {
+		if _, ok := all[k]; !ok {
+			all[k] = raw
+		}
+	}
+	return json.Marshal(all)
+}
+
 // write encrypts the entire vault state and writes it atomically to disk.
 // The output format is: [format 2 header][nonce + AES-256-GCM ciphertext].
 func (v *Vault) write() error {
 	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations, Gateways: v.gateways}
 	plaintext, err := json.Marshal(vd)
 	if err != nil {
+		return fmt.Errorf("encoding vault: %w", err)
+	}
+	if plaintext, err = keepUnknownVaultFields(plaintext, v.unknown); err != nil {
 		return fmt.Errorf("encoding vault: %w", err)
 	}
 	data, err := crypto.Seal(v.header, v.key, plaintext)

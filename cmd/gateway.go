@@ -9,12 +9,20 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // Gateway env variable names: what the gateway reads from its environment.
 const (
 	gatewayTokenEnv     = "OLLAMA_TOKEN"
 	gatewayBasicAuthEnv = "BASIC_AUTH"
+)
+
+// Where add reads secrets that are not given as flags, so they stay out of
+// shell history.
+const (
+	gatewayTokenInputEnv    = "AGENTVAULT_GATEWAY_TOKEN"
+	gatewayPasswordInputEnv = "AGENTVAULT_GATEWAY_PASSWORD"
 )
 
 var gatewayCmd = &cobra.Command{
@@ -31,7 +39,7 @@ The gateway and its clients read the values from their environment:
 
 Examples:
   agentvault gateway add lab --url https://llm.example.com --generate
-  agentvault gateway add lab --url https://llm.example.com --token T --basic-auth-user me --basic-auth-password P
+  AGENTVAULT_GATEWAY_TOKEN=T agentvault gateway add lab --url https://llm.example.com --basic-auth-user me
   agentvault gateway list
   agentvault gateway rotate lab
   agentvault gateway env lab --previous
@@ -50,6 +58,17 @@ var gatewayAddCmd = &cobra.Command{
 		pass, _ := cmd.Flags().GetString("basic-auth-password")
 		if generate && token != "" {
 			return fmt.Errorf("give --token or --generate, not both")
+		}
+		if token == "" && !generate {
+			token = os.Getenv(gatewayTokenInputEnv)
+		}
+		if user != "" && pass == "" {
+			if pass = os.Getenv(gatewayPasswordInputEnv); pass == "" && term.IsTerminal(stdinFD()) {
+				var err error
+				if pass, err = readPassword("Basic auth password: "); err != nil {
+					return err
+				}
+			}
 		}
 		if generate {
 			var err error
@@ -241,10 +260,10 @@ func init() {
 	gatewayCmd.AddCommand(gatewayAddCmd, gatewayListCmd, gatewayRemoveCmd, gatewayRotateCmd, gatewayEnvCmd)
 
 	gatewayAddCmd.Flags().String("url", "", "gateway URL (http:// or https://)")
-	gatewayAddCmd.Flags().String("token", "", "bearer token the gateway checks (OLLAMA_TOKEN)")
+	gatewayAddCmd.Flags().String("token", "", "bearer token the gateway checks (OLLAMA_TOKEN); default: $AGENTVAULT_GATEWAY_TOKEN, which keeps it out of shell history")
 	gatewayAddCmd.Flags().Bool("generate", false, "generate a random token instead of --token")
 	gatewayAddCmd.Flags().String("basic-auth-user", "", "basic auth user (BASIC_AUTH)")
-	gatewayAddCmd.Flags().String("basic-auth-password", "", "basic auth password (BASIC_AUTH)")
+	gatewayAddCmd.Flags().String("basic-auth-password", "", "basic auth password (BASIC_AUTH); default: $AGENTVAULT_GATEWAY_PASSWORD, else asked on a terminal")
 	_ = gatewayAddCmd.MarkFlagRequired("url")
 	gatewayEnvCmd.Flags().String("format", "sh", "output format: sh or dotenv")
 	gatewayEnvCmd.Flags().Bool("previous", false, "print the previous token as OLLAMA_TOKEN")

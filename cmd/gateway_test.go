@@ -33,8 +33,25 @@ func addTestGateway(t *testing.T, name string, flags map[string]string) {
 	}
 }
 
+func TestGatewayAddReadsSecretsFromEnv(t *testing.T) {
+	cfgDir := scopeTestVault(t)
+	t.Setenv(gatewayTokenInputEnv, "tok-from-env")
+	t.Setenv(gatewayPasswordInputEnv, "pw-from-env")
+	addTestGateway(t, "lab", map[string]string{"url": "https://llm.example.com", "basic-auth-user": "me"})
+	if g := storedGateway(t, cfgDir, "lab"); g.Token != "tok-from-env" || g.BasicAuth() != "me:pw-from-env" {
+		t.Errorf("stored = %+v", g)
+	}
+	// A flag still wins over the environment.
+	addTestGateway(t, "lab2", map[string]string{"url": "https://llm.example.com", "token": "tok-flag"})
+	if g := storedGateway(t, cfgDir, "lab2"); g.Token != "tok-flag" {
+		t.Errorf("token = %q, want the flag's", g.Token)
+	}
+}
+
 func TestGatewayAddListNoSecrets(t *testing.T) {
 	cfgDir := scopeTestVault(t)
+	t.Setenv(gatewayTokenInputEnv, "")
+	t.Setenv(gatewayPasswordInputEnv, "")
 	addTestGateway(t, "lab", map[string]string{"url": "https://llm.example.com", "token": "tok-secret-1",
 		"basic-auth-user": "me", "basic-auth-password": "pw-secret-1"})
 	if _, err := runPricing(t, gatewayAddCmd, []string{"lab"}, map[string]string{"url": "https://other.example", "generate": "true"}); err == nil {
@@ -222,6 +239,8 @@ func TestGatewayImportStrategies(t *testing.T) {
 		{"replace blank same URL keeps local", strategyReplace, []agent.Gateway{blanked}, map[string]string{"lab": "local-tok"}, false},
 		{"replace blank moved URL drops", strategyReplace, []agent.Gateway{{Name: "lab", URL: "https://evil.example"}}, map[string]string{"lab": ""}, true},
 		{"mirror removes local-only", strategyMirror, []agent.Gateway{newGw}, map[string]string{"new": "n-tok"}, false},
+		{"mirror keeps local on a bad entry", strategyMirror, []agent.Gateway{{Name: "lab", URL: "ftp://x.example", Token: "b"}}, map[string]string{"lab": "local-tok"}, false},
+		{"bad entry not added", strategyMerge, []agent.Gateway{{Name: "bad", URL: "https://u:p@x.example", Token: "b"}}, map[string]string{"lab": "local-tok"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := newTestVault(t)

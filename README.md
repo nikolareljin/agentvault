@@ -160,7 +160,7 @@ brew install nikolareljin/tap/agentvault
 ### Gateway credentials
 | Command | Description |
 |---------|-------------|
-| `gateway add\|list\|remove` | Store the token and basic auth a reverse-proxy gateway checks |
+| `gateway add\|list\|remove\|rotate\|env` | Store the token and basic auth a reverse-proxy gateway checks |
 | `gateway rotate` | Replace the token; the old one stays as the previous token |
 | `gateway env` | Print `OLLAMA_TOKEN` / `BASIC_AUTH` for a shell or a `.env` file |
 

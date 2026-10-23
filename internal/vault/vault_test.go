@@ -1572,3 +1572,36 @@ func TestLegacyBackupSkipsReplacedFile(t *testing.T) {
 		t.Fatalf("left a copy: %v", matches)
 	}
 }
+
+// A field a newer agentvault writes must survive this version's saves.
+func TestSaveKeepsUnknownFields(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("master"); err != nil {
+		t.Fatal(err)
+	}
+	v.unknown = map[string]json.RawMessage{"future_items": json.RawMessage(`[{"a":1}]`)}
+	if err := v.Save(); err != nil {
+		t.Fatal(err)
+	}
+	v2 := New(path)
+	if err := v2.Unlock("master"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v2.AddGateway(agent.Gateway{Name: "lab", URL: "https://llm.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	v3 := New(path)
+	if err := v3.Unlock("master"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(v3.unknown["future_items"]); got != `[{"a":1}]` {
+		t.Errorf("future_items = %q after a save by this version", got)
+	}
+	if len(v3.unknown) != 1 {
+		t.Errorf("unknown = %v, want only future_items (known fields must not land here)", v3.unknown)
+	}
+	if _, ok := v3.GetGateway("lab"); !ok {
+		t.Error("gateway lost")
+	}
+}

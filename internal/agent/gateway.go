@@ -27,9 +27,24 @@ type Gateway struct {
 	UpdatedAt         time.Time `json:"updated_at,omitzero"`
 }
 
-// Validate checks the name and URL. Credentials go in the token and basic
-// auth fields, not in the URL, so a URL with a user or password is refused.
+// Validate checks the name, URL and basic auth pair.
 func (g Gateway) Validate() error {
+	if err := g.ValidateTarget(); err != nil {
+		return err
+	}
+	if (g.BasicAuthUser == "") != (g.BasicAuthPassword == "") {
+		return errors.New("basic auth needs both a user and a password")
+	}
+	if strings.Contains(g.BasicAuthUser, ":") {
+		return errors.New("basic auth user must not contain ':'")
+	}
+	return nil
+}
+
+// ValidateTarget checks the name and URL only, for a bundle exported without
+// keys (a user with no password). Credentials go in the token and basic auth
+// fields, not in the URL, so a URL with a user or password is refused.
+func (g Gateway) ValidateTarget() error {
 	if strings.TrimSpace(g.Name) == "" {
 		return errors.New("gateway name is required")
 	}
@@ -42,12 +57,6 @@ func (g Gateway) Validate() error {
 	}
 	if u.User != nil {
 		return errors.New("gateway URL must not carry credentials: use --token and --basic-auth-user/--basic-auth-password")
-	}
-	if (g.BasicAuthUser == "") != (g.BasicAuthPassword == "") {
-		return errors.New("basic auth needs both a user and a password")
-	}
-	if strings.Contains(g.BasicAuthUser, ":") {
-		return errors.New("basic auth user must not contain ':'")
 	}
 	return nil
 }
