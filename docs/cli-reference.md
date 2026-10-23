@@ -311,8 +311,10 @@ Optional:
 - `--format sh|dotenv` (default: `sh`): `export K='v'` or `K='v'`
 - `--previous`: print the previous token as `OLLAMA_TOKEN`
 
-Prints only the variables that are set. `dotenv` leaves out a value that has
-a single quote, `${` or a control character, with a warning.
+Prints only the variables that are set. A value `dotenv` cannot quote (a
+single quote, `${` or a control character) makes `env` fail and print
+nothing, so a redirected `.env` is never written without the credential; use
+`--format sh` for such a value.
 
 Export and import: gateways travel in the bundle. Tokens and the basic auth
 password follow `--include-keys`. On import, a blank secret is filled from

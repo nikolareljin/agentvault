@@ -241,11 +241,17 @@ The output holds secrets: redirect it to a file only you can read.`,
 			token = g.PreviousToken
 		}
 		var out strings.Builder
-		if token != "" {
-			out.WriteString(line(gatewayTokenEnv, token))
-		}
-		if basic := g.BasicAuth(); basic != "" {
-			out.WriteString(line(gatewayBasicAuthEnv, basic))
+		for _, kv := range [][2]string{{gatewayTokenEnv, token}, {gatewayBasicAuthEnv, g.BasicAuth()}} {
+			if kv[1] == "" {
+				continue
+			}
+			l := line(kv[0], kv[1])
+			// The helpers write a comment for a value they cannot quote. A
+			// .env without the credential must not look like success.
+			if strings.HasPrefix(l, "#") {
+				return fmt.Errorf("%s cannot be written as %s; try --format sh", kv[0], format)
+			}
+			out.WriteString(l)
 		}
 		if out.Len() == 0 {
 			return fmt.Errorf("gateway %s has no token or basic auth set", printable(g.Name))

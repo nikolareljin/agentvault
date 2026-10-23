@@ -148,13 +148,15 @@ func TestGatewayEnv(t *testing.T) {
 	if _, err := runPricing(t, gatewayRotateCmd, []string{"lab"}, nil); err != nil {
 		t.Fatal(err)
 	}
+	// dotenv has no form for a single quote: env fails and writes nothing,
+	// so `env --format dotenv > .env` cannot leave a .env without the token.
 	out, err = runPricing(t, gatewayEnvCmd, []string{"lab"}, map[string]string{"previous": "true", "format": "dotenv"})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "OLLAMA_TOKEN cannot be written as dotenv") || strings.Contains(out, "BASIC_AUTH") {
+		t.Errorf("dotenv --previous = %q, %v", out, err)
 	}
-	// dotenv has no form for a single quote: the token is left out.
-	if strings.Contains(out, "it's") || !strings.Contains(out, "BASIC_AUTH='me:p w'\n") {
-		t.Errorf("dotenv --previous = %q", out)
+	out, err = runPricing(t, gatewayEnvCmd, []string{"lab"}, map[string]string{"format": "dotenv"})
+	if err != nil || !strings.HasPrefix(out, "OLLAMA_TOKEN='") || !strings.Contains(out, "BASIC_AUTH='me:p w'\n") {
+		t.Errorf("dotenv = %q, %v", out, err)
 	}
 	if _, err := runPricing(t, gatewayEnvCmd, []string{"nope"}, nil); err == nil {
 		t.Error("env of a missing gateway succeeded")
