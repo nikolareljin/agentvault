@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/key"
@@ -359,13 +360,32 @@ func (m *model) startImportPreview() tea.Cmd {
 	// The CLI may ask for the master and bundle passwords, so the preview runs
 	// on the terminal like the real import; its output is also copied into
 	// buf and shown in the preview screen afterwards.
-	var buf bytes.Buffer
+	var buf lockedBuffer
 	c := exec.Command(exe, args...)
 	c.Stdout = io.MultiWriter(os.Stdout, &buf)
 	c.Stderr = io.MultiWriter(os.Stderr, &buf)
 	return runPreviewProcess(c, func(err error) tea.Msg {
 		return importPreviewMsg{seq: seq, output: buf.String(), err: err}
 	})
+}
+
+// lockedBuffer collects stdout and stderr, which exec copies on separate
+// goroutines.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // runPreviewProcess hands the terminal to the preview command. Tests replace
