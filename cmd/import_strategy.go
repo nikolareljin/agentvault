@@ -509,9 +509,10 @@ func sessionIDPresent(sessions []agent.Session, id string) bool {
 	return false
 }
 
-// pricingKey identifies a pricing row by the provider and model pattern it covers.
+// pricingKey identifies a pricing row by the provider and model pattern it
+// covers. The pattern's case is ignored, as cost matching ignores it.
 func pricingKey(p agent.ProviderPricing) string {
-	return string(p.Provider) + "\x00" + strings.TrimSpace(p.ModelPattern)
+	return string(p.Provider) + "\x00" + strings.ToLower(strings.TrimSpace(p.ModelPattern))
 }
 
 // capabilityKey builds the canonical endpoint+model key for a capability entry.

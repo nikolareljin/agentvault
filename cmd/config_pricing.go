@@ -104,7 +104,8 @@ var configPricingSetCmd = &cobra.Command{
 		if seeded {
 			shared.Pricing = agent.DefaultPricing()
 		}
-		i := slices.IndexFunc(shared.Pricing, func(p agent.ProviderPricing) bool { return samePricingRow(p, row) })
+		key := pricingKey(row)
+		i := slices.IndexFunc(shared.Pricing, func(p agent.ProviderPricing) bool { return pricingKey(p) == key })
 		if i >= 0 {
 			// A flag not given keeps the stored value.
 			old := shared.Pricing[i]
@@ -165,7 +166,8 @@ var configPricingRemoveCmd = &cobra.Command{
 		if len(shared.Pricing) == 0 {
 			return fmt.Errorf("no pricing stored; the built-in defaults apply and cannot be removed one by one")
 		}
-		i := slices.IndexFunc(shared.Pricing, func(p agent.ProviderPricing) bool { return samePricingRow(p, row) })
+		key := pricingKey(row)
+		i := slices.IndexFunc(shared.Pricing, func(p agent.ProviderPricing) bool { return pricingKey(p) == key })
 		if i < 0 {
 			return fmt.Errorf("no pricing row for %s", pricingLabel(row))
 		}
@@ -179,12 +181,6 @@ var configPricingRemoveCmd = &cobra.Command{
 		}
 		return nil
 	},
-}
-
-// samePricingRow matches rows by provider and model pattern, ignoring the
-// pattern's case as cost matching does; a bundle can hold "Sonnet".
-func samePricingRow(a, b agent.ProviderPricing) bool {
-	return a.Provider == b.Provider && strings.EqualFold(strings.TrimSpace(a.ModelPattern), b.ModelPattern)
 }
 
 // rate prints a rate as a plain decimal: 0.00003, not 3e-05.

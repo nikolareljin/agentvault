@@ -196,7 +196,7 @@ Flags:
 - `--json` (default: `true`)
 - `--no-vault` (default: `false`)
 - `--vault-password-env <ENV_VAR>` (default: `AGENTVAULT_PASSWORD`)
-- `--cost-report` (default: `false`): include estimated cost breakdown aggregated from prompt history; fires budget alerts when spend exceeds 80% of `MonthlyBudgetUSD`
+- `--cost-report` (default: `false`): include estimated cost breakdown aggregated from prompt history; warns when this month's spend for a provider reaches 80% of its monthly budget (`config pricing set --monthly-budget`)
 - `--csv` (default: `false`): print only the cost report as CSV, one row per provider: `provider,total_usd,this_month_usd,monthly_budget_usd`. Needs the vault.
 
 ### `agentvault route`
