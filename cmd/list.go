@@ -78,12 +78,15 @@ func printAgentTable(out io.Writer, agents []agent.Agent) error {
 		if len(a.Tags) > 0 {
 			tags = fmt.Sprintf("%v", a.Tags)
 		}
-		// A trailing * marks the default of the group.
+		// A trailing * marks the default of the group, :TIER the variant tier.
 		variant := "-"
 		if g := a.VariantGroup(); g != "" {
 			variant = g
 			if a.IsVariantDefault() {
 				variant += "*"
+			}
+			if a.Variant.Tier != "" {
+				variant += ":" + a.Variant.Tier
 			}
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", printable(a.Name), printable(string(a.Provider)), printable(a.Model), printable(variant), printable(tags))

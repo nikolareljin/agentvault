@@ -52,6 +52,12 @@ type PromptRecord struct {
 	ResponsePreview     string                  `json:"response_preview,omitempty"`
 	Success             bool                    `json:"success"`
 	Error               string                  `json:"error,omitempty"`
+	// Variant group routing, set when the prompt named a group.
+	Variant        string `json:"variant,omitempty"`
+	VariantGroup   string `json:"variant_group,omitempty"`
+	VariantPolicy  string `json:"variant_policy,omitempty"`
+	VariantTier    string `json:"variant_tier,omitempty"`
+	FallbackReason string `json:"fallback_reason,omitempty"`
 }
 
 type promptResult struct {
@@ -112,6 +118,8 @@ supports codex/copilot-style coding flows and a generic profile for other agents
 Examples:
   agentvault prompt my-codex --text "review this diff"
   agentvault prompt my-ollama --text "build a parser" --json
+  agentvault prompt claude --text "fix the flaky test" --tier deep
+  agentvault prompt claude --text "hi" --variant claude-direct
   cat prompt.txt | agentvault prompt my-ollama --optimize-ollama`,
 	Args: validatePromptArgs,
 	RunE: runPrompt,
@@ -154,6 +162,8 @@ func init() {
 	promptCmd.Flags().Int("llm-router-context-size", 0, "context window in tokens for embedded inference (default 512)")
 	promptCmd.Flags().Int("llm-router-threads", 0, "CPU threads for embedded inference (default: all available)")
 	promptCmd.Flags().Int("llm-router-gpu-layers", 0, "transformer layers to offload to GPU for embedded inference (default 0, CPU-only)")
+	promptCmd.Flags().String("variant", "", "variant group prompts: run this member instead of the policy's choice")
+	promptCmd.Flags().String("tier", "", "variant group prompts: use this tier (simple|standard|deep) instead of scoring the prompt")
 	promptCmd.Flags().Bool("allow-fallbacks", false, "fall back to heuristic routing when llm-router or local-ai is unreachable (also enables fallback candidates in results)")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "dry-run")
 	promptCmd.MarkFlagsMutuallyExclusive("validate-only", "text")
@@ -196,9 +206,13 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	}
 
 	if validateOnly {
-		a, _, runtimeCfg, err := resolvePromptAgent(cmd, v, args, "")
+		a, _, runtimeCfg, choice, err := resolvePromptAgentChoice(cmd, v, args, "")
 		if err != nil {
 			return err
+		}
+		// With no prompt the tier is scored as simple: name the member checked.
+		if showVariantChoice(choice) && !jsonOut {
+			printVariantChoice(cmd.ErrOrStderr(), choice)
 		}
 		a.Model = runtimeCfg.Model.Value
 		a.APIKey = runtimeCfg.APIKey.Value
@@ -236,9 +250,12 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	a, decision, runtimeCfg, err := resolvePromptAgent(cmd, v, args, text)
+	a, decision, runtimeCfg, choice, err := resolvePromptAgentChoice(cmd, v, args, text)
 	if err != nil {
 		return err
+	}
+	if showVariantChoice(choice) && !jsonOut {
+		printVariantChoice(cmd.ErrOrStderr(), choice)
 	}
 	a.Model = runtimeCfg.Model.Value
 	a.APIKey = runtimeCfg.APIKey.Value
@@ -284,6 +301,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			if decision != nil {
 				payload["route"] = decision
 			}
+			addVariantChoiceJSON(payload, choice)
 			_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 			return nil
 		}
@@ -329,6 +347,13 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		record.RouteClass = decision.Intent.TaskClass
 		record.RouteReasons = append([]string(nil), decision.Selected.Reasons...)
 	}
+	if choice != nil {
+		record.Variant = choice.Variant
+		record.VariantGroup = choice.Group
+		record.VariantPolicy = choice.Policy
+		record.VariantTier = choice.Tier
+		record.FallbackReason = choice.FallbackReason()
+	}
 	if execErr == nil {
 		record.TokenUsage = optionalTokenUsage(result.Usage)
 		record.ResponsePreview = truncateForHistory(result.Response)
@@ -361,6 +386,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 			if decision != nil {
 				payload["route"] = decision
 			}
+			addVariantChoiceJSON(payload, choice)
 			_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 			return nil
 		}
@@ -375,6 +401,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		if decision != nil {
 			payload["route"] = decision
 		}
+		addVariantChoiceJSON(payload, choice)
 		_ = json.NewEncoder(c1Writer(os.Stdout)).Encode(payload)
 		return nil
 	}
@@ -395,22 +422,40 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 }
 
 func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptText string) (agent.Agent, *routerpkg.Decision, agent.PromptRuntimeConfig, error) {
+	a, decision, cfg, _, err := resolvePromptAgentChoice(cmd, v, args, promptText)
+	return a, decision, cfg, err
+}
+
+// resolvePromptAgentChoice is resolvePromptAgent plus the variant choice
+// when args name a variant group.
+func resolvePromptAgentChoice(cmd *cobra.Command, v vaultLike, args []string, promptText string) (agent.Agent, *routerpkg.Decision, agent.PromptRuntimeConfig, *variantChoice, error) {
 	autoRoute, _ := cmd.Flags().GetBool("auto")
+	variantFlags := promptFlagString(cmd, "variant") != "" || promptFlagString(cmd, "tier") != ""
 	if !autoRoute {
 		a, ok := v.Get(args[0])
-		if !ok {
-			// A variant group name runs the group's default agent.
-			a, ok = agent.VariantDefault(v.List(), args[0])
+		if ok {
+			if variantFlags {
+				return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, errVariantFlagsNeedGroup
+			}
+			a = withVariantGateway(v, a)
+			return a, nil, agent.ResolvePromptRuntimeConfig(a), nil, nil
 		}
-		if !ok {
-			return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("agent %q not found", args[0])
+		if len(agent.VariantMembers(v.List(), args[0])) == 0 {
+			return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, fmt.Errorf("agent %q not found", args[0])
 		}
-		a = withVariantGateway(v, a)
-		return a, nil, agent.ResolvePromptRuntimeConfig(a), nil
+		// A variant group name runs the member its policy picks.
+		a, choice, err := resolveVariantChoice(cmd, v, args[0], promptText)
+		if err != nil {
+			return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, err
+		}
+		return a, nil, agent.ResolvePromptRuntimeConfig(a), choice, nil
+	}
+	if variantFlags {
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, errors.New("prompt --auto does not take --variant or --tier")
 	}
 
 	if strings.TrimSpace(promptText) == "" {
-		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, errors.New("prompt is empty")
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, errors.New("prompt is empty")
 	}
 	routerCfg := promptRouterOverride(cmd)
 	// Stored gateway URLs first, so a loopback gateway counts as local.
@@ -427,12 +472,12 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptTe
 		ModelCapabilities: v.ListCapabilities(),
 	})
 	if err != nil {
-		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, err
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, err
 	}
 	selected := decision.Selected.AgentConfig()
 	original, ok := v.Get(selected.Name)
 	if !ok {
-		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q not found", selected.Name)
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, fmt.Errorf("selected agent %q not found", selected.Name)
 	}
 	original = withVariantGateway(v, original)
 	runtimeCfg := agent.ResolvePromptRuntimeConfig(original)
@@ -448,9 +493,9 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptTe
 	}
 	target := agent.ResolveExecutionTarget(resolved)
 	if routerCfg.LocalOnly && !target.Local {
-		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q does not satisfy local-only policy after runtime resolution", resolved.Name)
+		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, fmt.Errorf("selected agent %q does not satisfy local-only policy after runtime resolution", resolved.Name)
 	}
-	return original, &decision, runtimeCfg, nil
+	return original, &decision, runtimeCfg, nil, nil
 }
 
 func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {

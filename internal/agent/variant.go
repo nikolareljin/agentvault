@@ -18,6 +18,12 @@ import (
 type AgentVariant struct {
 	Group   string `json:"group"             yaml:"group"`
 	Default bool   `json:"default,omitempty" yaml:"default,omitempty"`
+	// Tier is the prompt complexity this member is meant for: simple,
+	// standard or deep. Empty means untiered.
+	Tier string `json:"tier,omitempty" yaml:"tier,omitempty"`
+	// Policy is the group's routing policy. Every member carries the same
+	// value, kept consistent like Default. Empty means default.
+	Policy string `json:"policy,omitempty" yaml:"policy,omitempty"`
 }
 
 // Validate checks the group name. A nil variant is valid.
@@ -121,11 +127,23 @@ func NormalizeVariantDefaults(agents []Agent, preferred string) (changed []strin
 		} else if count > 1 && agents[keep].Name != preferred {
 			notes = append(notes, fmt.Sprintf("variant group %s had %d defaults; keeping %s", group, count, agents[keep].Name))
 		}
+		// The group policy: the default member's, else the first set one
+		// by name. A member that joined without one inherits it.
+		policy := agents[keep].Variant.Policy
+		if policy == "" {
+			for _, i := range idx {
+				if p := agents[i].Variant.Policy; p != "" {
+					policy = p
+					break
+				}
+			}
+		}
 		for _, i := range idx {
 			want := i == keep
-			if agents[i].Variant.Default != want {
+			if agents[i].Variant.Default != want || agents[i].Variant.Policy != policy {
 				v := *agents[i].Variant
 				v.Default = want
+				v.Policy = policy
 				agents[i].Variant = &v
 				changed = append(changed, agents[i].Name)
 			}

@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added
+
+- Variant routing: `add`/`edit --variant-tier simple|standard|deep` gives a
+  variant a tier, and `agentvault variant policy GROUP
+  default|cost-first|balanced|quality-first` sets how `prompt GROUP` picks a
+  member. A deterministic scorer rates the prompt from its length, steps,
+  code indicators and sequencing words; `balanced` runs the matching tier,
+  `cost-first` aims one tier lower, `quality-first` one higher. Before
+  running, a member whose CLI or backend credential is missing is skipped
+  for the next one, and the reason is printed. `prompt GROUP --variant NAME`
+  pins a member and `--tier` overrides the score (under `default`, that run
+  routes as `balanced`). A missing Anthropic key counts only for a member
+  with `--auth-mode api_key`, since the claude CLI may use its own login. The choice goes to stderr,
+  to `--json` (`variant`, `group`, `policy`, `tier`, `fallback_reason`) and
+  to prompt history. `default` (and unset) keeps running the group default.
+  Import treats the policy like the default: the bundle's under replace and
+  mirror (an unset policy is `default` and wins too), the local one under
+  merge (a group new to this vault takes the bundle's)
+  (https://github.com/nikolareljin/agentvault/issues/19). Compatibility:
+  agentvault 0.17.0 and older read these agents but drop the tier and
+  policy fields on their next save.
+
 ## [0.17.0] - 2026-10-23
 
 ### Added
