@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `agentvault gateway add|list|remove|rotate|env` keeps the bearer token
+  and basic auth of a reverse-proxy gateway apart from agents. `rotate`
+  stores a new random token and keeps the old one as the previous token;
+  `env` prints `OLLAMA_TOKEN` and `BASIC_AUTH` for a shell or a `.env` file.
+  Gateways travel with export and import; their secrets follow
+  `--include-keys` (https://github.com/nikolareljin/agentvault/issues/37).
+
 ## [0.16.0] - 2026-10-23
 
 ### Added

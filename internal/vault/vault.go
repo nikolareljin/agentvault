@@ -43,6 +43,7 @@ type vaultData struct {
 	Sessions          agent.SessionConfig          `json:"sessions"`
 	ModelCapabilities []agent.ModelCapabilityEntry `json:"model_capabilities,omitempty"`
 	Locations         locations.Set                `json:"locations,omitempty"`
+	Gateways          []agent.Gateway              `json:"gateways,omitempty"`
 }
 
 // Vault represents the encrypted agent store.
@@ -54,6 +55,7 @@ type Vault struct {
 	sessions          agent.SessionConfig
 	modelCapabilities []agent.ModelCapabilityEntry
 	locations         locations.Set // work dirs and projects, by identity
+	gateways          []agent.Gateway
 	key               []byte        // derived key, set after Init or Unlock
 	header            crypto.Header // key-derivation header written ahead of the ciphertext
 	legacyOnDisk      bool          // file on disk is format 1; back it up before the first write
@@ -153,6 +155,7 @@ func (v *Vault) Unlock(masterPassword string) error {
 	v.sessions = vd.Sessions
 	v.modelCapabilities = normalizeCapabilityEntries(vd.ModelCapabilities)
 	v.locations = vd.Locations
+	v.gateways = vd.Gateways
 	if v.sessions.ParallelLimit != 0 {
 		v.sessions.ParallelLimitSet = true
 	} else if sessionParallelLimitDefined(plaintext) {
@@ -209,6 +212,58 @@ func (v *Vault) Locations() locations.Set {
 // SetLocations replaces the known work dirs and projects and persists.
 func (v *Vault) SetLocations(s locations.Set) error {
 	v.locations = s
+	return v.Save()
+}
+
+// Gateways returns a copy of the stored gateways.
+func (v *Vault) Gateways() []agent.Gateway {
+	return append([]agent.Gateway(nil), v.gateways...)
+}
+
+// GetGateway returns the gateway with the given name.
+func (v *Vault) GetGateway(name string) (agent.Gateway, bool) {
+	for _, g := range v.gateways {
+		if g.Name == name {
+			return g, true
+		}
+	}
+	return agent.Gateway{}, false
+}
+
+// AddGateway stores a new gateway and persists.
+func (v *Vault) AddGateway(g agent.Gateway) error {
+	if _, ok := v.GetGateway(g.Name); ok {
+		return fmt.Errorf("gateway %q already exists", g.Name)
+	}
+	v.gateways = append(v.gateways, g)
+	return v.Save()
+}
+
+// UpdateGateway replaces a gateway by name and persists.
+func (v *Vault) UpdateGateway(g agent.Gateway) error {
+	for i := range v.gateways {
+		if v.gateways[i].Name == g.Name {
+			v.gateways[i] = g
+			return v.Save()
+		}
+	}
+	return fmt.Errorf("gateway %q not found", g.Name)
+}
+
+// RemoveGateway deletes a gateway by name and persists.
+func (v *Vault) RemoveGateway(name string) error {
+	for i := range v.gateways {
+		if v.gateways[i].Name == name {
+			v.gateways = append(v.gateways[:i], v.gateways[i+1:]...)
+			return v.Save()
+		}
+	}
+	return fmt.Errorf("gateway %q not found", name)
+}
+
+// SetGateways replaces all gateways and persists.
+func (v *Vault) SetGateways(gs []agent.Gateway) error {
+	v.gateways = append([]agent.Gateway(nil), gs...)
 	return v.Save()
 }
 
@@ -588,7 +643,7 @@ func (v *Vault) ListInstructions() []agent.InstructionFile {
 
 // ExportData returns the vault contents as JSON (for export to a file).
 func (v *Vault) ExportData() ([]byte, error) {
-	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations, Gateways: v.gateways}
 	return json.MarshalIndent(vd, "", "  ")
 }
 
@@ -765,6 +820,12 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 			seenCaps[key] = struct{}{}
 		}
 	}
+	// Gateways: keep existing ones, add those not present by name.
+	for _, g := range vd.Gateways {
+		if _, ok := v.GetGateway(g.Name); !ok && g.Name != "" {
+			v.gateways = append(v.gateways, g)
+		}
+	}
 	// Only import parallel limit when current session config is otherwise empty,
 	// to avoid overwriting an intentional existing 0 (unlimited) setting.
 	if wasSessionConfigUnset && importedParallelLimitDefined {
@@ -885,7 +946,7 @@ func sessionParallelLimitDefined(data []byte) bool {
 // write encrypts the entire vault state and writes it atomically to disk.
 // The output format is: [format 2 header][nonce + AES-256-GCM ciphertext].
 func (v *Vault) write() error {
-	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations}
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations, Gateways: v.gateways}
 	plaintext, err := json.Marshal(vd)
 	if err != nil {
 		return fmt.Errorf("encoding vault: %w", err)

@@ -417,8 +417,8 @@ func confirmDestructiveImport(confirmFlag bool, isTerminal bool, in io.Reader, w
 	}
 	fmt.Fprintf(w, "Strategy 'mirror' makes this vault match the bundle exactly.\n")
 	fmt.Fprintf(w, "Anything not in profile %s will be DELETED: agents, rules, roles,\n", strings.Join(names, ", "))
-	fmt.Fprintf(w, "instructions, MCP servers, sessions, provider configs, pricing rows and\n")
-	fmt.Fprintf(w, "model capability entries. The shared system prompt and router config are\n")
+	fmt.Fprintf(w, "instructions, MCP servers, sessions, provider configs, pricing rows,\n")
+	fmt.Fprintf(w, "model capability entries and gateways. The shared system prompt and router config are\n")
 	fmt.Fprintf(w, "cleared too when the bundle does not carry them.\n")
 	fmt.Fprint(w, "Type 'mirror' to continue: ")
 	reader, ok := in.(*bufio.Reader)
@@ -798,8 +798,8 @@ func printBundleProfiles(cmd *cobra.Command, bundle PortableBundle, format bundl
 		fmt.Fprintf(out, "    Agents: %d, Sessions: %d, Rules: %d, Roles: %d, Instructions: %d\n",
 			len(p.Setup.Agents), len(p.Setup.Sessions.Sessions), len(p.Setup.SharedConfig.Rules),
 			len(p.Setup.SharedConfig.Roles), len(p.Setup.SharedConfig.Instructions))
-		fmt.Fprintf(out, "    Templates: %d, Provider files: %d, Skill assets: %d\n",
-			len(p.Setup.Templates.Assets), len(p.Setup.ProviderFiles), len(p.Setup.SkillAssets))
+		fmt.Fprintf(out, "    Templates: %d, Provider files: %d, Skill assets: %d, Gateways: %d\n",
+			len(p.Setup.Templates.Assets), len(p.Setup.ProviderFiles), len(p.Setup.SkillAssets), len(p.Setup.Gateways))
 		printDeclinedAssets(out, p.Setup.Declined)
 	}
 }
