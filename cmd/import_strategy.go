@@ -393,7 +393,9 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 // plan leaves. Under replace and mirror the bundle's default wins; under
 // merge the local default stays and a bundle default is cleared. A group
 // left with no default gets its first member by name. Each group the bundle
-// touches gets a report line naming its default.
+// touches gets a report line naming its default. The group policy follows
+// the same rule: the bundle's under replace and mirror, the local one under
+// merge, the other side's when one side has none.
 func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strategy importStrategy, now time.Time, rep *importReport) []agentOp {
 	final := make([]agent.Agent, 0, len(existing))
 	pos := map[string]int{}
@@ -442,9 +444,11 @@ func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strate
 			localDefault[g] = a.Name
 		}
 	}
-	before := map[string]bool{}
+	before := map[string]agent.AgentVariant{}
 	for _, a := range final {
-		before[a.Name] = a.IsVariantDefault()
+		if a.Variant != nil {
+			before[a.Name] = *a.Variant
+		}
 	}
 	groups := agent.VariantGroups(final)
 	source := map[string]string{}
@@ -457,6 +461,31 @@ func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strate
 		if winner != "" && agent.SetVariantDefault(final, g, winner) == nil {
 			source[g] = src
 		}
+	}
+	localPolicy := map[string]string{}
+	for _, g := range agent.VariantGroups(existing) {
+		localPolicy[g] = agent.VariantPolicyOf(existing, g)
+	}
+	policySource := map[string]string{}
+	for _, g := range groups {
+		policy, src := localPolicy[g], "local"
+		bundlePolicy := ""
+		if touched[g] {
+			bundlePolicy = agent.VariantPolicyOf(incoming, g)
+		}
+		if (strategy.incomingWins() || policy == "") && bundlePolicy != "" {
+			policy, src = bundlePolicy, "bundle"
+		}
+		// An unknown policy from a newer bundle is kept as is; prompt
+		// treats it as default with a note.
+		for i := range final {
+			if final[i].VariantGroup() == g && final[i].Variant.Policy != policy {
+				vv := *final[i].Variant
+				vv.Policy = policy
+				final[i].Variant = &vv
+			}
+		}
+		policySource[g] = src
 	}
 	_, notes := agent.NormalizeVariantDefaults(final, "")
 	for _, g := range groups {
@@ -472,6 +501,9 @@ func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strate
 		if def.Name != localDefault[g] {
 			rep.record("Variant", "group %s default %s (%s)", g, def.Name, src)
 		}
+		if p := agent.VariantPolicyOf(final, g); p != localPolicy[g] {
+			rep.record("Variant", "group %s policy %s (%s)", g, variantPolicyLabel(p), policySource[g])
+		}
 		for _, n := range notes {
 			if strings.HasPrefix(n, "variant group "+g+" ") {
 				rep.record("Note", "%s", n)
@@ -479,7 +511,7 @@ func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strate
 		}
 	}
 	for _, a := range final {
-		if before[a.Name] == a.IsVariantDefault() {
+		if a.Variant == nil || before[a.Name] == *a.Variant {
 			continue
 		}
 		if i, ok := opIdx[a.Name]; ok {
@@ -488,7 +520,7 @@ func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strate
 		}
 		a.UpdatedAt = now
 		ops = append(ops, agentOp{Kind: "update", Agent: a, Name: a.Name})
-		rep.record("Updated", "agent %s (variant default)", a.Name)
+		rep.record("Updated", "agent %s (variant default or policy)", a.Name)
 	}
 	return ops
 }

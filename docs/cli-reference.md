@@ -89,6 +89,7 @@ Optional:
 - `--disable-routing` (default: `false`)
 - `--variant-group <group>`: put the agent in a variant group (`""` on edit removes it)
 - `--variant-default` (default: `false`): make the agent its group's default
+- `--variant-tier <tier>`: `simple|standard|deep`, the prompt complexity this variant serves (`""` for untiered); needs a variant group
 - `--vertex-region <region>`: claude `vertex` backend region
 - `--vertex-project <project>`: claude `vertex` backend Google Cloud project
 - `--gateway <name>`: claude `gateway` backend: stored gateway whose URL and token to use
@@ -119,6 +120,7 @@ Flags:
 - `--disable-routing` (default: `false`)
 - `--variant-group <group>`: put the agent in a variant group (`""` on edit removes it)
 - `--variant-default` (default: `false`): make the agent its group's default
+- `--variant-tier <tier>`: `simple|standard|deep`, the prompt complexity this variant serves (`""` for untiered); needs a variant group
 - `--vertex-region <region>`: claude `vertex` backend region
 - `--vertex-project <project>`: claude `vertex` backend Google Cloud project
 - `--gateway <name>`: claude `gateway` backend: stored gateway whose URL and token to use
@@ -152,12 +154,47 @@ An unknown backend (written by a newer agentvault or by hand) is refused by
 import and as `(unknown)` in `variant list`.
 
 ### `agentvault variant list [group]`
-Lists each variant group (or only `group`) with its agents, backend, model,
-and the default marked `yes`. `agentvault list` shows the group in the
-`VARIANT` column, with `*` on the default.
+Lists each variant group (or only `group`) with its policy, agents, tier,
+backend, model, and the default marked `yes`. `agentvault list` shows the
+group in the `VARIANT` column, with `*` on the default and `:TIER` when the
+agent has a tier.
 
 ### `agentvault variant default <group> <agent>`
 Makes `agent` the default of `group` and clears the previous default.
+
+### `agentvault variant policy <group> [policy]`
+Prints the group's routing policy, or sets it to one of:
+
+| Policy | `prompt GROUP` runs |
+|---|---|
+| `default` (or unset) | the group default, whatever the prompt; no pre-flight check |
+| `balanced` | the member whose tier equals the prompt's tier |
+| `cost-first` | aims one tier lower (deep -> standard, standard -> simple) |
+| `quality-first` | aims one tier higher (simple -> standard, standard -> deep) |
+
+The prompt's tier comes from a complexity score (or `prompt --tier`). Points:
+40, 150 and 400 words give 1, 2 and 3; 3 or 6 numbered or bulleted lines give
+1 or 2; a ```` ``` ```` fence gives 1; a coding, review or analysis prompt gives 1;
+two or more sequencing words (then, next, after that, afterwards, finally,
+step) give 1. A total of 0-1 is `simple`, 2-3 `standard`, 4 or more `deep`.
+
+Members are ordered by distance from the target tier. At equal distance the
+lower tier goes first for `cost-first` and `balanced`, the higher for
+`quality-first`. Within a tier the group default goes first, then agent names
+in order. Untiered members come last. Before running, each member in that
+order is checked: its CLI (`claude`, `codex`, `gemini`) must be on `PATH`,
+and its Claude backend must have what it needs (an API key or
+`ANTHROPIC_API_KEY` for anthropic unless `--auth-mode oauth|none`, an AWS
+region for bedrock, region and project for vertex, a base URL and an
+existing stored gateway for gateway). The first member that passes runs; no
+retry happens once a run has started. When none passes, the error names each
+member and its reason. Bedrock members always fail the check, since `prompt`
+cannot run bedrock yet.
+
+The policy is stored on every member of the group and travels with export
+and import like the default: the bundle's under `replace` and `mirror`, the
+local one under `merge`, and the other side's when one side has none. The
+report prints `Variant: group G policy P (bundle|local)` when it changes.
 
 Variant groups tie existing agents together as alternates of one logical
 setup. `agentvault prompt GROUP` runs the group's default agent when no
@@ -166,8 +203,7 @@ follow `--include-keys`. On import each group keeps one default: under
 `replace` and `mirror` the bundle's default wins, under `merge` the local
 default stays, and a group with none gets its first member by name. The
 report prints `Variant: group G default A (bundle|local|first by name)`.
-Runtime routing and complexity-aware selection between variants are a
-separate feature.
+Tiers travel with each agent.
 
 ### `agentvault run [name]`
 Flags:
@@ -205,6 +241,22 @@ Flags:
 - `--no-log` (default: `false`)
 - `--history-file <path>`
 - `--timeout <duration>` (default: `5m`)
+- `--variant <agent>`: with a variant group name, run this member instead of the policy's choice; no fallback (error if it is not in the group)
+- `--tier <tier>`: with a variant group name, use `simple|standard|deep` instead of scoring the prompt
+
+With a variant group name and a policy other than `default` (or with
+`--variant` or `--tier`), `prompt` prints the choice to stderr before running:
+
+```
+variant: claude-deep (group claude, policy balanced, tier deep)
+fallback from claude-direct: no anthropic API key (agent key or ANTHROPIC_API_KEY)
+```
+
+`--json` output adds `variant`, `group`, `policy`, `tier` and
+`fallback_reason`; history records add `variant`, `variant_group`,
+`variant_policy`, `variant_tier` and `fallback_reason`. `--dry-run` shows the
+choice without running. `--auto` routing does not use groups and refuses
+`--variant` and `--tier`.
 
 Routing flags (apply when `--auto` is used or router mode is set):
 - `--router <mode>`: `heuristic|langgraph|local-ai|llm-router`

@@ -16,14 +16,16 @@ import (
 
 var variantCmd = &cobra.Command{
 	Use:   "variant",
-	Short: "List and pick the default of agent variant groups",
+	Short: "List variant groups, pick their default and routing policy",
 	Long: `A variant group ties existing agents together as alternates of one
 logical setup, for example one Claude setup run through anthropic, bedrock,
 vertex and a gateway. Each group has one default agent. Put an agent in a
 group with 'agentvault add|edit NAME --variant-group GROUP [--variant-default]'.
 
-'agentvault prompt GROUP' runs the group's default agent. Runtime routing
-and complexity-aware selection between variants are separate features.`,
+'agentvault prompt GROUP' runs the group's default agent under the default
+policy. Give members a tier with 'add|edit NAME --variant-tier
+simple|standard|deep' and set 'variant policy GROUP balanced' (or
+cost-first, quality-first) to pick the member by prompt complexity.`,
 }
 
 var variantListCmd = &cobra.Command{
@@ -60,9 +62,57 @@ var variantDefaultCmd = &cobra.Command{
 	},
 }
 
+var variantPolicyCmd = &cobra.Command{
+	Use:   "policy <group> [default|cost-first|balanced|quality-first]",
+	Short: "Show or set the routing policy of a variant group",
+	Long: `Without a policy, print the group's current policy.
+
+  default        run the group default, whatever the prompt (as before tiers)
+  balanced       run the member whose tier matches the prompt's tier
+  cost-first     aim one tier lower than the prompt's tier
+  quality-first  aim one tier higher than the prompt's tier
+
+With no exact match the nearest tier wins: the lower one for cost-first and
+balanced, the higher one for quality-first. Within a tier the group default
+goes first, then agent names in order. Untiered members run only when no
+tiered member can.`,
+	Args: cobra.RangeArgs(1, 2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		v, err := openVault()
+		if err != nil {
+			return err
+		}
+		group := args[0]
+		if len(agent.VariantMembers(v.List(), group)) == 0 {
+			return fmt.Errorf("variant group %q not found", group)
+		}
+		if len(args) == 1 {
+			fmt.Fprintln(cmd.OutOrStdout(), variantPolicyLabel(agent.VariantPolicyOf(v.List(), group)))
+			return nil
+		}
+		policy, err := agent.ParseVariantPolicy(args[1])
+		if err != nil {
+			return err
+		}
+		if err := v.SetVariantPolicy(group, policy); err != nil {
+			return err
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Variant group %s: policy is now %s.\n", printable(group), policy)
+		return nil
+	},
+}
+
+// variantPolicyLabel names a stored policy: "" is default.
+func variantPolicyLabel(p string) string {
+	if p == "" {
+		return agent.VariantPolicyDefault
+	}
+	return p
+}
+
 func init() {
 	rootCmd.AddCommand(variantCmd)
-	variantCmd.AddCommand(variantListCmd, variantDefaultCmd)
+	variantCmd.AddCommand(variantListCmd, variantDefaultCmd, variantPolicyCmd)
 }
 
 // printVariantList prints each group (or only group) with its members.
@@ -79,9 +129,10 @@ func printVariantList(out io.Writer, agents []agent.Agent, group string) error {
 		return nil
 	}
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "GROUP\tAGENT\tDEFAULT\tBACKEND\tMODEL")
+	fmt.Fprintln(w, "GROUP\tPOLICY\tAGENT\tDEFAULT\tTIER\tBACKEND\tMODEL")
 	for _, g := range groups {
 		def, _ := agent.VariantDefault(agents, g)
+		policy := variantPolicyLabel(agent.VariantPolicyOf(agents, g))
 		for _, m := range agent.VariantMembers(agents, g) {
 			mark := ""
 			if m.Name == def.Name {
@@ -91,7 +142,11 @@ func printVariantList(out io.Writer, agents []agent.Agent, group string) error {
 			if model == "" {
 				model = "-"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", printable(g), printable(m.Name), mark, printable(variantBackendLabel(m)), printable(model))
+			tier := m.Variant.Tier
+			if tier == "" {
+				tier = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", printable(g), printable(policy), printable(m.Name), mark, printable(tier), printable(variantBackendLabel(m)), printable(model))
 		}
 	}
 	return w.Flush()
@@ -115,6 +170,7 @@ func variantBackendLabel(a agent.Agent) string {
 func registerVariantFlags(fs *pflag.FlagSet) {
 	fs.String("variant-group", "", "variant group this agent belongs to (\"\" on edit removes it)")
 	fs.Bool("variant-default", false, "make this agent the default of its variant group")
+	fs.String("variant-tier", "", "prompt complexity this variant serves: simple|standard|deep (\"\" for untiered)")
 	fs.String("vertex-region", "", "claude vertex backend: Google Cloud region (CLOUD_ML_REGION)")
 	fs.String("vertex-project", "", "claude vertex backend: Google Cloud project (ANTHROPIC_VERTEX_PROJECT_ID)")
 	fs.String("gateway", "", "claude gateway backend: stored gateway whose URL and token to use")
@@ -131,8 +187,17 @@ func applyVariantFlags(cmd *cobra.Command, a *agent.Agent) error {
 		if g == "" {
 			a.Variant = nil
 		} else {
-			def := a.IsVariantDefault() && a.VariantGroup() == g
-			a.Variant = &agent.AgentVariant{Group: g, Default: def}
+			same := a.VariantGroup() == g
+			nv := agent.AgentVariant{Group: g, Default: a.IsVariantDefault() && same}
+			// The tier belongs to the agent; the policy belongs to the group
+			// and comes from the new group's members on save.
+			if a.Variant != nil {
+				nv.Tier = a.Variant.Tier
+			}
+			if same {
+				nv.Policy = a.Variant.Policy
+			}
+			a.Variant = &nv
 		}
 	}
 	if fs.Changed("variant-default") {
@@ -142,6 +207,19 @@ func applyVariantFlags(cmd *cobra.Command, a *agent.Agent) error {
 		}
 		vv := *a.Variant
 		vv.Default = d
+		a.Variant = &vv
+	}
+	if fs.Changed("variant-tier") {
+		raw, _ := fs.GetString("variant-tier")
+		tier, err := agent.ParseVariantTier(raw)
+		if err != nil {
+			return err
+		}
+		if a.Variant == nil {
+			return errors.New("--variant-tier needs --variant-group")
+		}
+		vv := *a.Variant
+		vv.Tier = tier
 		a.Variant = &vv
 	}
 	meta := func() *agent.AgentProviderMeta {

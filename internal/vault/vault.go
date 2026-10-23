@@ -404,6 +404,14 @@ func (v *Vault) SetVariantDefault(group, name string) error {
 	return v.Save()
 }
 
+// SetVariantPolicy stores policy on every member of group and persists it.
+func (v *Vault) SetVariantPolicy(group, policy string) error {
+	if err := agent.SetVariantPolicy(v.agents, group, policy); err != nil {
+		return err
+	}
+	return v.Save()
+}
+
 // Save encrypts and persists the vault to disk.
 func (v *Vault) Save() error {
 	if v.key == nil {

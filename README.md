@@ -105,12 +105,13 @@ brew install nikolareljin/tap/agentvault
 ### Agent Management
 | Command | Description |
 |---------|-------------|
-| `add <name>` | Add new agent (supports Claude `--backend anthropic|ollama|bedrock|vertex|gateway`, `--variant-group`) |
+| `add <name>` | Add new agent (supports Claude `--backend anthropic|ollama|bedrock|vertex|gateway`, `--variant-group`, `--variant-tier simple|standard|deep`) |
 | `list` | List all agents |
 | `edit <name>` | Edit agent (supports `--role`, `--disable-rules`, `--backend`) |
 | `remove <name>` | Remove agent |
 | `variant list [group]` | List variant groups, members and the default |
 | `variant default <group> <agent>` | Make an agent its group's default |
+| `variant policy <group> [default|cost-first|balanced|quality-first]` | Show or set how `prompt GROUP` picks a member by prompt complexity |
 | `run <name>` | Show effective configuration |
 
 ### Unified Rules
@@ -226,6 +227,15 @@ agentvault prompt my-ollama --text "create a demo app in Scala that says 'Hello 
 # optimize for codex/copilot-style coding flows
 agentvault prompt my-codex --text "refactor this endpoint" --optimize-profile codex
 agentvault prompt my-copilot --text "write tests for this function" --optimize-profile copilot
+
+# one Claude setup on three backends, picked by prompt complexity
+agentvault edit claude-direct --variant-group claude --variant-tier simple
+agentvault edit claude-gw --variant-group claude --variant-tier standard
+agentvault edit claude-vertex --variant-group claude --variant-tier deep
+agentvault variant policy claude balanced     # or cost-first, quality-first, default
+agentvault prompt claude --text "fix the flaky test" --dry-run   # prints the chosen variant
+agentvault prompt claude --text "hi" --tier deep                 # override the scored tier
+agentvault prompt claude --text "hi" --variant claude-gw         # pin one member
 
 # guided issue/PR execution using repository workflow templates
 agentvault prompt my-codex --workflow implement_issue --repo /path/to/repo --issue 16 --text "Keep the change scoped."
