@@ -93,7 +93,7 @@ func (m model) displayCopy() model {
 	for _, s := range []*string{&m.statusErr, &m.searchQuery, &m.commandQuery,
 		&m.lastCommand, &m.gatewayPrompt, &m.gatewayWorkspace,
 		&m.gatewayWorkSource, &m.gatewayEffective, &m.gatewayProfile,
-		&m.gatewayResponse, &m.gatewayErr, &m.deleteTarget, &m.statusMsg, &m.cwd} {
+		&m.gatewayResponse, &m.gatewayErr, &m.deleteTarget, &m.statusMsg, &m.cwd, &m.currentAgent} {
 		*s = scrubESC(*s)
 	}
 	return m

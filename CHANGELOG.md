@@ -6,6 +6,11 @@
 
 ### Added
 
+- TUI actions menu (`Space`, any tab): add agent (form), switch the
+  session's current agent, prompt it in at most 3 keys, open usage, or run a
+  command. The help bar and `?` screen are built from one key registry and
+  follow the current screen. Part 1 of
+  https://github.com/nikolareljin/agentvault/issues/10.
 - Variant routing: `add`/`edit --variant-tier simple|standard|deep` gives a
   variant a tier, and `agentvault variant policy GROUP
   default|cost-first|balanced|quality-first` sets how `prompt GROUP` picks a

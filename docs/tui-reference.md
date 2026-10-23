@@ -37,6 +37,40 @@ Tabs:
 - `q` or `Ctrl+C`: quit
 - `?`: help
 - `r`: refresh vault data and detected provider state
+- `Space`: open the actions menu
+
+The help bar at the bottom and the `?` screen list the keys for the screen
+you are on, including each actions-menu flow.
+
+## Actions menu
+
+`Space` opens the actions menu from any tab. Press an item's letter, or move
+with `j/k` and press `Enter`. `Esc` returns to the screen you came from.
+
+| Key | Action | Keys from start |
+|-----|--------|-----------------|
+| `a` | Add agent: name, provider, model, optional base URL | 3 (`Space a`, type, `Enter`) |
+| `s` | Switch agent: pick the current agent | 3 (`Space s Enter`) |
+| `p` | Prompt the current agent | 3 (`Space p`, type, `Enter`) |
+| `u` | Usage: open the Status tab | 2 (`Space u`) |
+| `:` or `;` | Run command: the `:` CLI command bridge | 2 (`Space :`) |
+
+Add agent form: `Tab`/`Shift+Tab` move between fields, `Left`/`Right` change
+the provider, `Enter` saves, `Esc` cancels. Input is checked with the same
+rules as `agentvault add`. The form takes no API key; if the agent needs one, set it with
+`agentvault edit NAME --api-key KEY`.
+
+Current agent: shown under the tab bar. It lasts for the TUI session and is
+not saved. In the switch list, `Enter` makes the highlighted agent current and
+`x` clears it.
+
+Prompt: with a current agent (or a vault with one agent), the Prompt Gateway
+opens on the prompt step. `Enter` runs the prompt in the default workspace
+(the current directory, or its repository root), shown in full as `Runs in:`. `Tab` goes to the workspace and preview steps
+instead, and `Esc` goes back to agent selection. Without a current agent the
+flow starts at agent selection, and the agent picked becomes current.
+
+The `:` command entry still works everywhere; none of these flows needs it.
 
 ## Tab 1: Agents
 

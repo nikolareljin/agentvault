@@ -38,6 +38,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -86,6 +88,9 @@ const (
 	viewAbout
 	viewHelp
 	viewConfirmDelete
+	viewActions
+	viewAddAgent
+	viewSwitchAgent
 )
 
 type tab int
@@ -247,6 +252,23 @@ type model struct {
 	gatewayUsage       gatewayUsage
 	gatewayStartedAt   time.Time
 	gatewayTick        int
+
+	// gatewayQuick is set when the gateway was opened from the actions
+	// menu: enter on the prompt runs it in the default workspace.
+	gatewayQuick bool
+
+	// Actions menu (space) and its flows.
+	actionsReturn viewMode // screen to return to when a flow closes
+	actionCursor  int
+	helpFrom      viewMode // screen '?' was opened from
+	switchCursor  int
+	addInputs     []textinput.Model
+	addProviders  []agent.Provider
+	addProvider   int
+	addFocus      int
+
+	// currentAgent is the agent Prompt uses. It lasts for the session only.
+	currentAgent string
 
 	// Delete confirmation state
 	deleteTarget  string // display name of item to delete
@@ -578,6 +600,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleConfirmDelete(msg)
 		}
 
+		switch m.mode {
+		case viewActions:
+			return m.handleActionsInput(msg)
+		case viewAddAgent:
+			return m.handleAddAgentInput(msg)
+		case viewSwitchAgent:
+			return m.handleSwitchInput(msg)
+		}
+
 		// Handle search mode
 		if m.searchMode {
 			return m.handleSearchInput(msg)
@@ -589,6 +620,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.activeTab == tabCommands && m.gatewayStage != gatewayOff {
 			return m.handleGatewayInput(msg)
+		}
+
+		if key.Matches(msg, keys.Actions) {
+			m.openActions()
+			return m, nil
 		}
 
 		switch msg.String() {
@@ -661,6 +697,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "?":
+			if m.mode != viewHelp {
+				m.helpFrom = m.mode
+			}
 			m.mode = viewHelp
 			return m, nil
 
@@ -678,18 +717,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "g":
 			if m.activeTab == tabCommands {
-				m.gatewayStage = gatewaySelectAgent
-				m.gatewayAgentCursor = 0
-				m.gatewayPrompt = ""
-				m.gatewayWorkspace = ""
-				m.gatewayWorkSource = ""
-				m.gatewayWorkGitRepo = false
-				m.gatewayEffective = ""
-				m.gatewayProfile = ""
-				m.gatewayOptimized = false
-				m.gatewayResponse = ""
-				m.gatewayErr = ""
-				m.gatewayUsage = gatewayUsage{}
+				m.resetGateway()
 				return m, nil
 			}
 
@@ -867,6 +895,7 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc":
 			m.gatewayStage = gatewayOff
+			m.gatewayQuick = false
 			return m, nil
 		case "up", "k":
 			if m.gatewayAgentCursor > 0 {
@@ -884,6 +913,9 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.gatewayStage = gatewayInputPrompt
+			if m.gatewayQuick && m.gatewayAgentCursor < len(m.agents) {
+				m.currentAgent = m.agents[m.gatewayAgentCursor].Name
+			}
 			if strings.TrimSpace(m.gatewayPrompt) == "" {
 				m.gatewayPrompt = ""
 			}
@@ -897,7 +929,7 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "backspace":
 			m.gatewayPrompt = trimLastRune(m.gatewayPrompt)
 			return m, nil
-		case "enter":
+		case "enter", "tab":
 			if strings.TrimSpace(m.gatewayPrompt) == "" {
 				m.setStatus("Prompt cannot be empty", true)
 				return m, nil
@@ -905,6 +937,9 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if len(m.agents) == 0 || m.gatewayAgentCursor >= len(m.agents) {
 				m.setStatus("Selected agent is unavailable", true)
 				return m, nil
+			}
+			if m.gatewayQuick && msg.String() == "enter" {
+				return m, m.quickRunGateway()
 			}
 			a := m.agents[m.gatewayAgentCursor]
 			effective, profile := optimizePromptForGateway(m.gatewayPrompt, a, m.shared)
@@ -973,15 +1008,7 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatus("Selected agent is unavailable", true)
 				return m, nil
 			}
-			m.gatewayRunning = true
-			m.gatewayResponse = ""
-			m.gatewayErr = ""
-			m.gatewayUsage = gatewayUsage{}
-			m.gatewayStartedAt = time.Now()
-			m.gatewayTick = 0
-			m.gatewayStage = gatewayRunning
-			a := m.agents[m.gatewayAgentCursor]
-			return m, tea.Batch(runGatewayPromptCmd(a, m.gatewayEffective, m.gatewayWorkspace, 5*time.Minute), gatewayPulseCmd())
+			return m, m.startGatewayRun()
 		}
 	case gatewayRunning:
 		if msg.String() == "esc" {
@@ -992,6 +1019,7 @@ func (m *model) handleGatewayInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc":
 			m.gatewayStage = gatewayOff
+			m.gatewayQuick = false
 			return m, nil
 		case "s", "S":
 			m.gatewayStage = gatewaySelectAgent
@@ -1553,6 +1581,12 @@ func (m model) view() string {
 		b.WriteString(m.renderHelp())
 	case viewConfirmDelete:
 		b.WriteString(m.renderConfirmDelete())
+	case viewActions:
+		b.WriteString(m.renderActions())
+	case viewAddAgent:
+		b.WriteString(m.renderAddAgent())
+	case viewSwitchAgent:
+		b.WriteString(m.renderSwitchAgent())
 	}
 
 	// Status bar
@@ -1586,7 +1620,11 @@ func (m model) renderHeader() string {
 		tabBar.WriteString(" ")
 	}
 
-	return fmt.Sprintf("%s  %s", title, tabBar.String())
+	current := "none (space s to pick)"
+	if m.currentAgent != "" {
+		current = m.currentAgent
+	}
+	return fmt.Sprintf("%s  %s\n%s", title, tabBar.String(), dimStyle.Render("Current agent: "+current))
 }
 
 func (m model) renderAgentList() string {
@@ -2264,7 +2302,15 @@ func (m model) renderGatewayFlow() string {
 		b.WriteString(labelStyle.Render("  Step 2: Enter prompt"))
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render(fmt.Sprintf("  Agent: %s (%s)", a.Name, a.Provider)))
-		b.WriteString("\n\n")
+		b.WriteString("\n")
+		// Enter runs here with no preview, so show the full path the agent works in.
+		if m.gatewayQuick {
+			if resolved, err := workspace.ResolveCurrentDirDefault(m.cwd); err == nil {
+				b.WriteString(dimStyle.Render("  Runs in: " + strings.ReplaceAll(resolved.Path, "\x1b", "?")))
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString("\n")
 		b.WriteString("  ")
 		b.WriteString(m.gatewayPrompt)
 		b.WriteString("_\n")
@@ -2475,156 +2521,25 @@ func (m model) renderConfirmDelete() string {
 
 func (m model) renderHelp() string {
 	var b strings.Builder
-
 	b.WriteString(titleStyle.Render("Keyboard Shortcuts"))
 	b.WriteString("\n\n")
-
-	agentsTabKeys := [][]string{
-		{"/", "Search/filter agents"},
-		{"d", "Delete selected agent"},
+	from := m
+	from.mode = m.helpFrom
+	if from.mode == viewHelp {
+		from.mode = m.getModeForTab()
 	}
-	if m.hasClaudeAgent {
-		agentsTabKeys = append(agentsTabKeys, []string{"b", "Cycle Claude backend in agent detail"})
-	}
-
-	sections := []struct {
-		title string
-		keys  [][]string
-	}{
-		{
-			title: "Navigation",
-			keys: [][]string{
-				{"Tab", "Next tab"},
-				{"Shift+Tab", "Previous tab"},
-				{"1-8", "Jump to tab"},
-				{"j/k or Up/Down", "Move cursor"},
-				{"Enter", "View details"},
-				{"Esc", "Back / Close"},
-				{"q", "Quit"},
-			},
-		},
-		{
-			title: "Agents Tab",
-			keys:  agentsTabKeys,
-		},
-		{
-			title: "Instructions Tab",
-			keys: [][]string{
-				{"e", "Edit in external editor"},
-				{"d", "Delete selected instruction"},
-			},
-		},
-		{
-			title: "Rules Tab",
-			keys: [][]string{
-				{"d", "Delete selected rule"},
-			},
-		},
-		{
-			title: "Detected Tab",
-			keys: [][]string{
-				{"a", "Add agent to vault"},
-				{"c", "Connect selected agent to Prompt Gateway"},
-				{"enter", "Open detected agent details"},
-			},
-		},
-		{
-			title: "General",
-			keys: [][]string{
-				{":", "Run custom CLI command"},
-				{"g", "Prompt gateway (Commands tab)"},
-				{"r", "Refresh data"},
-				{"?", "Show this help"},
-			},
-		},
-		{
-			title: "About Tab",
-			keys: [][]string{
-				{"8", "Jump to About tab"},
-			},
-		},
-	}
-
-	for _, section := range sections {
-		b.WriteString(subtitleStyle.Render("  " + section.title))
-		b.WriteString("\n")
-		for _, kv := range section.keys {
-			b.WriteString(fmt.Sprintf("    %-20s %s\n", kv[0], kv[1]))
-		}
-		b.WriteString("\n")
-	}
-
+	b.WriteString(renderHelpSections(m.helpSections(from)))
 	return b.String()
 }
 
+// renderHelpBar is the one-line help for the current screen, rendered from
+// the key registry (keys.go).
 func (m model) renderHelpBar() string {
-	var help string
-	switch m.mode {
-	case viewAgentDetail, viewInstructionDetail, viewRuleDetail, viewSessionDetail:
-		if m.mode == viewAgentDetail &&
-			m.activeTab == tabAgents &&
-			m.cursor >= 0 &&
-			m.cursor < len(m.filteredAgents) &&
-			m.filteredAgents[m.cursor] >= 0 &&
-			m.filteredAgents[m.cursor] < len(m.agents) &&
-			m.agents[m.filteredAgents[m.cursor]].Provider == agent.ProviderClaude {
-			help = "b: cycle backend  esc: back  q: quit"
-		} else {
-			help = "esc: back  q: quit"
-		}
-	case viewHelp:
-		help = "esc: back  q: quit"
-	case viewConfirmDelete:
-		help = "y: confirm  n/esc: cancel"
-	default:
-		if m.searchMode {
-			help = "enter: apply filter  esc: cancel"
-		} else if m.commandMode {
-			help = "enter: run command  esc: cancel"
-		} else {
-			switch m.activeTab {
-			case tabAgents:
-				help = "tab: tabs  /: search  d: delete  : run cmd  enter: detail  ?: help  q: quit"
-			case tabInstructions:
-				help = "tab: tabs  e: edit  d: delete  : run cmd  enter: detail  ?: help  q: quit"
-			case tabRules:
-				help = "tab: tabs  d: delete  : run cmd  enter: detail  ?: help  q: quit"
-			case tabDetected:
-				if m.mode == viewDetectedDetail {
-					help = "c: connect  a: add  esc: back  q: quit"
-				} else {
-					help = "tab: tabs  enter: details  c: connect  a: add  : run cmd  ?: help  q: quit"
-				}
-			case tabCommands:
-				if m.gatewayStage != gatewayOff {
-					switch m.gatewayStage {
-					case gatewaySelectAgent:
-						help = "j/k: select agent  enter: next  esc: close gateway"
-					case gatewayInputPrompt:
-						help = "type: prompt  enter: rewrite  backspace: edit  esc: back"
-					case gatewaySelectWorkspace:
-						help = "type: workspace path  enter: continue  backspace: edit  esc: back"
-					case gatewayPreview:
-						help = "y/enter: run  n: edit  esc: back"
-					case gatewayRunning:
-						help = "running..."
-					case gatewayResult:
-						help = "s: switch agent  e: edit prompt  esc: close gateway"
-					}
-				} else {
-					help = "tab: tabs  j/k: select action  enter: run  g: gateway  : custom cmd  r: refresh  ?: help  q: quit"
-				}
-			case tabAbout:
-				help = "tab: tabs  ?: help  q: quit"
-			default:
-				help = "tab: switch tabs  : run cmd  ?: help  q: quit"
-			}
-		}
-	}
+	out := "  " + newHelpModel().ShortHelpView(m.helpBindings())
 	if m.commandMode {
-		help += "\n  command> " + m.commandQuery + "_"
+		out += "\n" + helpStyle.Render("  command> "+m.commandQuery+"_")
 	}
-	return helpStyle.Render("  " + help)
+	return out
 }
 
 func runGatewayPromptCmd(a agent.Agent, prompt string, executionDir string, timeout time.Duration) tea.Cmd {
