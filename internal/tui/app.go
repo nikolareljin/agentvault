@@ -2302,7 +2302,15 @@ func (m model) renderGatewayFlow() string {
 		b.WriteString(labelStyle.Render("  Step 2: Enter prompt"))
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render(fmt.Sprintf("  Agent: %s (%s)", a.Name, a.Provider)))
-		b.WriteString("\n\n")
+		b.WriteString("\n")
+		// Enter runs here with no preview, so show the full path the agent works in.
+		if m.gatewayQuick {
+			if resolved, err := workspace.ResolveCurrentDirDefault(m.cwd); err == nil {
+				b.WriteString(dimStyle.Render("  Runs in: " + strings.ReplaceAll(resolved.Path, "\x1b", "?")))
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString("\n")
 		b.WriteString("  ")
 		b.WriteString(m.gatewayPrompt)
 		b.WriteString("_\n")

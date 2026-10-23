@@ -66,7 +66,7 @@ not saved. In the switch list, `Enter` makes the highlighted agent current and
 
 Prompt: with a current agent (or a vault with one agent), the Prompt Gateway
 opens on the prompt step. `Enter` runs the prompt in the default workspace
-(the current directory). `Tab` goes to the workspace and preview steps
+(the current directory, or its repository root), shown in full as `Runs in:`. `Tab` goes to the workspace and preview steps
 instead, and `Esc` goes back to agent selection. Without a current agent the
 flow starts at agent selection, and the agent picked becomes current.
 

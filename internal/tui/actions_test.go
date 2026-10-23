@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -368,5 +370,22 @@ func TestProgramDrivesActionsMenu(t *testing.T) {
 	}
 	if _, ok := v.Get("via-program"); !ok {
 		t.Fatal("program run did not add the agent")
+	}
+}
+
+// Enter runs the prompt with no preview, so the screen shows the full
+// workspace path, not the shortened one in the help bar.
+func TestQuickPromptShowsFullWorkspace(t *testing.T) {
+	m := actionsTestModel(t)
+	m.cwd = filepath.Join(m.cwd, "a-rather-long-directory-name-for-the-workspace", "nested")
+	if err := os.MkdirAll(m.cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, k := range []tea.KeyMsg{keySpace, runeKey('s'), keyEnter, keySpace, runeKey('p')} {
+		m = press(t, m, k, &n)
+	}
+	if !strings.Contains(m.View(), "Runs in: "+m.cwd) {
+		t.Fatalf("prompt screen does not show %s:\n%s", m.cwd, m.View())
 	}
 }
