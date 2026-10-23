@@ -68,6 +68,9 @@ func TestGatewayAddListNoSecrets(t *testing.T) {
 			t.Errorf("add %v succeeded", bad)
 		}
 	}
+	if _, err := runPricing(t, gatewayAddCmd, []string{"x\x1b[31my"}, map[string]string{"url": "https://x.example", "token": "t"}); err == nil {
+		t.Error("add with an escape in the name succeeded")
+	}
 	out, err := runPricing(t, gatewayListCmd, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -242,6 +245,7 @@ func TestGatewayImportStrategies(t *testing.T) {
 		{"replace blank moved URL drops", strategyReplace, []agent.Gateway{{Name: "lab", URL: "https://evil.example"}}, map[string]string{"lab": ""}, true},
 		{"mirror removes local-only", strategyMirror, []agent.Gateway{newGw}, map[string]string{"new": "n-tok"}, false},
 		{"mirror keeps local on a bad entry", strategyMirror, []agent.Gateway{{Name: "lab", URL: "ftp://x.example", Token: "b"}}, map[string]string{"lab": "local-tok"}, false},
+		{"escape in name not added", strategyMerge, []agent.Gateway{{Name: "e\x1b]0;x\a", URL: "https://x.example", Token: "b"}}, map[string]string{"lab": "local-tok"}, false},
 		{"bad entry not added", strategyMerge, []agent.Gateway{{Name: "bad", URL: "https://u:p@x.example", Token: "b"}}, map[string]string{"lab": "local-tok"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

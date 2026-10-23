@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
 // Gateway holds the credentials a reverse-proxy gateway in front of a model
@@ -50,6 +52,9 @@ func (g Gateway) ValidateTarget() error {
 	}
 	if strings.ContainsAny(g.Name, " \t\r\n") {
 		return fmt.Errorf("gateway name %q has whitespace", g.Name)
+	}
+	if textutil.Printable(g.Name) != g.Name || textutil.Printable(g.BasicAuthUser) != g.BasicAuthUser {
+		return fmt.Errorf("gateway %q: name or basic auth user has control characters", g.Name)
 	}
 	u, err := url.Parse(strings.TrimSpace(g.URL))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
