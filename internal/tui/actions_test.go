@@ -400,3 +400,16 @@ func TestActionsMenuSemicolonOpensCommandMode(t *testing.T) {
 		t.Fatal("; in the actions menu did not open command mode")
 	}
 }
+
+// The full help names both cursor directions and where Prompt runs.
+func TestFullHelpWording(t *testing.T) {
+	m := actionsTestModel(t)
+	n := 0
+	m = press(t, m, runeKey('?'), &n)
+	v := m.View()
+	for _, want := range []string{"j/k", "default workspace", "agentvault edit NAME --api-key KEY"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("help lacks %q", want)
+		}
+	}
+}

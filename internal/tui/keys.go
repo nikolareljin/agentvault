@@ -197,17 +197,17 @@ func (m model) helpSections(from model) []helpSection {
 		{"Actions menu (space, from any tab)", []key.Binding{
 			as(k.ActAdd, "add agent: name, provider, model, base URL"),
 			as(k.ActSwitch, "switch the current agent (this session)"),
-			as(k.ActPrompt, "prompt the current agent in the current dir"),
+			as(k.ActPrompt, "prompt the current agent in the default workspace"),
 			as(k.ActUsage, "usage and provider status (Status tab)"),
 			as(k.ActCommand, "run an agentvault CLI command"),
 		}},
-		{"Navigation", []key.Binding{k.Tabs, k.PrevTab, k.JumpTab, as(k.Down, "move cursor"), as(k.Detail, "view details"), as(k.Back, "back / close"), k.Quit}},
+		{"Navigation", []key.Binding{k.Tabs, k.PrevTab, k.JumpTab, bind([]string{"up", "k", "down", "j"}, "j/k", "move cursor"), as(k.Detail, "view details"), as(k.Back, "back / close"), k.Quit}},
 		{"Agents tab", agentsTab},
 		{"Instructions tab", []key.Binding{k.Edit, as(k.Delete, "delete selected instruction")}},
 		{"Rules tab", []key.Binding{as(k.Delete, "delete selected rule")}},
 		{"Detected tab", []key.Binding{k.AddDetected, as(k.Connect, "connect selected agent to Prompt Gateway"), as(k.Detail, "open detected agent details")}},
 		{"General", []key.Binding{as(k.Command, "run custom CLI command"), as(k.Gateway, "prompt gateway (Commands tab)"), as(k.Refresh, "refresh data"), as(k.Help, "show this help")}},
-		{"API keys", []key.Binding{bind(nil, "agentvault edit NAME --api-key KEY", "set a key (the TUI does not take secrets)")}},
+		{"API keys", []key.Binding{bind(nil, "edit --api-key", "agentvault edit NAME --api-key KEY (the TUI takes no secrets)")}},
 	}
 }
 
