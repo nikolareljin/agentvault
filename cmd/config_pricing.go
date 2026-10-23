@@ -125,7 +125,7 @@ var configPricingSetCmd = &cobra.Command{
 		}
 		// Alerts read one budget per provider, so a new one replaces any other.
 		cleared := false
-		if cmd.Flags().Changed("monthly-budget") {
+		if cmd.Flags().Changed("monthly-budget") && row.MonthlyBudgetUSD > 0 {
 			for j := range shared.Pricing {
 				if j != i && shared.Pricing[j].Provider == provider && shared.Pricing[j].MonthlyBudgetUSD > 0 {
 					shared.Pricing[j].MonthlyBudgetUSD = 0

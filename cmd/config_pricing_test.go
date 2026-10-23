@@ -119,6 +119,13 @@ func TestPricingOneBudgetPerProvider(t *testing.T) {
 	if p, _ := findPricing(rows, agent.ProviderClaude, ""); p.MonthlyBudgetUSD != 50 {
 		t.Errorf("claude budget %v, want 50", p.MonthlyBudgetUSD)
 	}
+	// 0 on another row removes nothing but that row's own budget.
+	if _, err := runPricing(t, configPricingSetCmd, []string{"claude"}, map[string]string{"model": "opus", "monthly-budget": "0"}); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := findPricing(storedPricing(t, cfgDir), agent.ProviderClaude, ""); p.MonthlyBudgetUSD != 50 {
+		t.Errorf("claude budget %v after opus set to 0, want 50", p.MonthlyBudgetUSD)
+	}
 }
 
 func TestPricingRemove(t *testing.T) {
