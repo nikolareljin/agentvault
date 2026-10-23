@@ -394,3 +394,29 @@ func TestVariantTierFlagRoutesUnderDefaultPolicy(t *testing.T) {
 		t.Fatalf("ran %s with policy %s, want c-deep with balanced", got.Name, choice.Policy)
 	}
 }
+
+func TestVariantImportBundleDefaultPolicyWins(t *testing.T) {
+	// A bundle group on the default policy stores no value; replace and mirror
+	// still make it win over a local policy, merge keeps the local one.
+	bundle := SetupBundle{Agents: []agent.Agent{tierAgent("c-a", "simple", "", true)}}
+	for _, tc := range []struct {
+		strategy importStrategy
+		want     string
+	}{
+		{strategyMerge, "quality-first"},
+		{strategyReplace, ""},
+		{strategyMirror, ""},
+	} {
+		v := newTestVault(t)
+		if err := v.Add(tierAgent("c-a", "simple", "quality-first", true)); err != nil {
+			t.Fatal(err)
+		}
+		plan := planProfileImport(v, bundle, tc.strategy, time.Now(), importConsent{})
+		if err := commitProfileImport(v, plan); err != nil {
+			t.Fatal(err)
+		}
+		if p := agent.VariantPolicyOf(v.List(), "claude"); p != tc.want {
+			t.Fatalf("%v: policy = %q, want %q", tc.strategy, p, tc.want)
+		}
+	}
+}

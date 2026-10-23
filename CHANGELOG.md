@@ -18,8 +18,8 @@
   to `--json` (`variant`, `group`, `policy`, `tier`, `fallback_reason`) and
   to prompt history. `default` (and unset) keeps running the group default.
   Import treats the policy like the default: the bundle's under replace and
-  mirror, the local one under merge (an unset local policy is `default` and
-  stays; a group new to this vault takes the bundle's)
+  mirror (an unset policy is `default` and wins too), the local one under
+  merge (a group new to this vault takes the bundle's)
   (https://github.com/nikolareljin/agentvault/issues/19). Compatibility:
   agentvault 0.17.0 and older read these agents but drop the tier and
   policy fields on their next save.

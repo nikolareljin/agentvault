@@ -474,9 +474,9 @@ func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strate
 		if touched[g] {
 			bundlePolicy = agent.VariantPolicyOf(incoming, g)
 		}
-		// An unset local policy means default, a choice merge keeps; only a group
-		// new to this vault takes the bundle's policy under merge.
-		if (strategy.incomingWins() || !localGroup) && bundlePolicy != "" {
+		// Unset means default, a choice like any other: replace and mirror take
+		// the bundle's even when unset, merge keeps a local group's.
+		if (strategy.incomingWins() && touched[g]) || (!localGroup && bundlePolicy != "") {
 			policy, src = bundlePolicy, "bundle"
 		}
 		// An unknown policy from a newer bundle is kept as is; prompt
