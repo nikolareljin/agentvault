@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-23
+
 ### Added
 
 - `agentvault gateway add|list|remove|rotate|env` keeps the bearer token
@@ -29,7 +31,10 @@
 - Claude backends `vertex` (`--vertex-region`, `--vertex-project`; sets
   `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`)
   and `gateway` (`--base-url` or a stored `--gateway`; sets
-  `ANTHROPIC_BASE_URL` and the key or `ANTHROPIC_AUTH_TOKEN`). Import names
+  `ANTHROPIC_BASE_URL` and the key or `ANTHROPIC_AUTH_TOKEN`). These runs
+  do not inherit `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+  `ANTHROPIC_BASE_URL` or `CLAUDE_CODE_USE_*` from the shell, and a stored
+  gateway's token is sent only to that gateway's URL. Import names
   an unknown Claude backend in a `Note:` line instead of running it as
   anthropic silently. Compatibility: agentvault 0.16.0 and older read these
   agents but drop the variant, vertex and gateway fields on their next save
