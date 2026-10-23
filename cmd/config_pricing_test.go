@@ -162,3 +162,37 @@ func TestWriteCostCSV(t *testing.T) {
 		t.Errorf("csv =\n%s\nwant\n%s", b.String(), want)
 	}
 }
+
+func TestPricingMatchesStoredRowIgnoringCase(t *testing.T) {
+	cfgDir := scopeTestVault(t)
+	v := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	// A bundle or an older vault can hold a pattern that is not lower case.
+	if err := v.SetSharedConfig(agent.SharedConfig{Pricing: []agent.ProviderPricing{
+		{Provider: agent.ProviderClaude, ModelPattern: "Sonnet", InputPer1KTokens: 1, OutputPer1KTokens: 2},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runPricing(t, configPricingSetCmd, []string{"claude"}, map[string]string{"model": "sonnet", "input": "3"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := storedPricing(t, cfgDir)
+	if len(rows) != 1 || rows[0].InputPer1KTokens != 3 || rows[0].OutputPer1KTokens != 2 {
+		t.Fatalf("rows = %+v, want the Sonnet row updated in place", rows)
+	}
+	if _, err := runPricing(t, configPricingRemoveCmd, []string{"claude"}, map[string]string{"model": "SONNET"}); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+}
+
+func TestPricingSetNeedsAChange(t *testing.T) {
+	cfgDir := scopeTestVault(t)
+	if _, err := runPricing(t, configPricingSetCmd, []string{"claude"}, map[string]string{"model": "sonnet"}); err == nil || !strings.Contains(err.Error(), "nothing to change") {
+		t.Fatalf("set with no values: %v", err)
+	}
+	if rows := storedPricing(t, cfgDir); len(rows) != 0 {
+		t.Errorf("stored %d rows, want none", len(rows))
+	}
+}
