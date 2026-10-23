@@ -48,8 +48,10 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
 		case ClaudeBackendGateway:
-			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), []string{"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"}, "")
-			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), []string{"ANTHROPIC_BASE_URL"}, "")
+			// No fallback to the shell's ANTHROPIC_* values: an Anthropic key
+			// must not be sent to a gateway the agent names.
+			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
+			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
 		default:
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), []string{"ANTHROPIC_API_KEY"}, "")
 			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
@@ -96,8 +98,8 @@ func ClaudeRuntimeEnv(a Agent, gw *Gateway) (map[string]string, error) {
 		}
 	case ClaudeBackendVertex:
 		region, project := strings.TrimSpace(meta.VertexRegion), strings.TrimSpace(meta.VertexProject)
-		if region == "" || project == "" {
-			return nil, errors.New("claude vertex backend needs a region and a project")
+		if err := validateVertexTarget(region, project); err != nil {
+			return nil, err
 		}
 		env["CLAUDE_CODE_USE_VERTEX"] = "1"
 		env["CLOUD_ML_REGION"] = region
@@ -122,7 +124,8 @@ func ClaudeRuntimeEnv(a Agent, gw *Gateway) (map[string]string, error) {
 			env["ANTHROPIC_AUTH_TOKEN"] = key
 		case key != "":
 			env["ANTHROPIC_API_KEY"] = key
-		case gw != nil && strings.TrimSpace(gw.Token) != "":
+		case gw != nil && strings.TrimSpace(gw.Token) != "" && SameGatewayURL(base, gw.URL):
+			// The stored token goes only to the stored gateway's own URL.
 			env["ANTHROPIC_AUTH_TOKEN"] = strings.TrimSpace(gw.Token)
 		}
 	}

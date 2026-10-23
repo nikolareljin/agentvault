@@ -468,7 +468,10 @@ func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strate
 		if src == "" {
 			src = "first by name"
 		}
-		rep.record("Variant", "group %s default %s (%s)", g, def.Name, src)
+		// Only a change is news: a re-import that keeps the default is quiet.
+		if def.Name != localDefault[g] {
+			rep.record("Variant", "group %s default %s (%s)", g, def.Name, src)
+		}
 		for _, n := range notes {
 			if strings.HasPrefix(n, "variant group "+g+" ") {
 				rep.record("Note", "%s", n)

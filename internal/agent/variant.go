@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/nikolareljin/agentvault/internal/textutil"
 )
@@ -148,7 +150,10 @@ func SetVariantDefault(agents []Agent, group, name string) error {
 			continue
 		}
 		v := *agents[i].Variant
-		v.Default = agents[i].Name == name
+		if v.Default != (agents[i].Name == name) {
+			v.Default = !v.Default
+			agents[i].UpdatedAt = time.Now()
+		}
 		agents[i].Variant = &v
 	}
 	return nil
@@ -172,12 +177,16 @@ func validateClaudeBackendFields(a *Agent) error {
 	}
 	switch a.Backend {
 	case ClaudeBackendVertex:
-		if strings.TrimSpace(meta.VertexRegion) == "" || strings.TrimSpace(meta.VertexProject) == "" {
-			return errors.New("claude vertex backend needs a region and a project (--vertex-region, --vertex-project)")
+		if err := validateVertexTarget(strings.TrimSpace(meta.VertexRegion), strings.TrimSpace(meta.VertexProject)); err != nil {
+			return err
 		}
 	case ClaudeBackendGateway:
 		if strings.TrimSpace(a.BaseURL) == "" && strings.TrimSpace(meta.GatewayName) == "" {
 			return errors.New("claude gateway backend needs --base-url or --gateway NAME")
+		}
+		// Both would send the stored gateway's token to another URL.
+		if strings.TrimSpace(a.BaseURL) != "" && strings.TrimSpace(meta.GatewayName) != "" {
+			return errors.New("claude gateway backend takes --base-url or --gateway NAME, not both")
 		}
 		if strings.TrimSpace(a.BaseURL) != "" {
 			if err := validateGatewayBaseURL(a.BaseURL); err != nil {
@@ -186,6 +195,33 @@ func validateClaudeBackendFields(a *Agent) error {
 		}
 	}
 	return nil
+}
+
+// Vertex builds its endpoint host from the region, so both values are held
+// to Google's syntax: a crafted region must not name another host.
+var (
+	vertexRegionRE  = regexp.MustCompile(`^[a-z]+(-[a-z0-9]+)*$`)
+	vertexProjectRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
+)
+
+func validateVertexTarget(region, project string) error {
+	if region == "" || project == "" {
+		return errors.New("claude vertex backend needs a region and a project (--vertex-region, --vertex-project)")
+	}
+	if !vertexRegionRE.MatchString(region) {
+		return fmt.Errorf("claude vertex region %q is not a region name such as us-east5", region)
+	}
+	if !vertexProjectRE.MatchString(project) {
+		return fmt.Errorf("claude vertex project %q is not a Google Cloud project ID", project)
+	}
+	return nil
+}
+
+// SameGatewayURL reports whether two gateway URLs are the same endpoint,
+// ignoring surrounding space and a trailing slash.
+func SameGatewayURL(a, b string) bool {
+	norm := func(s string) string { return strings.TrimRight(strings.TrimSpace(s), "/") }
+	return norm(a) != "" && norm(a) == norm(b)
 }
 
 func validateGatewayBaseURL(raw string) error {

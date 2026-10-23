@@ -138,8 +138,14 @@ default and prints a note.
 | `anthropic` (default) | Anthropic API | `--api-key` | `ANTHROPIC_API_KEY` |
 | `ollama` | local Ollama | `--base-url` | none (HTTP runner) |
 | `bedrock` | AWS Bedrock | provider meta region and profile | `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION`, `AWS_PROFILE` |
-| `vertex` | Google Vertex AI | `--vertex-region`, `--vertex-project` (both required) | `CLAUDE_CODE_USE_VERTEX=1`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID` |
-| `gateway` | Claude-compatible endpoint (hosted gateway, API gateway, reverse proxy) | `--base-url` (http/https, no credentials in it) or `--gateway NAME`; `--api-key` | `ANTHROPIC_BASE_URL`, plus `ANTHROPIC_API_KEY`, or `ANTHROPIC_AUTH_TOKEN` with `--auth-mode token` or a stored gateway token |
+| `vertex` | Google Vertex AI | `--vertex-region` (such as `us-east5`), `--vertex-project` (a Google Cloud project ID); both required and checked | `CLAUDE_CODE_USE_VERTEX=1`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID` |
+| `gateway` | Claude-compatible endpoint (hosted gateway, API gateway, reverse proxy) | `--base-url` (http/https, no credentials in it) or `--gateway NAME`, not both; `--api-key` | `ANTHROPIC_BASE_URL`, plus `ANTHROPIC_API_KEY`, or `ANTHROPIC_AUTH_TOKEN` with `--auth-mode token` or a stored gateway token |
+
+For `vertex` and `gateway`, `prompt` drops `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and `CLAUDE_CODE_USE_*` from the
+shell environment and sets only the backend's own values, so a shell's
+Anthropic key never reaches a gateway. A stored gateway's token is sent only
+to that gateway's URL.
 
 An unknown backend (written by a newer agentvault or by hand) is refused by
 `add` and `edit`, runs as `anthropic`, and is named in a `Note:` line on

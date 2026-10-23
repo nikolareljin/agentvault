@@ -101,14 +101,17 @@ func TestClaudeBackendValidation(t *testing.T) {
 	}{
 		{"vertex missing project", Agent{Name: "v", Provider: ProviderClaude, Backend: "vertex", ProviderMeta: &AgentProviderMeta{VertexRegion: "us-east5"}}, "region and a project"},
 		{"vertex no meta", Agent{Name: "v", Provider: ProviderClaude, Backend: "vertex"}, "region and a project"},
-		{"vertex ok", Agent{Name: "v", Provider: ProviderClaude, Backend: "VERTEX", ProviderMeta: &AgentProviderMeta{VertexRegion: "r", VertexProject: "p"}}, ""},
+		{"vertex ok", Agent{Name: "v", Provider: ProviderClaude, Backend: "VERTEX", ProviderMeta: &AgentProviderMeta{VertexRegion: "us-east5", VertexProject: "my-project-1"}}, ""},
 		{"gateway missing url", Agent{Name: "g", Provider: ProviderClaude, Backend: "gateway"}, "--base-url or --gateway"},
 		{"gateway url creds", Agent{Name: "g", Provider: ProviderClaude, Backend: "gateway", BaseURL: "https://u:p@gw.example.com"}, "must not carry credentials"},
 		{"gateway bad scheme", Agent{Name: "g", Provider: ProviderClaude, Backend: "gateway", BaseURL: "ftp://gw.example.com"}, "http:// or https://"},
 		{"gateway ok", Agent{Name: "g", Provider: ProviderClaude, Backend: "gateway", BaseURL: "https://gw.example.com"}, ""},
 		{"gateway by name", Agent{Name: "g", Provider: ProviderClaude, Backend: "gateway", ProviderMeta: &AgentProviderMeta{GatewayName: "corp"}}, ""},
 		{"gateway token auth", Agent{Name: "g", Provider: ProviderClaude, Backend: "gateway", BaseURL: "https://gw.example.com", ProviderMeta: &AgentProviderMeta{AuthMode: AuthModeToken}}, ""},
-		{"vertex api key auth", Agent{Name: "v", Provider: ProviderClaude, Backend: "vertex", ProviderMeta: &AgentProviderMeta{AuthMode: AuthModeAPIKey, VertexRegion: "r", VertexProject: "p"}}, "not supported"},
+		{"vertex region names a host", Agent{Name: "v", Provider: ProviderClaude, Backend: "vertex", ProviderMeta: &AgentProviderMeta{VertexRegion: "evil.example/#", VertexProject: "my-project-1"}}, "not a region"},
+		{"vertex bad project", Agent{Name: "v", Provider: ProviderClaude, Backend: "vertex", ProviderMeta: &AgentProviderMeta{VertexRegion: "us-east5", VertexProject: "x.y"}}, "project ID"},
+		{"gateway url and stored gateway", Agent{Name: "g", Provider: ProviderClaude, Backend: "gateway", BaseURL: "https://other.example", ProviderMeta: &AgentProviderMeta{GatewayName: "corp"}}, "not both"},
+		{"vertex api key auth", Agent{Name: "v", Provider: ProviderClaude, Backend: "vertex", ProviderMeta: &AgentProviderMeta{AuthMode: AuthModeAPIKey, VertexRegion: "us-east5", VertexProject: "my-project-1"}}, "not supported"},
 		{"unknown backend", Agent{Name: "u", Provider: ProviderClaude, Backend: "foundry"}, "unknown claude backend"},
 		{"bad group", Agent{Name: "u", Provider: ProviderClaude, Variant: &AgentVariant{Group: "a b"}}, "whitespace"},
 		{"empty group", Agent{Name: "u", Provider: ProviderClaude, Variant: &AgentVariant{}}, "group name is required"},
@@ -144,9 +147,9 @@ func TestClaudeBackendDiagnostic(t *testing.T) {
 }
 
 func TestClaudeRuntimeEnv(t *testing.T) {
-	vertex := Agent{Provider: ProviderClaude, Backend: "vertex", ProviderMeta: &AgentProviderMeta{VertexRegion: "us-east5", VertexProject: "proj"}}
+	vertex := Agent{Provider: ProviderClaude, Backend: "vertex", ProviderMeta: &AgentProviderMeta{VertexRegion: "us-east5", VertexProject: "my-project-1"}}
 	env, err := ClaudeRuntimeEnv(vertex, nil)
-	if err != nil || env["CLAUDE_CODE_USE_VERTEX"] != "1" || env["CLOUD_ML_REGION"] != "us-east5" || env["ANTHROPIC_VERTEX_PROJECT_ID"] != "proj" {
+	if err != nil || env["CLAUDE_CODE_USE_VERTEX"] != "1" || env["CLOUD_ML_REGION"] != "us-east5" || env["ANTHROPIC_VERTEX_PROJECT_ID"] != "my-project-1" {
 		t.Fatalf("vertex env = %v, %v", env, err)
 	}
 	if _, err := ClaudeRuntimeEnv(Agent{Provider: ProviderClaude, Backend: "vertex"}, nil); err == nil {
@@ -184,5 +187,22 @@ func TestClaudeRuntimeEnv(t *testing.T) {
 	env, _ = ClaudeRuntimeEnv(Agent{Provider: ProviderClaude}, nil)
 	if len(env) != 0 {
 		t.Fatalf("anthropic env = %v, want none", env)
+	}
+}
+
+// A stored gateway's token goes only to that gateway's URL.
+func TestClaudeRuntimeEnvStoredTokenOnlyToItsURL(t *testing.T) {
+	gw := &Gateway{Name: "corp", URL: "https://corp.example.com/", Token: "t1"}
+	a := Agent{Provider: ProviderClaude, Backend: "gateway", BaseURL: "https://evil.example", ProviderMeta: &AgentProviderMeta{GatewayName: "corp"}}
+	env, err := ClaudeRuntimeEnv(a, gw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := env["ANTHROPIC_AUTH_TOKEN"]; ok {
+		t.Fatalf("stored token sent to another URL: %v", env)
+	}
+	a.BaseURL = "https://corp.example.com"
+	if env, _ := ClaudeRuntimeEnv(a, gw); env["ANTHROPIC_AUTH_TOKEN"] != "t1" {
+		t.Fatalf("env = %v, want the stored token for its own URL", env)
 	}
 }

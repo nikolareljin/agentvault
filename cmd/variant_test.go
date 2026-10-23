@@ -20,7 +20,7 @@ func variantAgent(name, backend string, def bool) agent.Agent {
 		a.BaseURL = "https://gw.example.com"
 		a.APIKey = "gw-secret"
 	case agent.ClaudeBackendVertex:
-		a.ProviderMeta = &agent.AgentProviderMeta{VertexRegion: "us-east5", VertexProject: "proj"}
+		a.ProviderMeta = &agent.AgentProviderMeta{VertexRegion: "us-east5", VertexProject: "my-project-1"}
 	}
 	return a
 }
@@ -104,8 +104,10 @@ func TestImportVariantDefaultMergeVsReplace(t *testing.T) {
 				t.Fatalf("default = %s, want %s", got, tc.want)
 			}
 			lines := strings.Join(plan.Report.Lines, "\n")
-			if !strings.Contains(lines, "Variant: group claude default "+tc.want+" ("+tc.source+")") {
-				t.Fatalf("report lacks the variant line:\n%s", lines)
+			// A kept local default is not news; a changed one is reported.
+			hasLine := strings.Contains(lines, "Variant: group claude default "+tc.want+" ("+tc.source+")")
+			if hasLine != (tc.source != "local") || (tc.source == "local" && strings.Contains(lines, "Variant:")) {
+				t.Fatalf("variant line present = %v for source %s:\n%s", hasLine, tc.source, lines)
 			}
 			if !strings.Contains(lines, `Note: agent odd: unknown claude backend "foundry"`) {
 				t.Fatalf("report lacks the unknown backend note:\n%s", lines)
@@ -191,7 +193,7 @@ func TestVariantExportImportRoundTrip(t *testing.T) {
 			}
 			gw, _ := target.Get("c-gw")
 			vx, _ := target.Get("c-vertex")
-			if gw.Backend != "gateway" || gw.BaseURL != "https://gw.example.com" || vx.ProviderMeta == nil || vx.ProviderMeta.VertexProject != "proj" {
+			if gw.Backend != "gateway" || gw.BaseURL != "https://gw.example.com" || vx.ProviderMeta == nil || vx.ProviderMeta.VertexProject != "my-project-1" {
 				t.Fatalf("backend settings lost: gw=%#v vertex=%#v", gw, vx)
 			}
 			wantKey := ""
@@ -322,5 +324,57 @@ func TestResolvePromptAgentGroupAndStoredGateway(t *testing.T) {
 	// The stored agent is not changed.
 	if a, _ := v.Get("c-gw"); a.BaseURL != "" || a.APIKey != "" || a.ProviderMeta.AuthMode != "" {
 		t.Fatalf("stored agent changed: %#v", a)
+	}
+}
+
+// A stored gateway's URL is filled before routing, so a loopback gateway
+// passes --local-only, and the vault's own agents are not changed.
+func TestResolvePromptAgentAutoLocalOnlyStoredGateway(t *testing.T) {
+	cmd := newPromptOptimizationTestCommand()
+	for _, f := range []string{"auto", "prefer-local", "prefer-fast", "prefer-low-cost", "local-only"} {
+		cmd.Flags().Bool(f, false, "")
+	}
+	cmd.Flags().String("router", "", "")
+	cmd.Flags().String("langgraph-cmd", "", "")
+	for _, f := range []string{"auto", "local-only"} {
+		if err := cmd.Flags().Set(f, "true"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v := gatewayPromptVault{
+		stubPromptVault: stubPromptVault{agents: []agent.Agent{{Name: "c-gw", Provider: agent.ProviderClaude, Backend: "gateway",
+			ProviderMeta: &agent.AgentProviderMeta{GatewayName: "corp"}}}},
+		gw: agent.Gateway{Name: "corp", URL: "http://127.0.0.1:8080", Token: "t1"},
+	}
+	got, _, _, err := resolvePromptAgent(cmd, v, nil, "Private local only code review.")
+	if err != nil {
+		t.Fatalf("local-only with a loopback stored gateway: %v", err)
+	}
+	if got.BaseURL != "http://127.0.0.1:8080" || got.APIKey != "t1" {
+		t.Fatalf("resolved = %#v", got)
+	}
+	if a, _ := v.Get("c-gw"); a.BaseURL != "" || a.APIKey != "" {
+		t.Fatalf("stored agent changed: %#v", a)
+	}
+}
+
+// Vertex and gateway runs get the backend's own values, not the shell's.
+func TestClaudePromptEnvDropsShellAnthropicValues(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "shell-key")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://shell.example")
+	t.Setenv("CLAUDE_CODE_USE_BEDROCK", "1")
+	env, err := claudePromptEnv(agent.Agent{Provider: agent.ProviderClaude, Backend: "gateway", BaseURL: "https://gw.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "shell-key") || strings.Contains(joined, "shell.example") || strings.Contains(joined, "CLAUDE_CODE_USE_BEDROCK") {
+		t.Fatal("prompt env kept a shell ANTHROPIC_* or CLAUDE_CODE_USE_* value")
+	}
+	if !strings.Contains(joined, "ANTHROPIC_BASE_URL=https://gw.example.com") {
+		t.Fatal("prompt env lacks the agent's base URL")
+	}
+	if cfg := agent.ResolvePromptRuntimeConfig(agent.Agent{Provider: agent.ProviderClaude, Backend: "gateway"}); cfg.APIKey.Value != "" {
+		t.Fatalf("gateway runtime config took the shell key: %q", cfg.APIKey.Value)
 	}
 }
