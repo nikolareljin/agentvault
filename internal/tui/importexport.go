@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -190,14 +193,28 @@ func (m *model) openImport() tea.Cmd {
 // exportFormState reads the form inputs into the export state.
 func (m model) exportFormState() exportForm {
 	f := m.exp
-	f.Path = m.expPath.Value()
+	f.Path = expandTilde(m.expPath.Value())
 	return f
+}
+
+// expandTilde does what a shell would do for a leading ~, since the forms
+// run the CLI without one and the CLI takes these paths literally.
+func expandTilde(p string) string {
+	p = strings.TrimSpace(p)
+	if p != "~" && !strings.HasPrefix(p, "~/") && !strings.HasPrefix(p, `~\`) {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	return filepath.Join(home, p[1:])
 }
 
 func (m model) importFormState() importForm {
 	f := m.imp
-	f.Path = m.impPath.Value()
-	f.ProjectRoot = m.impRoot.Value()
+	f.Path = expandTilde(m.impPath.Value())
+	f.ProjectRoot = expandTilde(m.impRoot.Value())
 	f.Strategy = importStrategies[m.impStrategy]
 	f.OnConflict = importOnConflicts[m.impConflict]
 	return f
@@ -339,10 +356,22 @@ func (m *model) startImportPreview() tea.Cmd {
 	m.impOutput, m.impErr = "", ""
 	m.impSeq++
 	seq, args := m.impSeq, importArgs(f, true)
-	return func() tea.Msg {
-		out, err := exec.Command(exe, args...).CombinedOutput()
-		return importPreviewMsg{seq: seq, output: string(out), err: err}
-	}
+	// The CLI may ask for the master and bundle passwords, so the preview runs
+	// on the terminal like the real import; its output is also copied into
+	// buf and shown in the preview screen afterwards.
+	var buf bytes.Buffer
+	c := exec.Command(exe, args...)
+	c.Stdout = io.MultiWriter(os.Stdout, &buf)
+	c.Stderr = io.MultiWriter(os.Stderr, &buf)
+	return runPreviewProcess(c, func(err error) tea.Msg {
+		return importPreviewMsg{seq: seq, output: buf.String(), err: err}
+	})
+}
+
+// runPreviewProcess hands the terminal to the preview command. Tests replace
+// it to run the command without a terminal.
+var runPreviewProcess = func(c *exec.Cmd, done func(error) tea.Msg) tea.Cmd {
+	return tea.ExecProcess(c, done)
 }
 
 func (m *model) handleImportPreviewMsg(msg importPreviewMsg) {
@@ -366,6 +395,12 @@ func (m *model) handleImportPreviewInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.impRunning {
+		return m, nil
+	}
+	// The preview had the terminal for passwords, so a failure is real: fix
+	// the form and preview again rather than run the import blind.
+	if m.impErr != "" && (key.Matches(msg, keys.ConfirmImport) || key.Matches(msg, keys.ConfirmMirror)) {
+		m.setStatus("The preview failed: press e to fix the form and preview again", true)
 		return m, nil
 	}
 	f := m.importFormState()
@@ -501,7 +536,7 @@ func (m model) renderImportPreview() string {
 	if m.impErr != "" {
 		b.WriteString(errorStyle.Render("  Preview failed: " + textutil.Printable(m.impErr)))
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("  An encrypted bundle needs AGENTVAULT_IMPORT_PASSWORD for the preview; the real import asks on the terminal."))
+		b.WriteString(dimStyle.Render("  Press e to fix the form and preview again; the import does not run after a failed preview."))
 		b.WriteString("\n")
 	}
 	if f.mirror() {

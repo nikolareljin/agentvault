@@ -96,12 +96,13 @@ passed as repeated `--map`. `Ctrl+D` removes the last entry. An entry without
 both sides is refused.
 
 `Enter` elsewhere on the import form runs the same command with `--dry-run`
-and shows its output in the TUI. From the preview, `y` or `Enter` runs the
+on the terminal, so it can ask for the master and bundle passwords, then
+shows its output in the TUI. From the preview, `y` or `Enter` runs the
 real import on the terminal (it may ask for the bundle password or to confirm
 project matches), `e` or `Esc` returns to the form. `mirror` deletes local
 items the bundle does not have: the form and preview show a warning, and only
-`M` runs it. The preview has no terminal, so an encrypted bundle needs
-`AGENTVAULT_IMPORT_PASSWORD` for the preview; the real import asks for it.
+`M` runs it. After a failed preview neither runs: fix the form with `e` and
+preview again. A leading `~` in a path is expanded to the home directory.
 
 ## Tab 1: Agents
 

@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -32,7 +34,28 @@ func useFakeCLI(t *testing.T, mode string) {
 	t.Setenv(fakeCLIEnv, mode)
 	prev := agentvaultExecutable
 	agentvaultExecutable = os.Executable
-	t.Cleanup(func() { agentvaultExecutable = prev })
+	prevRun := runPreviewProcess
+	runPreviewProcess = func(c *exec.Cmd, done func(error) tea.Msg) tea.Cmd {
+		previewCmds = append(previewCmds, c)
+		return func() tea.Msg { return done(c.Run()) }
+	}
+	t.Cleanup(func() { agentvaultExecutable, runPreviewProcess, previewCmds = prev, prevRun, nil })
+}
+
+// previewCmds records the preview commands the fake runner was given.
+var previewCmds []*exec.Cmd
+
+// The preview may prompt for passwords, so it gets the terminal: stdin is
+// left for ExecProcess to attach, and output is copied, not captured alone.
+func TestImportPreviewGetsTerminal(t *testing.T) {
+	useFakeCLI(t, "ok")
+	runPreview(t, openImportForm(t))
+	if len(previewCmds) != 1 {
+		t.Fatalf("preview did not go through runPreviewProcess (%d calls)", len(previewCmds))
+	}
+	if c := previewCmds[0]; c.Stdin != nil || c.Stdout == nil || c.Stderr == nil {
+		t.Fatalf("stdin=%v stdout=%v stderr=%v, want terminal stdin and copied output", c.Stdin, c.Stdout, c.Stderr)
+	}
 }
 
 func TestExportArgs(t *testing.T) {
@@ -220,6 +243,13 @@ func TestImportPreviewShowsCLIError(t *testing.T) {
 	if !strings.Contains(view, "Error: fake failure") || !strings.Contains(view, "Preview failed") {
 		t.Fatalf("CLI error not shown:\n%s", view)
 	}
+	// A failed preview does not lead to the real import.
+	for _, k := range []tea.KeyMsg{runeKey('y'), keyEnter, runeKey('M')} {
+		tm, cmd := m.Update(k)
+		if got := asModel(t, tm); cmd != nil || got.mode != viewImportPreview {
+			t.Fatalf("%q after failed preview: cmd=%v mode=%v", k.String(), cmd != nil, got.mode)
+		}
+	}
 }
 
 func TestImportPreviewScrubsControlChars(t *testing.T) {
@@ -303,5 +333,26 @@ func TestExportFormTogglesAndWarns(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "agentvault export -y --plain --confirm -- '/tmp/out dir/b.avbundle'") {
 		t.Fatal("command line not shown")
+	}
+}
+
+// The forms run without a shell, so a leading ~ is expanded here.
+func TestFormPathsExpandTilde(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	m := openImportForm(t)
+	m.impPath.SetValue("~/b.avbundle")
+	m.impRoot.SetValue("~")
+	f := m.importFormState()
+	if f.Path != filepath.Join(home, "b.avbundle") || f.ProjectRoot != home {
+		t.Fatalf("path=%q root=%q, want under %s", f.Path, f.ProjectRoot, home)
+	}
+	m.expPath.SetValue("~/out.avbundle")
+	if got := m.exportFormState().Path; got != filepath.Join(home, "out.avbundle") {
+		t.Fatalf("export path=%q", got)
+	}
+	if got := expandTilde("~user/x"); got != "~user/x" {
+		t.Fatalf("~user expanded: %q", got)
 	}
 }
