@@ -973,7 +973,8 @@ func resolveAgentEnvAPIKey(a agent.Agent) string {
 	switch a.Provider {
 	case agent.ProviderClaude:
 		switch agent.NormalizeClaudeBackend(a.Backend) {
-		case agent.ClaudeBackendOllama, agent.ClaudeBackendBedrock:
+		case agent.ClaudeBackendOllama, agent.ClaudeBackendBedrock, agent.ClaudeBackendVertex, agent.ClaudeBackendGateway:
+			// A gateway key is not the ANTHROPIC_API_KEY of this shell.
 			return ""
 		default:
 			return os.Getenv("ANTHROPIC_API_KEY")
@@ -999,8 +1000,11 @@ func agentRequiresAPIKey(a agent.Agent) bool {
 	}
 	if a.Provider == agent.ProviderClaude {
 		switch agent.NormalizeClaudeBackend(a.Backend) {
-		case agent.ClaudeBackendOllama, agent.ClaudeBackendBedrock:
+		case agent.ClaudeBackendOllama, agent.ClaudeBackendBedrock, agent.ClaudeBackendVertex:
 			return false
+		case agent.ClaudeBackendGateway:
+			// A gateway may need no key, or take a stored gateway's token.
+			return a.APIKey != ""
 		}
 	}
 	return true

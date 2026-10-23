@@ -62,13 +62,20 @@ Example:
 			UpdatedAt:    now,
 		}
 		applyRouteConfigFlags(cmd, &a.Route)
+		if err := applyVariantFlags(cmd, &a); err != nil {
+			return err
+		}
 		if err := a.Validate(); err != nil {
+			return err
+		}
+		if err := checkVariantGateway(v, a); err != nil {
 			return err
 		}
 		if err := v.Add(a); err != nil {
 			return err
 		}
 		fmt.Printf("Agent %q added.\n", a.Name)
+		printVariantNotes(v)
 		return nil
 	},
 }
@@ -77,12 +84,13 @@ func init() {
 	rootCmd.AddCommand(addCmd)
 	addCmd.Flags().StringP("provider", "p", "", "provider (claude, gemini, codex, ollama, openai, custom)")
 	addCmd.Flags().StringP("model", "m", "", "model name")
-	addCmd.Flags().String("backend", "", "backend (for claude: anthropic|ollama|bedrock)")
+	addCmd.Flags().String("backend", "", "backend (for claude: anthropic|ollama|bedrock|vertex|gateway)")
 	addCmd.Flags().StringP("api-key", "k", "", "API key")
 	addCmd.Flags().String("base-url", "", "custom base URL")
 	addCmd.Flags().String("system-prompt", "", "system prompt")
 	addCmd.Flags().String("task-desc", "", "task description")
 	addCmd.Flags().String("tags", "", "comma-separated tags")
 	registerRouteConfigFlags(addCmd.Flags())
+	registerVariantFlags(addCmd.Flags())
 	_ = addCmd.MarkFlagRequired("provider")
 }

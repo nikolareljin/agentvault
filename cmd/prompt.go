@@ -397,8 +397,13 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptTe
 	if !autoRoute {
 		a, ok := v.Get(args[0])
 		if !ok {
+			// A variant group name runs the group's default agent.
+			a, ok = agent.VariantDefault(v.List(), args[0])
+		}
+		if !ok {
 			return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("agent %q not found", args[0])
 		}
+		a = withVariantGateway(v, a)
 		return a, nil, agent.ResolvePromptRuntimeConfig(a), nil
 	}
 
@@ -437,7 +442,7 @@ func resolvePromptAgent(cmd *cobra.Command, v vaultLike, args []string, promptTe
 	if routerCfg.LocalOnly && !target.Local {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, fmt.Errorf("selected agent %q does not satisfy local-only policy after runtime resolution", resolved.Name)
 	}
-	return original, &decision, runtimeCfg, nil
+	return withVariantGateway(v, original), &decision, runtimeCfg, nil
 }
 
 func promptRouterOverride(cmd *cobra.Command) agent.RouterConfig {
@@ -610,6 +615,63 @@ func executePromptTarget(ctx context.Context, target agent.ExecutionTarget, a ag
 	default:
 		return promptResult{}, fmt.Errorf("runner %q (provider %q) is not supported by prompt gateway yet", target.Runner, a.Provider)
 	}
+}
+
+// claudePromptEnv returns the claude CLI environment for a. The anthropic
+// backend sets ANTHROPIC_API_KEY as before; other backends add what
+// agent.ClaudeRuntimeEnv returns. A stored gateway is resolved earlier, by
+// resolvePromptAgent, into the agent's base URL and key.
+func claudePromptEnv(a agent.Agent) ([]string, error) {
+	backend := agent.NormalizeClaudeBackend(a.Backend)
+	if backend == agent.ClaudeBackendAnthropic {
+		return envutil.SetValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey)), nil
+	}
+	extra, err := agent.ClaudeRuntimeEnv(a, nil)
+	if err != nil {
+		return nil, err
+	}
+	env := os.Environ()
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		env = envutil.SetValueWithPrecedence(env, k, extra[k])
+	}
+	return env, nil
+}
+
+// promptGatewayLookup is the part of the vault that resolves a stored
+// gateway a Claude gateway agent names.
+type promptGatewayLookup interface {
+	GetGateway(name string) (agent.Gateway, bool)
+}
+
+// withVariantGateway fills a Claude gateway agent's base URL and token from
+// the stored gateway it names, in memory only, when it has none of its own.
+func withVariantGateway(v vaultLike, a agent.Agent) agent.Agent {
+	if a.Provider != agent.ProviderClaude || agent.NormalizeClaudeBackend(a.Backend) != agent.ClaudeBackendGateway || a.ProviderMeta == nil || a.ProviderMeta.GatewayName == "" {
+		return a
+	}
+	lookup, ok := v.(promptGatewayLookup)
+	if !ok {
+		return a
+	}
+	gw, ok := lookup.GetGateway(a.ProviderMeta.GatewayName)
+	if !ok {
+		return a
+	}
+	if strings.TrimSpace(a.BaseURL) == "" {
+		a.BaseURL = gw.URL
+	}
+	if strings.TrimSpace(a.APIKey) == "" && gw.Token != "" {
+		meta := *a.ProviderMeta
+		meta.AuthMode = agent.AuthModeToken
+		a.ProviderMeta = &meta
+		a.APIKey = gw.Token
+	}
+	return a
 }
 
 func effectivePromptBackend(a agent.Agent) string {
@@ -974,7 +1036,11 @@ func executeClaudePrompt(a agent.Agent, prompt string, timeout time.Duration, ex
 
 	cmd := exec.CommandContext(runCtx, "claude", args...)
 	cmd.Dir = executionDir
-	cmd.Env = envutil.SetValueWithPrecedence(os.Environ(), "ANTHROPIC_API_KEY", strings.TrimSpace(a.APIKey))
+	env, err := claudePromptEnv(a)
+	if err != nil {
+		return promptResult{}, err
+	}
+	cmd.Env = env
 
 	var capture bytes.Buffer
 	var stderrCapture bytes.Buffer

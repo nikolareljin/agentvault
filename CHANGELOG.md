@@ -17,6 +17,24 @@
   shares the vault before adding one.
 - The vault keeps top-level fields it does not know when it saves, so data
   a newer agentvault adds later survives a save by this version.
+- Variant groups: `add`/`edit --variant-group G [--variant-default]` tie
+  existing agents together as alternates of one setup, with one default per
+  group. `agentvault variant list [group]` and `variant default G AGENT`
+  manage them, `list` shows the group, and `prompt G` runs the default.
+  Import keeps one default per group: the bundle's under replace and mirror,
+  the local one under merge
+  (https://github.com/nikolareljin/agentvault/issues/29). Runtime routing
+  and complexity-aware selection between variants are separate
+  (https://github.com/nikolareljin/agentvault/issues/19).
+- Claude backends `vertex` (`--vertex-region`, `--vertex-project`; sets
+  `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`)
+  and `gateway` (`--base-url` or a stored `--gateway`; sets
+  `ANTHROPIC_BASE_URL` and the key or `ANTHROPIC_AUTH_TOKEN`). Import names
+  an unknown Claude backend in a `Note:` line instead of running it as
+  anthropic silently. Compatibility: agentvault 0.16.0 and older read these
+  agents but drop the variant, vertex and gateway fields on their next save
+  and run `vertex`/`gateway` agents as anthropic; update every machine that
+  shares the vault before using them.
 
 ## [0.16.0] - 2026-10-23
 

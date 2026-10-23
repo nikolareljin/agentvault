@@ -34,11 +34,13 @@ Use --show-keys to include API keys and base URL credentials in the output
 
 		if asJSON {
 			type entry struct {
-				Name     string `json:"name"`
-				Provider string `json:"provider"`
-				Model    string `json:"model"`
-				APIKey   string `json:"api_key,omitempty"`
-				BaseURL  string `json:"base_url,omitempty"`
+				Name     string              `json:"name"`
+				Provider string              `json:"provider"`
+				Model    string              `json:"model"`
+				APIKey   string              `json:"api_key,omitempty"`
+				BaseURL  string              `json:"base_url,omitempty"`
+				Backend  string              `json:"backend,omitempty"`
+				Variant  *agent.AgentVariant `json:"variant,omitempty"`
 			}
 			var out []entry
 			for _, a := range agents {
@@ -47,6 +49,8 @@ Use --show-keys to include API keys and base URL credentials in the output
 					Provider: string(a.Provider),
 					Model:    a.Model,
 					BaseURL:  maskURLSecrets(a.BaseURL),
+					Backend:  a.Backend,
+					Variant:  a.Variant,
 				}
 				if showKeys {
 					e.APIKey = a.APIKey
@@ -68,13 +72,21 @@ Use --show-keys to include API keys and base URL credentials in the output
 // characters are replaced.
 func printAgentTable(out io.Writer, agents []agent.Agent) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tPROVIDER\tMODEL\tTAGS")
+	fmt.Fprintln(w, "NAME\tPROVIDER\tMODEL\tVARIANT\tTAGS")
 	for _, a := range agents {
 		tags := "-"
 		if len(a.Tags) > 0 {
 			tags = fmt.Sprintf("%v", a.Tags)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", printable(a.Name), printable(string(a.Provider)), printable(a.Model), printable(tags))
+		// A trailing * marks the default of the group.
+		variant := "-"
+		if g := a.VariantGroup(); g != "" {
+			variant = g
+			if a.IsVariantDefault() {
+				variant += "*"
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", printable(a.Name), printable(string(a.Provider)), printable(a.Model), printable(variant), printable(tags))
 	}
 	return w.Flush()
 }

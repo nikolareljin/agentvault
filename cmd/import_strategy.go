@@ -172,6 +172,7 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	rep := &plan.Report
 
 	plan.AgentOps = planAgentOps(v.List(), setup.Agents, strategy, now, consent, rep)
+	plan.AgentOps = planVariantDefaults(v.List(), setup.Agents, plan.AgentOps, strategy, now, rep)
 
 	shared := cloneSharedConfig(v.SharedConfig())
 	// Prompt sessions are local run history that export deliberately omits, so
@@ -314,6 +315,11 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 	var ops []agentOp
 	for _, a := range incoming {
 		incomingNames[a.Name] = struct{}{}
+		if a.Provider == agent.ProviderClaude {
+			if note := agent.ClaudeBackendDiagnostic(a.Backend); note != "" {
+				rep.record("Note", "agent %s: %s", a.Name, note)
+			}
+		}
 		current, exists := byName[a.Name]
 		// Values an export without --include-secrets blanked come back from
 		// the local agent, or are dropped.
@@ -379,6 +385,107 @@ func planAgentOps(existing []agent.Agent, incoming []agent.Agent, strategy impor
 		}
 		ops = append(ops, agentOp{Kind: "remove", Name: a.Name})
 		rep.record("Removed", "agent %s (not in bundle)", a.Name)
+	}
+	return ops
+}
+
+// planVariantDefaults keeps one default per variant group in the vault the
+// plan leaves. Under replace and mirror the bundle's default wins; under
+// merge the local default stays and a bundle default is cleared. A group
+// left with no default gets its first member by name. Each group the bundle
+// touches gets a report line naming its default.
+func planVariantDefaults(existing, incoming []agent.Agent, ops []agentOp, strategy importStrategy, now time.Time, rep *importReport) []agentOp {
+	final := make([]agent.Agent, 0, len(existing))
+	pos := map[string]int{}
+	for _, a := range existing {
+		pos[a.Name] = len(final)
+		final = append(final, a)
+	}
+	opIdx := map[string]int{}
+	for i, op := range ops {
+		switch op.Kind {
+		case "add", "update":
+			opIdx[op.Name] = i
+			if p, ok := pos[op.Name]; ok {
+				final[p] = op.Agent
+			} else {
+				pos[op.Name] = len(final)
+				final = append(final, op.Agent)
+			}
+		case "remove":
+			if p, ok := pos[op.Name]; ok {
+				final[p] = agent.Agent{}
+			}
+		}
+	}
+	kept := final[:0]
+	for _, a := range final {
+		if a.Name != "" {
+			kept = append(kept, a)
+		}
+	}
+	final = kept
+
+	bundleDefault := map[string]string{}
+	touched := map[string]bool{}
+	for _, a := range incoming {
+		if g := a.VariantGroup(); g != "" {
+			touched[g] = true
+			if a.IsVariantDefault() && bundleDefault[g] == "" {
+				bundleDefault[g] = a.Name
+			}
+		}
+	}
+	localDefault := map[string]string{}
+	for _, a := range existing {
+		if g := a.VariantGroup(); g != "" && a.IsVariantDefault() && localDefault[g] == "" {
+			localDefault[g] = a.Name
+		}
+	}
+	before := map[string]bool{}
+	for _, a := range final {
+		before[a.Name] = a.IsVariantDefault()
+	}
+	groups := agent.VariantGroups(final)
+	source := map[string]string{}
+	for _, g := range groups {
+		winner, src := localDefault[g], "local"
+		if (strategy.incomingWins() || winner == "") && bundleDefault[g] != "" {
+			winner, src = bundleDefault[g], "bundle"
+		}
+		// SetVariantDefault fails when the winner left the group.
+		if winner != "" && agent.SetVariantDefault(final, g, winner) == nil {
+			source[g] = src
+		}
+	}
+	_, notes := agent.NormalizeVariantDefaults(final, "")
+	for _, g := range groups {
+		if !touched[g] {
+			continue
+		}
+		def, _ := agent.VariantDefault(final, g)
+		src := source[g]
+		if src == "" {
+			src = "first by name"
+		}
+		rep.record("Variant", "group %s default %s (%s)", g, def.Name, src)
+		for _, n := range notes {
+			if strings.HasPrefix(n, "variant group "+g+" ") {
+				rep.record("Note", "%s", n)
+			}
+		}
+	}
+	for _, a := range final {
+		if before[a.Name] == a.IsVariantDefault() {
+			continue
+		}
+		if i, ok := opIdx[a.Name]; ok {
+			ops[i].Agent.Variant = a.Variant
+			continue
+		}
+		a.UpdatedAt = now
+		ops = append(ops, agentOp{Kind: "update", Agent: a, Name: a.Name})
+		rep.record("Updated", "agent %s (variant default)", a.Name)
 	}
 	return ops
 }

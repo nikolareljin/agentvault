@@ -41,6 +41,14 @@ func ValidateProviderMeta(provider Provider, backend string, meta *AgentProvider
 			effectiveProvider = ProviderOllama
 		}
 		supported := ProviderAuthModes(effectiveProvider)
+		if provider == ProviderClaude {
+			switch backend {
+			case ClaudeBackendVertex:
+				supported = []string{AuthModeIAM}
+			case ClaudeBackendGateway:
+				supported = []string{AuthModeAPIKey, AuthModeToken, AuthModeNone}
+			}
+		}
 		providerValid := false
 		for _, m := range supported {
 			if meta.AuthMode == m {
@@ -85,6 +93,12 @@ func DefaultProviderMeta(provider Provider, backend string) *AgentProviderMeta {
 		}
 		if backend == ClaudeBackendOllama {
 			return &AgentProviderMeta{AuthMode: AuthModeNone}
+		}
+		if backend == ClaudeBackendVertex {
+			return &AgentProviderMeta{AuthMode: AuthModeIAM}
+		}
+		if backend == ClaudeBackendGateway {
+			return &AgentProviderMeta{AuthMode: AuthModeAPIKey}
 		}
 		return &AgentProviderMeta{AuthMode: AuthModeAPIKey}
 	case ProviderCopilot:

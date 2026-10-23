@@ -105,10 +105,12 @@ brew install nikolareljin/tap/agentvault
 ### Agent Management
 | Command | Description |
 |---------|-------------|
-| `add <name>` | Add new agent (supports Claude `--backend anthropic|ollama|bedrock`) |
+| `add <name>` | Add new agent (supports Claude `--backend anthropic|ollama|bedrock|vertex|gateway`, `--variant-group`) |
 | `list` | List all agents |
 | `edit <name>` | Edit agent (supports `--role`, `--disable-rules`, `--backend`) |
 | `remove <name>` | Remove agent |
+| `variant list [group]` | List variant groups, members and the default |
+| `variant default <group> <agent>` | Make an agent its group's default |
 | `run <name>` | Show effective configuration |
 
 ### Unified Rules

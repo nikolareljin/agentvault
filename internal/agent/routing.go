@@ -269,6 +269,10 @@ func ResolveExecutionTarget(a Agent) ExecutionTarget {
 			target.Runner = RunnerBedrockAPI
 			target.Local = false
 			target.Supported = false
+		case ClaudeBackendGateway:
+			target.Runner = RunnerClaudeCLI
+			target.Local = isExplicitLocalEndpoint(target.BaseURL)
+			target.Supported = true
 		default:
 			target.Runner = RunnerClaudeCLI
 			target.Local = false
