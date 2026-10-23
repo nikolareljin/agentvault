@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-22
+
 ### Added
 
 - `agentvault config pricing list|set|remove` manages the pricing used for
