@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-23
+
 ### Added
 
 - Variant routing: `add`/`edit --variant-tier simple|standard|deep` gives a
@@ -14,8 +16,8 @@
   for the next one, and the reason is printed. `prompt GROUP --variant NAME`
   pins a member and `--tier` overrides the score (under `default`, that run
   routes as `balanced`). A missing Anthropic key counts only for a member
-  with `--auth-mode api_key`, since the claude CLI may use its own login. The choice goes to stderr,
-  to `--json` (`variant`, `group`, `policy`, `tier`, `fallback_reason`) and
+  with `--auth-mode api_key`, since the claude CLI may use its own login.
+  The choice goes to stderr, to `--json` (`variant`, `group`, `policy`, `tier`, `fallback_reason`) and
   to prompt history. `default` (and unset) keeps running the group default.
   Import treats the policy like the default: the bundle's under replace and
   mirror (an unset policy is `default` and wins too), the local one under
