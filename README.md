@@ -392,6 +392,7 @@ agentvault instructions push /path/to/project
 
 | Key | Action |
 |-----|--------|
+| `Space` | Actions menu: add agent, switch agent, prompt, usage, run command |
 | `Tab` | Next tab |
 | `Shift+Tab` | Previous tab |
 | `1-8` | Jump to tab |
@@ -404,6 +405,12 @@ agentvault instructions push /path/to/project
 | `q` | Quit |
 
 **Tabs**: Agents, Instructions, Rules, Sessions, Detected, Commands, Status, About
+
+The actions menu reaches each frequent task in at most 3 keys, not counting
+typed text: `Space a` adds an agent, `Space s Enter` picks the current agent
+for the session, `Space p`, type, `Enter` prompts it, `Space u` shows usage.
+The help bar shows the keys for the current screen. Details:
+`docs/tui-reference.md`.
 
 ## Supported Agents
 
