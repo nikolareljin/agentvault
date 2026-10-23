@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -42,7 +44,12 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 		case ClaudeBackendOllama:
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), []string{"OLLAMA_HOST"}, "http://localhost:11434")
-		case ClaudeBackendBedrock:
+		case ClaudeBackendBedrock, ClaudeBackendVertex:
+			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
+			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
+		case ClaudeBackendGateway:
+			// No fallback to the shell's ANTHROPIC_* values: an Anthropic key
+			// must not be sent to a gateway the agent names.
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
 		default:
@@ -64,6 +71,65 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 	}
 
 	return cfg
+}
+
+// ClaudeRuntimeEnv returns the environment the claude CLI reads to run
+// agent a on its backend. gw is the stored gateway a gateway backend names
+// in ProviderMeta.GatewayName, or nil; the agent's own base URL and key win
+// over it. The anthropic and ollama backends need nothing here.
+func ClaudeRuntimeEnv(a Agent, gw *Gateway) (map[string]string, error) {
+	meta := a.ProviderMeta
+	if meta == nil {
+		meta = &AgentProviderMeta{}
+	}
+	env := map[string]string{}
+	switch NormalizeClaudeBackend(a.Backend) {
+	case ClaudeBackendBedrock:
+		env["CLAUDE_CODE_USE_BEDROCK"] = "1"
+		region := strings.TrimSpace(meta.BedrockRegion)
+		if region == "" {
+			region = strings.TrimSpace(meta.AWSRegion)
+		}
+		if region != "" {
+			env["AWS_REGION"] = region
+		}
+		if p := strings.TrimSpace(meta.AWSProfile); p != "" {
+			env["AWS_PROFILE"] = p
+		}
+	case ClaudeBackendVertex:
+		region, project := strings.TrimSpace(meta.VertexRegion), strings.TrimSpace(meta.VertexProject)
+		if err := validateVertexTarget(region, project); err != nil {
+			return nil, err
+		}
+		env["CLAUDE_CODE_USE_VERTEX"] = "1"
+		env["CLOUD_ML_REGION"] = region
+		env["ANTHROPIC_VERTEX_PROJECT_ID"] = project
+	case ClaudeBackendGateway:
+		base := strings.TrimSpace(a.BaseURL)
+		if base == "" && gw != nil {
+			base = strings.TrimSpace(gw.URL)
+		}
+		if base == "" {
+			if meta.GatewayName != "" {
+				return nil, fmt.Errorf("claude gateway backend: stored gateway %q not found", meta.GatewayName)
+			}
+			return nil, errors.New("claude gateway backend needs a base URL")
+		}
+		if err := validateGatewayBaseURL(base); err != nil {
+			return nil, err
+		}
+		env["ANTHROPIC_BASE_URL"] = base
+		switch key := strings.TrimSpace(a.APIKey); {
+		case key != "" && meta.AuthMode == AuthModeToken:
+			env["ANTHROPIC_AUTH_TOKEN"] = key
+		case key != "":
+			env["ANTHROPIC_API_KEY"] = key
+		case gw != nil && strings.TrimSpace(gw.Token) != "" && SameGatewayURL(base, gw.URL):
+			// The stored token goes only to the stored gateway's own URL.
+			env["ANTHROPIC_AUTH_TOKEN"] = strings.TrimSpace(gw.Token)
+		}
+	}
+	return env, nil
 }
 
 func resolveValue(local string, envKeys []string, defaultValue string) ResolvedValue {

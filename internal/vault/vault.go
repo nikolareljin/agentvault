@@ -57,6 +57,7 @@ type Vault struct {
 	modelCapabilities []agent.ModelCapabilityEntry
 	locations         locations.Set // work dirs and projects, by identity
 	gateways          []agent.Gateway
+	variantNotes      []string                   // notes of the last agent change, see VariantNotes
 	unknown           map[string]json.RawMessage // top-level fields a newer agentvault wrote; kept on save
 	key               []byte                     // derived key, set after Init or Unlock
 	header            crypto.Header              // key-derivation header written ahead of the ciphertext
@@ -349,6 +350,7 @@ func (v *Vault) Add(a agent.Agent) error {
 		}
 	}
 	v.agents = append(v.agents, a)
+	v.normalizeVariants(a.Name)
 	return v.Save()
 }
 
@@ -357,6 +359,7 @@ func (v *Vault) Update(a agent.Agent) error {
 	for i, existing := range v.agents {
 		if existing.Name == a.Name {
 			v.agents[i] = a
+			v.normalizeVariants(a.Name)
 			return v.Save()
 		}
 	}
@@ -376,6 +379,28 @@ func (v *Vault) Remove(name string) error {
 		return fmt.Errorf("agent %q not found", name)
 	}
 	v.agents = append(v.agents[:idx], v.agents[idx+1:]...)
+	v.normalizeVariants("")
+	return v.Save()
+}
+
+// normalizeVariants keeps one default per variant group after a change to
+// agent preferred (which wins when it is marked default) and records a note
+// for each group it had to fix, for VariantNotes.
+func (v *Vault) normalizeVariants(preferred string) {
+	_, v.variantNotes = agent.NormalizeVariantDefaults(v.agents, preferred)
+}
+
+// VariantNotes returns the notes of the last Add, Update or Remove: one per
+// variant group whose default had to be chosen.
+func (v *Vault) VariantNotes() []string {
+	return v.variantNotes
+}
+
+// SetVariantDefault makes name the default agent of group and persists it.
+func (v *Vault) SetVariantDefault(group, name string) error {
+	if err := agent.SetVariantDefault(v.agents, group, name); err != nil {
+		return err
+	}
 	return v.Save()
 }
 

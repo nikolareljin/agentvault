@@ -84,8 +84,14 @@ Example:
 			a.DisabledRules = rules
 		}
 		applyRouteConfigFlags(cmd, &a.Route)
+		if err := applyVariantFlags(cmd, &a); err != nil {
+			return err
+		}
 
 		if err := a.ValidateFields(); err != nil {
+			return err
+		}
+		if err := checkVariantGateway(v, a); err != nil {
 			return err
 		}
 		a.UpdatedAt = time.Now()
@@ -93,6 +99,7 @@ Example:
 			return err
 		}
 		fmt.Printf("Agent %q updated.\n", a.Name)
+		printVariantNotes(v)
 		return nil
 	},
 }
@@ -101,7 +108,7 @@ func init() {
 	rootCmd.AddCommand(editCmd)
 	editCmd.Flags().StringP("provider", "p", "", "provider")
 	editCmd.Flags().StringP("model", "m", "", "model name")
-	editCmd.Flags().String("backend", "", "backend (for claude: anthropic|ollama|bedrock)")
+	editCmd.Flags().String("backend", "", "backend (for claude: anthropic|ollama|bedrock|vertex|gateway)")
 	editCmd.Flags().StringP("api-key", "k", "", "API key")
 	editCmd.Flags().String("base-url", "", "custom base URL")
 	editCmd.Flags().String("system-prompt", "", "system prompt")
@@ -110,4 +117,5 @@ func init() {
 	editCmd.Flags().String("role", "", "role to apply (e.g., lead-engineer)")
 	editCmd.Flags().String("disable-rules", "", "comma-separated rules to disable for this agent")
 	registerRouteConfigFlags(editCmd.Flags())
+	registerVariantFlags(editCmd.Flags())
 }

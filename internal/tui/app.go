@@ -1376,27 +1376,41 @@ func (m *model) handleCycleClaudeBackend() (tea.Model, tea.Cmd) {
 		agent.ClaudeBackendAnthropic,
 		agent.ClaudeBackendOllama,
 		agent.ClaudeBackendBedrock,
+		agent.ClaudeBackendVertex,
+		agent.ClaudeBackendGateway,
 	}
 	current := agent.NormalizeClaudeBackend(a.Backend)
-	next := order[0]
+	start := 0
 	for i, b := range order {
 		if b == current {
-			next = order[(i+1)%len(order)]
+			start = i
 			break
 		}
 	}
-	a.Backend = next
-	a.UpdatedAt = time.Now()
-	if err := a.ValidateFields(); err != nil {
-		m.setStatus(fmt.Sprintf("Invalid backend selection: %v", err), true)
+	// Skip a backend the profile lacks settings for (vertex needs a
+	// region and project, gateway a URL); set those with agentvault edit.
+	var lastErr error
+	found := false
+	for step := 1; step < len(order); step++ {
+		candidate := a
+		candidate.Backend = order[(start+step)%len(order)]
+		if lastErr = candidate.ValidateFields(); lastErr == nil {
+			a = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.setStatus(fmt.Sprintf("Invalid backend selection: %v", lastErr), true)
 		return m, nil
 	}
+	a.UpdatedAt = time.Now()
 	if err := m.vault.Update(a); err != nil {
 		m.setStatus(fmt.Sprintf("Failed to update backend: %v", err), true)
 		return m, nil
 	}
 	m.refresh()
-	m.setStatus(fmt.Sprintf("Claude backend set to %s for %s", next, a.Name), false)
+	m.setStatus(fmt.Sprintf("Claude backend set to %s for %s", a.Backend, a.Name), false)
 	return m, nil
 }
 
@@ -2653,6 +2667,8 @@ func executeGatewayPrompt(a agent.Agent, prompt string, executionDir string, tim
 			return executeGatewayOllama(a, prompt, timeout)
 		case agent.ClaudeBackendBedrock:
 			return "", gatewayUsage{}, fmt.Errorf("claude bedrock backend is not supported in TUI gateway yet")
+		case agent.ClaudeBackendVertex, agent.ClaudeBackendGateway:
+			return "", gatewayUsage{}, fmt.Errorf("claude %s backend is not supported in TUI gateway yet; use agentvault prompt", backend)
 		default:
 			return executeGatewayClaude(a, prompt, executionDir, timeout)
 		}

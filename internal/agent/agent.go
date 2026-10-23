@@ -53,7 +53,24 @@ const (
 	ClaudeBackendAnthropic = "anthropic"
 	ClaudeBackendOllama    = "ollama"
 	ClaudeBackendBedrock   = "bedrock"
+	// ClaudeBackendVertex runs Claude on Google Vertex AI.
+	ClaudeBackendVertex = "vertex"
+	// ClaudeBackendGateway runs Claude through a Claude-compatible endpoint
+	// (a hosted gateway, an API gateway or a reverse proxy).
+	ClaudeBackendGateway = "gateway"
 )
+
+// ClaudeBackends lists the known Claude backends, default first.
+var ClaudeBackends = []string{ClaudeBackendAnthropic, ClaudeBackendOllama, ClaudeBackendBedrock, ClaudeBackendVertex, ClaudeBackendGateway}
+
+func isClaudeBackend(b string) bool {
+	for _, k := range ClaudeBackends {
+		if b == k {
+			return true
+		}
+	}
+	return false
+}
 
 // MCPServer represents a Model Context Protocol server configuration.
 type MCPServer struct {
@@ -66,16 +83,21 @@ type MCPServer struct {
 // AgentProviderMeta captures provider-specific configuration for full round-trip portability.
 // Only fields relevant to the agent's Provider are populated; all fields are optional.
 type AgentProviderMeta struct {
-	AuthMode        string            `json:"auth_mode,omitempty"        yaml:"auth_mode,omitempty"`
-	BedrockRegion   string            `json:"bedrock_region,omitempty"   yaml:"bedrock_region,omitempty"`
-	BedrockRoleARN  string            `json:"bedrock_role_arn,omitempty" yaml:"bedrock_role_arn,omitempty"`
-	CopilotOrg      string            `json:"copilot_org,omitempty"      yaml:"copilot_org,omitempty"`
-	GeminiProject   string            `json:"gemini_project,omitempty"   yaml:"gemini_project,omitempty"`
-	GeminiLocation  string            `json:"gemini_location,omitempty"  yaml:"gemini_location,omitempty"`
-	AWSProfile      string            `json:"aws_profile,omitempty"      yaml:"aws_profile,omitempty"`
-	AWSRegion       string            `json:"aws_region,omitempty"       yaml:"aws_region,omitempty"`
-	OllamaKeepAlive string            `json:"ollama_keep_alive,omitempty" yaml:"ollama_keep_alive,omitempty"`
-	Extra           map[string]string `json:"extra,omitempty"            yaml:"extra,omitempty"`
+	AuthMode        string `json:"auth_mode,omitempty"        yaml:"auth_mode,omitempty"`
+	BedrockRegion   string `json:"bedrock_region,omitempty"   yaml:"bedrock_region,omitempty"`
+	BedrockRoleARN  string `json:"bedrock_role_arn,omitempty" yaml:"bedrock_role_arn,omitempty"`
+	CopilotOrg      string `json:"copilot_org,omitempty"      yaml:"copilot_org,omitempty"`
+	GeminiProject   string `json:"gemini_project,omitempty"   yaml:"gemini_project,omitempty"`
+	GeminiLocation  string `json:"gemini_location,omitempty"  yaml:"gemini_location,omitempty"`
+	AWSProfile      string `json:"aws_profile,omitempty"      yaml:"aws_profile,omitempty"`
+	AWSRegion       string `json:"aws_region,omitempty"       yaml:"aws_region,omitempty"`
+	OllamaKeepAlive string `json:"ollama_keep_alive,omitempty" yaml:"ollama_keep_alive,omitempty"`
+	VertexRegion    string `json:"vertex_region,omitempty"    yaml:"vertex_region,omitempty"`
+	VertexProject   string `json:"vertex_project,omitempty"   yaml:"vertex_project,omitempty"`
+	// GatewayName names a stored gateway whose URL and token a Claude
+	// gateway backend uses when the agent has no base URL of its own.
+	GatewayName string            `json:"gateway_name,omitempty" yaml:"gateway_name,omitempty"`
+	Extra       map[string]string `json:"extra,omitempty"            yaml:"extra,omitempty"`
 }
 
 // Agent represents a configured AI agent.
@@ -94,6 +116,7 @@ type Agent struct {
 	Role          string             `json:"role,omitempty"            yaml:"role,omitempty"`
 	DisabledRules []string           `json:"disabled_rules,omitempty"  yaml:"disabled_rules,omitempty"`
 	ProviderMeta  *AgentProviderMeta `json:"provider_meta,omitempty"   yaml:"provider_meta,omitempty"`
+	Variant       *AgentVariant      `json:"variant,omitempty"         yaml:"variant,omitempty"`
 	CreatedAt     time.Time          `json:"created_at"                yaml:"created_at"`
 	UpdatedAt     time.Time          `json:"updated_at"                yaml:"updated_at"`
 }
@@ -630,12 +653,18 @@ func (a *Agent) ValidateFields() error {
 	backendRaw := strings.TrimSpace(a.Backend)
 	if a.Provider == ProviderClaude {
 		backend := strings.ToLower(backendRaw)
-		if backend != "" && backend != ClaudeBackendAnthropic && backend != ClaudeBackendOllama && backend != ClaudeBackendBedrock {
+		if backend != "" && !isClaudeBackend(backend) {
 			return errors.New("unknown claude backend: " + backendRaw)
 		}
 		a.Backend = backend // normalize in-place so ValidateProviderMeta sees canonical form
+		if err := validateClaudeBackendFields(a); err != nil {
+			return err
+		}
 	} else if backendRaw != "" {
 		return errors.New("backend is only supported for claude agents")
+	}
+	if err := a.Variant.Validate(); err != nil {
+		return err
 	}
 	if err := a.Route.Validate(); err != nil {
 		return err
@@ -648,18 +677,17 @@ func (a *Agent) ValidateFields() error {
 
 // NormalizeClaudeBackend normalizes a raw Claude backend string to a canonical value.
 // It trims whitespace, lowercases the input, and defaults to ClaudeBackendAnthropic
-// for empty or unrecognized values.
+// for empty or unrecognized values. Use ClaudeBackendDiagnostic to report an
+// unrecognized value instead of running it as anthropic silently.
 func NormalizeClaudeBackend(raw string) string {
 	backend := strings.TrimSpace(strings.ToLower(raw))
 	if backend == "" {
 		return ClaudeBackendAnthropic
 	}
-	switch backend {
-	case ClaudeBackendAnthropic, ClaudeBackendOllama, ClaudeBackendBedrock:
+	if isClaudeBackend(backend) {
 		return backend
-	default:
-		return ClaudeBackendAnthropic
 	}
+	return ClaudeBackendAnthropic
 }
 
 // ParseClaudeBackend normalizes a raw Claude backend string and returns an
@@ -669,12 +697,10 @@ func ParseClaudeBackend(raw string) (string, error) {
 	if backend == "" {
 		return ClaudeBackendAnthropic, nil
 	}
-	switch backend {
-	case ClaudeBackendAnthropic, ClaudeBackendOllama, ClaudeBackendBedrock:
+	if isClaudeBackend(backend) {
 		return backend, nil
-	default:
-		return "", fmt.Errorf("unknown claude backend: %s", raw)
 	}
+	return "", fmt.Errorf("unknown claude backend: %s", raw)
 }
 
 // EffectiveSystemPrompt returns the agent's system prompt, falling back to the

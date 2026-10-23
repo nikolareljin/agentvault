@@ -27,6 +27,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `list`
 - `edit`
 - `remove`
+- `variant`
 - `run`
 - `prompt`
 - `route`
@@ -74,7 +75,7 @@ Required:
 
 Optional:
 - `-m, --model <model>`
-- `--backend <backend>`: `anthropic|ollama|bedrock`
+- `--backend <backend>`: `anthropic|ollama|bedrock|vertex|gateway` (see Claude backends)
 - `-k, --api-key <key>`
 - `--base-url <url>`
 - `--system-prompt <text>`
@@ -86,6 +87,12 @@ Optional:
 - `--privacy-tier <tier>`: `local|restricted|remote`
 - `--route-priority <int>`
 - `--disable-routing` (default: `false`)
+- `--variant-group <group>`: put the agent in a variant group (`""` on edit removes it)
+- `--variant-default` (default: `false`): make the agent its group's default
+- `--vertex-region <region>`: claude `vertex` backend region
+- `--vertex-project <project>`: claude `vertex` backend Google Cloud project
+- `--gateway <name>`: claude `gateway` backend: stored gateway whose URL and token to use
+- `--auth-mode <mode>`: `api_key|token|iam|oauth|none`; for the `gateway` backend `token` sends the key as `ANTHROPIC_AUTH_TOKEN`
 
 ### `agentvault list`
 Flags:
@@ -96,7 +103,7 @@ Flags:
 Flags:
 - `-p, --provider <provider>`
 - `-m, --model <model>`
-- `--backend <backend>`: `anthropic|ollama|bedrock`
+- `--backend <backend>`: `anthropic|ollama|bedrock|vertex|gateway` (see Claude backends)
 - `-k, --api-key <key>`
 - `--base-url <url>`
 - `--system-prompt <text>`
@@ -110,10 +117,57 @@ Flags:
 - `--privacy-tier <tier>`: `local|restricted|remote`
 - `--route-priority <int>`
 - `--disable-routing` (default: `false`)
+- `--variant-group <group>`: put the agent in a variant group (`""` on edit removes it)
+- `--variant-default` (default: `false`): make the agent its group's default
+- `--vertex-region <region>`: claude `vertex` backend region
+- `--vertex-project <project>`: claude `vertex` backend Google Cloud project
+- `--gateway <name>`: claude `gateway` backend: stored gateway whose URL and token to use
+- `--auth-mode <mode>`: `api_key|token|iam|oauth|none`; for the `gateway` backend `token` sends the key as `ANTHROPIC_AUTH_TOKEN`
 
 ### `agentvault remove [name]`
 Flags:
 - `-f, --force` (default: `false`)
+
+Removing a group's default makes its first remaining member by name the
+default and prints a note.
+
+### Claude backends
+
+| Backend | Runs through | Settings | Environment set for `claude` |
+|---|---|---|---|
+| `anthropic` (default) | Anthropic API | `--api-key` | `ANTHROPIC_API_KEY` |
+| `ollama` | local Ollama | `--base-url` | none (HTTP runner) |
+| `bedrock` | AWS Bedrock | provider meta region and profile | `CLAUDE_CODE_USE_BEDROCK=1`, `AWS_REGION`, `AWS_PROFILE` |
+| `vertex` | Google Vertex AI | `--vertex-region` (such as `us-east5`), `--vertex-project` (a Google Cloud project ID); both required and checked | `CLAUDE_CODE_USE_VERTEX=1`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID` |
+| `gateway` | Claude-compatible endpoint (hosted gateway, API gateway, reverse proxy) | `--base-url` (http/https, no credentials in it) or `--gateway NAME`, not both; `--api-key` | `ANTHROPIC_BASE_URL`, plus `ANTHROPIC_API_KEY`, or `ANTHROPIC_AUTH_TOKEN` with `--auth-mode token` or a stored gateway token |
+
+For `vertex` and `gateway`, `prompt` drops `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and `CLAUDE_CODE_USE_*` from the
+shell environment and sets only the backend's own values, so a shell's
+Anthropic key never reaches a gateway. A stored gateway's token is sent only
+to that gateway's URL.
+
+An unknown backend (written by a newer agentvault or by hand) is refused by
+`add` and `edit`, runs as `anthropic`, and is named in a `Note:` line on
+import and as `(unknown)` in `variant list`.
+
+### `agentvault variant list [group]`
+Lists each variant group (or only `group`) with its agents, backend, model,
+and the default marked `yes`. `agentvault list` shows the group in the
+`VARIANT` column, with `*` on the default.
+
+### `agentvault variant default <group> <agent>`
+Makes `agent` the default of `group` and clears the previous default.
+
+Variant groups tie existing agents together as alternates of one logical
+setup. `agentvault prompt GROUP` runs the group's default agent when no
+agent has that name. Variants travel with export and import; their keys
+follow `--include-keys`. On import each group keeps one default: under
+`replace` and `mirror` the bundle's default wins, under `merge` the local
+default stays, and a group with none gets its first member by name. The
+report prints `Variant: group G default A (bundle|local|first by name)`.
+Runtime routing and complexity-aware selection between variants are a
+separate feature.
 
 ### `agentvault run [name]`
 Flags:

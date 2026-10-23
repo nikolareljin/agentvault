@@ -38,6 +38,7 @@ var removeCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Agent %q removed.\n", name)
+		printVariantNotes(v)
 		return nil
 	},
 }
