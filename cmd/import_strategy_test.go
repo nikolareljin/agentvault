@@ -369,6 +369,14 @@ func TestPlanProfileImportMergesPricing(t *testing.T) {
 	}
 }
 
+func TestPricingKeyIgnoresPatternCase(t *testing.T) {
+	a := pricingKey(agent.ProviderPricing{Provider: agent.ProviderClaude, ModelPattern: "Sonnet"})
+	b := pricingKey(agent.ProviderPricing{Provider: agent.ProviderClaude, ModelPattern: "sonnet "})
+	if a != b {
+		t.Fatal("pricingKey() kept Sonnet and sonnet apart; a merge would store both")
+	}
+}
+
 func TestPricingKeySeparatesModelPatterns(t *testing.T) {
 	a := pricingKey(agent.ProviderPricing{Provider: agent.ProviderClaude, ModelPattern: "opus"})
 	b := pricingKey(agent.ProviderPricing{Provider: agent.ProviderClaude, ModelPattern: "sonnet"})

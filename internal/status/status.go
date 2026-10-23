@@ -25,8 +25,10 @@ type Report struct {
 
 // CostReport aggregates estimated spend from the prompt history file.
 type CostReport struct {
-	TotalUSD     float64            `json:"total_usd"`
-	ByProvider   map[string]float64 `json:"by_provider"`
+	TotalUSD   float64            `json:"total_usd"`
+	ByProvider map[string]float64 `json:"by_provider"`
+	// ThisMonth is ByProvider for the current UTC month, which budgets use.
+	ThisMonth    map[string]float64 `json:"this_month_by_provider,omitempty"`
 	RecordCount  int                `json:"record_count"`
 	BudgetAlerts []BudgetAlert      `json:"budget_alerts,omitempty"`
 }
@@ -496,6 +498,7 @@ func BuildCostReport(historyPath string, pricing []agent.ProviderPricing) *CostR
 	report := &CostReport{
 		TotalUSD:    total,
 		ByProvider:  byProvider,
+		ThisMonth:   byProviderThisMonth,
 		RecordCount: count,
 	}
 

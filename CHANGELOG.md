@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `agentvault config pricing list|set|remove` manages the pricing used for
+  cost estimates and monthly budgets; the first `set` keeps the built-in
+  defaults for the other providers. `status --csv` prints the cost report
+  as CSV (https://github.com/nikolareljin/agentvault/issues/39).
+- The cost report's JSON has `this_month_by_provider`.
+
 ### Fixed
 
 - `agentvault init` takes the master password from `AGENTVAULT_PASSWORD`
