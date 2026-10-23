@@ -93,12 +93,31 @@ func TestPricingSetRefusesBadInput(t *testing.T) {
 		want  string
 	}{
 		{[]string{"nosuch"}, map[string]string{"input": "1", "output": "1"}, "unknown provider"},
-		{[]string{"ollama"}, map[string]string{"input": "-1", "output": "1"}, "negative"},
+		{[]string{"ollama"}, map[string]string{"input": "-1", "output": "1"}, ">= 0"},
+		{[]string{"ollama"}, map[string]string{"model": "x", "input": "NaN", "output": "1"}, "--input must be"},
+		{[]string{"ollama"}, map[string]string{"model": "x", "input": "1", "output": "Inf"}, "--output must be"},
 		{[]string{"ollama"}, map[string]string{"model": "x", "input": "1"}, "needs --input and --output"},
 	} {
 		if _, err := runPricing(t, configPricingSetCmd, tc.args, tc.flags); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("set %v %v: %v, want %q", tc.args, tc.flags, err, tc.want)
 		}
+	}
+}
+
+func TestPricingOneBudgetPerProvider(t *testing.T) {
+	cfgDir := scopeTestVault(t)
+	if _, err := runPricing(t, configPricingSetCmd, []string{"claude"}, map[string]string{"model": "sonnet", "monthly-budget": "10"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runPricing(t, configPricingSetCmd, []string{"claude"}, map[string]string{"monthly-budget": "50"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := storedPricing(t, cfgDir)
+	if p, _ := findPricing(rows, agent.ProviderClaude, "sonnet"); p.MonthlyBudgetUSD != 0 {
+		t.Errorf("sonnet budget %v, want 0 after the provider row took the budget", p.MonthlyBudgetUSD)
+	}
+	if p, _ := findPricing(rows, agent.ProviderClaude, ""); p.MonthlyBudgetUSD != 50 {
+		t.Errorf("claude budget %v, want 50", p.MonthlyBudgetUSD)
 	}
 }
 

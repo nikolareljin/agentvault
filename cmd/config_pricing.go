@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -21,7 +22,8 @@ no pricing is stored, built-in defaults are used. The first set stores the
 defaults with the change, so the other providers keep their rates.
 
 A monthly budget makes status --cost-report warn once this month's spend
-for the provider reaches 80% of it.
+for the provider reaches 80% of it. A provider has one budget: setting it
+on one row clears it on the others.
 
 Examples:
   agentvault config pricing list
@@ -84,8 +86,8 @@ var configPricingSetCmd = &cobra.Command{
 			{"monthly-budget", &row.MonthlyBudgetUSD},
 		} {
 			*f.dst, _ = cmd.Flags().GetFloat64(f.name)
-			if *f.dst < 0 {
-				return fmt.Errorf("--%s must not be negative", f.name)
+			if *f.dst < 0 || math.IsNaN(*f.dst) || math.IsInf(*f.dst, 0) {
+				return fmt.Errorf("--%s must be a number >= 0", f.name)
 			}
 		}
 
@@ -119,6 +121,17 @@ var configPricingSetCmd = &cobra.Command{
 				return fmt.Errorf("a new pricing row needs --input and --output")
 			}
 			shared.Pricing = append(shared.Pricing, row)
+			i = len(shared.Pricing) - 1
+		}
+		// Alerts read one budget per provider, so a new one replaces any other.
+		cleared := false
+		if cmd.Flags().Changed("monthly-budget") {
+			for j := range shared.Pricing {
+				if j != i && shared.Pricing[j].Provider == provider && shared.Pricing[j].MonthlyBudgetUSD > 0 {
+					shared.Pricing[j].MonthlyBudgetUSD = 0
+					cleared = true
+				}
+			}
 		}
 		if err := v.SetSharedConfig(shared); err != nil {
 			return err
@@ -127,6 +140,9 @@ var configPricingSetCmd = &cobra.Command{
 			fmt.Println("Stored the built-in default pricing, then applied this change.")
 		}
 		fmt.Printf("Pricing for %s updated.\n", pricingLabel(row))
+		if cleared {
+			fmt.Printf("Cleared the monthly budget on the other %s rows: a provider has one budget.\n", printable(string(provider)))
+		}
 		return nil
 	},
 }

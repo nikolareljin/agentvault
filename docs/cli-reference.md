@@ -543,7 +543,7 @@ No flags. Lists the stored pricing rows, or the built-in defaults while none are
 ### `agentvault config pricing set <provider>`
 - `--model <pattern>`: model pattern, a substring of the model name (default: every model; the longest matching pattern wins)
 - `--input <usd>`, `--output <usd>`, `--cached <usd>`: rates per 1,000 tokens. A new row needs `--input` and `--output`; on a stored row a flag not given keeps its value.
-- `--monthly-budget <usd>`: monthly budget for the whole provider; `status --cost-report` warns at 80% of it. `0` means none.
+- `--monthly-budget <usd>`: monthly budget for the whole provider; `status --cost-report` warns at 80% of it. A provider has one budget, so this clears it on the provider's other rows. `0` means none.
 
 The first `set` stores the built-in defaults with the change, so the other providers keep their rates.
 
