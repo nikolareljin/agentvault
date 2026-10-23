@@ -160,6 +160,8 @@ type profileImportPlan struct {
 	SessionsChanged bool
 	Capabilities    []agent.ModelCapabilityEntry
 	CapsChanged     bool
+	Gateways        []agent.Gateway
+	GatewaysChanged bool
 	Report          importReport
 }
 
@@ -273,6 +275,11 @@ func planProfileImport(v *vault.Vault, setup SetupBundle, strategy importStrateg
 	existingCaps := nilIfEmpty(v.ListCapabilities())
 	plan.Capabilities = mergeKeyed(existingCaps, setup.ModelCapabilities, capabilityKey, strategy, "model capability", rep)
 	plan.CapsChanged = !reflect.DeepEqual(existingCaps, plan.Capabilities)
+
+	existingGateways := nilIfEmpty(v.Gateways())
+	plan.Gateways = mergeKeyed(existingGateways, restoreGatewaySecrets(existingGateways, setup.Gateways, strategy, rep),
+		func(g agent.Gateway) string { return g.Name }, strategy, "gateway", rep)
+	plan.GatewaysChanged = !reflect.DeepEqual(existingGateways, plan.Gateways)
 
 	return plan
 }
@@ -652,6 +659,11 @@ func commitProfileImport(v *vault.Vault, plan profileImportPlan) error {
 	if plan.CapsChanged {
 		if err := v.SetCapabilities(plan.Capabilities); err != nil {
 			return fmt.Errorf("updating model capabilities: %w", err)
+		}
+	}
+	if plan.GatewaysChanged {
+		if err := v.SetGateways(plan.Gateways); err != nil {
+			return fmt.Errorf("updating gateways: %w", err)
 		}
 	}
 	return nil

@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- `agentvault gateway add|list|remove|rotate|env` keeps the bearer token
+  and basic auth of a reverse-proxy gateway apart from agents. `rotate`
+  stores a new random token and keeps the old one as the previous token;
+  `env` prints `OLLAMA_TOKEN` and `BASIC_AUTH` for a shell or a `.env` file.
+  Gateways travel with export and import; their secrets follow
+  `--include-keys` (https://github.com/nikolareljin/agentvault/issues/37).
+  `add` reads secrets from `AGENTVAULT_GATEWAY_TOKEN` and
+  `AGENTVAULT_GATEWAY_PASSWORD` (or a prompt) to keep them out of shell
+  history. Compatibility: agentvault 0.16.0 and older open a vault with
+  gateways but drop them on their next save; update every machine that
+  shares the vault before adding one.
+- The vault keeps top-level fields it does not know when it saves, so data
+  a newer agentvault adds later survives a save by this version.
+
 ## [0.16.0] - 2026-10-23
 
 ### Added

@@ -61,6 +61,7 @@ type SetupBundle struct {
 	InstructionOverrides []SetupAsset                 `json:"instruction_overrides"`
 	SkillAssets          []SetupAsset                 `json:"skill_assets"`
 	ModelCapabilities    []agent.ModelCapabilityEntry `json:"model_capabilities,omitempty"`
+	Gateways             []agent.Gateway              `json:"gateways,omitempty"`
 	StatusSnapshot       *statuspkg.Report            `json:"status_snapshot,omitempty"`
 	DetectedAgents       []DetectedAgent              `json:"detected_agents,omitempty"`
 	InstallGuide         InstallGuide                 `json:"install_guide"`
@@ -354,6 +355,7 @@ func runSetupExport(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  Agents: %d\n", len(bundle.Agents))
 	fmt.Printf("  Sessions: %d\n", len(bundle.Sessions.Sessions))
 	fmt.Printf("  Instructions: %d\n", len(bundle.SharedConfig.Instructions))
+	fmt.Printf("  Gateways: %d\n", len(bundle.Gateways))
 	fmt.Printf("  Workflow templates: %d\n", len(bundle.Templates.Assets))
 	if includeStatus {
 		fmt.Println("  Includes status snapshot: yes")
@@ -517,6 +519,17 @@ func printSetupBundle(bundle SetupBundle) {
 			hasKey = "has key"
 		}
 		printfClean("  • %s (%s, %s) [%s]\n", a.Name, a.Provider, a.Model, hasKey)
+	}
+
+	if len(bundle.Gateways) > 0 {
+		printfClean("\nGateways (%d):\n", len(bundle.Gateways))
+		for _, g := range bundle.Gateways {
+			hasToken := "no token"
+			if g.Token != "" {
+				hasToken = "has token"
+			}
+			printfClean("  - %s (%s) [%s]\n", g.Name, maskURLSecrets(g.URL), hasToken)
+		}
 	}
 
 	printfClean("\nInstructions (%d):\n", len(bundle.SharedConfig.Instructions))

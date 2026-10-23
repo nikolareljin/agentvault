@@ -32,6 +32,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `route`
 - `status`
 - `capability`
+- `gateway`
 - `routing-model`
 - `rules`
 - `roles`
@@ -267,6 +268,58 @@ Optional:
 Behavior: tries `/v1/models` (OpenAI-compat shape — llama.cpp, Ollama, bitnet-server) first,
 then falls back to `/health` (models-list shape). Infers capability tags from model names.
 Registry entries are used by all routing modes to augment agent `RouteConfig.Capabilities`.
+
+## Gateway credentials
+
+A gateway is a reverse proxy in front of a model server that checks a bearer
+token and, optionally, HTTP basic auth. The vault keeps gateways apart from
+agents: they are not shown by `list`, not routed to, and generate no config.
+The gateway and its clients read `OLLAMA_TOKEN` and `BASIC_AUTH=user:pass`
+from their environment:
+
+```bash
+agentvault gateway env lab --format dotenv > .env   # docker compose, a service
+eval "$(agentvault gateway env lab)"                # a shell
+```
+
+### `agentvault gateway add <name>`
+Required:
+- `--url <url>`: `http://` or `https://` with a host, no credentials in it
+
+At least one of:
+- `--token <value>` or `--generate` (32 random bytes, base64url)
+- `--basic-auth-user <user>` with `--basic-auth-password <password>`
+
+Secrets given as flags land in shell history. Without `--token`, the token
+is read from `AGENTVAULT_GATEWAY_TOKEN`; without `--basic-auth-password`,
+the password is read from `AGENTVAULT_GATEWAY_PASSWORD`, else asked on a
+terminal. A name that exists is refused.
+
+### `agentvault gateway list`
+Prints name, URL, whether a token and a previous token are set, the basic
+auth user, and the last rotation. Never prints a secret.
+
+### `agentvault gateway remove <name>`
+
+### `agentvault gateway rotate <name>`
+Stores a new random token and keeps the current one as the previous token;
+the token before that is dropped. The new token is not printed. Update the
+gateway and its clients, then print the values with `gateway env`.
+
+### `agentvault gateway env <name>`
+Optional:
+- `--format sh|dotenv` (default: `sh`): `export K='v'` or `K='v'`
+- `--previous`: print the previous token as `OLLAMA_TOKEN`
+
+Prints only the variables that are set. A value `dotenv` cannot quote (a
+single quote, `${` or a control character) makes `env` fail and print
+nothing, so a redirected `.env` is never written without the credential; use
+`--format sh` for such a value.
+
+Export and import: gateways travel in the bundle. Tokens and the basic auth
+password follow `--include-keys`. On import, a blank secret is filled from
+the local gateway of the same name only when the URL (and, for the password,
+the user) match.
 
 ## Embedded inference model
 

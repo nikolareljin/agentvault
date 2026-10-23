@@ -479,3 +479,64 @@ func restoreCustomSettings(incoming, existing map[string]any, allowed bool) (map
 	}
 	return incoming, left
 }
+
+// blankGatewaySecrets blanks a gateway's tokens and basic auth password, as
+// an export without --include-keys blanks agent API keys. The user stays.
+func blankGatewaySecrets(g *agent.Gateway) {
+	g.Token = ""
+	g.PreviousToken = ""
+	g.BasicAuthPassword = ""
+}
+
+// restoreGatewaySecrets fills the blanked secrets of each bundle gateway
+// from the local gateway of the same name, only when both point at the same
+// URL (and, for the password, the same user). A bundle cannot send this
+// machine's token to another host. A blank that is not filled and would
+// replace a local secret is named in a Left out line.
+func restoreGatewaySecrets(existing, incoming []agent.Gateway, strategy importStrategy, rep *importReport) []agent.Gateway {
+	byName := make(map[string]agent.Gateway, len(existing))
+	for _, g := range existing {
+		byName[g.Name] = g
+	}
+	out := make([]agent.Gateway, 0, len(incoming))
+	for _, g := range incoming {
+		// A bad bundle entry changes nothing here, not even under mirror.
+		if err := g.ValidateTarget(); err != nil {
+			rep.record("Skipped", "gateway %s: %v", g.Name, err)
+			if have, ok := byName[g.Name]; ok {
+				out = append(out, have)
+			}
+			continue
+		}
+		have, exists := byName[g.Name]
+		if exists {
+			sameURL := g.URL == have.URL
+			for _, f := range []struct {
+				name     string
+				in, keep *string
+				ok       bool
+			}{
+				{"token", &g.Token, &have.Token, sameURL},
+				{"previous_token", &g.PreviousToken, &have.PreviousToken, sameURL},
+				{"basic_auth_password", &g.BasicAuthPassword, &have.BasicAuthPassword, sameURL && g.BasicAuthUser == have.BasicAuthUser},
+			} {
+				if *f.in != "" || *f.keep == "" {
+					continue
+				}
+				if f.ok {
+					*f.in = *f.keep
+				} else if strategy.incomingWins() {
+					rep.record("Left out", "gateway %s %s: blank in the bundle, and the bundle's gateway differs from this machine's", g.Name, f.name)
+				}
+			}
+			// Timestamps are this machine's when nothing else changed, so a
+			// re-import of the same bundle is a no-op.
+			if g.Token == have.Token && g.PreviousToken == have.PreviousToken && g.URL == have.URL &&
+				g.BasicAuthUser == have.BasicAuthUser && g.BasicAuthPassword == have.BasicAuthPassword {
+				g.CreatedAt, g.UpdatedAt, g.RotatedAt = have.CreatedAt, have.UpdatedAt, have.RotatedAt
+			}
+		}
+		out = append(out, g)
+	}
+	return out
+}

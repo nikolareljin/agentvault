@@ -157,6 +157,13 @@ brew install nikolareljin/tap/agentvault
 | `routing-model status` | Show embedded engine state and model file info |
 | `routing-model download` | Download BitNet-b1.58-2B-4T routing model (~400 MB) |
 
+### Gateway credentials
+| Command | Description |
+|---------|-------------|
+| `gateway add\|list\|remove\|rotate\|env` | Store the token and basic auth a reverse-proxy gateway checks |
+| `gateway rotate` | Replace the token; the old one stays as the previous token |
+| `gateway env` | Print `OLLAMA_TOKEN` / `BASIC_AUTH` for a shell or a `.env` file |
+
 ### Export/Import
 | Command | Description |
 |---------|-------------|
@@ -438,6 +445,7 @@ A bundle contains, per profile:
 - Shared system prompt, MCP servers, unified rules, roles, instructions, router config
 - Provider configs (Claude plugins, Codex rules, Ollama settings)
 - Model capability registry entries
+- Gateways; their tokens and basic auth passwords follow `--include-keys`
 - Sessions
 - Workflow templates
 - User-level setup of Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor and Windsurf: instruction files, settings, agents, commands, output styles, MCP servers and skills, plus every file those instructions name and the hook scripts settings run (list in `docs/cli-reference.md`)

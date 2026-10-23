@@ -435,6 +435,7 @@ func printExportSummary(cmd *cobra.Command, bundle PortableBundle, opts exportOp
 		fmt.Fprintf(out, "    Rules: %d, Roles: %d, Instructions: %d, MCP servers: %d\n",
 			len(p.Setup.SharedConfig.Rules), len(p.Setup.SharedConfig.Roles),
 			len(p.Setup.SharedConfig.Instructions), len(p.Setup.SharedConfig.MCPServers))
+		fmt.Fprintf(out, "    Gateways: %d\n", len(p.Setup.Gateways))
 		fmt.Fprintf(out, "    Workflow templates: %d\n", len(p.Setup.Templates.Assets))
 		fmt.Fprintf(out, "    Provider files: %d, Skill assets: %d, Project files: %d\n",
 			len(p.Setup.ProviderFiles), len(p.Setup.SkillAssets), len(p.Setup.ProjectFiles))
@@ -579,6 +580,16 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 	} else {
 		for i := range bundle.Agents {
 			bundle.Agents[i].APIKey = ""
+		}
+	}
+	// Gateway secrets follow the agent key policy: --include-keys. A
+	// single-agent export carries no gateways.
+	if strings.TrimSpace(opts.AgentName) == "" {
+		bundle.Gateways = v.Gateways()
+	}
+	if !opts.IncludeKeys {
+		for i := range bundle.Gateways {
+			blankGatewaySecrets(&bundle.Gateways[i])
 		}
 	}
 
