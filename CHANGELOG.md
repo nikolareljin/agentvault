@@ -18,7 +18,8 @@
   routes as `balanced`). A missing Anthropic key counts only for a member
   with `--auth-mode api_key`, since the claude CLI may use its own login.
   The choice goes to stderr, to `--json` (`variant`, `group`, `policy`,
-  `tier`, `fallback_reason`) and to prompt history. `default` (and unset) keeps running the group default.
+  `tier`, `fallback_reason`) and to prompt history. `default` (and unset)
+  keeps running the group default.
   Import treats the policy like the default: the bundle's under replace and
   mirror (an unset policy is `default` and wins too), the local one under
   merge (a group new to this vault takes the bundle's)
