@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- TUI import and export forms in the actions menu (`Space i`, `Space x`),
+  issue 10 part 2. They build and show the `agentvault import`/`export`
+  command and run it; import previews with `--dry-run` first, takes repeated
+  `--map OLD=NEW` entries, and needs `M` to run a mirror import.
+
 ## [0.18.0] - 2026-10-23
 
 ### Added

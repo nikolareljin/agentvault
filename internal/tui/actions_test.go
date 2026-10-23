@@ -130,6 +130,42 @@ func TestActionStepCounts(t *testing.T) {
 			t.Fatalf("usage took %d steps, want <= %d", steps, maxSteps)
 		}
 	})
+
+	testImportExportStepCounts(t, maxSteps)
+}
+
+func testImportExportStepCounts(t *testing.T, maxSteps int) {
+	useFakeCLI(t, "ok")
+
+	t.Run("import preview", func(t *testing.T) {
+		m, steps := actionsTestModel(t), 0
+		m = press(t, m, keySpace, &steps)
+		m = press(t, m, runeKey('i'), &steps)
+		m = press(t, m, keyEnter, &steps)
+		if m.mode != viewImportPreview {
+			t.Fatalf("mode = %v, want preview; status %q", m.mode, m.statusMsg)
+		}
+		if steps > maxSteps {
+			t.Fatalf("import took %d steps, want <= %d", steps, maxSteps)
+		}
+	})
+
+	t.Run("export", func(t *testing.T) {
+		m, steps := actionsTestModel(t), 0
+		m = press(t, m, keySpace, &steps)
+		m = press(t, m, runeKey('x'), &steps)
+		if m.mode != viewExport {
+			t.Fatalf("mode = %v, want export form", m.mode)
+		}
+		tm, cmd := m.Update(keyEnter)
+		steps++
+		if cmd == nil || asModel(t, tm).mode == viewExport {
+			t.Fatal("enter did not run export")
+		}
+		if steps > maxSteps {
+			t.Fatalf("export took %d steps, want <= %d", steps, maxSteps)
+		}
+	})
 }
 
 func TestActionsMenuOpensFromEveryTab(t *testing.T) {

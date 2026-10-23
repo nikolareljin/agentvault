@@ -53,6 +53,8 @@ with `j/k` and press `Enter`. `Esc` returns to the screen you came from.
 | `s` | Switch agent: pick the current agent | 3 (`Space s Enter`) |
 | `p` | Prompt the current agent | 3 (`Space p`, type, `Enter`) |
 | `u` | Usage: open the Status tab | 2 (`Space u`) |
+| `i` | Import: form, dry-run preview, then import | 3 (`Space i Enter` to preview) |
+| `x` | Export: form, then export | 3 (`Space x Enter`) |
 | `:` or `;` | Run command: the `:` CLI command bridge | 2 (`Space :`) |
 
 Add agent form: `Tab`/`Shift+Tab` move between fields, `Left`/`Right` change
@@ -71,6 +73,35 @@ instead, and `Esc` goes back to agent selection. Without a current agent the
 flow starts at agent selection, and the agent picked becomes current.
 
 The `:` command entry still works everywhere; none of these flows needs it.
+
+### Import and export
+
+Both forms build an `agentvault` command line and run the binary; the TUI
+does not import or export by itself. Each form shows the exact command it
+will run, so the same options can be used on the CLI.
+
+Export form: output file (empty: the CLI default
+`<config dir>/exports/<host>-<timestamp>.avbundle`), include API keys
+(on, `--include-keys=false` when off), encrypt (on, `--plain --confirm` when
+off) and include memory (`--include-memory`). `Tab` moves, `Space` toggles,
+`Enter` runs `agentvault export -y ...` on the terminal, where it asks for the
+bundle password. A warning line says when keys or secrets go into the file.
+
+Import form: bundle (empty: the CLI picks the newest bundle in
+`<config dir>/exports`), strategy (`merge`, `replace`, `mirror`; `Left`/`Right`
+cycle), on conflict (CLI decides, `backup-replace`, `keep`), project root
+(adds `--apply-projects --project-root DIR`) and path maps. On the map field
+type `OLD=NEW` and press `Enter` to add it; entries are listed in order and
+passed as repeated `--map`. `Ctrl+D` removes the last entry. An entry without
+both sides is refused.
+
+`Enter` elsewhere on the import form runs the same command with `--dry-run`
+and shows its output in the TUI. From the preview, `y` or `Enter` runs the
+real import on the terminal (it may ask for the bundle password or to confirm
+project matches), `e` or `Esc` returns to the form. `mirror` deletes local
+items the bundle does not have: the form and preview show a warning, and only
+`M` runs it. The preview has no terminal, so an encrypted bundle needs
+`AGENTVAULT_IMPORT_PASSWORD` for the preview; the real import asks for it.
 
 ## Tab 1: Agents
 

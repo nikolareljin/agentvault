@@ -18,10 +18,11 @@ type keyRegistry struct {
 	Connect, Backend                                                    key.Binding
 
 	// Actions menu shortcuts.
-	ActAdd, ActSwitch, ActPrompt, ActUsage, ActCommand key.Binding
+	ActAdd, ActSwitch, ActPrompt, ActUsage, ActCommand, ActImport, ActExport key.Binding
 
 	// Flows.
 	Select, Submit, NextField, PrevField, CycleNext, CyclePrev, ClearAgent key.Binding
+	Toggle, RemoveMap, EditForm, ConfirmImport, ConfirmMirror              key.Binding
 	GwRun, GwReview, GwConfirm, GwRedo, GwSwitch, GwEdit, Type, Erase      key.Binding
 }
 
@@ -64,6 +65,14 @@ var keys = keyRegistry{
 	ActPrompt:  bind([]string{"p"}, "p", "prompt"),
 	ActUsage:   bind([]string{"u"}, "u", "usage"),
 	ActCommand: bind([]string{":", ";"}, ":", "run command"),
+	ActImport:  bind([]string{"i"}, "i", "import"),
+	ActExport:  bind([]string{"x"}, "x", "export"),
+
+	Toggle:        bind([]string{" ", "right", "left"}, "space", "toggle"),
+	RemoveMap:     bind([]string{"ctrl+d"}, "ctrl+d", "remove last map"),
+	EditForm:      bind([]string{"e", "E"}, "e", "edit form"),
+	ConfirmImport: bind([]string{"y", "Y", "enter"}, "y/enter", "import"),
+	ConfirmMirror: bind([]string{"M"}, "M", "run mirror import"),
 
 	Select:     bind([]string{"enter"}, "enter", "select"),
 	Submit:     bind([]string{"enter"}, "enter", "save"),
@@ -88,7 +97,19 @@ func (m model) helpBindings() []key.Binding {
 	k := keys
 	switch m.mode {
 	case viewActions:
-		return []key.Binding{k.ActAdd, k.ActSwitch, k.ActPrompt, k.ActUsage, k.ActCommand, as(k.Select, "run"), k.Back}
+		return []key.Binding{k.ActAdd, k.ActSwitch, k.ActPrompt, k.ActUsage, k.ActImport, k.ActExport, k.ActCommand, as(k.Select, "run"), k.Back}
+	case viewExport:
+		return []key.Binding{as(k.Type, "path"), k.NextField, as(k.Toggle, "toggle option"), as(k.Submit, "export"), as(k.Back, "cancel")}
+	case viewImport:
+		return []key.Binding{as(k.Type, "field"), k.NextField, as(k.CycleNext, "cycle choice"), as(k.Submit, "add map / preview"), k.RemoveMap, as(k.Back, "cancel")}
+	case viewImportPreview:
+		if m.impRunning {
+			return []key.Binding{bind(nil, "running...", ""), as(k.Back, "back to form")}
+		}
+		if m.importFormState().mirror() {
+			return []key.Binding{k.ConfirmMirror, k.EditForm, as(k.Back, "back to form")}
+		}
+		return []key.Binding{k.ConfirmImport, k.EditForm, as(k.Back, "back to form")}
 	case viewAddAgent:
 		return []key.Binding{as(k.Type, "field"), k.NextField, as(k.CycleNext, "provider (on Provider)"), k.Submit, as(k.Back, "cancel")}
 	case viewSwitchAgent:
@@ -199,7 +220,19 @@ func (m model) helpSections(from model) []helpSection {
 			as(k.ActSwitch, "switch the current agent (this session)"),
 			as(k.ActPrompt, "prompt the current agent in the default workspace"),
 			as(k.ActUsage, "usage and provider status (Status tab)"),
+			as(k.ActImport, "import: dry-run preview, then run agentvault import"),
+			as(k.ActExport, "export: run agentvault export with the form's options"),
 			as(k.ActCommand, "run an agentvault CLI command"),
+		}},
+		{"Import and export forms", []key.Binding{
+			as(k.NextField, "next field (shift+tab: previous)"),
+			as(k.Toggle, "toggle an export option"),
+			as(k.CycleNext, "cycle strategy / on-conflict (left: back)"),
+			as(k.Submit, "export; import: add the map entry, or preview"),
+			as(k.RemoveMap, "remove the last --map entry"),
+			as(k.ConfirmImport, "run the import from the preview"),
+			as(k.ConfirmMirror, "run a mirror import (deletes local items)"),
+			as(k.EditForm, "back to the import form"),
 		}},
 		{"Navigation", []key.Binding{k.Tabs, k.PrevTab, k.JumpTab, bind([]string{"up", "k", "down", "j"}, "j/k", "move cursor"), as(k.Detail, "view details"), as(k.Back, "back / close"), k.Quit}},
 		{"Agents tab", agentsTab},
