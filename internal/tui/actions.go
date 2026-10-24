@@ -135,7 +135,7 @@ func (m *model) openSwitchAgent() tea.Cmd {
 func (m *model) openUsage() tea.Cmd {
 	m.activeTab = tabStatus
 	m.mode = viewStatus
-	return statusRefreshCmd(m.vault)
+	return statusRefreshCmd(m.vault, true)
 }
 
 func (m *model) openCommand() tea.Cmd {

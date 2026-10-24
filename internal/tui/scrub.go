@@ -88,6 +88,7 @@ func (m model) displayCopy() model {
 	m.detected = scrubESC(m.detected)
 	m.providerCfgs = scrubESC(m.providerCfgs)
 	m.statusReport = scrubESC(m.statusReport)
+	m.capabilities = scrubESC(m.capabilities)
 	m.localInst = scrubESC(m.localInst)
 	m.quickCommands = scrubESC(m.quickCommands)
 	for _, s := range []*string{&m.statusErr, &m.searchQuery, &m.commandQuery,

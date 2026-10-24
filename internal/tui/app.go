@@ -136,8 +136,9 @@ type quickCommand struct {
 }
 
 type statusRefreshMsg struct {
-	report statuspkg.Report
-	err    error
+	report   statuspkg.Report
+	costRead bool // report.Cost was read; otherwise the last one is kept
+	err      error
 }
 
 // editorFinishedMsg is sent when the external editor exits.
@@ -208,7 +209,9 @@ type model struct {
 	instructions   []agent.InstructionFile
 	detected       []DetectedAgentInfo
 	providerCfgs   agent.ProviderConfig
+	capabilities   []agent.ModelCapabilityEntry
 	statusReport   *statuspkg.Report
+	costRead       bool // statusReport.Cost has been read at least once
 	statusErr      string
 
 	// UI navigation state
@@ -314,6 +317,7 @@ func initialModel(v *vault.Vault) model {
 		shared:       v.SharedConfig(),
 		instructions: v.ListInstructions(),
 		providerCfgs: v.ProviderConfigs(),
+		capabilities: v.ListCapabilities(),
 		activeTab:    tabAgents,
 		mode:         viewAgentList,
 		cwd:          cwd,
@@ -385,6 +389,7 @@ func (m *model) refresh() {
 	m.instructions = m.vault.ListInstructions()
 	m.detected = detectAgentsForTUI()
 	m.providerCfgs = m.vault.ProviderConfigs()
+	m.capabilities = m.vault.ListCapabilities()
 	m.markDetectedInVault()
 	m.autoAddDetectedAgents()
 	m.refreshHasClaudeAgent()
@@ -549,7 +554,7 @@ func detectAgentsForTUI() []DetectedAgentInfo {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(statusRefreshCmd(m.vault), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
+	return tea.Batch(statusRefreshCmd(m.vault, m.activeTab == tabStatus), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -567,7 +572,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusErr = msg.err.Error()
 		} else {
 			report := msg.report
+			if !msg.costRead && m.statusReport != nil {
+				report.Cost = m.statusReport.Cost
+			}
 			m.statusReport = &report
+			m.costRead = m.costRead || msg.costRead
 			m.statusErr = ""
 		}
 		return m, nil
@@ -681,7 +690,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			m.activeTab = (m.activeTab + 1) % numTabs
 			m.mode = m.getModeForTab()
-			return m, nil
+			return m, m.costOnEnterStatus()
 
 		case "shift+tab":
 			if m.activeTab == 0 {
@@ -690,7 +699,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeTab--
 			}
 			m.mode = m.getModeForTab()
-			return m, nil
+			return m, m.costOnEnterStatus()
 
 		case "1":
 			m.activeTab = tabAgents
@@ -719,7 +728,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "7":
 			m.activeTab = tabStatus
 			m.mode = viewStatus
-			return m, nil
+			return m, m.costOnEnterStatus()
 		case "8":
 			m.activeTab = tabAbout
 			m.mode = viewAbout
@@ -778,10 +787,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m.refresh()
 			m.setStatus("Refreshed", false)
-			return m, statusRefreshCmd(m.vault)
+			return m, statusRefreshCmd(m.vault, m.activeTab == tabStatus)
 		}
 	case time.Time:
-		return m, tea.Batch(statusRefreshCmd(m.vault), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
+		return m, tea.Batch(statusRefreshCmd(m.vault, m.activeTab == tabStatus), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
 	}
 	return m, nil
 }
@@ -2509,6 +2518,9 @@ func (m model) renderStatus() string {
 		b.WriteString("\n")
 	}
 
+	b.WriteString(m.renderStatusCost())
+	b.WriteString(m.renderCapabilityMatrix())
+
 	if len(m.localInst) > 0 {
 		b.WriteString("\n")
 		b.WriteString(labelStyle.Render("  Local Instruction Files (auto-detected):"))
@@ -2676,14 +2688,19 @@ func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (
 	}, nil
 }
 
-func statusRefreshCmd(v *vault.Vault) tea.Cmd {
+// statusRefreshCmd builds the status report. withCost also reads the prompt
+// history for the cost section, which only the Status tab shows.
+func statusRefreshCmd(v *vault.Vault, withCost bool) tea.Cmd {
 	return func() tea.Msg {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
 			return statusRefreshMsg{err: err}
 		}
 		report := statuspkg.BuildReport(v, homeDir)
-		return statusRefreshMsg{report: report}
+		if withCost {
+			report.Cost = statuspkg.CostReportForVault(v)
+		}
+		return statusRefreshMsg{report: report, costRead: withCost}
 	}
 }
 

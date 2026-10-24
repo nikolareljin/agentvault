@@ -8,6 +8,9 @@
   issue 10 part 2. They build and show the `agentvault import`/`export`
   command and run it; import previews with `--dry-run` first, takes repeated
   `--map OLD=NEW` entries, and needs `M` to run a mirror import.
+- TUI Status tab: estimated cost (total, per provider, this month) with
+  monthly budget warnings, and a model capability matrix from the
+  capability registry. Issue 10 part 3.
 
 ## [0.18.0] - 2026-10-23
 
