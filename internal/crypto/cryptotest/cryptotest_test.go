@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -39,20 +40,23 @@ func TestNotImportedByProductionCode(t *testing.T) {
 	}
 }
 
+// fastParamsCall matches the call as a statement, not in a comment or string.
+var fastParamsCall = regexp.MustCompile(`(?m)^\s*cryptotest\.UseFastParams\(\)\s*$`)
+
 // Every test package that can reach internal/vault calls UseFastParams in
 // its TestMain. One that forgets still passes, only slower: under -race on
 // macOS that slowness is a 10 minute timeout. internal/crypto is exempt: it
 // keeps the real parameters and pins them.
 func TestVaultTestPackagesUseFastParams(t *testing.T) {
 	const vaultPkg = "github.com/nikolareljin/agentvault/internal/vault"
-	out, err := exec.Command("go", "list", "-f", "{{.ImportPath}}|{{.Dir}}|{{len .TestGoFiles}}", "github.com/nikolareljin/agentvault/...").Output()
+	out, err := exec.Command("go", "list", "-f", "{{.ImportPath}}|{{.Dir}}|{{len .TestGoFiles}}{{len .XTestGoFiles}}", "github.com/nikolareljin/agentvault/...").Output()
 	if err != nil {
 		t.Fatalf("go list: %v", err)
 	}
 	checked := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		f := strings.SplitN(line, "|", 3)
-		if len(f) != 3 || f[2] == "0" || strings.HasSuffix(f[0], "/internal/crypto") || strings.HasSuffix(f[0], "/cryptotest") {
+		if len(f) != 3 || f[2] == "00" || strings.HasSuffix(f[0], "/internal/crypto") || strings.HasSuffix(f[0], "/cryptotest") {
 			continue
 		}
 		deps, err := exec.Command("go", "list", "-test", "-deps", f[0]).Output()
@@ -70,7 +74,7 @@ func TestVaultTestPackagesUseFastParams(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(b), "cryptotest.UseFastParams()") {
+			if fastParamsCall.Match(b) {
 				found = true
 				break
 			}
