@@ -157,6 +157,7 @@ type editorFinishedMsg struct {
 type cliCommandFinishedMsg struct {
 	command string
 	err     error
+	summary string // one line of the command's output for the status bar
 }
 
 type gatewayStage int
@@ -604,6 +605,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(fmt.Sprintf("Command failed: %v", msg.err), true)
 		} else {
 			m.setStatus("Command completed", false)
+		}
+		if msg.summary != "" {
+			m.setStatus(msg.summary, msg.err != nil)
 		}
 		// The command may have written the vault: read it back, so the
 		// screens show it and the next save does not overwrite it.

@@ -168,3 +168,35 @@ func TestCapabilityCursorClampedAfterShrink(t *testing.T) {
 		t.Fatal("d y did nothing with the cursor past the end")
 	}
 }
+
+func TestCapabilityDiscoverShowsResultLine(t *testing.T) {
+	for _, tc := range []struct{ mode, want string }{
+		{"ok", "arg:--endpoint=http://h:11434"}, // the fake prints its args; the last one is the result line
+		{"fail", "Error: fake failure"},
+	} {
+		useFakeCLI(t, tc.mode)
+		m := openCapabilities(t)
+		m = asModel(t, must(m.Update(runeKey('D'))))
+		m = typeText(t, m, "http://h:11434")
+		tm, cmd := m.Update(keyEnter)
+		if cmd == nil {
+			t.Fatalf("%s: discover did not run", tc.mode)
+		}
+		m = asModel(t, must(asModel(t, tm).Update(cmd())))
+		if m.statusMsg != tc.want || m.statusIsError != (tc.mode == "fail") || m.mode != viewCapabilities {
+			t.Errorf("%s: status=%q error=%v mode=%v, want %q", tc.mode, m.statusMsg, m.statusIsError, m.mode, tc.want)
+		}
+	}
+}
+
+func TestCommandSummary(t *testing.T) {
+	if got := commandSummary("  + m-a (general)\nAdded 2 model(s) from http://h\n\n", false); got != "Added 2 model(s) from http://h" {
+		t.Errorf("success: %q", got)
+	}
+	if got := commandSummary("Error: discover: refused\nUsage:\n  agentvault capability discover [flags]\n", true); got != "Error: discover: refused" {
+		t.Errorf("failure: %q", got)
+	}
+	if got := commandSummary("no error line\n", true); got != "" {
+		t.Errorf("failure without an Error line: %q", got)
+	}
+}

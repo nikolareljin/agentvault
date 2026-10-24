@@ -3,6 +3,9 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -183,14 +186,54 @@ func (m *model) handleCapabilityDiscoverInput(msg tea.KeyMsg) (tea.Model, tea.Cm
 			m.setStatus("Error: the endpoint holds credentials; the TUI does not pass them on a command line. Run agentvault capability discover yourself.", true)
 			return m, nil
 		}
-		cmd := m.runCLI(discoverArgs(m.capDiscover.Value()))
-		// Back to the list, which the reload after the command fills.
-		m.mode = viewCapabilities
-		return m, cmd
+		return m, m.runDiscover(endpoint)
 	}
 	var cmd tea.Cmd
 	m.capDiscover, cmd = m.capDiscover.Update(msg)
 	return m, cmd
+}
+
+// runDiscover runs 'capability discover' on the terminal, since it may ask
+// for the master password, and copies its output so the result line ("Added
+// N model(s)" or the error) is still on the status bar after the TUI redraws.
+func (m *model) runDiscover(endpoint string) tea.Cmd {
+	exe, err := agentvaultExecutable()
+	if err != nil {
+		m.setStatus(fmt.Sprintf("Unable to locate agentvault binary: %v", err), true)
+		return nil
+	}
+	// Back to the list, which the reload after the command fills.
+	m.mode = viewCapabilities
+	m.commandRunning = true
+	args := discoverArgs(endpoint)
+	var buf lockedBuffer
+	c := exec.Command(exe, args...)
+	c.Stdout = io.MultiWriter(os.Stdout, &buf)
+	c.Stderr = io.MultiWriter(os.Stderr, &buf)
+	line := shownCommand(args)
+	return runPreviewProcess(c, func(err error) tea.Msg {
+		return cliCommandFinishedMsg{command: line, err: err, summary: commandSummary(buf.String(), err != nil)}
+	})
+}
+
+// commandSummary picks the line of a command's output for the status bar:
+// the "Error:" line when it failed (cobra prints usage after it), else the
+// last line.
+func commandSummary(output string, failed bool) string {
+	var last string
+	for _, l := range strings.Split(output, "\n") {
+		l = strings.TrimSpace(l)
+		if failed && strings.HasPrefix(l, "Error:") {
+			return textutil.Printable(l)
+		}
+		if l != "" {
+			last = l
+		}
+	}
+	if failed {
+		return ""
+	}
+	return textutil.Printable(last)
 }
 
 func (m model) renderCapabilities() string {
