@@ -92,7 +92,7 @@ func TestStatusCostShownWhenReportFails(t *testing.T) {
 }
 
 func TestTruncateRunes(t *testing.T) {
-	if got := truncateRunes(strings.Repeat("é", 30), 28); got != strings.Repeat("é", 25)+"..." {
+	if got := truncateRunes(strings.Repeat("\u00e9", 30), 28); got != strings.Repeat("\u00e9", 25)+"..." {
 		t.Errorf("truncateRunes = %q", got)
 	}
 }
