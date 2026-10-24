@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS CI timed out under `go test -race` (ci-helpers 0.44.0 default):
+  `cmd` passed 600s, as every test vault ran the default 64 MiB, t=3 Argon2id.
+  Tests in `cmd`, `internal/vault`, `internal/tui` and `internal/status` now
+  create vaults with the cheapest parameters the header accepts
+  (`internal/crypto/cryptotest`); a test fails for a package that reaches
+  `internal/vault` without them.
+  The binary does not import that package, and a test checks it.
+- TUI tests no longer run the agents installed on the machine. Every
+  `initialModel` and `refresh` ran each installed agent's `--version` and
+  auto-added what it found to the test vault, so results and run time
+  depended on the developer's tools (`internal/tui` without `-race`: 76s locally, now 2s).
+  Tests stub the scan; `TestDetectAgentsOnThisMachine` runs the real scan
+  and is skipped when `CI` is set.
+
 ## [0.19.0] - 2026-10-24
 
 ### Added

@@ -349,7 +349,7 @@ func initialModel(v *vault.Vault) model {
 	for i := range m.agents {
 		m.filteredAgents[i] = i
 	}
-	m.detected = detectAgentsForTUI()
+	m.detected = detectAgents()
 	m.markDetectedInVault()
 	m.autoAddDetectedAgents()
 	m.refreshHasClaudeAgent()
@@ -400,7 +400,7 @@ func (m *model) refresh() {
 	m.agents = m.vault.List()
 	m.shared = m.vault.SharedConfig()
 	m.instructions = m.vault.ListInstructions()
-	m.detected = detectAgentsForTUI()
+	m.detected = detectAgents()
 	m.providerCfgs = m.vault.ProviderConfigs()
 	m.capabilities = m.vault.ListCapabilities()
 	m.markDetectedInVault()
@@ -533,6 +533,11 @@ func (m *model) refreshLocalInstructions() {
 	m.localInst = local
 	m.instructions = m.vault.ListInstructions()
 }
+
+// detectAgents is the agent scan initialModel and refresh run. Tests replace it:
+// the real scan runs each installed agent's --version, which made the TUI
+// tests depend on, and wait for, the tools on the developer's machine.
+var detectAgents = detectAgentsForTUI
 
 func detectAgentsForTUI() []DetectedAgentInfo {
 	var detected []DetectedAgentInfo

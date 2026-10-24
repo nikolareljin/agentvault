@@ -66,6 +66,22 @@ go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out -o coverage.html
 ```
 
+### How the tests run
+
+- CI runs `go test -race ./...` on Linux, macOS and Windows. Run the same
+  locally before pushing: a data race fails CI, not plain `go test`.
+- Every package whose code reads the home directory has a `TestMain` that
+  points `HOME` and the XDG directories at a throwaway directory, so no test
+  touches your real agent configs. A new such package adds one.
+- Test vaults use the cheapest Argon2id parameters the vault header accepts
+  (`cryptotest.UseFastParams()` in `TestMain`). A new test package that
+  creates vaults calls it too: the default parameters under `-race` took the
+  `cmd` tests past the 10 minute limit on macOS. `internal/crypto` keeps the
+  real parameters and pins them. `TestVaultTestPackagesUseFastParams` fails
+  for a test package that reaches `internal/vault` without the call.
+- TUI tests do not scan for installed agents. `TestDetectAgentsOnThisMachine`
+  runs the real scan on your machine and is skipped when `CI` is set.
+
 ## Manual Testing Checklist
 
 ### 1. Vault Initialization
