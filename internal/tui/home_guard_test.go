@@ -14,6 +14,8 @@ import (
 // before any test runs, so no test can write to the real user's agent configs.
 func TestMain(m *testing.M) {
 	cryptotest.UseFastParams()
+	// No test sees the agents installed on this machine; see detect_test.go.
+	detectAgents = func() []DetectedAgentInfo { return nil }
 	if os.Getenv(fakeCLIEnv) != "" {
 		os.Exit(runFakeCLI())
 	}

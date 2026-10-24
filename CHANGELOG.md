@@ -9,6 +9,12 @@
   Tests in `cmd`, `internal/vault` and `internal/tui` now create vaults with
   the cheapest parameters the header accepts (`internal/crypto/cryptotest`).
   The binary does not import that package, and a test checks it.
+- TUI tests no longer run the agents installed on the machine. Every
+  `initialModel` and `refresh` ran each installed agent's `--version` and
+  auto-added what it found to the test vault, so results and run time
+  depended on the developer's tools (`internal/tui`: 76s locally, now 2s).
+  Tests stub the scan; `TestDetectAgentsOnThisMachine` runs the real scan
+  and is skipped when `CI` is set.
 
 ## [0.19.0] - 2026-10-24
 
