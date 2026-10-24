@@ -67,8 +67,8 @@ func TestStatusCostReadOnlyOnStatusTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := initialModel(v)
-	if msg := statusRefreshCmd(v, false)().(statusRefreshMsg); msg.report.Cost != nil || msg.costRead {
-		t.Fatalf("history read off the Status tab: %+v", msg.report.Cost)
+	if msg := statusRefreshCmd(v, false)().(statusRefreshMsg); msg.cost != nil || msg.costRead {
+		t.Fatalf("history read off the Status tab: %+v", msg.cost)
 	}
 	// Opening the tab reads the cost; a later refresh off the tab keeps it.
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("7")})
@@ -77,8 +77,23 @@ func TestStatusCostReadOnlyOnStatusTab(t *testing.T) {
 	}
 	next, _ = next.(model).Update(cmd())
 	next, _ = next.(model).Update(statusRefreshCmd(v, false)())
-	if out := next.(model).renderStatus(); !strings.Contains(out, "Total:        $1.0000 (1 prompts)") {
+	if out := next.(model).renderStatus(); !strings.Contains(out, "Total:        $1.0000 (1 prompt)") {
 		t.Errorf("cost dropped by a refresh that did not read it:\n%s", out)
+	}
+}
+
+func TestStatusCostShownWhenReportFails(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	next, _ := m.Update(statusRefreshMsg{costRead: true, err: fmt.Errorf("no home")})
+	if out := next.(model).renderStatus(); !strings.Contains(out, "No successful prompts recorded yet.") {
+		t.Errorf("cost stuck loading after a report error:\n%s", out)
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	if got := truncateRunes(strings.Repeat("é", 30), 28); got != strings.Repeat("é", 25)+"..." {
+		t.Errorf("truncateRunes = %q", got)
 	}
 }
 

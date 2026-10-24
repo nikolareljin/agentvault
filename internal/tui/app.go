@@ -137,7 +137,8 @@ type quickCommand struct {
 
 type statusRefreshMsg struct {
 	report   statuspkg.Report
-	costRead bool // report.Cost was read; otherwise the last one is kept
+	cost     *statuspkg.CostReport
+	costRead bool // cost was read; otherwise the last one is kept
 	err      error
 }
 
@@ -211,7 +212,8 @@ type model struct {
 	providerCfgs   agent.ProviderConfig
 	capabilities   []agent.ModelCapabilityEntry
 	statusReport   *statuspkg.Report
-	costRead       bool // statusReport.Cost has been read at least once
+	cost           *statuspkg.CostReport // nil: no successful prompts
+	costRead       bool                  // cost has been read at least once
 	statusErr      string
 
 	// UI navigation state
@@ -568,15 +570,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleEditorFinished(msg)
 
 	case statusRefreshMsg:
+		if msg.costRead {
+			m.cost, m.costRead = msg.cost, true
+		}
 		if msg.err != nil {
 			m.statusErr = msg.err.Error()
 		} else {
 			report := msg.report
-			if !msg.costRead && m.statusReport != nil {
-				report.Cost = m.statusReport.Cost
-			}
 			m.statusReport = &report
-			m.costRead = m.costRead || msg.costRead
 			m.statusErr = ""
 		}
 		return m, nil
@@ -2692,15 +2693,17 @@ func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (
 // history for the cost section, which only the Status tab shows.
 func statusRefreshCmd(v *vault.Vault, withCost bool) tea.Cmd {
 	return func() tea.Msg {
+		msg := statusRefreshMsg{costRead: withCost}
+		if withCost {
+			msg.cost = statuspkg.CostReportForVault(v)
+		}
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return statusRefreshMsg{err: err}
+			msg.err = err
+			return msg
 		}
-		report := statuspkg.BuildReport(v, homeDir)
-		if withCost {
-			report.Cost = statuspkg.CostReportForVault(v)
-		}
-		return statusRefreshMsg{report: report, costRead: withCost}
+		msg.report = statuspkg.BuildReport(v, homeDir)
+		return msg
 	}
 }
 

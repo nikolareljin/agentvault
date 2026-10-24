@@ -45,18 +45,22 @@ func (m model) renderStatusCost() string {
 	b.WriteString("\n")
 	b.WriteString(labelStyle.Render("  Cost (estimated, from prompt history):"))
 	b.WriteString("\n")
-	if m.statusReport == nil || !m.costRead {
+	if !m.costRead {
 		b.WriteString(dimStyle.Render("    Loading..."))
 		b.WriteString("\n")
 		return b.String()
 	}
-	c := m.statusReport.Cost
+	c := m.cost
 	if c == nil {
 		b.WriteString(dimStyle.Render("    No successful prompts recorded yet."))
 		b.WriteString("\n")
 		return b.String()
 	}
-	b.WriteString(fmt.Sprintf("    Total:        $%.4f (%d prompts)\n", c.TotalUSD, c.RecordCount))
+	prompts := "prompts"
+	if c.RecordCount == 1 {
+		prompts = "prompt"
+	}
+	b.WriteString(fmt.Sprintf("    Total:        $%.4f (%d %s)\n", c.TotalUSD, c.RecordCount, prompts))
 	providers := make([]string, 0, len(c.ByProvider))
 	for p := range c.ByProvider {
 		providers = append(providers, p)
@@ -104,7 +108,7 @@ func (m model) renderCapabilityMatrix() string {
 		if e.ContextSize > 0 {
 			ctx = fmt.Sprintf("%d", e.ContextSize)
 		}
-		row := fmt.Sprintf("    %-28s %8s", truncate(textutil.Printable(e.ModelName), 28), ctx)
+		row := fmt.Sprintf("    %-28s %8s", truncateRunes(textutil.Printable(e.ModelName), 28), ctx)
 		for _, c := range matrixCapabilities {
 			mark := " - "
 			if has[c.name] {
@@ -131,4 +135,13 @@ func capabilityLegend() string {
 		parts = append(parts, c.header+"="+c.name)
 	}
 	return strings.Join(parts, " ")
+}
+
+// truncateRunes is truncate that does not cut a UTF-8 character.
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-3]) + "..."
 }
