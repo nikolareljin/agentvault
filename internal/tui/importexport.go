@@ -389,8 +389,33 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// runPreviewProcess hands the terminal to the preview command. Tests replace
-// it to run the command without a terminal.
+// tailBuffer keeps the last max bytes written to it, for output whose size
+// the TUI does not control.
+type tailBuffer struct {
+	mu  sync.Mutex
+	max int
+	buf []byte
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf = append(b.buf, p...)
+	if over := len(b.buf) - b.max; over > 0 {
+		b.buf = append(b.buf[:0], b.buf[over:]...)
+	}
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
+}
+
+// runPreviewProcess hands the terminal to a command whose output the TUI
+// copies (import preview, discover, the ':' bridge). Tests replace it to run
+// the command without a terminal.
 var runPreviewProcess = func(c *exec.Cmd, done func(error) tea.Msg) tea.Cmd {
 	return tea.ExecProcess(c, done)
 }

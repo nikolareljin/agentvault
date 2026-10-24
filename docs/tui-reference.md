@@ -228,6 +228,8 @@ Keys:
 Behavior:
 - you enter command without binary name
 - TUI executes as `agentvault <command>`
+- when it fails, its `Error:` line stays on the status bar after the TUI
+  redraws (a successful command shows only "Command completed")
 - afterwards the TUI reads the vault file again, so what the command wrote
   shows up and is kept by the next save from the TUI; if the file was
   rewritten under another password, the TUI stops saving and asks for a

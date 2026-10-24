@@ -206,10 +206,10 @@ func (m *model) runDiscover(endpoint string) tea.Cmd {
 	m.mode = viewCapabilities
 	m.commandRunning = true
 	args := discoverArgs(endpoint)
-	var buf lockedBuffer
+	buf := &tailBuffer{max: 64 << 10}
 	c := exec.Command(exe, args...)
-	c.Stdout = io.MultiWriter(os.Stdout, &buf)
-	c.Stderr = io.MultiWriter(os.Stderr, &buf)
+	c.Stdout = io.MultiWriter(os.Stdout, buf)
+	c.Stderr = io.MultiWriter(os.Stderr, buf)
 	line := shownCommand(args)
 	return runPreviewProcess(c, func(err error) tea.Msg {
 		return cliCommandFinishedMsg{command: line, err: err, summary: commandSummary(buf.String(), err != nil)}

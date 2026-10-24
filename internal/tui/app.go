@@ -890,7 +890,7 @@ func (m *model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		exePath, err := os.Executable()
+		exePath, err := agentvaultExecutable()
 		if err != nil {
 			m.setStatus(fmt.Sprintf("Unable to locate agentvault binary: %v", err), true)
 			m.commandMode = false
@@ -899,11 +899,21 @@ func (m *model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.commandRunning = true
 		cmd := exec.Command(exePath, parts...)
-		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return cliCommandFinishedMsg{
+		// The TUI redraws over the output, so keep its tail for the Error:
+		// line. Only a failure is summarized: the last line of a successful
+		// command can be a value the user asked to print, such as a key.
+		out := &tailBuffer{max: 64 << 10}
+		cmd.Stdout = io.MultiWriter(os.Stdout, out)
+		cmd.Stderr = io.MultiWriter(os.Stderr, out)
+		return m, runPreviewProcess(cmd, func(err error) tea.Msg {
+			msg := cliCommandFinishedMsg{
 				command: "agentvault " + strings.Join(parts, " "),
 				err:     err,
 			}
+			if err != nil {
+				msg.summary = commandSummary(out.String(), true)
+			}
+			return msg
 		})
 	default:
 		if len(msg.String()) == 1 {

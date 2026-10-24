@@ -200,3 +200,31 @@ func TestCommandSummary(t *testing.T) {
 		t.Errorf("failure without an Error line: %q", got)
 	}
 }
+
+func TestCommandBridgeShowsOnlyFailureLine(t *testing.T) {
+	for _, tc := range []struct{ mode, want string }{
+		{"ok", "Command completed"}, // a success line can be a printed secret; it is not shown
+		{"fail", "Error: fake failure"},
+	} {
+		useFakeCLI(t, tc.mode)
+		m := asModel(t, must(actionsTestModel(t).Update(runeKey(':'))))
+		m = typeText(t, m, "config get secret")
+		tm, cmd := m.Update(keyEnter)
+		if cmd == nil {
+			t.Fatalf("%s: command did not run", tc.mode)
+		}
+		m = asModel(t, must(asModel(t, tm).Update(cmd())))
+		if m.statusMsg != tc.want {
+			t.Errorf("%s: status = %q, want %q", tc.mode, m.statusMsg, tc.want)
+		}
+	}
+}
+
+func TestTailBufferKeepsTail(t *testing.T) {
+	b := &tailBuffer{max: 8}
+	_, _ = b.Write([]byte("0123456789"))
+	_, _ = b.Write([]byte("ab"))
+	if got := b.String(); got != "456789ab" {
+		t.Fatalf("tail = %q", got)
+	}
+}
