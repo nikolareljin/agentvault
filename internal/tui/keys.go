@@ -19,6 +19,7 @@ type keyRegistry struct {
 
 	// Actions menu shortcuts.
 	ActAdd, ActSwitch, ActPrompt, ActUsage, ActCommand, ActImport, ActExport key.Binding
+	ActCapabilities, CapAdd, CapDiscover                                     key.Binding
 
 	// Flows.
 	Select, Submit, NextField, PrevField, CycleNext, CyclePrev, ClearAgent key.Binding
@@ -68,6 +69,10 @@ var keys = keyRegistry{
 	ActImport:  bind([]string{"i"}, "i", "import"),
 	ActExport:  bind([]string{"x"}, "x", "export"),
 
+	ActCapabilities: bind([]string{"c"}, "c", "capabilities"),
+	CapAdd:          bind([]string{"a"}, "a", "add"),
+	CapDiscover:     bind([]string{"D"}, "D", "discover"),
+
 	Toggle:        bind([]string{" ", "right", "left"}, "space", "toggle"),
 	RemoveMap:     bind([]string{"ctrl+d"}, "ctrl+d", "remove last map"),
 	EditForm:      bind([]string{"e", "E"}, "e", "edit form"),
@@ -97,7 +102,16 @@ func (m model) helpBindings() []key.Binding {
 	k := keys
 	switch m.mode {
 	case viewActions:
-		return []key.Binding{k.ActAdd, k.ActSwitch, k.ActPrompt, k.ActUsage, k.ActImport, k.ActExport, k.ActCommand, as(k.Select, "run"), k.Back}
+		return []key.Binding{k.ActAdd, k.ActSwitch, k.ActPrompt, k.ActUsage, k.ActImport, k.ActExport, k.ActCapabilities, k.ActCommand, as(k.Select, "run"), k.Back}
+	case viewCapabilities:
+		if m.capConfirm {
+			return []key.Binding{bind([]string{"y"}, "y", "remove"), bind(nil, "any key", "cancel")}
+		}
+		return []key.Binding{as(k.Down, "move"), k.CapAdd, as(k.Delete, "remove"), k.CapDiscover, as(k.Back, "close")}
+	case viewCapabilityAdd:
+		return []key.Binding{as(k.Type, "field"), k.NextField, as(k.Submit, "add"), as(k.Back, "cancel")}
+	case viewCapabilityDiscover:
+		return []key.Binding{as(k.Type, "endpoint"), as(k.Submit, "discover"), as(k.Back, "cancel")}
 	case viewExport:
 		return []key.Binding{as(k.Type, "path"), k.NextField, as(k.Toggle, "toggle option"), as(k.Submit, "export"), as(k.Back, "cancel")}
 	case viewImport:
@@ -222,6 +236,7 @@ func (m model) helpSections(from model) []helpSection {
 			as(k.ActUsage, "usage and provider status (Status tab)"),
 			as(k.ActImport, "import: dry-run preview, then run agentvault import"),
 			as(k.ActExport, "export: run agentvault export with the form's options"),
+			as(k.ActCapabilities, "model capabilities: list, add, remove, discover"),
 			as(k.ActCommand, "run an agentvault CLI command"),
 		}},
 		{"Import and export forms", []key.Binding{
@@ -233,6 +248,11 @@ func (m model) helpSections(from model) []helpSection {
 			as(k.ConfirmImport, "run the import from the preview"),
 			as(k.ConfirmMirror, "run a mirror import (deletes local items)"),
 			as(k.EditForm, "back to the import form"),
+		}},
+		{"Capabilities screen", []key.Binding{
+			as(k.CapAdd, "add an entry: endpoint, model, context, capabilities"),
+			as(k.Delete, "remove the selected entry (y confirms)"),
+			as(k.CapDiscover, "discover an endpoint's models (agentvault capability discover)"),
 		}},
 		{"Navigation", []key.Binding{k.Tabs, k.PrevTab, k.JumpTab, bind([]string{"up", "k", "down", "j"}, "j/k", "move cursor"), as(k.Detail, "view details"), as(k.Back, "back / close"), k.Quit}},
 		{"Agents tab", agentsTab},

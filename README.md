@@ -21,7 +21,7 @@ Detailed command and TUI references: `docs/README.md`.
 - **Cost Projection Dashboard**: Per-execution cost estimates using public provider rates; `status --cost-report` shows spend breakdown and budget alerts
 - **Importance and Deadline Routing**: `--importance critical` and `--deadline immediate` influence scoring across all routing modes
 - **Live Streaming Output**: Prompt responses stream in real-time for Claude, Codex, and Gemini
-- **Interactive TUI**: 8-tab interface (Agents/Instructions/Rules/Sessions/Detected/Commands/Status/About) with search, filtering, and Prompt Gateway; import (dry-run preview first) and export forms that run and show the matching `agentvault` command
+- **Interactive TUI**: 8-tab interface (Agents/Instructions/Rules/Sessions/Detected/Commands/Status/About) with search, filtering, and Prompt Gateway; import (dry-run preview first) and export forms that run and show the matching `agentvault` command; cost and budget warnings plus a capability matrix on the Status tab; a capabilities screen to add, remove and discover model capabilities
 - **MCP Server Support**: Configure Model Context Protocol servers per agent
 - **Secure Portable Setup**: Export with env-var key capture (`--include-keys`) and sensitive content (`--include-secrets`) that a plaintext export writes only with `--confirm`
 
@@ -392,7 +392,7 @@ agentvault instructions push /path/to/project
 
 | Key | Action |
 |-----|--------|
-| `Space` | Actions menu: add agent, switch agent, prompt, usage, run command |
+| `Space` | Actions menu: add agent, switch agent, prompt, usage, import, export, capabilities, run command |
 | `Tab` | Next tab |
 | `Shift+Tab` | Previous tab |
 | `1-8` | Jump to tab |
@@ -408,7 +408,8 @@ agentvault instructions push /path/to/project
 
 The actions menu reaches each frequent task in at most 3 keys, not counting
 typed text: `Space a` adds an agent, `Space s Enter` picks the current agent
-for the session, `Space p`, type, `Enter` prompts it, `Space u` shows usage.
+for the session, `Space p`, type, `Enter` prompts it, `Space u` shows usage,
+`Space i` and `Space x` import and export, `Space c` manages capabilities.
 The help bar shows the keys for the current screen. Details:
 `docs/tui-reference.md`.
 

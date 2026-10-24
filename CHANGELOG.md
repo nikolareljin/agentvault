@@ -11,6 +11,8 @@
 - TUI Status tab: estimated cost (total, per provider, this month) with
   monthly budget warnings, and a model capability matrix from the
   capability registry. Issue 10 part 3.
+- TUI capabilities screen (`Space c`): list, add, remove and discover model
+  capability entries. Issue 10 part 4.
 
 ### Fixed
 
@@ -19,6 +21,8 @@
   with the state from when the TUI opened. The TUI now reloads the vault
   after each command, and stops saving if the file was rewritten under
   another password.
+- TUI: a failed `:` command left only "Command failed: exit status 1"; its
+  `Error:` line now stays on the status bar.
 
 ## [0.18.0] - 2026-10-23
 

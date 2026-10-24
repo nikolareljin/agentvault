@@ -94,6 +94,9 @@ const (
 	viewExport
 	viewImport
 	viewImportPreview
+	viewCapabilities
+	viewCapabilityAdd
+	viewCapabilityDiscover
 )
 
 type tab int
@@ -154,6 +157,7 @@ type editorFinishedMsg struct {
 type cliCommandFinishedMsg struct {
 	command string
 	err     error
+	summary string // one line of the command's output for the status bar
 }
 
 type gatewayStage int
@@ -290,6 +294,13 @@ type model struct {
 	impOutput   string
 	impErr      string
 	impSeq      int
+
+	// Capabilities screen (capabilities.go).
+	capCursor   int
+	capConfirm  bool // d pressed: y removes the selected entry
+	capInputs   []textinput.Model
+	capFocus    int
+	capDiscover textinput.Model
 
 	// currentAgent is the agent Prompt uses. It lasts for the session only.
 	currentAgent string
@@ -595,6 +606,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setStatus("Command completed", false)
 		}
+		if msg.summary != "" {
+			m.setStatus(msg.summary, msg.err != nil)
+		}
 		// The command may have written the vault: read it back, so the
 		// screens show it and the next save does not overwrite it.
 		if err := m.vault.Reload(); err != nil {
@@ -655,6 +669,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleImportInput(msg)
 		case viewImportPreview:
 			return m.handleImportPreviewInput(msg)
+		case viewCapabilities:
+			return m.handleCapabilitiesInput(msg)
+		case viewCapabilityAdd:
+			return m.handleCapabilityAddInput(msg)
+		case viewCapabilityDiscover:
+			return m.handleCapabilityDiscoverInput(msg)
 		}
 
 		// Handle search mode
@@ -870,7 +890,7 @@ func (m *model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		exePath, err := os.Executable()
+		exePath, err := agentvaultExecutable()
 		if err != nil {
 			m.setStatus(fmt.Sprintf("Unable to locate agentvault binary: %v", err), true)
 			m.commandMode = false
@@ -879,11 +899,21 @@ func (m *model) handleCommandInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.commandRunning = true
 		cmd := exec.Command(exePath, parts...)
-		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return cliCommandFinishedMsg{
+		// The TUI redraws over the output, so keep its tail for the Error:
+		// line. Only a failure is summarized: the last line of a successful
+		// command can be a value the user asked to print, such as a key.
+		out := &tailBuffer{max: 64 << 10}
+		cmd.Stdout = io.MultiWriter(os.Stdout, out)
+		cmd.Stderr = io.MultiWriter(os.Stderr, out)
+		return m, runPreviewProcess(cmd, func(err error) tea.Msg {
+			msg := cliCommandFinishedMsg{
 				command: "agentvault " + strings.Join(parts, " "),
 				err:     err,
 			}
+			if err != nil {
+				msg.summary = commandSummary(out.String(), true)
+			}
+			return msg
 		})
 	default:
 		if len(msg.String()) == 1 {
@@ -1641,6 +1671,12 @@ func (m model) view() string {
 		b.WriteString(m.renderImport())
 	case viewImportPreview:
 		b.WriteString(m.renderImportPreview())
+	case viewCapabilities:
+		b.WriteString(m.renderCapabilities())
+	case viewCapabilityAdd:
+		b.WriteString(m.renderCapabilityAdd())
+	case viewCapabilityDiscover:
+		b.WriteString(m.renderCapabilityDiscover())
 	}
 
 	// Status bar

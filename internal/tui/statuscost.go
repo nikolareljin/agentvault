@@ -84,7 +84,7 @@ func (m model) renderCapabilityMatrix() string {
 	b.WriteString(labelStyle.Render("  Model Capabilities:"))
 	b.WriteString("\n")
 	if len(m.capabilities) == 0 {
-		b.WriteString(dimStyle.Render("    None recorded. Add with ': capability add' or ': capability discover'."))
+		b.WriteString(dimStyle.Render("    None recorded. Space c adds or discovers them."))
 		b.WriteString("\n")
 		return b.String()
 	}
