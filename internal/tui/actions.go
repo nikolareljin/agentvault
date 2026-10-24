@@ -28,6 +28,8 @@ func actionItems() []actionItem {
 		{keys.ActSwitch, "Switch agent", "Pick the current agent for this session", (*model).openSwitchAgent},
 		{keys.ActPrompt, "Prompt", "Send a prompt to the current agent", (*model).openQuickPrompt},
 		{keys.ActUsage, "Usage", "Provider status and token usage (Status tab)", (*model).openUsage},
+		{keys.ActImport, "Import", "Preview, then import a bundle (agentvault import)", (*model).openImport},
+		{keys.ActExport, "Export", "Export settings to a bundle (agentvault export)", (*model).openExport},
 		{keys.ActCommand, "Run command", "Type any agentvault CLI command", (*model).openCommand},
 	}
 }
@@ -71,7 +73,8 @@ func (m *model) openActions() {
 
 func (m *model) closeOverlay() {
 	m.mode = m.actionsReturn
-	if m.mode == viewActions || m.mode == viewAddAgent || m.mode == viewSwitchAgent {
+	if m.mode == viewActions || m.mode == viewAddAgent || m.mode == viewSwitchAgent ||
+		m.mode == viewExport || m.mode == viewImport || m.mode == viewImportPreview {
 		m.mode = m.getModeForTab()
 	}
 }

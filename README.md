@@ -21,7 +21,7 @@ Detailed command and TUI references: `docs/README.md`.
 - **Cost Projection Dashboard**: Per-execution cost estimates using public provider rates; `status --cost-report` shows spend breakdown and budget alerts
 - **Importance and Deadline Routing**: `--importance critical` and `--deadline immediate` influence scoring across all routing modes
 - **Live Streaming Output**: Prompt responses stream in real-time for Claude, Codex, and Gemini
-- **Interactive TUI**: 8-tab interface (Agents/Instructions/Rules/Sessions/Detected/Commands/Status/About) with search, filtering, and Prompt Gateway
+- **Interactive TUI**: 8-tab interface (Agents/Instructions/Rules/Sessions/Detected/Commands/Status/About) with search, filtering, and Prompt Gateway; import (dry-run preview first) and export forms that run and show the matching `agentvault` command
 - **MCP Server Support**: Configure Model Context Protocol servers per agent
 - **Secure Portable Setup**: Export with env-var key capture (`--include-keys`) and sensitive content (`--include-secrets`) that a plaintext export writes only with `--confirm`
 

@@ -91,6 +91,9 @@ const (
 	viewActions
 	viewAddAgent
 	viewSwitchAgent
+	viewExport
+	viewImport
+	viewImportPreview
 )
 
 type tab int
@@ -266,6 +269,22 @@ type model struct {
 	addProviders  []agent.Provider
 	addProvider   int
 	addFocus      int
+
+	// Import and export forms (importexport.go).
+	exp         exportForm
+	expPath     textinput.Model
+	expFocus    int
+	imp         importForm
+	impPath     textinput.Model
+	impRoot     textinput.Model
+	impMap      textinput.Model
+	impStrategy int
+	impConflict int
+	impFocus    int
+	impRunning  bool
+	impOutput   string
+	impErr      string
+	impSeq      int
 
 	// currentAgent is the agent Prompt uses. It lasts for the session only.
 	currentAgent string
@@ -582,6 +601,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case importPreviewMsg:
+		m.handleImportPreviewMsg(msg)
+		return m, nil
+
 	case gatewayPulseMsg:
 		if m.gatewayStage == gatewayRunning && m.gatewayRunning {
 			m.gatewayTick++
@@ -607,6 +630,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleAddAgentInput(msg)
 		case viewSwitchAgent:
 			return m.handleSwitchInput(msg)
+		case viewExport:
+			return m.handleExportInput(msg)
+		case viewImport:
+			return m.handleImportInput(msg)
+		case viewImportPreview:
+			return m.handleImportPreviewInput(msg)
 		}
 
 		// Handle search mode
@@ -1587,6 +1616,12 @@ func (m model) view() string {
 		b.WriteString(m.renderAddAgent())
 	case viewSwitchAgent:
 		b.WriteString(m.renderSwitchAgent())
+	case viewExport:
+		b.WriteString(m.renderExport())
+	case viewImport:
+		b.WriteString(m.renderImport())
+	case viewImportPreview:
+		b.WriteString(m.renderImportPreview())
 	}
 
 	// Status bar
