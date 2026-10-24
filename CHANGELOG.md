@@ -2,25 +2,33 @@
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-24
+
 ### Added
 
 - TUI import and export forms in the actions menu (`Space i`, `Space x`),
-  issue 10 part 2. They build and show the `agentvault import`/`export`
-  command and run it; import previews with `--dry-run` first, takes repeated
-  `--map OLD=NEW` entries, and needs `M` to run a mirror import.
+  part 2 of https://github.com/nikolareljin/agentvault/issues/10. They
+  build and show the `agentvault import`/`export` command and run it;
+  import previews with `--dry-run` first, takes repeated `--map OLD=NEW`
+  entries, and needs `M` to run a mirror import.
 - TUI Status tab: estimated cost (total, per provider, this month) with
   monthly budget warnings, and a model capability matrix from the
-  capability registry. Issue 10 part 3.
+  capability registry. Part 3 of
+  https://github.com/nikolareljin/agentvault/issues/10.
 - TUI capabilities screen (`Space c`): list, add, remove and discover model
-  capability entries. Issue 10 part 4.
+  capability entries. Part 4 of
+  https://github.com/nikolareljin/agentvault/issues/10, which it completes.
 
 ### Fixed
 
 - TUI: a command run from the TUI (`:` bridge, import/export forms) that
   wrote the vault was not seen, and the next save from the TUI overwrote it
   with the state from when the TUI opened. The TUI now reloads the vault
-  after each command, and stops saving if the file was rewritten under
-  another password.
+  after each command. If the file was rewritten under another password or
+  cannot be read, the vault is locked: every change is refused, and none is
+  kept in memory as if saved.
+- TUI: the Status tab's refresh read the vault on a background goroutine
+  while the TUI reloaded or changed it (a data race). It now reads a copy.
 - TUI: a failed `:` command left only "Command failed: exit status 1"; its
   `Error:` line now stays on the status bar.
 
