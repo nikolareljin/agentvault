@@ -138,21 +138,35 @@ func (v *Vault) Unlock(masterPassword string) error {
 		}
 		key, header = newKey, upgraded
 	}
+	vd, err := decodeVaultData(plaintext)
+	if err != nil {
+		crypto.Zero(key)
+		return err
+	}
+	v.header = header
+	v.key = key
+	v.legacyOnDisk = wasLegacy
+	v.legacySalt = legacySalt
+	v.apply(vd, plaintext)
+	return nil
+}
+
+func decodeVaultData(plaintext []byte) (vaultData, error) {
 	var vd vaultData
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
 		// try legacy format (plain agent array) for backward compat
 		var agents []agent.Agent
 		if legacyDecodeErr := json.Unmarshal(plaintext, &agents); legacyDecodeErr != nil {
-			crypto.Zero(key)
-			return fmt.Errorf("decoding vault data: %w", legacyDecodeErr)
+			return vaultData{}, fmt.Errorf("decoding vault data: %w", legacyDecodeErr)
 		}
 		vd = vaultData{Agents: agents}
 	}
+	return vd, nil
+}
+
+// apply replaces the in-memory state with vd, decoded from plaintext.
+func (v *Vault) apply(vd vaultData, plaintext []byte) {
 	unknown := unknownVaultFields(plaintext)
-	v.header = header
-	v.key = key
-	v.legacyOnDisk = wasLegacy
-	v.legacySalt = legacySalt
 	v.agents = vd.Agents
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
@@ -166,6 +180,81 @@ func (v *Vault) Unlock(masterPassword string) error {
 	} else if sessionParallelLimitDefined(plaintext) {
 		v.sessions.ParallelLimitSet = true
 	}
+}
+
+// ErrVaultRelocked is Reload's error when the file on disk was written
+// under another password or format. The vault is locked: writing the old
+// state back would undo that change.
+var ErrVaultRelocked = errors.New("vault file changed under another password or format; reopen it")
+
+// Unlocked reports whether Save can write: false before Unlock and after
+// Reload locked the vault.
+func (v *Vault) Unlocked() bool {
+	return v.key != nil
+}
+
+// Snapshot returns a deep copy of the vault's data with no key: reads only,
+// every setter refuses. Code that reads a vault on another goroutine takes
+// one first, since Reload and the setters replace the data.
+func (v *Vault) Snapshot() (*Vault, error) {
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations, Gateways: v.gateways}
+	plaintext, err := json.Marshal(vd)
+	if err != nil {
+		return nil, fmt.Errorf("copying vault: %w", err)
+	}
+	// A fresh value: decoding into vd would reuse v's slice arrays.
+	var cp vaultData
+	if err := json.Unmarshal(plaintext, &cp); err != nil {
+		return nil, fmt.Errorf("copying vault: %w", err)
+	}
+	c := New(v.path)
+	c.apply(cp, plaintext)
+	c.sessions.ParallelLimitSet = v.sessions.ParallelLimitSet
+	return c, nil
+}
+
+// lock drops the key, so Save fails until the vault is unlocked again.
+func (v *Vault) lock() {
+	crypto.Zero(v.key)
+	v.key = nil
+}
+
+// Reload re-reads the vault file with the key from Unlock, so changes made
+// by another process (such as an agentvault command run from the TUI) are
+// seen and not overwritten by the next Save.
+func (v *Vault) Reload() error {
+	if v.key == nil {
+		return errors.New("vault is not unlocked")
+	}
+	data, err := safefile.Read(v.path)
+	if err != nil {
+		// Unknown content: saving the old state could overwrite it.
+		v.lock()
+		return fmt.Errorf("reading vault: %w", err)
+	}
+	if v.legacyOnDisk {
+		// Unlocked from a format 1 file and not written since: unchanged
+		// while it still starts with that salt. Any agentvault write
+		// upgrades it under a header this key was not derived for.
+		if len(v.legacySalt) > 0 && bytes.HasPrefix(data, v.legacySalt) {
+			return nil
+		}
+	}
+	plaintext, err := crypto.OpenWithKey(data, v.header, v.key)
+	if err != nil {
+		v.lock()
+		if errors.Is(err, crypto.ErrHeaderChanged) {
+			return ErrVaultRelocked
+		}
+		return fmt.Errorf("reloading vault: %w", err)
+	}
+	vd, err := decodeVaultData(plaintext)
+	if err != nil {
+		v.lock()
+		return err
+	}
+	v.legacyOnDisk = false
+	v.apply(vd, plaintext)
 	return nil
 }
 
@@ -176,6 +265,9 @@ func (v *Vault) SharedConfig() agent.SharedConfig {
 
 // SetSharedConfig updates the shared configuration and persists.
 func (v *Vault) SetSharedConfig(sc agent.SharedConfig) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.shared = sc
 	return v.Save()
 }
@@ -187,24 +279,36 @@ func (v *Vault) ProviderConfigs() agent.ProviderConfig {
 
 // SetProviderConfigs updates the provider configurations and persists.
 func (v *Vault) SetProviderConfigs(pc agent.ProviderConfig) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.providerConfigs = pc
 	return v.Save()
 }
 
 // SetClaudeConfig updates Claude-specific configuration.
 func (v *Vault) SetClaudeConfig(cc *agent.ClaudeConfig) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.providerConfigs.Claude = cc
 	return v.Save()
 }
 
 // SetCodexConfig updates Codex-specific configuration.
 func (v *Vault) SetCodexConfig(cc *agent.CodexConfig) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.providerConfigs.Codex = cc
 	return v.Save()
 }
 
 // SetOllamaConfig updates Ollama-specific configuration.
 func (v *Vault) SetOllamaConfig(oc *agent.OllamaConfig) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.providerConfigs.Ollama = oc
 	return v.Save()
 }
@@ -216,6 +320,9 @@ func (v *Vault) Locations() locations.Set {
 
 // SetLocations replaces the known work dirs and projects and persists.
 func (v *Vault) SetLocations(s locations.Set) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.locations = s
 	return v.Save()
 }
@@ -237,6 +344,9 @@ func (v *Vault) GetGateway(name string) (agent.Gateway, bool) {
 
 // AddGateway stores a new gateway and persists.
 func (v *Vault) AddGateway(g agent.Gateway) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	if _, ok := v.GetGateway(g.Name); ok {
 		return fmt.Errorf("gateway %q already exists", g.Name)
 	}
@@ -246,6 +356,9 @@ func (v *Vault) AddGateway(g agent.Gateway) error {
 
 // UpdateGateway replaces a gateway by name and persists.
 func (v *Vault) UpdateGateway(g agent.Gateway) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	for i := range v.gateways {
 		if v.gateways[i].Name == g.Name {
 			v.gateways[i] = g
@@ -257,6 +370,9 @@ func (v *Vault) UpdateGateway(g agent.Gateway) error {
 
 // RemoveGateway deletes a gateway by name and persists.
 func (v *Vault) RemoveGateway(name string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	for i := range v.gateways {
 		if v.gateways[i].Name == name {
 			v.gateways = append(v.gateways[:i], v.gateways[i+1:]...)
@@ -268,6 +384,9 @@ func (v *Vault) RemoveGateway(name string) error {
 
 // SetGateways replaces all gateways and persists.
 func (v *Vault) SetGateways(gs []agent.Gateway) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.gateways = append([]agent.Gateway(nil), gs...)
 	return v.Save()
 }
@@ -279,6 +398,9 @@ func (v *Vault) Sessions() agent.SessionConfig {
 
 // SetSessions updates the session configuration and persists.
 func (v *Vault) SetSessions(sc agent.SessionConfig) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	// Treat SetSessions as an explicit session-config write, including a
 	// deliberate unlimited parallel limit (0).
 	sc.ParallelLimitSet = true
@@ -298,6 +420,9 @@ func (v *Vault) GetSessionByName(name string) (agent.Session, bool) {
 
 // AddSession adds a new session to the vault.
 func (v *Vault) AddSession(s agent.Session) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	if _, exists := v.sessions.GetSession(s.ID); exists {
 		return fmt.Errorf("session %q already exists", s.ID)
 	}
@@ -307,6 +432,9 @@ func (v *Vault) AddSession(s agent.Session) error {
 
 // UpdateSession updates an existing session.
 func (v *Vault) UpdateSession(s agent.Session) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	if !v.sessions.UpdateSession(s) {
 		return fmt.Errorf("session %q not found", s.ID)
 	}
@@ -315,6 +443,9 @@ func (v *Vault) UpdateSession(s agent.Session) error {
 
 // RemoveSession removes a session by ID.
 func (v *Vault) RemoveSession(id string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	if !v.sessions.RemoveSession(id) {
 		return fmt.Errorf("session %q not found", id)
 	}
@@ -323,6 +454,9 @@ func (v *Vault) RemoveSession(id string) error {
 
 // SetActiveSession sets the currently active session.
 func (v *Vault) SetActiveSession(id string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.sessions.ActiveSession = id
 	return v.Save()
 }
@@ -344,6 +478,9 @@ func (v *Vault) Get(name string) (agent.Agent, bool) {
 
 // Add appends an agent to the vault and persists it.
 func (v *Vault) Add(a agent.Agent) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	for _, existing := range v.agents {
 		if existing.Name == a.Name {
 			return fmt.Errorf("agent %q already exists", a.Name)
@@ -356,6 +493,9 @@ func (v *Vault) Add(a agent.Agent) error {
 
 // Update replaces an agent by name and persists the vault.
 func (v *Vault) Update(a agent.Agent) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	for i, existing := range v.agents {
 		if existing.Name == a.Name {
 			v.agents[i] = a
@@ -368,6 +508,9 @@ func (v *Vault) Update(a agent.Agent) error {
 
 // Remove deletes an agent by name and persists the vault.
 func (v *Vault) Remove(name string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	idx := -1
 	for i, a := range v.agents {
 		if a.Name == name {
@@ -398,6 +541,9 @@ func (v *Vault) VariantNotes() []string {
 
 // SetVariantDefault makes name the default agent of group and persists it.
 func (v *Vault) SetVariantDefault(group, name string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	if err := agent.SetVariantDefault(v.agents, group, name); err != nil {
 		return err
 	}
@@ -406,6 +552,9 @@ func (v *Vault) SetVariantDefault(group, name string) error {
 
 // SetVariantPolicy stores policy on every member of group and persists it.
 func (v *Vault) SetVariantPolicy(group, policy string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	if err := agent.SetVariantPolicy(v.agents, group, policy); err != nil {
 		return err
 	}
@@ -414,10 +563,19 @@ func (v *Vault) SetVariantPolicy(group, policy string) error {
 
 // Save encrypts and persists the vault to disk.
 func (v *Vault) Save() error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
+	return v.write()
+}
+
+// requireUnlocked is checked before a setter changes anything, so a locked
+// vault keeps showing what is on disk instead of a change it cannot save.
+func (v *Vault) requireUnlocked() error {
 	if v.key == nil {
 		return errors.New("vault is not unlocked")
 	}
-	return v.write()
+	return nil
 }
 
 // ListCapabilities returns all model capability entries.
@@ -443,6 +601,9 @@ var ErrCapabilityNotFound = errors.New("no capability entry found")
 // AddCapability adds a new model capability entry. Returns an error if an entry
 // for the same endpoint+model combination already exists.
 func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	entry.EndpointURL = strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/")
 	entry.ModelName = strings.TrimSpace(entry.ModelName)
 	if entry.EndpointURL == "" {
@@ -469,6 +630,9 @@ func (v *Vault) AddCapability(entry agent.ModelCapabilityEntry) error {
 // Duplicate entries (same endpoint+model) are skipped; the returned int is the
 // number actually added.
 func (v *Vault) AddCapabilities(entries []agent.ModelCapabilityEntry) (int, error) {
+	if err := v.requireUnlocked(); err != nil {
+		return 0, err
+	}
 	added := 0
 	for _, entry := range entries {
 		entry.EndpointURL = strings.TrimRight(strings.TrimSpace(entry.EndpointURL), "/")
@@ -525,6 +689,9 @@ func normalizeCapabilityEntries(entries []agent.ModelCapabilityEntry) []agent.Mo
 // Entries are normalized the same way as on vault load, so import and direct
 // edits converge on identical keys.
 func (v *Vault) SetCapabilities(entries []agent.ModelCapabilityEntry) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	v.modelCapabilities = normalizeCapabilityEntries(entries)
 	return v.Save()
 }
@@ -532,6 +699,9 @@ func (v *Vault) SetCapabilities(entries []agent.ModelCapabilityEntry) error {
 // RemoveCapability removes a capability entry by endpoint URL and model name.
 // Returns an error if not found.
 func (v *Vault) RemoveCapability(endpointURL, modelName string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	endpointURL = strings.TrimRight(strings.TrimSpace(endpointURL), "/")
 	modelName = strings.TrimSpace(modelName)
 	for i, e := range v.modelCapabilities {
@@ -575,6 +745,9 @@ func (v *Vault) GetInstruction(name string) (agent.InstructionFile, bool) {
 // Identity is the composite key (Name + Scope + DirectoryPattern), so global
 // and directory-scoped variants of the same name coexist.
 func (v *Vault) SetInstruction(inst agent.InstructionFile) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	if err := agent.ValidateInstructionScope(inst); err != nil {
 		return err
 	}
@@ -621,6 +794,9 @@ func (v *Vault) GetInstructionByKey(key string) (agent.InstructionFile, bool) {
 // RemoveInstructionByKey removes the instruction with the given composite key.
 // Use this when multiple scoped variants of the same name may coexist.
 func (v *Vault) RemoveInstructionByKey(key string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	for i, inst := range v.shared.Instructions {
 		if agent.InstructionKey(inst) == key {
 			v.shared.Instructions = append(v.shared.Instructions[:i], v.shared.Instructions[i+1:]...)
@@ -649,6 +825,9 @@ func (v *Vault) RemoveInstructionByKey(key string) error {
 // (matching GetInstruction behavior) so that show and remove operate on
 // the same variant when --scope is omitted.
 func (v *Vault) RemoveInstruction(name string) error {
+	if err := v.requireUnlocked(); err != nil {
+		return err
+	}
 	first := -1
 	for i, inst := range v.shared.Instructions {
 		if inst.Name != name {
@@ -694,6 +873,9 @@ func (v *Vault) ExportData() ([]byte, error) {
 // conflicts reports instruction Name+Scope+DirectoryPattern collisions where existing wins;
 // same name at different scopes (or same scope with different directory patterns) coexist.
 func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, invalidInstructions []string, conflicts []agent.InstructionConflict, err error) {
+	if err = v.requireUnlocked(); err != nil {
+		return
+	}
 	var vd vaultData
 	if err := json.Unmarshal(data, &vd); err != nil {
 		return 0, nil, nil, nil, fmt.Errorf("decoding import data: %w", err)

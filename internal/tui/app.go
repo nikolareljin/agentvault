@@ -136,8 +136,10 @@ type quickCommand struct {
 }
 
 type statusRefreshMsg struct {
-	report statuspkg.Report
-	err    error
+	report   statuspkg.Report
+	cost     *statuspkg.CostReport
+	costRead bool // cost was read; otherwise the last one is kept
+	err      error
 }
 
 // editorFinishedMsg is sent when the external editor exits.
@@ -208,7 +210,10 @@ type model struct {
 	instructions   []agent.InstructionFile
 	detected       []DetectedAgentInfo
 	providerCfgs   agent.ProviderConfig
+	capabilities   []agent.ModelCapabilityEntry
 	statusReport   *statuspkg.Report
+	cost           *statuspkg.CostReport // nil: no successful prompts
+	costRead       bool                  // cost has been read at least once
 	statusErr      string
 
 	// UI navigation state
@@ -314,6 +319,7 @@ func initialModel(v *vault.Vault) model {
 		shared:       v.SharedConfig(),
 		instructions: v.ListInstructions(),
 		providerCfgs: v.ProviderConfigs(),
+		capabilities: v.ListCapabilities(),
 		activeTab:    tabAgents,
 		mode:         viewAgentList,
 		cwd:          cwd,
@@ -385,6 +391,7 @@ func (m *model) refresh() {
 	m.instructions = m.vault.ListInstructions()
 	m.detected = detectAgentsForTUI()
 	m.providerCfgs = m.vault.ProviderConfigs()
+	m.capabilities = m.vault.ListCapabilities()
 	m.markDetectedInVault()
 	m.autoAddDetectedAgents()
 	m.refreshHasClaudeAgent()
@@ -393,6 +400,10 @@ func (m *model) refresh() {
 }
 
 func (m *model) autoAddDetectedAgents() {
+	if !m.vault.Unlocked() {
+		// Add would list an agent it cannot save.
+		return
+	}
 	seenByPath := make(map[string]struct{}, len(m.detected))
 	seenByName := make(map[string]struct{}, len(m.detected))
 	for _, d := range m.detected {
@@ -549,7 +560,7 @@ func detectAgentsForTUI() []DetectedAgentInfo {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(statusRefreshCmd(m.vault), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
+	return tea.Batch(statusRefreshCmd(m.vault, m.activeTab == tabStatus), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -563,6 +574,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleEditorFinished(msg)
 
 	case statusRefreshMsg:
+		if msg.costRead {
+			m.cost, m.costRead = msg.cost, true
+		}
 		if msg.err != nil {
 			m.statusErr = msg.err.Error()
 		} else {
@@ -580,6 +594,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(fmt.Sprintf("Command failed: %v", msg.err), true)
 		} else {
 			m.setStatus("Command completed", false)
+		}
+		// The command may have written the vault: read it back, so the
+		// screens show it and the next save does not overwrite it.
+		if err := m.vault.Reload(); err != nil {
+			m.setStatus(fmt.Sprintf("Vault not reloaded: %v. Changes from this TUI will not be saved; restart it.", err), true)
 		}
 		m.refresh()
 		return m, nil
@@ -681,7 +700,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			m.activeTab = (m.activeTab + 1) % numTabs
 			m.mode = m.getModeForTab()
-			return m, nil
+			return m, m.costOnEnterStatus()
 
 		case "shift+tab":
 			if m.activeTab == 0 {
@@ -690,7 +709,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.activeTab--
 			}
 			m.mode = m.getModeForTab()
-			return m, nil
+			return m, m.costOnEnterStatus()
 
 		case "1":
 			m.activeTab = tabAgents
@@ -719,7 +738,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "7":
 			m.activeTab = tabStatus
 			m.mode = viewStatus
-			return m, nil
+			return m, m.costOnEnterStatus()
 		case "8":
 			m.activeTab = tabAbout
 			m.mode = viewAbout
@@ -778,10 +797,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m.refresh()
 			m.setStatus("Refreshed", false)
-			return m, statusRefreshCmd(m.vault)
+			return m, statusRefreshCmd(m.vault, m.activeTab == tabStatus)
 		}
 	case time.Time:
-		return m, tea.Batch(statusRefreshCmd(m.vault), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
+		return m, tea.Batch(statusRefreshCmd(m.vault, m.activeTab == tabStatus), tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return t }))
 	}
 	return m, nil
 }
@@ -2509,6 +2528,9 @@ func (m model) renderStatus() string {
 		b.WriteString("\n")
 	}
 
+	b.WriteString(m.renderStatusCost())
+	b.WriteString(m.renderCapabilityMatrix())
+
 	if len(m.localInst) > 0 {
 		b.WriteString("\n")
 		b.WriteString(labelStyle.Render("  Local Instruction Files (auto-detected):"))
@@ -2676,14 +2698,27 @@ func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (
 	}, nil
 }
 
-func statusRefreshCmd(v *vault.Vault) tea.Cmd {
+// statusRefreshCmd builds the status report. withCost also reads the prompt
+// history for the cost section, which only the Status tab shows.
+func statusRefreshCmd(v *vault.Vault, withCost bool) tea.Cmd {
+	// The report is built on another goroutine while Update may reload or
+	// change v, so it reads a copy taken now.
+	v, err := v.Snapshot()
+	if err != nil {
+		return func() tea.Msg { return statusRefreshMsg{err: err} }
+	}
 	return func() tea.Msg {
+		msg := statusRefreshMsg{costRead: withCost}
+		if withCost {
+			msg.cost = statuspkg.CostReportForVault(v)
+		}
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return statusRefreshMsg{err: err}
+			msg.err = err
+			return msg
 		}
-		report := statuspkg.BuildReport(v, homeDir)
-		return statusRefreshMsg{report: report}
+		msg.report = statuspkg.BuildReport(v, homeDir)
+		return msg
 	}
 }
 

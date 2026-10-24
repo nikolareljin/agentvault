@@ -207,6 +207,10 @@ Keys:
 Behavior:
 - you enter command without binary name
 - TUI executes as `agentvault <command>`
+- afterwards the TUI reads the vault file again, so what the command wrote
+  shows up and is kept by the next save from the TUI; if the file was
+  rewritten under another password, the TUI stops saving and asks for a
+  restart
 
 ### B) Prompt Gateway flow
 
@@ -267,6 +271,17 @@ Read only dashboard with:
 - counts for agents/instructions/rules/roles/sessions
 - provider config presence
 - detected agents summary
+- estimated cost from the prompt history: the total, each provider's total
+  and this month's spend, and a budget warning once a provider reaches 80%
+  of its monthly budget (`agentvault config pricing set PROVIDER
+  --monthly-budget USD`); the same numbers as `agentvault status
+  --cost-report`
+- model capability matrix: one row per `agentvault capability` entry with
+  its context size, a `yes` per capability column (coding, review, analysis,
+  documentation, general, vision, embedding) and any other label, and the
+  endpoint below it with credentials masked
+
+The cost is read when the tab opens and every 5 seconds while it is open.
 
 No tab specific action keys.
 

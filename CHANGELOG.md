@@ -8,6 +8,17 @@
   issue 10 part 2. They build and show the `agentvault import`/`export`
   command and run it; import previews with `--dry-run` first, takes repeated
   `--map OLD=NEW` entries, and needs `M` to run a mirror import.
+- TUI Status tab: estimated cost (total, per provider, this month) with
+  monthly budget warnings, and a model capability matrix from the
+  capability registry. Issue 10 part 3.
+
+### Fixed
+
+- TUI: a command run from the TUI (`:` bridge, import/export forms) that
+  wrote the vault was not seen, and the next save from the TUI overwrote it
+  with the state from when the TUI opened. The TUI now reloads the vault
+  after each command, and stops saving if the file was rewritten under
+  another password.
 
 ## [0.18.0] - 2026-10-23
 
