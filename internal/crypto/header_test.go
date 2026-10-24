@@ -156,3 +156,13 @@ func TestParseHeaderBounds(t *testing.T) {
 		t.Error("short salt accepted")
 	}
 }
+
+// New vaults use RFC 9106's second recommended option. Tests elsewhere swap
+// CurrentParams for cheap ones (cryptotest), so this package, which does not,
+// is where a change to the shipped values has to show up.
+func TestCurrentParamsAreRFC9106(t *testing.T) {
+	want := KDFParams{Time: 3, MemoryKiB: 64 * 1024, Threads: 4}
+	if CurrentParams != want {
+		t.Fatalf("CurrentParams = %+v, want %+v", CurrentParams, want)
+	}
+}
