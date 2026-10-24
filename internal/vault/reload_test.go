@@ -116,3 +116,27 @@ func TestReloadLocksWhenFileUnreadable(t *testing.T) {
 		t.Fatal("save after a failed reload succeeded")
 	}
 }
+
+func TestLockedVaultSettersChangeNothing(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("pass-123456789"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Add(agent.Agent{Name: "keep", Provider: agent.ProviderClaude}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	_ = v.Reload() // locks
+	if err := v.Remove("keep"); err == nil {
+		t.Fatal("Remove on a locked vault succeeded")
+	}
+	if err := v.AddCapability(agent.ModelCapabilityEntry{EndpointURL: "http://h:1", ModelName: "m"}); err == nil {
+		t.Fatal("AddCapability on a locked vault succeeded")
+	}
+	if len(v.List()) != 1 || len(v.ListCapabilities()) != 0 {
+		t.Fatalf("locked vault changed in memory: agents=%v caps=%v", v.List(), v.ListCapabilities())
+	}
+}
