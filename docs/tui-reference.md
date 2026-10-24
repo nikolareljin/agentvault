@@ -102,7 +102,8 @@ real import on the terminal (it may ask for the bundle password or to confirm
 project matches), `e` or `Esc` returns to the form. `mirror` deletes local
 items the bundle does not have: the form and preview show a warning, and only
 `M` runs it. After a failed preview neither runs: fix the form with `e` and
-preview again. A leading `~` in a path is expanded to the home directory.
+preview again. A leading `~` in a path, or in the NEW side of a map, is
+expanded to the home directory.
 
 ## Tab 1: Agents
 

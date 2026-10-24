@@ -352,6 +352,10 @@ func TestFormPathsExpandTilde(t *testing.T) {
 	if got := m.exportFormState().Path; got != filepath.Join(home, "out.avbundle") {
 		t.Fatalf("export path=%q", got)
 	}
+	// NEW is a path on this machine; OLD is the exporting machine's.
+	if got, err := validateMapEntry("~/old=~/new"); err != nil || got != "~/old="+filepath.Join(home, "new") {
+		t.Fatalf("map entry=%q err=%v", got, err)
+	}
 	if got := expandTilde("~user/x"); got != "~user/x" {
 		t.Fatalf("~user expanded: %q", got)
 	}

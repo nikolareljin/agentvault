@@ -100,14 +100,15 @@ func importArgs(f importForm, dryRun bool) []string {
 	return args
 }
 
-// validateMapEntry checks the OLD=NEW shape. The CLI checks the paths.
+// validateMapEntry checks the OLD=NEW shape and expands ~ in NEW, a path on
+// this machine. OLD is the exporting machine's path. The CLI checks both.
 func validateMapEntry(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	from, to, ok := strings.Cut(s, "=")
 	if !ok || strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
 		return "", fmt.Errorf("map %q: want OLD=NEW, both non-empty", s)
 	}
-	return s, nil
+	return from + "=" + expandTilde(to), nil
 }
 
 func (f importForm) validate() error {
