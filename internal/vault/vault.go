@@ -206,8 +206,9 @@ func (v *Vault) Reload() error {
 	}
 	if v.legacyOnDisk {
 		// Unlocked from a format 1 file and not written since: unchanged
-		// while it is still that file. Any agentvault write upgrades it.
-		if h, _, err := crypto.ParseHeader(data); err == nil && h.Legacy && bytes.Equal(h.Salt, v.legacySalt) {
+		// while it still starts with that salt. Any agentvault write
+		// upgrades it under a header this key was not derived for.
+		if len(v.legacySalt) > 0 && bytes.HasPrefix(data, v.legacySalt) {
 			return nil
 		}
 	}
