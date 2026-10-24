@@ -11,6 +11,8 @@
 - TUI Status tab: estimated cost (total, per provider, this month) with
   monthly budget warnings, and a model capability matrix from the
   capability registry. Issue 10 part 3.
+- TUI capabilities screen (`Space c`): list, add, remove and discover model
+  capability entries. Issue 10 part 4.
 
 ### Fixed
 

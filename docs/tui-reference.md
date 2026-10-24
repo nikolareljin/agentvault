@@ -55,6 +55,7 @@ with `j/k` and press `Enter`. `Esc` returns to the screen you came from.
 | `u` | Usage: open the Status tab | 2 (`Space u`) |
 | `i` | Import: form, dry-run preview, then import | 3 (`Space i Enter` to preview) |
 | `x` | Export: form, then export | 3 (`Space x Enter`) |
+| `c` | Capabilities: list, add, remove, discover | 2 (`Space c`) |
 | `:` or `;` | Run command: the `:` CLI command bridge | 2 (`Space :`) |
 
 Add agent form: `Tab`/`Shift+Tab` move between fields, `Left`/`Right` change
@@ -104,6 +105,23 @@ items the bundle does not have: the form and preview show a warning, and only
 `M` runs it. After a failed preview neither runs: fix the form with `e` and
 preview again. A leading `~` in a path, or in the NEW side of a map, is
 expanded to the home directory.
+
+### Capabilities
+
+`Space c` lists the model capability entries (`agentvault capability
+list`): model, context size, capabilities, and the endpoint with credentials
+masked. `j/k` move.
+
+- `a`: add form with endpoint, model, context (tokens, optional) and
+  capabilities (comma separated). `Tab` moves, `Enter` saves, `Esc` goes
+  back to the list. Input is normalized as `agentvault capability add` does:
+  a trailing `/` on the endpoint is dropped and capabilities are lower case.
+  An endpoint and model already listed is refused.
+- `d`: remove the selected entry; `y` confirms, any other key cancels.
+- `D`: discover an endpoint's models. It runs `agentvault capability
+  discover --endpoint=URL`, which asks the endpoint over the network, and the
+  list shows what it added once it returns.
+- `Esc`: close.
 
 ## Tab 1: Agents
 

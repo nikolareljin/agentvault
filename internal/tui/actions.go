@@ -30,6 +30,7 @@ func actionItems() []actionItem {
 		{keys.ActUsage, "Usage", "Provider status and token usage (Status tab)", (*model).openUsage},
 		{keys.ActImport, "Import", "Preview, then import a bundle (agentvault import)", (*model).openImport},
 		{keys.ActExport, "Export", "Export settings to a bundle (agentvault export)", (*model).openExport},
+		{keys.ActCapabilities, "Capabilities", "List, add, remove or discover model capabilities", (*model).openCapabilities},
 		{keys.ActCommand, "Run command", "Type any agentvault CLI command", (*model).openCommand},
 	}
 }
@@ -74,7 +75,8 @@ func (m *model) openActions() {
 func (m *model) closeOverlay() {
 	m.mode = m.actionsReturn
 	if m.mode == viewActions || m.mode == viewAddAgent || m.mode == viewSwitchAgent ||
-		m.mode == viewExport || m.mode == viewImport || m.mode == viewImportPreview {
+		m.mode == viewExport || m.mode == viewImport || m.mode == viewImportPreview ||
+		m.mode == viewCapabilities || m.mode == viewCapabilityAdd || m.mode == viewCapabilityDiscover {
 		m.mode = m.getModeForTab()
 	}
 }

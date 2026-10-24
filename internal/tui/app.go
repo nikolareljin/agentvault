@@ -94,6 +94,9 @@ const (
 	viewExport
 	viewImport
 	viewImportPreview
+	viewCapabilities
+	viewCapabilityAdd
+	viewCapabilityDiscover
 )
 
 type tab int
@@ -290,6 +293,13 @@ type model struct {
 	impOutput   string
 	impErr      string
 	impSeq      int
+
+	// Capabilities screen (capabilities.go).
+	capCursor   int
+	capConfirm  bool // d pressed: y removes the selected entry
+	capInputs   []textinput.Model
+	capFocus    int
+	capDiscover textinput.Model
 
 	// currentAgent is the agent Prompt uses. It lasts for the session only.
 	currentAgent string
@@ -655,6 +665,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleImportInput(msg)
 		case viewImportPreview:
 			return m.handleImportPreviewInput(msg)
+		case viewCapabilities:
+			return m.handleCapabilitiesInput(msg)
+		case viewCapabilityAdd:
+			return m.handleCapabilityAddInput(msg)
+		case viewCapabilityDiscover:
+			return m.handleCapabilityDiscoverInput(msg)
 		}
 
 		// Handle search mode
@@ -1641,6 +1657,12 @@ func (m model) view() string {
 		b.WriteString(m.renderImport())
 	case viewImportPreview:
 		b.WriteString(m.renderImportPreview())
+	case viewCapabilities:
+		b.WriteString(m.renderCapabilities())
+	case viewCapabilityAdd:
+		b.WriteString(m.renderCapabilityAdd())
+	case viewCapabilityDiscover:
+		b.WriteString(m.renderCapabilityDiscover())
 	}
 
 	// Status bar

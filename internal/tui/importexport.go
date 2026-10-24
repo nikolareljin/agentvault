@@ -451,10 +451,20 @@ func (m *model) runCLI(args []string) tea.Cmd {
 	}
 	m.closeOverlay()
 	m.commandRunning = true
-	line := displayCommand(args)
+	line := shownCommand(args)
 	return tea.ExecProcess(exec.Command(exe, args...), func(err error) tea.Msg {
 		return cliCommandFinishedMsg{command: line, err: err}
 	})
+}
+
+// shownCommand is the command line runCLI keeps as "Last command", with
+// credentials in URL arguments masked.
+func shownCommand(args []string) string {
+	shown := make([]string, len(args))
+	for i, a := range args {
+		shown[i] = MaskURL(a)
+	}
+	return displayCommand(shown)
 }
 
 func formMarker(focused bool) string {
