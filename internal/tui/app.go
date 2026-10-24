@@ -534,7 +534,7 @@ func (m *model) refreshLocalInstructions() {
 	m.instructions = m.vault.ListInstructions()
 }
 
-// detectAgents is the agent scan newModel and refresh run. Tests replace it:
+// detectAgents is the agent scan initialModel and refresh run. Tests replace it:
 // the real scan runs each installed agent's --version, which made the TUI
 // tests depend on, and wait for, the tools on the developer's machine.
 var detectAgents = detectAgentsForTUI
