@@ -26,7 +26,8 @@ func TestFastParamsPassHeaderBounds(t *testing.T) {
 func TestNotImportedByProductionCode(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", "github.com/nikolareljin/agentvault").Output()
 	if err != nil {
-		t.Skipf("go list unavailable: %v", err)
+		// go test runs with go on PATH, so a failure here is a real one.
+		t.Fatalf("go list: %v", err)
 	}
 	for _, p := range strings.Fields(string(out)) {
 		if strings.HasSuffix(p, "/internal/crypto/cryptotest") {
