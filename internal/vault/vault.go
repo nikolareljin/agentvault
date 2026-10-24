@@ -187,6 +187,12 @@ func (v *Vault) apply(vd vaultData, plaintext []byte) {
 // state back would undo that change.
 var ErrVaultRelocked = errors.New("vault file changed under another password or format; reopen it")
 
+// Unlocked reports whether Save can write: false before Unlock and after
+// Reload locked the vault.
+func (v *Vault) Unlocked() bool {
+	return v.key != nil
+}
+
 // lock drops the key, so Save fails until the vault is unlocked again.
 func (v *Vault) lock() {
 	crypto.Zero(v.key)
@@ -202,6 +208,8 @@ func (v *Vault) Reload() error {
 	}
 	data, err := safefile.Read(v.path)
 	if err != nil {
+		// Unknown content: saving the old state could overwrite it.
+		v.lock()
 		return fmt.Errorf("reading vault: %w", err)
 	}
 	if v.legacyOnDisk {

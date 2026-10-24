@@ -400,6 +400,10 @@ func (m *model) refresh() {
 }
 
 func (m *model) autoAddDetectedAgents() {
+	if !m.vault.Unlocked() {
+		// Add would list an agent it cannot save.
+		return
+	}
 	seenByPath := make(map[string]struct{}, len(m.detected))
 	seenByName := make(map[string]struct{}, len(m.detected))
 	for _, d := range m.detected {

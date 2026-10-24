@@ -96,3 +96,23 @@ func TestReloadLegacyUnchangedIsNoop(t *testing.T) {
 		t.Fatalf("Reload after upgrade: err=%v agents=%v", err, v.List())
 	}
 }
+
+func TestReloadLocksWhenFileUnreadable(t *testing.T) {
+	path := tempVaultPath(t)
+	v := New(path)
+	if err := v.Init("pass-123456789"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Reload(); err == nil {
+		t.Fatal("Reload of a missing file succeeded")
+	}
+	if v.Unlocked() {
+		t.Fatal("vault still unlocked after a failed reload")
+	}
+	if err := v.Add(agent.Agent{Name: "a", Provider: agent.ProviderClaude}); err == nil {
+		t.Fatal("save after a failed reload succeeded")
+	}
+}

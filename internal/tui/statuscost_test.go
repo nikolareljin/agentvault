@@ -159,3 +159,22 @@ func TestCommandFinishedReloadsVault(t *testing.T) {
 		t.Errorf("TUI save dropped the command's entry")
 	}
 }
+
+func TestRelockedVaultListsNoUnsavedAgents(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	if err := os.Remove(v.Path()); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := m.Update(cliCommandFinishedMsg{command: "agentvault x"})
+	got := next.(model)
+	if !strings.Contains(got.statusMsg, "will not be saved") {
+		t.Errorf("status = %q", got.statusMsg)
+	}
+	before := len(v.List())
+	got.detected = []DetectedAgentInfo{{Name: "newtool", Provider: "codex", Path: "/opt/newtool"}}
+	got.autoAddDetectedAgents()
+	if len(v.List()) != before {
+		t.Errorf("agents %d -> %d: auto-add listed an agent it could not save", before, len(v.List()))
+	}
+}
