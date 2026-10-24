@@ -2701,6 +2701,12 @@ func executeGatewayOllama(a agent.Agent, prompt string, timeout time.Duration) (
 // statusRefreshCmd builds the status report. withCost also reads the prompt
 // history for the cost section, which only the Status tab shows.
 func statusRefreshCmd(v *vault.Vault, withCost bool) tea.Cmd {
+	// The report is built on another goroutine while Update may reload or
+	// change v, so it reads a copy taken now.
+	v, err := v.Snapshot()
+	if err != nil {
+		return func() tea.Msg { return statusRefreshMsg{err: err} }
+	}
 	return func() tea.Msg {
 		msg := statusRefreshMsg{costRead: withCost}
 		if withCost {

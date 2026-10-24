@@ -140,3 +140,27 @@ func TestLockedVaultSettersChangeNothing(t *testing.T) {
 		t.Fatalf("locked vault changed in memory: agents=%v caps=%v", v.List(), v.ListCapabilities())
 	}
 }
+
+func TestSnapshotIsDeepAndReadOnly(t *testing.T) {
+	v := New(tempVaultPath(t))
+	if err := v.Init("pass-123456789"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Add(agent.Agent{Name: "a", Provider: agent.ProviderClaude, Tags: []string{"t"}}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := v.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.List()[0].Tags[0] = "changed"
+	if v.List()[0].Tags[0] != "t" {
+		t.Fatal("snapshot shares memory with the vault")
+	}
+	if c.Unlocked() || c.Add(agent.Agent{Name: "b", Provider: agent.ProviderClaude}) == nil {
+		t.Fatal("snapshot can save")
+	}
+	if c.Path() != v.Path() || len(c.List()) != 1 {
+		t.Fatalf("snapshot path=%q agents=%v", c.Path(), c.List())
+	}
+}

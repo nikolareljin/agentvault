@@ -193,6 +193,26 @@ func (v *Vault) Unlocked() bool {
 	return v.key != nil
 }
 
+// Snapshot returns a deep copy of the vault's data with no key: reads only,
+// every setter refuses. Code that reads a vault on another goroutine takes
+// one first, since Reload and the setters replace the data.
+func (v *Vault) Snapshot() (*Vault, error) {
+	vd := vaultData{Agents: v.agents, Shared: v.shared, ProviderConfigs: v.providerConfigs, Sessions: v.sessions, ModelCapabilities: v.modelCapabilities, Locations: v.locations, Gateways: v.gateways}
+	plaintext, err := json.Marshal(vd)
+	if err != nil {
+		return nil, fmt.Errorf("copying vault: %w", err)
+	}
+	// A fresh value: decoding into vd would reuse v's slice arrays.
+	var cp vaultData
+	if err := json.Unmarshal(plaintext, &cp); err != nil {
+		return nil, fmt.Errorf("copying vault: %w", err)
+	}
+	c := New(v.path)
+	c.apply(cp, plaintext)
+	c.sessions.ParallelLimitSet = v.sessions.ParallelLimitSet
+	return c, nil
+}
+
 // lock drops the key, so Save fails until the vault is unlocked again.
 func (v *Vault) lock() {
 	crypto.Zero(v.key)

@@ -178,3 +178,15 @@ func TestRelockedVaultListsNoUnsavedAgents(t *testing.T) {
 		t.Errorf("agents %d -> %d: auto-add listed an agent it could not save", before, len(v.List()))
 	}
 }
+
+// Run with -race: the refresh goroutine must not read the vault that
+// Update reloads.
+func TestStatusRefreshDoesNotRaceReload(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	cmd := statusRefreshCmd(v, true)
+	done := make(chan struct{})
+	go func() { cmd(); close(done) }()
+	m.Update(cliCommandFinishedMsg{command: "agentvault x"})
+	<-done
+}
