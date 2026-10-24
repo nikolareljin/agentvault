@@ -77,7 +77,8 @@ go tool cover -html=coverage.out -o coverage.html
   (`cryptotest.UseFastParams()` in `TestMain`). A new test package that
   creates vaults calls it too: the default parameters under `-race` took the
   `cmd` tests past the 10 minute limit on macOS. `internal/crypto` keeps the
-  real parameters and pins them.
+  real parameters and pins them. `TestVaultTestPackagesUseFastParams` fails
+  for a test package that reaches `internal/vault` without the call.
 - TUI tests do not scan for installed agents. `TestDetectAgentsOnThisMachine`
   runs the real scan on your machine and is skipped when `CI` is set.
 
