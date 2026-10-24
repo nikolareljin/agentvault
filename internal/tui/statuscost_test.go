@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"github.com/nikolareljin/agentvault/internal/vault"
 )
 
 func TestStatusShowsCostAndBudgetAlert(t *testing.T) {
@@ -128,5 +129,33 @@ func TestStatusCapabilityMatrix(t *testing.T) {
 	}
 	if !strings.Contains(out, "COD=coding") {
 		t.Errorf("legend missing:\n%s", out)
+	}
+}
+
+func TestCommandFinishedReloadsVault(t *testing.T) {
+	v := testVault(t)
+	m := initialModel(v)
+	// What ': capability add' does: another process writes the vault file.
+	cli := vault.New(v.Path())
+	if err := cli.Unlock("testpass"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cli.AddCapability(agent.ModelCapabilityEntry{EndpointURL: "http://h:11434", ModelName: "from-cli", Capabilities: []string{"coding"}}); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := m.Update(cliCommandFinishedMsg{command: "agentvault capability add"})
+	if out := next.(model).renderStatus(); !strings.Contains(out, "from-cli") {
+		t.Errorf("matrix does not show the command's entry:\n%s", out)
+	}
+	// A save from the TUI keeps it.
+	if err := v.Add(agent.Agent{Name: "after", Provider: agent.ProviderCodex}); err != nil {
+		t.Fatal(err)
+	}
+	check := vault.New(v.Path())
+	if err := check.Unlock("testpass"); err != nil {
+		t.Fatal(err)
+	}
+	if len(check.ListCapabilities()) != 1 {
+		t.Errorf("TUI save dropped the command's entry")
 	}
 }

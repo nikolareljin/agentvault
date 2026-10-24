@@ -591,6 +591,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.setStatus("Command completed", false)
 		}
+		// The command may have written the vault: read it back, so the
+		// screens show it and the next save does not overwrite it.
+		if err := m.vault.Reload(); err != nil {
+			m.setStatus(fmt.Sprintf("Vault not reloaded: %v. Changes from this TUI will not be saved; restart it.", err), true)
+		}
 		m.refresh()
 		return m, nil
 

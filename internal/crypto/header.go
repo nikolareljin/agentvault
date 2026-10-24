@@ -215,3 +215,24 @@ func Zero(b []byte) {
 		subtle.XORBytes(b, b, b)
 	}
 }
+
+// OpenWithKey decrypts a format 2 file with a key already derived for want.
+// It fails with ErrHeaderChanged when the file's header is not want, since
+// the key was derived for that header only.
+func OpenWithKey(data []byte, want Header, key []byte) ([]byte, error) {
+	if !bytes.HasPrefix(data, []byte(headerMagic)) {
+		return nil, ErrHeaderChanged
+	}
+	h, rest, err := parseV2(data)
+	if err != nil {
+		return nil, err
+	}
+	if want.Legacy || !bytes.Equal(h.Bytes(), want.Bytes()) {
+		return nil, ErrHeaderChanged
+	}
+	return decryptAAD(rest, key, data[:HeaderLen])
+}
+
+// ErrHeaderChanged is OpenWithKey's error for a file written under another
+// header: a new password or a format upgrade.
+var ErrHeaderChanged = errors.New("vault file header changed")

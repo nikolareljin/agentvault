@@ -138,21 +138,35 @@ func (v *Vault) Unlock(masterPassword string) error {
 		}
 		key, header = newKey, upgraded
 	}
+	vd, err := decodeVaultData(plaintext)
+	if err != nil {
+		crypto.Zero(key)
+		return err
+	}
+	v.header = header
+	v.key = key
+	v.legacyOnDisk = wasLegacy
+	v.legacySalt = legacySalt
+	v.apply(vd, plaintext)
+	return nil
+}
+
+func decodeVaultData(plaintext []byte) (vaultData, error) {
 	var vd vaultData
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
 		// try legacy format (plain agent array) for backward compat
 		var agents []agent.Agent
 		if legacyDecodeErr := json.Unmarshal(plaintext, &agents); legacyDecodeErr != nil {
-			crypto.Zero(key)
-			return fmt.Errorf("decoding vault data: %w", legacyDecodeErr)
+			return vaultData{}, fmt.Errorf("decoding vault data: %w", legacyDecodeErr)
 		}
 		vd = vaultData{Agents: agents}
 	}
+	return vd, nil
+}
+
+// apply replaces the in-memory state with vd, decoded from plaintext.
+func (v *Vault) apply(vd vaultData, plaintext []byte) {
 	unknown := unknownVaultFields(plaintext)
-	v.header = header
-	v.key = key
-	v.legacyOnDisk = wasLegacy
-	v.legacySalt = legacySalt
 	v.agents = vd.Agents
 	v.shared = vd.Shared
 	v.providerConfigs = vd.ProviderConfigs
@@ -166,6 +180,52 @@ func (v *Vault) Unlock(masterPassword string) error {
 	} else if sessionParallelLimitDefined(plaintext) {
 		v.sessions.ParallelLimitSet = true
 	}
+}
+
+// ErrVaultRelocked is Reload's error when the file on disk was written
+// under another password or format. The vault is locked: writing the old
+// state back would undo that change.
+var ErrVaultRelocked = errors.New("vault file changed under another password or format; reopen it")
+
+// lock drops the key, so Save fails until the vault is unlocked again.
+func (v *Vault) lock() {
+	crypto.Zero(v.key)
+	v.key = nil
+}
+
+// Reload re-reads the vault file with the key from Unlock, so changes made
+// by another process (such as an agentvault command run from the TUI) are
+// seen and not overwritten by the next Save.
+func (v *Vault) Reload() error {
+	if v.key == nil {
+		return errors.New("vault is not unlocked")
+	}
+	data, err := safefile.Read(v.path)
+	if err != nil {
+		return fmt.Errorf("reading vault: %w", err)
+	}
+	if v.legacyOnDisk {
+		// Unlocked from a format 1 file and not written since: unchanged
+		// while it is still that file. Any agentvault write upgrades it.
+		if h, _, err := crypto.ParseHeader(data); err == nil && h.Legacy && bytes.Equal(h.Salt, v.legacySalt) {
+			return nil
+		}
+	}
+	plaintext, err := crypto.OpenWithKey(data, v.header, v.key)
+	if err != nil {
+		v.lock()
+		if errors.Is(err, crypto.ErrHeaderChanged) {
+			return ErrVaultRelocked
+		}
+		return fmt.Errorf("reloading vault: %w", err)
+	}
+	vd, err := decodeVaultData(plaintext)
+	if err != nil {
+		v.lock()
+		return err
+	}
+	v.legacyOnDisk = false
+	v.apply(vd, plaintext)
 	return nil
 }
 

@@ -12,6 +12,14 @@
   monthly budget warnings, and a model capability matrix from the
   capability registry. Issue 10 part 3.
 
+### Fixed
+
+- TUI: a command run from the TUI (`:` bridge, import/export forms) that
+  wrote the vault was not seen, and the next save from the TUI overwrote it
+  with the state from when the TUI opened. The TUI now reloads the vault
+  after each command, and stops saving if the file was rewritten under
+  another password.
+
 ## [0.18.0] - 2026-10-23
 
 ### Added
