@@ -120,7 +120,9 @@ masked. `j/k` move.
 - `d`: remove the selected entry; `y` confirms, any other key cancels.
 - `D`: discover an endpoint's models. It runs `agentvault capability
   discover --endpoint=URL`, which asks the endpoint over the network, and the
-  list shows what it added once it returns.
+  list shows what it added once it returns. An endpoint with credentials in
+  it is refused, since a command line is visible to other local users; run
+  the CLI command yourself for that one.
 - `Esc`: close.
 
 ## Tab 1: Agents

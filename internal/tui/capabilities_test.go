@@ -117,13 +117,18 @@ func TestCapabilityDiscoverRunsCLI(t *testing.T) {
 	if _, cmd := m.Update(keyEnter); cmd != nil {
 		t.Fatal("empty endpoint ran the CLI")
 	}
+	m = typeText(t, m, "http://user:pw@h:11434")
+	if tm, cmd := m.Update(keyEnter); cmd != nil || !strings.Contains(asModel(t, tm).statusMsg, "holds credentials") {
+		t.Fatal("an endpoint with credentials was put on the command line")
+	}
+	m.capDiscover.SetValue("")
 	m = typeText(t, m, "http://h:11434")
 	if !strings.Contains(m.View(), "agentvault capability discover --endpoint=http://h:11434") {
 		t.Fatalf("command line not shown:\n%s", m.View())
 	}
 	tm, cmd := m.Update(keyEnter)
-	if cmd == nil || !asModel(t, tm).commandRunning {
-		t.Fatal("enter did not run the CLI")
+	if got := asModel(t, tm); cmd == nil || !got.commandRunning || got.mode != viewCapabilities {
+		t.Fatalf("enter: cmd=%v running=%v mode=%v, want the CLI run and the list open", cmd != nil, got.commandRunning, got.mode)
 	}
 	if got := discoverArgs(" http://h:11434 "); !reflect.DeepEqual(got, []string{"capability", "discover", "--endpoint=http://h:11434"}) {
 		t.Fatalf("discoverArgs = %q", got)
@@ -137,5 +142,29 @@ func TestRunCLIMasksCredentialsInLastCommand(t *testing.T) {
 	}
 	if got := shownCommand([]string{"import", "--", "/tmp/a b.avbundle"}); got != "agentvault import -- '/tmp/a b.avbundle'" {
 		t.Fatalf("plain args changed: %q", got)
+	}
+}
+
+func TestCapabilityCursorClampedAfterShrink(t *testing.T) {
+	m := openCapabilities(t)
+	for _, name := range []string{"m1", "m2"} {
+		if err := m.vault.AddCapability(agent.ModelCapabilityEntry{EndpointURL: "http://h:1", ModelName: name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.capabilities = m.vault.ListCapabilities()
+	m.capCursor = 1
+	// A command removed m2; the reload shrinks the list under the cursor.
+	if err := m.vault.RemoveCapability("http://h:1", "m2"); err != nil {
+		t.Fatal(err)
+	}
+	m.capabilities = m.vault.ListCapabilities()
+	if !strings.Contains(m.View(), "> m1") {
+		t.Fatalf("no entry selected:\n%s", m.View())
+	}
+	m = asModel(t, must(m.Update(runeKey('d'))))
+	m = asModel(t, must(m.Update(runeKey('y'))))
+	if len(m.vault.ListCapabilities()) != 0 {
+		t.Fatal("d y did nothing with the cursor past the end")
 	}
 }

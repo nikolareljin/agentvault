@@ -81,6 +81,8 @@ func capabilityEntry(endpoint, model, context, caps string) (agent.ModelCapabili
 
 func (m *model) handleCapabilitiesInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	n := len(m.capabilities)
+	// A reload after a command can shrink the list under the cursor.
+	m.capCursor = max(0, min(m.capCursor, n-1))
 	if m.capConfirm {
 		m.capConfirm = false
 		if msg.String() == "y" && m.capCursor < n {
@@ -171,12 +173,20 @@ func (m *model) handleCapabilityDiscoverInput(msg tea.KeyMsg) (tea.Model, tea.Cm
 		m.mode = viewCapabilities
 		return m, nil
 	case key.Matches(msg, keys.Submit):
-		if strings.TrimSpace(m.capDiscover.Value()) == "" {
+		endpoint := strings.TrimSpace(m.capDiscover.Value())
+		if endpoint == "" {
 			m.setStatus("Error: endpoint is required", true)
 			return m, nil
 		}
-		// runCLI returns to the tab; the reload after it lists the result.
-		return m, m.runCLI(discoverArgs(m.capDiscover.Value()))
+		if MaskURL(endpoint) != endpoint {
+			// The child's argv is readable by other local users (ps).
+			m.setStatus("Error: the endpoint holds credentials; the TUI does not pass them on a command line. Run agentvault capability discover yourself.", true)
+			return m, nil
+		}
+		cmd := m.runCLI(discoverArgs(m.capDiscover.Value()))
+		// Back to the list, which the reload after the command fills.
+		m.mode = viewCapabilities
+		return m, cmd
 	}
 	var cmd tea.Cmd
 	m.capDiscover, cmd = m.capDiscover.Update(msg)
@@ -192,6 +202,7 @@ func (m model) renderCapabilities() string {
 		b.WriteString("\n")
 		return b.String()
 	}
+	cursor := max(0, min(m.capCursor, len(m.capabilities)-1))
 	for i, e := range m.capabilities {
 		caps := strings.Join(e.Capabilities, ",")
 		if caps == "" {
@@ -202,7 +213,7 @@ func (m model) renderCapabilities() string {
 			ctx = strconv.Itoa(e.ContextSize)
 		}
 		line := fmt.Sprintf("%-28s %8s  %s", truncateRunes(textutil.Printable(e.ModelName), 28), ctx, textutil.Printable(caps))
-		if i == m.capCursor {
+		if i == cursor {
 			b.WriteString(selectedStyle.Render("> " + line))
 		} else {
 			b.WriteString("  " + line)
