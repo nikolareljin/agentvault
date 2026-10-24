@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS CI timed out under `go test -race` (ci-helpers 0.44.0 default):
+  `cmd` passed 600s, as every test vault ran the default 64 MiB, t=3 Argon2id.
+  Tests in `cmd`, `internal/vault` and `internal/tui` now create vaults with
+  the cheapest parameters the header accepts (`internal/crypto/cryptotest`).
+  The binary does not import that package, and a test checks it.
+
 ## [0.19.0] - 2026-10-24
 
 ### Added
