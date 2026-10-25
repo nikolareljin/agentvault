@@ -479,6 +479,11 @@ func TestNormalizeRemoteAzureDevOps(t *testing.T) {
 		{"git@ssh.dev.azure.com:v3/org/project/a%0Ab", ""},
 		{"git@ssh.dev.azure.com:v3/org/_project/repo", ""},
 		{"https://dev.azure.com/org/_git/_git/repo", ""},
+		{"git@ssh.dev.azure.com:v3/org/a%23b/repo", ""},
+		{"git@ssh.dev.azure.com:v3/org/a%3Fb/repo", ""},
+		{"https://dev.azure.com/org/a%25b/_git/repo", ""},
+		{"https://dev.azure.com/org/a;b/_git/repo", ""},
+		{"https://dev.azure.com/org/.project/_git/repo", ""},
 	}
 	for _, c := range other {
 		got, ok := NormalizeRemote(c.in)
@@ -497,8 +502,9 @@ func TestCanonicalStored(t *testing.T) {
 		{"ssh.dev.azure.com/v3/org/project/repo", "dev.azure.com/org/project/repo"},
 		{"vs-ssh.visualstudio.com/v3/org/project/repo", "dev.azure.com/org/project/repo"},
 		{"dev.azure.com/org/my project/_git/repo", "dev.azure.com/org/my project/repo"},
-		{"dev.azure.com/org/a%b/_git/repo", "dev.azure.com/org/a%b/repo"},
-		{"dev.azure.com/org/a%20b/_git/repo", "dev.azure.com/org/a%20b/repo"},
+		// A stored name is not decoded again; one Azure DevOps refuses is kept.
+		{"dev.azure.com/org/a%20b/_git/repo", "dev.azure.com/org/a%20b/_git/repo"},
+		{"dev.azure.com/org/a#b/_git/repo", "dev.azure.com/org/a#b/_git/repo"},
 		{"dev.azure.com/org/_git/repo", "dev.azure.com/org/repo/repo"},
 		{"dev.azure.com:8443/org/project/_git/repo", "dev.azure.com:8443/org/project/_git/repo"},
 		// Already canonical, or not an Azure DevOps form: unchanged.

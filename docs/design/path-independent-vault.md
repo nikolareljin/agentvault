@@ -94,7 +94,9 @@ the machine a bundle came from.
   in all three names. `.../org/_git/repo` names the repository of the same
   name in project `repo`. An scp-like path is URL-decoded first, so
   `My%20Project` there equals `My Project` in an HTTPS URL. A path that fits
-  none of the forms normalizes like any other remote. Remotes stored in the
+  none of the forms normalizes like any other remote. A name holding a
+  character Azure DevOps refuses (`# ? % ; $ @ :` and others) is refused:
+  `#` would split a project key at the wrong place. Remotes stored in the
   old form are rewritten when a vault is opened or a bundle decoded.
 - Refused (no remote recorded), because each could give two repos one
   identity or put a non-host in it: control characters anywhere, a

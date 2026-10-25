@@ -170,6 +170,11 @@ func NormalizeRemote(raw string) (string, bool) {
 // isAzure is false for any other host, and for an Azure DevOps host whose path
 // matches none of the forms, which then normalizes like any other remote. ok
 // is false for an Azure DevOps path that cannot be read safely.
+// azureNameForbidden are characters Azure DevOps refuses in organization,
+// project and repository names. A name holding one is not a real remote,
+// and # would split a ProjectKey ("remote:...#subdir") in the wrong place.
+const azureNameForbidden = `/\:*?"<>|;#$%&~@'{},+=[]`
+
 func azureDevOps(host string, segs []string, scpLike bool) (id string, isAzure, ok bool) {
 	var org string
 	switch {
@@ -215,7 +220,7 @@ func azureDevOps(host string, segs []string, scpLike bool) (id string, isAzure, 
 			}
 			n = d
 		}
-		if n == "" || strings.HasPrefix(n, "_") || strings.ContainsAny(n, "/\\@:") || hasControl(n) {
+		if n == "" || n[0] == '_' || n[0] == '.' || strings.ContainsAny(n, azureNameForbidden) || hasControl(n) {
 			return "", true, false
 		}
 		names[i] = strings.ToLower(n)
@@ -227,8 +232,7 @@ func azureDevOps(host string, segs []string, scpLike bool) (id string, isAzure, 
 // earlier version up to date. Only Azure DevOps remotes changed: they were
 // kept as typed (dev.azure.com/org/project/_git/repo, org.visualstudio.com/...)
 // and now map to one identity. Any other value is returned unchanged.
-// The stored names are already decoded, so they are not parsed as a URL
-// again: a name holding a literal % stays as it is.
+// The stored names are already decoded, so they are not decoded again.
 func CanonicalStored(remote string) string {
 	host, path, _ := strings.Cut(remote, "/")
 	if id, isAzure, ok := azureDevOps(host, strings.Split(path, "/"), false); isAzure && ok {
