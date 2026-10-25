@@ -59,7 +59,7 @@ func balancerHealthKey(c Candidate, baseURL string) string {
 // CheckHealth pings the candidate's HTTP endpoint. CLI runners (Claude, Codex, Gemini)
 // have no HTTP endpoint to probe and are always considered healthy. HTTP runners (Ollama,
 // OpenAI-compat) are probed using their effective BaseURL, which is resolved from the
-// stored agent value → OLLAMA_HOST env → provider default, so agents that omit BaseURL
+// stored agent value -> Ollama endpoint env -> provider default, so agents that omit BaseURL
 // (relying on the env or localhost default) are still subject to circuit-breaker health checks.
 // Updates the circuit breaker state: marks unavailable after balancerMaxFailures consecutive
 // failures; allows re-check after balancerCooldown.
@@ -72,7 +72,7 @@ func (b *Balancer) CheckHealth(ctx context.Context, c Candidate) bool {
 
 	// Determine the effective endpoint to probe.
 	// Use the stored Target.BaseURL when present; fall back to the resolved runtime
-	// config URL (handles OLLAMA_HOST env / provider default) for HTTP agents that
+	// config URL (handles OLLAMA_BASE_URL env / provider default) for HTTP agents that
 	// omit BaseURL in the vault.
 	baseURL := c.Target.BaseURL
 	if baseURL == "" {

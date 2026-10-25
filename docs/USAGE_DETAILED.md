@@ -166,7 +166,7 @@ Routing flags (used when `--auto` is set or router mode overrides are desired):
 
 Runtime value precedence:
 - local agent value in vault
-- environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`)
+- environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_BASE_URL`; `OLLAMA_HOST` is read when it is unset and is deprecated)
 - default fallback (`http://localhost:11434` for Ollama base URL)
 
 Execution behavior:

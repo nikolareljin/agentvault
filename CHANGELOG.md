@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The Ollama endpoint is read from `OLLAMA_BASE_URL`. `OLLAMA_HOST` is still
+  read when `OLLAMA_BASE_URL` is unset, for this release only, and is
+  reported as deprecated: the agent detail view names the variable, and
+  `prompt` and `setup pull` print a warning. `OLLAMA_HOST` is also Ollama's
+  own bind address, so one variable served two meanings.
+
 ### Fixed
 
 - One Azure DevOps repository had up to four git identities: the

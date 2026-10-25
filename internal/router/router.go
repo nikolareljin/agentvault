@@ -289,7 +289,7 @@ func buildCandidates(agents []agent.Agent, intent Intent, cfg agent.RouterConfig
 		// The vault enforces uniqueness per (endpoint, model) pair, so at most one entry
 		// matches; break after the first match.
 		// Use the resolved URL (env var / provider default) so agents with an empty stored
-		// BaseURL (e.g. Ollama using OLLAMA_HOST) can still match registry entries.
+		// BaseURL (e.g. Ollama using OLLAMA_BASE_URL) can still match registry entries.
 		effectiveBase := agent.ResolvePromptRuntimeConfig(a).BaseURL.Value
 		if len(caps) > 0 && effectiveBase != "" {
 			normalizedBase := strings.TrimRight(effectiveBase, "/")

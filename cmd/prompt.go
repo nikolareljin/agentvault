@@ -210,6 +210,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		warnDeprecatedRuntimeEnv(cmd.ErrOrStderr(), runtimeCfg)
 		// With no prompt the tier is scored as simple: name the member checked.
 		if showVariantChoice(choice) && !jsonOut {
 			printVariantChoice(cmd.ErrOrStderr(), choice)
@@ -254,6 +255,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	warnDeprecatedRuntimeEnv(cmd.ErrOrStderr(), runtimeCfg)
 	if showVariantChoice(choice) && !jsonOut {
 		printVariantChoice(cmd.ErrOrStderr(), choice)
 	}
@@ -1463,4 +1465,11 @@ func extractInt64(data map[string]any, paths []string) int64 {
 		}
 	}
 	return 0
+}
+
+// warnDeprecatedRuntimeEnv names a deprecated variable a runtime value came from.
+func warnDeprecatedRuntimeEnv(w io.Writer, cfg agent.PromptRuntimeConfig) {
+	if note := cfg.BaseURL.Deprecation(); note != "" {
+		fmt.Fprintf(w, "warning: %s\n", note)
+	}
 }

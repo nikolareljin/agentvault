@@ -145,10 +145,17 @@ func TestRenderAgentDetail_ShowsEnvAndDefaultSources(t *testing.T) {
 	}
 	m := initialModel(v)
 	view := m.renderAgentDetail()
-	if !strings.Contains(view, "http://env-ollama:11434 (env)") {
-		t.Fatalf("expected env source in base URL, got: %s", view)
+	if !strings.Contains(view, "http://env-ollama:11434 (env OLLAMA_HOST)") || !strings.Contains(view, "OLLAMA_HOST is deprecated, set OLLAMA_BASE_URL") {
+		t.Fatalf("expected env source and deprecation in base URL, got: %s", view)
 	}
 
+	t.Setenv("OLLAMA_BASE_URL", "http://base-ollama:11434")
+	view = m.renderAgentDetail()
+	if !strings.Contains(view, "http://base-ollama:11434 (env OLLAMA_BASE_URL)") || strings.Contains(view, "deprecated") {
+		t.Fatalf("expected OLLAMA_BASE_URL without deprecation, got: %s", view)
+	}
+
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "")
 	view = m.renderAgentDetail()
 	if !strings.Contains(view, "http://localhost:11434 (default)") {

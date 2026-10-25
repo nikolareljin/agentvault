@@ -1836,7 +1836,14 @@ func (m model) renderAgentDetail() string {
 		field("API Key", "")
 	}
 
-	field("Base URL", MaskURL(runtimeCfg.BaseURL.Value)+sourceSuffix(runtimeCfg.BaseURL.Source))
+	baseURLSuffix := sourceSuffix(runtimeCfg.BaseURL.Source)
+	if runtimeCfg.BaseURL.EnvKey != "" {
+		baseURLSuffix = fmt.Sprintf(" (env %s)", runtimeCfg.BaseURL.EnvKey)
+	}
+	if note := runtimeCfg.BaseURL.Deprecation(); note != "" {
+		baseURLSuffix += "  " + warnStyle.Render(note)
+	}
+	field("Base URL", MaskURL(runtimeCfg.BaseURL.Value)+baseURLSuffix)
 	field("Role", a.Role)
 
 	effectivePrompt := a.EffectiveSystemPrompt(m.shared)

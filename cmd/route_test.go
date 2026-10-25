@@ -16,7 +16,8 @@ func TestRouteCommandRejectsUnexpectedArgs(t *testing.T) {
 }
 
 func TestResolvedRoutingAgentsAppliesRuntimeBaseURL(t *testing.T) {
-	t.Setenv("OLLAMA_HOST", "https://remote.example")
+	t.Setenv("OLLAMA_BASE_URL", "https://remote.example")
+	t.Setenv("OLLAMA_HOST", "")
 
 	resolved := resolvedRoutingAgents([]agent.Agent{{
 		Name:     "local",

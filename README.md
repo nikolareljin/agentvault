@@ -277,7 +277,7 @@ Current limitation:
 
 Runtime value precedence for prompt execution is:
 - local agent setting in vault
-- process environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST`)
+- process environment fallback (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_BASE_URL`; `OLLAMA_HOST` is read when it is unset and is deprecated)
 - built-in default fallback (for Ollama base URL: `http://localhost:11434`)
 
 Workflow templates (`implement_issue`, `implement_pr`, `add_issue`, and any you add) are plain `.txt` or Markdown `.md` files, resolved repository-local file > config storage > built-in. How to edit, replace and add them: [docs/templates.md](docs/templates.md).

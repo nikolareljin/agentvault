@@ -18,10 +18,37 @@ const (
 	ValueSourceUnset   ValueSource = "unset"
 )
 
-// ResolvedValue contains an effective value plus its source.
+// OllamaBaseURLEnv names the Ollama endpoint. OllamaHostEnv is read only when
+// it is unset, and only for this release: it is also Ollama's own bind address.
+const (
+	OllamaBaseURLEnv = "OLLAMA_BASE_URL"
+	OllamaHostEnv    = "OLLAMA_HOST"
+)
+
+var ollamaBaseURLEnvKeys = []string{OllamaBaseURLEnv, OllamaHostEnv}
+
+// ResolvedValue contains an effective value plus its source. EnvKey names the
+// variable the value came from when Source is ValueSourceEnv.
 type ResolvedValue struct {
 	Value  string
 	Source ValueSource
+	EnvKey string
+}
+
+// Deprecation returns a one-line notice when the value came from a deprecated
+// environment variable, else "".
+func (r ResolvedValue) Deprecation() string {
+	if r.Source == ValueSourceEnv && r.EnvKey == OllamaHostEnv {
+		return OllamaHostEnv + " is deprecated, set " + OllamaBaseURLEnv
+	}
+	return ""
+}
+
+// OllamaBaseURLFromEnv returns the Ollama endpoint from the environment and
+// the variable it came from, or "" and "" when neither is set.
+func OllamaBaseURLFromEnv() (value, key string) {
+	r := resolveValue("", ollamaBaseURLEnvKeys, "")
+	return r.Value, r.EnvKey
 }
 
 // PromptRuntimeConfig captures effective prompt-runtime values with precedence metadata.
@@ -43,7 +70,7 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 		switch NormalizeClaudeBackend(a.Backend) {
 		case ClaudeBackendOllama:
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
-			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), []string{"OLLAMA_HOST"}, "http://localhost:11434")
+			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), ollamaBaseURLEnvKeys, "http://localhost:11434")
 		case ClaudeBackendBedrock, ClaudeBackendVertex:
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
@@ -64,7 +91,7 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
 	case ProviderOllama:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
-		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), []string{"OLLAMA_HOST"}, "http://localhost:11434")
+		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), ollamaBaseURLEnvKeys, "http://localhost:11434")
 	default:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
@@ -141,7 +168,7 @@ func resolveValue(local string, envKeys []string, defaultValue string) ResolvedV
 			continue
 		}
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return ResolvedValue{Value: value, Source: ValueSourceEnv}
+			return ResolvedValue{Value: value, Source: ValueSourceEnv, EnvKey: key}
 		}
 	}
 	if defaultValue != "" {

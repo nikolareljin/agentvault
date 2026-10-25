@@ -36,6 +36,7 @@ func TestResolvePromptRuntimeConfig_UsesEnvFallback(t *testing.T) {
 }
 
 func TestResolvePromptRuntimeConfig_UsesDefaultFallback(t *testing.T) {
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "")
 	a := Agent{
 		Provider: ProviderOllama,
@@ -52,6 +53,7 @@ func TestResolvePromptRuntimeConfig_UsesDefaultFallback(t *testing.T) {
 }
 
 func TestResolvePromptRuntimeConfig_UsesEnvForOllamaBaseURL(t *testing.T) {
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
 	a := Agent{
 		Provider: ProviderOllama,
@@ -68,6 +70,7 @@ func TestResolvePromptRuntimeConfig_UsesEnvForOllamaBaseURL(t *testing.T) {
 }
 
 func TestResolvePromptRuntimeConfig_PrefersLocalOllamaBaseURLOverEnv(t *testing.T) {
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
 	a := Agent{
 		Provider: ProviderOllama,
@@ -102,6 +105,7 @@ func TestResolvePromptRuntimeConfig_PrefersLocalClaudeAPIKeyOverEnv(t *testing.T
 }
 
 func TestResolvePromptRuntimeConfig_ClaudeOllamaBackendUsesOllamaEnv(t *testing.T) {
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
 	t.Setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
 	a := Agent{
@@ -123,6 +127,7 @@ func TestResolvePromptRuntimeConfig_ClaudeOllamaBackendUsesOllamaEnv(t *testing.
 }
 
 func TestResolvePromptRuntimeConfig_ClaudeOllamaBackendUsesDefaultWhenEnvMissing(t *testing.T) {
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "")
 	a := Agent{
 		Provider: ProviderClaude,
@@ -190,5 +195,28 @@ func TestLookupPathSupportsArrays(t *testing.T) {
 	}
 	if got != "gemini response" {
 		t.Fatalf("LookupPath() = %v, want gemini response", got)
+	}
+}
+
+func TestResolvePromptRuntimeConfig_OllamaBaseURLEnv(t *testing.T) {
+	a := Agent{Provider: ProviderOllama, Model: "llama3.2"}
+
+	t.Setenv("OLLAMA_BASE_URL", "http://base:11434")
+	t.Setenv("OLLAMA_HOST", "http://host:11434")
+	cfg := ResolvePromptRuntimeConfig(a)
+	if cfg.BaseURL.Value != "http://base:11434" || cfg.BaseURL.EnvKey != OllamaBaseURLEnv || cfg.BaseURL.Deprecation() != "" {
+		t.Fatalf("both set: got %+v, want OLLAMA_BASE_URL without deprecation", cfg.BaseURL)
+	}
+
+	t.Setenv("OLLAMA_BASE_URL", "  ")
+	cfg = ResolvePromptRuntimeConfig(a)
+	if cfg.BaseURL.Value != "http://host:11434" || cfg.BaseURL.EnvKey != OllamaHostEnv {
+		t.Fatalf("legacy only: got %+v, want OLLAMA_HOST", cfg.BaseURL)
+	}
+	if got := cfg.BaseURL.Deprecation(); got != "OLLAMA_HOST is deprecated, set OLLAMA_BASE_URL" {
+		t.Fatalf("Deprecation() = %q", got)
+	}
+	if v, k := OllamaBaseURLFromEnv(); v != "http://host:11434" || k != OllamaHostEnv {
+		t.Fatalf("OllamaBaseURLFromEnv() = %q, %q", v, k)
 	}
 }
