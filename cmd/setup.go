@@ -836,7 +836,7 @@ func runSetupPull(cmd *cobra.Command, args []string) error {
 			pc.Ollama = ollamaConfig
 			fmt.Println("  Pulled: Ollama config")
 			if _, key := agent.OllamaBaseURLFromEnv(); key == agent.OllamaHostEnv {
-				fmt.Fprintf(os.Stderr, "  Warning: %s is deprecated, set %s\n", agent.OllamaHostEnv, agent.OllamaBaseURLEnv)
+				fmt.Fprintf(cmd.ErrOrStderr(), "  Warning: %s is deprecated, set %s\n", agent.OllamaHostEnv, agent.OllamaBaseURLEnv)
 			}
 			pulled++
 		} else {

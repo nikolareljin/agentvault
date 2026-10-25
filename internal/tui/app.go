@@ -1815,31 +1815,31 @@ func (m model) renderAgentDetail() string {
 		b.WriteString(fmt.Sprintf("  %s  %s\n", labelStyle.Render(fmt.Sprintf("%-16s", label+":")), value))
 	}
 
-	sourceSuffix := func(source agent.ValueSource) string {
-		if source == agent.ValueSourceUnset {
+	sourceSuffix := func(r agent.ResolvedValue) string {
+		switch {
+		case r.Source == agent.ValueSourceUnset:
 			return ""
+		case r.EnvKey != "":
+			return fmt.Sprintf(" (env %s)", r.EnvKey)
 		}
-		return fmt.Sprintf(" (%s)", source)
+		return fmt.Sprintf(" (%s)", r.Source)
 	}
 
 	field("Provider", string(a.Provider))
 	if a.Provider == agent.ProviderClaude {
 		field("Backend", agent.NormalizeClaudeBackend(a.Backend))
 	}
-	field("Model", runtimeCfg.Model.Value+sourceSuffix(runtimeCfg.Model.Source))
+	field("Model", runtimeCfg.Model.Value+sourceSuffix(runtimeCfg.Model))
 
 	if runtimeCfg.APIKey.Value != "" {
 		masked := runtimeCfg.APIKey.Value[:min(4, len(runtimeCfg.APIKey.Value))] +
 			strings.Repeat("*", max(0, len(runtimeCfg.APIKey.Value)-4))
-		field("API Key", masked+sourceSuffix(runtimeCfg.APIKey.Source))
+		field("API Key", masked+sourceSuffix(runtimeCfg.APIKey))
 	} else {
 		field("API Key", "")
 	}
 
-	baseURLSuffix := sourceSuffix(runtimeCfg.BaseURL.Source)
-	if runtimeCfg.BaseURL.EnvKey != "" {
-		baseURLSuffix = fmt.Sprintf(" (env %s)", runtimeCfg.BaseURL.EnvKey)
-	}
+	baseURLSuffix := sourceSuffix(runtimeCfg.BaseURL)
 	if note := runtimeCfg.BaseURL.Deprecation(); note != "" {
 		baseURLSuffix += "  " + warnStyle.Render(note)
 	}
