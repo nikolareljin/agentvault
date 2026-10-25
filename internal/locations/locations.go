@@ -99,6 +99,35 @@ func (h HiddenConfirm) Covers(keys []string) bool {
 	return true
 }
 
+// CanonicalKey brings a ProjectKey, with or without a "#subdir" suffix,
+// stored by an earlier version up to date (see gitid.CanonicalStored).
+func CanonicalKey(key string) string {
+	rest, ok := strings.CutPrefix(key, "remote:")
+	if !ok {
+		return key
+	}
+	remote, sub, hasSub := strings.Cut(rest, "#")
+	key = "remote:" + gitid.CanonicalStored(remote)
+	if hasSub {
+		key += "#" + sub
+	}
+	return key
+}
+
+// Canonicalize brings the remotes and project keys in s, stored by an
+// earlier version, up to date.
+func (s *Set) Canonicalize() {
+	for i := range s.Projects {
+		s.Projects[i].GitRemote = gitid.CanonicalStored(s.Projects[i].GitRemote)
+	}
+	for k, c := range s.ConfirmedHidden {
+		for i := range c.Projects {
+			c.Projects[i] = CanonicalKey(c.Projects[i])
+		}
+		s.ConfirmedHidden[k] = c
+	}
+}
+
 // ProjectKey is a project's identity for a hidden confirmation: its remote,
 // else its root commits, else its name in the work dir.
 func ProjectKey(p Project) string {

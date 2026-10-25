@@ -161,7 +161,18 @@ func decodeVaultData(plaintext []byte) (vaultData, error) {
 		}
 		vd = vaultData{Agents: agents}
 	}
+	vd.canonicalizeIdentities()
 	return vd, nil
+}
+
+// canonicalizeIdentities rewrites project identities stored by an earlier
+// version (an Azure DevOps remote in any of its forms) so they still match
+// the repository they name.
+func (vd *vaultData) canonicalizeIdentities() {
+	vd.Locations.Canonicalize()
+	for i := range vd.Shared.Instructions {
+		vd.Shared.Instructions[i].SourceProject = locations.CanonicalKey(vd.Shared.Instructions[i].SourceProject)
+	}
 }
 
 // apply replaces the in-memory state with vd, decoded from plaintext.
@@ -880,6 +891,7 @@ func (v *Vault) ImportData(data []byte) (imported int, skippedAgents []string, i
 	if err := json.Unmarshal(data, &vd); err != nil {
 		return 0, nil, nil, nil, fmt.Errorf("decoding import data: %w", err)
 	}
+	vd.canonicalizeIdentities()
 	importedParallelLimitDefined := sessionParallelLimitDefined(data) || vd.Sessions.ParallelLimitSet || vd.Sessions.ParallelLimit != 0
 	for _, a := range vd.Agents {
 		_, exists := v.Get(a.Name)

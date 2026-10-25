@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- One Azure DevOps repository had up to four git identities: the
+  `dev.azure.com`, `org.visualstudio.com`, `ssh.dev.azure.com` and
+  `vs-ssh.visualstudio.com` remotes normalized to different strings, so a
+  bundle exported from a clone over SSH did not match the same project
+  cloned over HTTPS. All forms, with or without user, token, port, `.git`,
+  `DefaultCollection` or a project named like its repository, now normalize
+  to `dev.azure.com/org/project/repo`, lower-cased. Two repositories in one
+  project stay apart. Identities a vault or bundle stored in the old form
+  are rewritten on open and decode, so saved projects, hidden-folder
+  confirmations and referenced files still match.
+
 - macOS CI timed out under `go test -race` (ci-helpers 0.44.0 default):
   `cmd` passed 600s, as every test vault ran the default 64 MiB, t=3 Argon2id.
   Tests in `cmd`, `internal/vault`, `internal/tui` and `internal/status` now

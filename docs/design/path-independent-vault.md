@@ -86,6 +86,16 @@ the machine a bundle came from.
 - Normalized remotes never hold `@` or `:` in a path segment; scp-like
   `user:token@host:path` drops everything up to the last `@` before the
   first slash.
+- Azure DevOps remotes (`dev.azure.com/org/project/_git/repo`,
+  `org.visualstudio.com[/DefaultCollection]/project/_git/repo`,
+  `ssh.dev.azure.com:v3/org/project/repo`,
+  `vs-ssh.visualstudio.com:v3/org/project/repo`) normalize to
+  `dev.azure.com/org/project/repo`, lower-cased: Azure DevOps ignores case
+  in all three names. `.../org/_git/repo` names the repository of the same
+  name in project `repo`. An scp-like path is URL-decoded first, so
+  `My%20Project` there equals `My Project` in an HTTPS URL. A path that fits
+  none of the forms normalizes like any other remote. Remotes stored in the
+  old form are rewritten when a vault is opened or a bundle decoded.
 - Refused (no remote recorded), because each could give two repos one
   identity or put a non-host in it: control characters anywhere, a
   backslash, `%2F`/`%5C` in a URL path (`a%2Fb/c` would equal `a/b/c`), `..`
