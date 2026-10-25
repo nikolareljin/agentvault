@@ -220,3 +220,28 @@ func TestResolvePromptRuntimeConfig_OllamaBaseURLEnv(t *testing.T) {
 		t.Fatalf("OllamaBaseURLFromEnv() = %q, %q", v, k)
 	}
 }
+
+func TestResolvePromptRuntimeConfig_OllamaEnvReadLikeOllama(t *testing.T) {
+	a := Agent{Provider: ProviderOllama, Model: "llama3.2"}
+	t.Setenv("OLLAMA_BASE_URL", "")
+	cases := map[string]string{
+		"0.0.0.0":                  "http://0.0.0.0:11434",
+		"0.0.0.0:11434":            "http://0.0.0.0:11434",
+		"gpu.example:8080":         "http://gpu.example:8080",
+		"[::1]":                    "http://[::1]:11434",
+		"[::1]:9000":               "http://[::1]:9000",
+		"gpu.example/ollama":       "http://gpu.example:11434/ollama",
+		"https://gpu.example":      "https://gpu.example",
+		"http://gpu.example:11434": "http://gpu.example:11434",
+	}
+	for in, want := range cases {
+		t.Setenv("OLLAMA_HOST", in)
+		if got := ResolvePromptRuntimeConfig(a).BaseURL.Value; got != want {
+			t.Errorf("OLLAMA_HOST=%q: base url = %q, want %q", in, got, want)
+		}
+	}
+	t.Setenv("OLLAMA_HOST", "")
+	if got := ResolvePromptRuntimeConfig(Agent{Provider: ProviderOllama, BaseURL: "gpu.example"}).BaseURL.Value; got != "gpu.example" {
+		t.Errorf("stored base url rewritten: %q", got)
+	}
+}

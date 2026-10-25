@@ -636,6 +636,9 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 	trimmedPrompt := strings.TrimSpace(req.Prompt)
 
 	ollamaURL := strings.TrimSpace(cfg.LocalAIOllamaURL)
+	if ollamaURL == "" {
+		ollamaURL, _ = agent.OllamaBaseURLFromEnv()
+	}
 	model := strings.TrimSpace(cfg.LocalAIModel)
 
 	analysis, err := AnalyzeWithLocalAI(trimmedPrompt, ollamaURL, model, 10*time.Second)

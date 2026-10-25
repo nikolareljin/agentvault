@@ -154,7 +154,7 @@ func init() {
 	promptCmd.Flags().String("deadline", "", "optional routing deadline signal: immediate|normal|background")
 	promptCmd.Flags().Bool("no-stream", false, "disable live output streaming; buffer response and print after completion")
 	promptCmd.Flags().String("local-ai-model", "", "ollama model used for local-ai routing classification (default: llama3.2)")
-	promptCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: http://localhost:11434)")
+	promptCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: OLLAMA_BASE_URL, else http://localhost:11434)")
 	promptCmd.Flags().String("llm-router-url", "", "URL of local llama-server or bitnet-server for llm-router mode (e.g. http://localhost:8080)")
 	promptCmd.Flags().String("llm-router-model", "", "model name override for llm-router mode (uses server default if empty)")
 	promptCmd.Flags().Int("llm-router-timeout", 0, "llm-router request timeout in seconds (default 30)")

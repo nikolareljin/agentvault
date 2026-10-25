@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -47,8 +48,33 @@ func (r ResolvedValue) Deprecation() string {
 // OllamaBaseURLFromEnv returns the Ollama endpoint from the environment and
 // the variable it came from, or "" and "" when neither is set.
 func OllamaBaseURLFromEnv() (value, key string) {
-	r := resolveValue("", ollamaBaseURLEnvKeys, "")
+	r := resolveOllamaBaseURL("", "")
 	return r.Value, r.EnvKey
+}
+
+// resolveOllamaBaseURL is resolveValue for the Ollama endpoint. A value from
+// the environment is read the way Ollama reads OLLAMA_HOST: "host" or
+// "host:port" means http, port 11434.
+func resolveOllamaBaseURL(local, defaultValue string) ResolvedValue {
+	r := resolveValue(local, ollamaBaseURLEnvKeys, defaultValue)
+	if r.Source == ValueSourceEnv {
+		r.Value = normalizeOllamaEnvURL(r.Value)
+	}
+	return r
+}
+
+func normalizeOllamaEnvURL(v string) string {
+	if strings.Contains(v, "://") {
+		return v
+	}
+	hostport, path, _ := strings.Cut(v, "/")
+	if _, _, err := net.SplitHostPort(hostport); err != nil {
+		hostport = net.JoinHostPort(strings.Trim(hostport, "[]"), "11434")
+	}
+	if path != "" {
+		return "http://" + hostport + "/" + path
+	}
+	return "http://" + hostport
 }
 
 // PromptRuntimeConfig captures effective prompt-runtime values with precedence metadata.
@@ -70,7 +96,7 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 		switch NormalizeClaudeBackend(a.Backend) {
 		case ClaudeBackendOllama:
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
-			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), ollamaBaseURLEnvKeys, "http://localhost:11434")
+			cfg.BaseURL = resolveOllamaBaseURL(strings.TrimSpace(a.BaseURL), "http://localhost:11434")
 		case ClaudeBackendBedrock, ClaudeBackendVertex:
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
@@ -91,7 +117,7 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
 	case ProviderOllama:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
-		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), ollamaBaseURLEnvKeys, "http://localhost:11434")
+		cfg.BaseURL = resolveOllamaBaseURL(strings.TrimSpace(a.BaseURL), "http://localhost:11434")
 	default:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")

@@ -271,7 +271,7 @@ Routing flags (apply when `--auto` is used or router mode is set):
 - `--prefer-low-cost` (default: `false`)
 - `--local-only` (default: `false`)
 - `--local-ai-model <model>` (default: `llama3.2`)
-- `--local-ai-url <url>` (default: `http://localhost:11434`)
+- `--local-ai-url <url>` (default: `OLLAMA_BASE_URL`, else `http://localhost:11434`)
 - `--llm-router-url <url>`
 - `--llm-router-model <name>`
 - `--llm-router-timeout <int>` (default: `30`)
@@ -330,7 +330,7 @@ Flags:
 - `--importance <level>`: `low|medium|high|critical` — influences scoring; `critical` strongly prefers cloud/low-latency runners
 - `--deadline <level>`: `immediate|normal|background` — `immediate` boosts low-latency agents; `background` favors low-cost
 - `--local-ai-model <model>` (default: `llama3.2`): Ollama model for `local-ai` routing classification
-- `--local-ai-url <url>` (default: `http://localhost:11434`): Ollama base URL for `local-ai` routing
+- `--local-ai-url <url>` (default: `OLLAMA_BASE_URL`, else `http://localhost:11434`): Ollama base URL for `local-ai` routing
 - `--llm-router-url <url>`: OpenAI-compatible server URL for `llm-router` mode (e.g. `http://localhost:8080`)
 - `--llm-router-model <name>`: model name override for `llm-router` HTTP mode (uses server default if empty)
 - `--llm-router-timeout <int>` (default: `30`): `llm-router` HTTP request timeout in seconds

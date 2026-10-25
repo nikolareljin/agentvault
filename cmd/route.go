@@ -36,7 +36,7 @@ func init() {
 	routeCmd.Flags().String("importance", "", "routing importance: low|medium|high|critical")
 	routeCmd.Flags().String("deadline", "", "routing deadline: immediate|normal|background")
 	routeCmd.Flags().String("local-ai-model", "", "ollama model for local-ai routing classification (default: llama3.2)")
-	routeCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: http://localhost:11434)")
+	routeCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: OLLAMA_BASE_URL, else http://localhost:11434)")
 	routeCmd.Flags().String("llm-router-url", "", "URL of local llama-server or bitnet-server for llm-router mode (e.g. http://localhost:8080)")
 	routeCmd.Flags().String("llm-router-model", "", "model name override for llm-router mode (uses server default if empty)")
 	routeCmd.Flags().Int("llm-router-timeout", 0, "llm-router request timeout in seconds (default 30)")
