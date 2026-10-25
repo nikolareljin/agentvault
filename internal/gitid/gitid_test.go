@@ -54,6 +54,7 @@ func TestNormalizeRemote(t *testing.T) {
 		{"a@b:tok" + "@github.com:owner/repo", "github.com/owner/repo"},
 		{"git@github.com:owner/re@po", ""},
 		{"git@github.com:own:er/repo", ""},
+		{"git@git.example.com:owner/re#po", ""},
 		{"https://github.com/owner/re@po", ""},
 		{"https://github.com/own:er/repo", ""},
 		// Not network remotes.
@@ -480,10 +481,11 @@ func TestNormalizeRemoteAzureDevOps(t *testing.T) {
 		{"git@ssh.dev.azure.com:v3/org/_project/repo", ""},
 		{"https://dev.azure.com/org/_git/_git/repo", ""},
 		{"git@ssh.dev.azure.com:v3/org/a%23b/repo", ""},
-		{"git@ssh.dev.azure.com:v3/org/a%3Fb/repo", ""},
-		{"https://dev.azure.com/org/a%25b/_git/repo", ""},
-		{"https://dev.azure.com/org/a;b/_git/repo", ""},
-		{"https://dev.azure.com/org/.project/_git/repo", ""},
+		{"git@ssh.dev.azure.com:v3/org/a%40b/repo", ""},
+		// Other punctuation is kept: R&D is a real project name.
+		{"https://dev.azure.com/org/R%26D/_git/repo", "dev.azure.com/org/r&d/repo"},
+		{"git@ssh.dev.azure.com:v3/org/R%26D/repo", "dev.azure.com/org/r&d/repo"},
+		{"https://dev.azure.com/org/a%25b/_git/repo", "dev.azure.com/org/a%b/repo"},
 	}
 	for _, c := range other {
 		got, ok := NormalizeRemote(c.in)
@@ -503,7 +505,8 @@ func TestCanonicalStored(t *testing.T) {
 		{"vs-ssh.visualstudio.com/v3/org/project/repo", "dev.azure.com/org/project/repo"},
 		{"dev.azure.com/org/my project/_git/repo", "dev.azure.com/org/my project/repo"},
 		// A stored name is not decoded again; one Azure DevOps refuses is kept.
-		{"dev.azure.com/org/a%20b/_git/repo", "dev.azure.com/org/a%20b/_git/repo"},
+		{"dev.azure.com/org/a%b/_git/repo", "dev.azure.com/org/a%b/repo"},
+		{"dev.azure.com/org/a%20b/_git/repo", "dev.azure.com/org/a%20b/repo"},
 		{"dev.azure.com/org/a#b/_git/repo", "dev.azure.com/org/a#b/_git/repo"},
 		{"dev.azure.com/org/_git/repo", "dev.azure.com/org/repo/repo"},
 		{"dev.azure.com:8443/org/project/_git/repo", "dev.azure.com:8443/org/project/_git/repo"},

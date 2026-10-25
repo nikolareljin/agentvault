@@ -14,6 +14,10 @@
   project stay apart. Identities a vault or bundle stored in the old form
   are rewritten on open and decode, so saved projects, hidden-folder
   confirmations and referenced files still match.
+- A scp-like remote with `#` in its path (`git@host:owner/re#po`) kept
+  the `#` in its identity, where it split the project key that names a
+  subfolder (`remote:...#subdir`) in the wrong place. Such a remote now
+  records no remote identity; the project is matched by its root commits.
 
 - macOS CI timed out under `go test -race` (ci-helpers 0.44.0 default):
   `cmd` passed 600s, as every test vault ran the default 64 MiB, t=3 Argon2id.

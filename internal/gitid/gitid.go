@@ -124,7 +124,8 @@ func NormalizeRemote(raw string) (string, bool) {
 			return "", false
 		}
 		// @ or : in a segment is credentials or a mis-parse; never keep it.
-		if strings.ContainsAny(seg, "@:") {
+		// # would split a ProjectKey ("remote:...#subdir") in the wrong place.
+		if strings.ContainsAny(seg, "@:#") {
 			return "", false
 		}
 		segs = append(segs, seg)
@@ -170,10 +171,10 @@ func NormalizeRemote(raw string) (string, bool) {
 // isAzure is false for any other host, and for an Azure DevOps host whose path
 // matches none of the forms, which then normalizes like any other remote. ok
 // is false for an Azure DevOps path that cannot be read safely.
-// azureNameForbidden are characters Azure DevOps refuses in organization,
-// project and repository names. A name holding one is not a real remote,
-// and # would split a ProjectKey ("remote:...#subdir") in the wrong place.
-const azureNameForbidden = `/\:*?"<>|;#$%&~@'{},+=[]`
+// azureNameForbidden may not appear in an organization, project or
+// repository name in an identity: each would mis-split it or a ProjectKey
+// ("remote:...#subdir"). A decoded scp-like name can hold any of them.
+const azureNameForbidden = `/\:@#`
 
 func azureDevOps(host string, segs []string, scpLike bool) (id string, isAzure, ok bool) {
 	var org string
@@ -220,7 +221,7 @@ func azureDevOps(host string, segs []string, scpLike bool) (id string, isAzure, 
 			}
 			n = d
 		}
-		if n == "" || n[0] == '_' || n[0] == '.' || strings.ContainsAny(n, azureNameForbidden) || hasControl(n) {
+		if n == "" || n[0] == '_' || strings.ContainsAny(n, azureNameForbidden) || hasControl(n) {
 			return "", true, false
 		}
 		names[i] = strings.ToLower(n)
