@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The Ollama endpoint is read from `OLLAMA_BASE_URL`. `OLLAMA_HOST` is still
+  read when `OLLAMA_BASE_URL` is unset, for this release only, and is
+  reported as deprecated: the agent detail view names the variable, and
+  `prompt`, `route` and `setup pull` print a warning (`local-ai` routing
+  included; its error carries the notice when the endpoint fails). `OLLAMA_HOST` is also Ollama's
+  own bind address, so one variable served two meanings. A value without a
+  scheme is read the way Ollama reads it (`0.0.0.0` means
+  `http://127.0.0.1:11434`, since a listen-on-all address does not
+  connect on Windows); before, it was used as is and every request failed. `local-ai` routing and `detect` use the variable too; they always
+  used `http://localhost:11434`.
+
 ### Fixed
 
 - One Azure DevOps repository had up to four git identities: the

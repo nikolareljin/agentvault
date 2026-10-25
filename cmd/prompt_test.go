@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -264,7 +265,8 @@ func TestResolvePromptAgentAutoUsesProvidedPromptText(t *testing.T) {
 }
 
 func TestResolvePromptAgentAutoKeepsRuntimeValueSourcesFromOriginalAgent(t *testing.T) {
-	t.Setenv("OLLAMA_HOST", "https://remote.example")
+	t.Setenv("OLLAMA_BASE_URL", "https://remote.example")
+	t.Setenv("OLLAMA_HOST", "")
 
 	cmd := newPromptOptimizationTestCommand()
 	cmd.Flags().Bool("auto", false, "")
@@ -297,7 +299,8 @@ func TestResolvePromptAgentAutoKeepsRuntimeValueSourcesFromOriginalAgent(t *test
 }
 
 func TestResolvePromptAgentAutoRejectsRemoteResolvedTargetForLocalOnly(t *testing.T) {
-	t.Setenv("OLLAMA_HOST", "https://remote.example")
+	t.Setenv("OLLAMA_BASE_URL", "https://remote.example")
+	t.Setenv("OLLAMA_HOST", "")
 
 	cmd := newPromptOptimizationTestCommand()
 	cmd.Flags().Bool("auto", false, "")
@@ -361,5 +364,23 @@ func TestPromptRouterOverrideDoesNotForceAllowFallbacks(t *testing.T) {
 	cfg := promptRouterOverride(cmd)
 	if cfg.AllowFallbacks {
 		t.Fatalf("AllowFallbacks = true, want false when not explicitly requested")
+	}
+}
+
+func TestWarnDeprecatedRuntimeEnv(t *testing.T) {
+	a := agent.Agent{Provider: agent.ProviderOllama, Model: "llama3.2"}
+	t.Setenv("OLLAMA_BASE_URL", "")
+	t.Setenv("OLLAMA_HOST", "http://host:11434")
+	var out bytes.Buffer
+	warnDeprecatedRuntimeEnv(&out, agent.ResolvePromptRuntimeConfig(a))
+	if got := out.String(); got != "warning: OLLAMA_HOST is deprecated, set OLLAMA_BASE_URL\n" {
+		t.Fatalf("legacy env: got %q", got)
+	}
+
+	t.Setenv("OLLAMA_BASE_URL", "http://base:11434")
+	out.Reset()
+	warnDeprecatedRuntimeEnv(&out, agent.ResolvePromptRuntimeConfig(a))
+	if out.Len() != 0 {
+		t.Fatalf("OLLAMA_BASE_URL set: got %q, want no warning", out.String())
 	}
 }

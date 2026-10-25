@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -834,4 +835,52 @@ func writeFakeInterpreter(t *testing.T, dir, name string, code int) string {
 		t.Fatalf("WriteFile(%s) error = %v", path, err)
 	}
 	return path
+}
+
+func TestRouteWithLocalAIUsesOllamaBaseURLEnv(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "no", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_BASE_URL", srv.URL)
+	t.Setenv("OLLAMA_HOST", "")
+
+	_, _ = Route(Request{
+		Prompt: "refactor the auth module",
+		Agents: []agent.Agent{{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"}},
+		Config: agent.RouterConfig{Mode: "local-ai", AllowFallbacks: true},
+	})
+	if hits.Load() == 0 {
+		t.Fatal("local-ai routing did not call the OLLAMA_BASE_URL endpoint")
+	}
+}
+
+func TestRouteWithLocalAIWarnsOnOllamaHost(t *testing.T) {
+	t.Setenv("OLLAMA_BASE_URL", "")
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:1")
+	req := Request{
+		Prompt: "refactor the auth module",
+		Agents: []agent.Agent{{Name: "local", Provider: agent.ProviderOllama, Model: "llama3.2"}},
+		Config: agent.RouterConfig{Mode: "local-ai", AllowFallbacks: true},
+	}
+	decision, err := Route(req)
+	if err != nil {
+		t.Fatalf("Route() error = %v", err)
+	}
+	if len(decision.Warnings) != 1 || decision.Warnings[0] != agent.OllamaHostDeprecation {
+		t.Fatalf("warnings = %q, want the OLLAMA_HOST deprecation", decision.Warnings)
+	}
+
+	req.Config.AllowFallbacks = false
+	if _, err := Route(req); err == nil || !strings.Contains(err.Error(), agent.OllamaHostDeprecation) {
+		t.Fatalf("error = %v, want it to carry the deprecation", err)
+	}
+
+	t.Setenv("OLLAMA_BASE_URL", "127.0.0.1:1")
+	req.Config.AllowFallbacks = true
+	if decision, _ := Route(req); len(decision.Warnings) != 0 {
+		t.Fatalf("warnings = %q, want none with OLLAMA_BASE_URL", decision.Warnings)
+	}
 }

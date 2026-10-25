@@ -134,6 +134,7 @@ func TestCycleClaudeBackend_PersistsViaUpdate(t *testing.T) {
 }
 
 func TestRenderAgentDetail_ShowsEnvAndDefaultSources(t *testing.T) {
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
 	dir := t.TempDir()
 	v := vault.New(filepath.Join(dir, "env-default.enc"))
@@ -145,14 +146,37 @@ func TestRenderAgentDetail_ShowsEnvAndDefaultSources(t *testing.T) {
 	}
 	m := initialModel(v)
 	view := m.renderAgentDetail()
-	if !strings.Contains(view, "http://env-ollama:11434 (env)") {
-		t.Fatalf("expected env source in base URL, got: %s", view)
+	if !strings.Contains(view, "http://env-ollama:11434 (env OLLAMA_HOST)") || !strings.Contains(view, "OLLAMA_HOST is deprecated, set OLLAMA_BASE_URL") {
+		t.Fatalf("expected env source and deprecation in base URL, got: %s", view)
 	}
 
+	t.Setenv("OLLAMA_BASE_URL", "http://base-ollama:11434")
+	view = m.renderAgentDetail()
+	if !strings.Contains(view, "http://base-ollama:11434 (env OLLAMA_BASE_URL)") || strings.Contains(view, "deprecated") {
+		t.Fatalf("expected OLLAMA_BASE_URL without deprecation, got: %s", view)
+	}
+
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "")
 	view = m.renderAgentDetail()
 	if !strings.Contains(view, "http://localhost:11434 (default)") {
 		t.Fatalf("expected default source in base URL, got: %s", view)
+	}
+}
+
+func TestRenderAgentDetail_NamesAPIKeyEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "env-anthropic-key")
+	dir := t.TempDir()
+	v := vault.New(filepath.Join(dir, "env-key.enc"))
+	if err := v.Init("testpass"); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := v.Add(agent.Agent{Name: "claude-env", Provider: agent.ProviderClaude, Model: "claude-sonnet"}); err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	view := initialModel(v).renderAgentDetail()
+	if !strings.Contains(view, "(env ANTHROPIC_API_KEY)") || strings.Contains(view, "env-anthropic-key") {
+		t.Fatalf("expected API key env name and a masked key, got: %s", view)
 	}
 }
 

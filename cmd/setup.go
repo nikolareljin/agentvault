@@ -835,6 +835,9 @@ func runSetupPull(cmd *cobra.Command, args []string) error {
 		if err == nil {
 			pc.Ollama = ollamaConfig
 			fmt.Println("  Pulled: Ollama config")
+			if _, key := agent.OllamaBaseURLFromEnv(); key == agent.OllamaHostEnv {
+				fmt.Fprintf(cmd.ErrOrStderr(), "  Warning: %s\n", agent.OllamaHostDeprecation)
+			}
 			pulled++
 		} else {
 			fmt.Println("  Skipped: Ollama (not configured)")

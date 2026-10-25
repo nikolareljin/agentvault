@@ -504,8 +504,11 @@ func detectOllama() DetectedAgent {
 		}
 	}
 
-	// Default base URL
+	// The endpoint prompt would use for an agent with no base URL.
 	a.Settings["base_url"] = "http://localhost:11434"
+	if env, _ := agent.OllamaBaseURLFromEnv(); env != "" {
+		a.Settings["base_url"] = env
+	}
 
 	return a
 }

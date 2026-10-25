@@ -3,6 +3,8 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -18,10 +20,86 @@ const (
 	ValueSourceUnset   ValueSource = "unset"
 )
 
-// ResolvedValue contains an effective value plus its source.
+// OllamaBaseURLEnv names the Ollama endpoint. OllamaHostEnv is read only when
+// it is unset, and only for this release: it is also Ollama's own bind address.
+const (
+	OllamaBaseURLEnv = "OLLAMA_BASE_URL"
+	OllamaHostEnv    = "OLLAMA_HOST"
+)
+
+// OllamaHostDeprecation is the notice shown when OllamaHostEnv was read.
+const OllamaHostDeprecation = OllamaHostEnv + " is deprecated, set " + OllamaBaseURLEnv
+
+var ollamaBaseURLEnvKeys = []string{OllamaBaseURLEnv, OllamaHostEnv}
+
+// ResolvedValue contains an effective value plus its source. EnvKey names the
+// variable the value came from when Source is ValueSourceEnv.
 type ResolvedValue struct {
 	Value  string
 	Source ValueSource
+	EnvKey string
+}
+
+// Deprecation returns a one-line notice when the value came from a deprecated
+// environment variable, else "".
+func (r ResolvedValue) Deprecation() string {
+	if r.Source == ValueSourceEnv && r.EnvKey == OllamaHostEnv {
+		return OllamaHostDeprecation
+	}
+	return ""
+}
+
+// OllamaBaseURLFromEnv returns the Ollama endpoint from the environment and
+// the variable it came from, or "" and "" when neither is set.
+func OllamaBaseURLFromEnv() (value, key string) {
+	r := resolveOllamaBaseURL("", "")
+	return r.Value, r.EnvKey
+}
+
+// resolveOllamaBaseURL is resolveValue for the Ollama endpoint. A value from
+// the environment is read the way Ollama reads OLLAMA_HOST: "host" or
+// "host:port" means http, port 11434. A listen-on-all address (0.0.0.0, ::)
+// becomes loopback, which Windows needs to connect.
+func resolveOllamaBaseURL(local, defaultValue string) ResolvedValue {
+	r := resolveValue(local, ollamaBaseURLEnvKeys, defaultValue)
+	if r.Source == ValueSourceEnv {
+		r.Value = normalizeOllamaEnvURL(r.Value)
+	}
+	return r
+}
+
+func normalizeOllamaEnvURL(v string) string {
+	if !strings.Contains(v, "://") {
+		hostport, path, _ := strings.Cut(v, "/")
+		if _, _, err := net.SplitHostPort(hostport); err != nil {
+			hostport = net.JoinHostPort(strings.Trim(hostport, "[]"), "11434")
+		}
+		v = "http://" + hostport
+		if path != "" {
+			v += "/" + path
+		}
+	}
+	u, err := url.Parse(v)
+	if err != nil {
+		return v
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || !ip.IsUnspecified() {
+		return v
+	}
+	loopback := "127.0.0.1"
+	if ip.To4() == nil {
+		loopback = "::1"
+	}
+	switch port := u.Port(); {
+	case port != "":
+		u.Host = net.JoinHostPort(loopback, port)
+	case ip.To4() == nil:
+		u.Host = "[" + loopback + "]"
+	default:
+		u.Host = loopback
+	}
+	return u.String()
 }
 
 // PromptRuntimeConfig captures effective prompt-runtime values with precedence metadata.
@@ -43,7 +121,7 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 		switch NormalizeClaudeBackend(a.Backend) {
 		case ClaudeBackendOllama:
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
-			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), []string{"OLLAMA_HOST"}, "http://localhost:11434")
+			cfg.BaseURL = resolveOllamaBaseURL(strings.TrimSpace(a.BaseURL), "http://localhost:11434")
 		case ClaudeBackendBedrock, ClaudeBackendVertex:
 			cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 			cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
@@ -64,7 +142,7 @@ func ResolvePromptRuntimeConfig(a Agent) PromptRuntimeConfig {
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
 	case ProviderOllama:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
-		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), []string{"OLLAMA_HOST"}, "http://localhost:11434")
+		cfg.BaseURL = resolveOllamaBaseURL(strings.TrimSpace(a.BaseURL), "http://localhost:11434")
 	default:
 		cfg.APIKey = resolveValue(strings.TrimSpace(a.APIKey), nil, "")
 		cfg.BaseURL = resolveValue(strings.TrimSpace(a.BaseURL), nil, "")
@@ -141,7 +219,7 @@ func resolveValue(local string, envKeys []string, defaultValue string) ResolvedV
 			continue
 		}
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return ResolvedValue{Value: value, Source: ValueSourceEnv}
+			return ResolvedValue{Value: value, Source: ValueSourceEnv, EnvKey: key}
 		}
 	}
 	if defaultValue != "" {

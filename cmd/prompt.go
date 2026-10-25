@@ -154,7 +154,7 @@ func init() {
 	promptCmd.Flags().String("deadline", "", "optional routing deadline signal: immediate|normal|background")
 	promptCmd.Flags().Bool("no-stream", false, "disable live output streaming; buffer response and print after completion")
 	promptCmd.Flags().String("local-ai-model", "", "ollama model used for local-ai routing classification (default: llama3.2)")
-	promptCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: http://localhost:11434)")
+	promptCmd.Flags().String("local-ai-url", "", "ollama base URL for local-ai routing (default: OLLAMA_BASE_URL, else http://localhost:11434)")
 	promptCmd.Flags().String("llm-router-url", "", "URL of local llama-server or bitnet-server for llm-router mode (e.g. http://localhost:8080)")
 	promptCmd.Flags().String("llm-router-model", "", "model name override for llm-router mode (uses server default if empty)")
 	promptCmd.Flags().Int("llm-router-timeout", 0, "llm-router request timeout in seconds (default 30)")
@@ -210,6 +210,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		warnDeprecatedRuntimeEnv(cmd.ErrOrStderr(), runtimeCfg)
 		// With no prompt the tier is scored as simple: name the member checked.
 		if showVariantChoice(choice) && !jsonOut {
 			printVariantChoice(cmd.ErrOrStderr(), choice)
@@ -254,6 +255,7 @@ func runPrompt(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	warnDeprecatedRuntimeEnv(cmd.ErrOrStderr(), runtimeCfg)
 	if showVariantChoice(choice) && !jsonOut {
 		printVariantChoice(cmd.ErrOrStderr(), choice)
 	}
@@ -473,6 +475,9 @@ func resolvePromptAgentChoice(cmd *cobra.Command, v vaultLike, args []string, pr
 	})
 	if err != nil {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, err
+	}
+	for _, w := range decision.Warnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)
 	}
 	selected := decision.Selected.AgentConfig()
 	original, ok := v.Get(selected.Name)
@@ -1463,4 +1468,11 @@ func extractInt64(data map[string]any, paths []string) int64 {
 		}
 	}
 	return 0
+}
+
+// warnDeprecatedRuntimeEnv names a deprecated variable a runtime value came from.
+func warnDeprecatedRuntimeEnv(w io.Writer, cfg agent.PromptRuntimeConfig) {
+	if note := cfg.BaseURL.Deprecation(); note != "" {
+		fmt.Fprintf(w, "warning: %s\n", note)
+	}
 }

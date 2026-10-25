@@ -3,7 +3,7 @@
 // Each supported provider stores its configuration differently:
 //   - Claude: ~/.claude/settings.json, ~/.claude/keybindings.json
 //   - Codex:  ~/.codex/config.toml, ~/.codex/rules/*.md
-//   - Ollama: OLLAMA_HOST environment variable
+//   - Ollama: OLLAMA_BASE_URL (or the deprecated OLLAMA_HOST) environment variable
 //
 // These Load/Save functions bridge between the provider's native format
 // and AgentVault's unified storage, enabling export/import of provider
@@ -364,8 +364,7 @@ func LoadOllamaConfig() (*OllamaConfig, error) {
 		CustomSettings: make(map[string]any),
 	}
 
-	// Check OLLAMA_HOST env
-	if host := os.Getenv("OLLAMA_HOST"); host != "" {
+	if host, _ := OllamaBaseURLFromEnv(); host != "" {
 		config.BaseURL = host
 	}
 
