@@ -27,6 +27,9 @@ const (
 	OllamaHostEnv    = "OLLAMA_HOST"
 )
 
+// OllamaHostDeprecation is the notice shown when OllamaHostEnv was read.
+const OllamaHostDeprecation = OllamaHostEnv + " is deprecated, set " + OllamaBaseURLEnv
+
 var ollamaBaseURLEnvKeys = []string{OllamaBaseURLEnv, OllamaHostEnv}
 
 // ResolvedValue contains an effective value plus its source. EnvKey names the
@@ -41,7 +44,7 @@ type ResolvedValue struct {
 // environment variable, else "".
 func (r ResolvedValue) Deprecation() string {
 	if r.Source == ValueSourceEnv && r.EnvKey == OllamaHostEnv {
-		return OllamaHostEnv + " is deprecated, set " + OllamaBaseURLEnv
+		return OllamaHostDeprecation
 	}
 	return ""
 }
@@ -80,18 +83,21 @@ func normalizeOllamaEnvURL(v string) string {
 	if err != nil {
 		return v
 	}
-	if ip := net.ParseIP(u.Hostname()); ip != nil && ip.IsUnspecified() {
-		loopback := "127.0.0.1"
-		if ip.To4() == nil {
-			loopback = "::1"
-		}
-		if port := u.Port(); port != "" {
-			u.Host = net.JoinHostPort(loopback, port)
-		} else if ip.To4() == nil {
-			u.Host = "[" + loopback + "]"
-		} else {
-			u.Host = loopback
-		}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil || !ip.IsUnspecified() {
+		return v
+	}
+	loopback := "127.0.0.1"
+	if ip.To4() == nil {
+		loopback = "::1"
+	}
+	switch port := u.Port(); {
+	case port != "":
+		u.Host = net.JoinHostPort(loopback, port)
+	case ip.To4() == nil:
+		u.Host = "[" + loopback + "]"
+	default:
+		u.Host = loopback
 	}
 	return u.String()
 }

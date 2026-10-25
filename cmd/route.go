@@ -70,6 +70,9 @@ func runRoute(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	for _, w := range decision.Warnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)
+	}
 	jsonOut, _ := cmd.Flags().GetBool("json")
 	if jsonOut {
 		enc := json.NewEncoder(c1Writer(os.Stdout))

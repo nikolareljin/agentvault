@@ -476,6 +476,9 @@ func resolvePromptAgentChoice(cmd *cobra.Command, v vaultLike, args []string, pr
 	if err != nil {
 		return agent.Agent{}, nil, agent.PromptRuntimeConfig{}, nil, err
 	}
+	for _, w := range decision.Warnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)
+	}
 	selected := decision.Selected.AgentConfig()
 	original, ok := v.Get(selected.Name)
 	if !ok {

@@ -237,6 +237,7 @@ func TestResolvePromptRuntimeConfig_OllamaEnvReadLikeOllama(t *testing.T) {
 		"gpu.example/ollama":       "http://gpu.example:11434/ollama",
 		"https://gpu.example":      "https://gpu.example",
 		"http://gpu.example:11434": "http://gpu.example:11434",
+		"http://gpu.example/a%2Fb": "http://gpu.example/a%2Fb",
 	}
 	for in, want := range cases {
 		t.Setenv("OLLAMA_HOST", in)

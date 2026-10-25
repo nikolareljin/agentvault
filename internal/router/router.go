@@ -84,6 +84,7 @@ type Decision struct {
 	Candidates          []Candidate `json:"candidates,omitempty"`
 	EffectiveImportance string      `json:"effective_importance,omitempty"`
 	EffectiveDeadline   string      `json:"effective_deadline,omitempty"`
+	Warnings            []string    `json:"warnings,omitempty"`
 }
 
 // Errors a caller can act on, as opposed to ones that mean something is
@@ -636,10 +637,27 @@ func routeWithLocalAI(req Request, cfg agent.RouterConfig) (Decision, error) {
 	trimmedPrompt := strings.TrimSpace(req.Prompt)
 
 	ollamaURL := strings.TrimSpace(cfg.LocalAIOllamaURL)
+	var warnings []string
 	if ollamaURL == "" {
-		ollamaURL, _ = agent.OllamaBaseURLFromEnv()
+		var key string
+		ollamaURL, key = agent.OllamaBaseURLFromEnv()
+		if key == agent.OllamaHostEnv {
+			warnings = append(warnings, agent.OllamaHostDeprecation)
+		}
 	}
 	model := strings.TrimSpace(cfg.LocalAIModel)
+	decision, err := routeWithLocalAIAt(req, cfg, trimmedPrompt, ollamaURL, model)
+	if err != nil {
+		if len(warnings) > 0 {
+			return decision, fmt.Errorf("%w (%s)", err, strings.Join(warnings, "; "))
+		}
+		return decision, err
+	}
+	decision.Warnings = append(decision.Warnings, warnings...)
+	return decision, nil
+}
+
+func routeWithLocalAIAt(req Request, cfg agent.RouterConfig, trimmedPrompt, ollamaURL, model string) (Decision, error) {
 
 	analysis, err := AnalyzeWithLocalAI(trimmedPrompt, ollamaURL, model, 10*time.Second)
 	if err != nil {
