@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Each release now runs the `darwin-amd64` binary on an Intel macOS runner,
+  after checking its SHA-256 against the release. Until now only the arm64
+  binary ran (the Homebrew job runs on arm64), so a broken Intel build would
+  have shipped. The tap is published only when both pass. A manual run of
+  the Homebrew workflow can skip publishing with `publish: false`.
+
 ### Changed
 
 - The Ollama endpoint is read from `OLLAMA_BASE_URL`. `OLLAMA_HOST` is still

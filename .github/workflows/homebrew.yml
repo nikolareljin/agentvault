@@ -9,12 +9,21 @@ on:
       release_tag:
         required: true
         type: string
+      publish:
+        required: false
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
       release_tag:
         description: "Release tag to package, for example 0.13.0"
         required: true
         type: string
+      publish:
+        description: "Commit the formula to the tap"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -117,10 +126,49 @@ jobs:
           path: ${{ runner.temp }}/agentvault.rb
           if-no-files-found: error
 
+  # The package job runs on arm64, so it only executes the arm64 binary.
+  intel:
+    runs-on: macos-15-intel
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.+-]+)?$ ]]
+
+      - name: Run the darwin-amd64 release binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          asset=agentvault-darwin-amd64
+          for attempt in {1..20}; do
+            if gh release download "$RELEASE_TAG" -R "${{ github.repository }}" -p "$asset" -D "$RUNNER_TEMP" 2>/dev/null; then
+              break
+            fi
+            test "$attempt" = 20 && exit 1
+            sleep 15
+          done
+          want="$(gh api "repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" \
+            --jq ".assets[] | select(.name == \"$asset\") | .digest")"
+          got="sha256:$(shasum -a 256 "$RUNNER_TEMP/$asset" | cut -d' ' -f1)"
+          if [ "$got" != "$want" ]; then
+            echo "digest mismatch for $asset: got $got, release says $want" >&2
+            exit 1
+          fi
+          chmod +x "$RUNNER_TEMP/$asset"
+          "$RUNNER_TEMP/$asset" version | grep -F "$RELEASE_TAG"
+
   # Commits the formula to the tap with its deploy key; the tap's ruleset lets
   # that key, and only it, push to main.
   publish:
-    needs: package
+    needs: [package, intel]
+    if: ${{ inputs.publish }}
     uses: nikolareljin/ci-helpers/.github/workflows/homebrew-tap-publish.yml@production
     with:
       formula_artifact: homebrew-formula-agentvault
