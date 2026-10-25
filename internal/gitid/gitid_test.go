@@ -497,6 +497,10 @@ func TestCanonicalStored(t *testing.T) {
 		{"ssh.dev.azure.com/v3/org/project/repo", "dev.azure.com/org/project/repo"},
 		{"vs-ssh.visualstudio.com/v3/org/project/repo", "dev.azure.com/org/project/repo"},
 		{"dev.azure.com/org/my project/_git/repo", "dev.azure.com/org/my project/repo"},
+		{"dev.azure.com/org/a%b/_git/repo", "dev.azure.com/org/a%b/repo"},
+		{"dev.azure.com/org/a%20b/_git/repo", "dev.azure.com/org/a%20b/repo"},
+		{"dev.azure.com/org/_git/repo", "dev.azure.com/org/repo/repo"},
+		{"dev.azure.com:8443/org/project/_git/repo", "dev.azure.com:8443/org/project/_git/repo"},
 		// Already canonical, or not an Azure DevOps form: unchanged.
 		{"dev.azure.com/org/project/repo", "dev.azure.com/org/project/repo"},
 		{"dev.azure.com/org/project", "dev.azure.com/org/project"},

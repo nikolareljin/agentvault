@@ -227,12 +227,11 @@ func azureDevOps(host string, segs []string, scpLike bool) (id string, isAzure, 
 // earlier version up to date. Only Azure DevOps remotes changed: they were
 // kept as typed (dev.azure.com/org/project/_git/repo, org.visualstudio.com/...)
 // and now map to one identity. Any other value is returned unchanged.
+// The stored names are already decoded, so they are not parsed as a URL
+// again: a name holding a literal % stays as it is.
 func CanonicalStored(remote string) string {
-	host, _, _ := strings.Cut(remote, "/")
-	if host != "dev.azure.com" && host != "ssh.dev.azure.com" && !strings.HasSuffix(host, ".visualstudio.com") {
-		return remote
-	}
-	if id, ok := NormalizeRemote("https://" + remote); ok {
+	host, path, _ := strings.Cut(remote, "/")
+	if id, isAzure, ok := azureDevOps(host, strings.Split(path, "/"), false); isAzure && ok {
 		return id
 	}
 	return remote
