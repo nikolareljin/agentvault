@@ -225,8 +225,12 @@ func TestResolvePromptRuntimeConfig_OllamaEnvReadLikeOllama(t *testing.T) {
 	a := Agent{Provider: ProviderOllama, Model: "llama3.2"}
 	t.Setenv("OLLAMA_BASE_URL", "")
 	cases := map[string]string{
-		"0.0.0.0":                  "http://0.0.0.0:11434",
-		"0.0.0.0:11434":            "http://0.0.0.0:11434",
+		"0.0.0.0":                  "http://127.0.0.1:11434",
+		"0.0.0.0:11434":            "http://127.0.0.1:11434",
+		"http://0.0.0.0":           "http://127.0.0.1",
+		"[::]:11434":               "http://[::1]:11434",
+		"https://[::]":             "https://[::1]",
+		"192.0.2.5":                "http://192.0.2.5:11434",
 		"gpu.example:8080":         "http://gpu.example:8080",
 		"[::1]":                    "http://[::1]:11434",
 		"[::1]:9000":               "http://[::1]:9000",

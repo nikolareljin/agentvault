@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -54,7 +55,8 @@ func OllamaBaseURLFromEnv() (value, key string) {
 
 // resolveOllamaBaseURL is resolveValue for the Ollama endpoint. A value from
 // the environment is read the way Ollama reads OLLAMA_HOST: "host" or
-// "host:port" means http, port 11434.
+// "host:port" means http, port 11434. A listen-on-all address (0.0.0.0, ::)
+// becomes loopback, which Windows needs to connect.
 func resolveOllamaBaseURL(local, defaultValue string) ResolvedValue {
 	r := resolveValue(local, ollamaBaseURLEnvKeys, defaultValue)
 	if r.Source == ValueSourceEnv {
@@ -64,17 +66,34 @@ func resolveOllamaBaseURL(local, defaultValue string) ResolvedValue {
 }
 
 func normalizeOllamaEnvURL(v string) string {
-	if strings.Contains(v, "://") {
+	if !strings.Contains(v, "://") {
+		hostport, path, _ := strings.Cut(v, "/")
+		if _, _, err := net.SplitHostPort(hostport); err != nil {
+			hostport = net.JoinHostPort(strings.Trim(hostport, "[]"), "11434")
+		}
+		v = "http://" + hostport
+		if path != "" {
+			v += "/" + path
+		}
+	}
+	u, err := url.Parse(v)
+	if err != nil {
 		return v
 	}
-	hostport, path, _ := strings.Cut(v, "/")
-	if _, _, err := net.SplitHostPort(hostport); err != nil {
-		hostport = net.JoinHostPort(strings.Trim(hostport, "[]"), "11434")
+	if ip := net.ParseIP(u.Hostname()); ip != nil && ip.IsUnspecified() {
+		loopback := "127.0.0.1"
+		if ip.To4() == nil {
+			loopback = "::1"
+		}
+		if port := u.Port(); port != "" {
+			u.Host = net.JoinHostPort(loopback, port)
+		} else if ip.To4() == nil {
+			u.Host = "[" + loopback + "]"
+		} else {
+			u.Host = loopback
+		}
 	}
-	if path != "" {
-		return "http://" + hostport + "/" + path
-	}
-	return "http://" + hostport
+	return u.String()
 }
 
 // PromptRuntimeConfig captures effective prompt-runtime values with precedence metadata.

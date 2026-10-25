@@ -134,6 +134,7 @@ func TestCycleClaudeBackend_PersistsViaUpdate(t *testing.T) {
 }
 
 func TestRenderAgentDetail_ShowsEnvAndDefaultSources(t *testing.T) {
+	t.Setenv("OLLAMA_BASE_URL", "")
 	t.Setenv("OLLAMA_HOST", "http://env-ollama:11434")
 	dir := t.TempDir()
 	v := vault.New(filepath.Join(dir, "env-default.enc"))
