@@ -54,6 +54,7 @@ func TestNormalizeRemote(t *testing.T) {
 		{"a@b:tok" + "@github.com:owner/repo", "github.com/owner/repo"},
 		{"git@github.com:owner/re@po", ""},
 		{"git@github.com:own:er/repo", ""},
+		{"git@git.example.com:owner/re#po", ""},
 		{"https://github.com/owner/re@po", ""},
 		{"https://github.com/own:er/repo", ""},
 		// Not network remotes.
@@ -428,6 +429,98 @@ func TestIdentifyChecksOwnerOfEveryPathGitLoads(t *testing.T) {
 		})
 		if err != nil || called || r2.RootSkipped == "" || len(r2.RootCommits) != 0 {
 			t.Errorf("foreign %s: %+v %v called=%v", bad, r2, err, called)
+		}
+	}
+}
+
+func TestNormalizeRemoteAzureDevOps(t *testing.T) {
+	const want = "dev.azure.com/org/project/repo"
+	same := []string{
+		"https://dev.azure.com/org/project/_git/repo",
+		"https://org" + "@dev.azure.com/org/project/_git/repo",
+		"https://user:pat" + "@dev.azure.com/org/project/_git/repo.git",
+		"https://dev.azure.com/Org/Project/_git/Repo/",
+		"https://dev.azure.com:443/org/project/_git/repo",
+		"git@ssh.dev.azure.com:v3/org/project/repo",
+		"git@ssh.dev.azure.com:v3/Org/Project/Repo.git",
+		"ssh://git@ssh.dev.azure.com/v3/org/project/repo",
+		"ssh://git@ssh.dev.azure.com:22/v3/org/project/repo",
+		"org" + "@vs-ssh.visualstudio.com:v3/org/project/repo",
+		"ssh://org" + "@vs-ssh.visualstudio.com/v3/org/project/repo",
+		"https://org.visualstudio.com/project/_git/repo",
+		"https://user:pat" + "@org.visualstudio.com/project/_git/repo.git",
+		"https://ORG.visualstudio.com/DefaultCollection/project/_git/repo",
+	}
+	for _, in := range same {
+		got, ok := NormalizeRemote(in)
+		if !ok || got != want {
+			t.Errorf("NormalizeRemote(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+
+	other := []struct{ in, want string }{
+		// Two repositories in one project stay apart.
+		{"https://dev.azure.com/org/project/_git/other", "dev.azure.com/org/project/other"},
+		// A repository named like its project may leave the project out.
+		{"https://dev.azure.com/org/_git/project", "dev.azure.com/org/project/project"},
+		{"https://org.visualstudio.com/_git/project", "dev.azure.com/org/project/project"},
+		{"https://dev.azure.com/org/project/_git/project", "dev.azure.com/org/project/project"},
+		// A space in a project name: decoded in https, encoded in scp-like.
+		{"https://dev.azure.com/org/My%20Project/_git/repo", "dev.azure.com/org/my project/repo"},
+		{"git@ssh.dev.azure.com:v3/org/My%20Project/repo", "dev.azure.com/org/my project/repo"},
+		// Paths that match no Azure DevOps form normalize like any remote.
+		{"https://dev.azure.com/org/project", "dev.azure.com/org/project"},
+		{"https://dev.azure.com:8443/org/project/_git/repo", "dev.azure.com:8443/org/project/_git/repo"},
+		{"https://a.b.visualstudio.com/project/_git/repo", "a.b.visualstudio.com/project/_git/repo"},
+		{"git@ssh.dev.azure.com:v2/org/project/repo", "ssh.dev.azure.com/v2/org/project/repo"},
+		// Unsafe names are refused.
+		{"git@ssh.dev.azure.com:v3/org/a%2Fb/repo", ""},
+		{"git@ssh.dev.azure.com:v3/org/project/%zz", ""},
+		{"git@ssh.dev.azure.com:v3/org/project/a%40b", ""},
+		{"git@ssh.dev.azure.com:v3/org/project/a%0Ab", ""},
+		{"git@ssh.dev.azure.com:v3/org/_project/repo", ""},
+		{"https://dev.azure.com/org/_git/_git/repo", ""},
+		{"git@ssh.dev.azure.com:v3/org/a%23b/repo", ""},
+		{"git@ssh.dev.azure.com:v3/org/a%40b/repo", ""},
+		// Other punctuation is kept: R&D is a real project name.
+		{"https://dev.azure.com/org/R%26D/_git/repo", "dev.azure.com/org/r&d/repo"},
+		{"git@ssh.dev.azure.com:v3/org/R%26D/repo", "dev.azure.com/org/r&d/repo"},
+		{"https://dev.azure.com/org/a%25b/_git/repo", "dev.azure.com/org/a%b/repo"},
+	}
+	for _, c := range other {
+		got, ok := NormalizeRemote(c.in)
+		if ok != (c.want != "") || got != c.want {
+			t.Errorf("NormalizeRemote(%q) = %q, %v; want %q", c.in, got, ok, c.want)
+		}
+	}
+}
+
+func TestCanonicalStored(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// Azure DevOps remotes as earlier versions stored them.
+		{"dev.azure.com/org/project/_git/repo", "dev.azure.com/org/project/repo"},
+		{"dev.azure.com/Org/Project/_git/Repo", "dev.azure.com/org/project/repo"},
+		{"org.visualstudio.com/project/_git/repo", "dev.azure.com/org/project/repo"},
+		{"ssh.dev.azure.com/v3/org/project/repo", "dev.azure.com/org/project/repo"},
+		{"vs-ssh.visualstudio.com/v3/org/project/repo", "dev.azure.com/org/project/repo"},
+		{"dev.azure.com/org/my project/_git/repo", "dev.azure.com/org/my project/repo"},
+		// A stored name is not decoded again; one Azure DevOps refuses is kept.
+		{"dev.azure.com/org/a%b/_git/repo", "dev.azure.com/org/a%b/repo"},
+		{"dev.azure.com/org/a%20b/_git/repo", "dev.azure.com/org/a%20b/repo"},
+		{"dev.azure.com/org/a#b/_git/repo", "dev.azure.com/org/a#b/_git/repo"},
+		{"dev.azure.com/org/_git/repo", "dev.azure.com/org/repo/repo"},
+		{"dev.azure.com:8443/org/project/_git/repo", "dev.azure.com:8443/org/project/_git/repo"},
+		// Already canonical, or not an Azure DevOps form: unchanged.
+		{"dev.azure.com/org/project/repo", "dev.azure.com/org/project/repo"},
+		{"dev.azure.com/org/project", "dev.azure.com/org/project"},
+		{"github.com/owner/repo", "github.com/owner/repo"},
+		{"git.example.com:443/owner/repo", "git.example.com:443/owner/repo"},
+		{"gitlab.com/Group/Repo", "gitlab.com/Group/Repo"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := CanonicalStored(c.in); got != c.want {
+			t.Errorf("CanonicalStored(%q) = %q; want %q", c.in, got, c.want)
 		}
 	}
 }

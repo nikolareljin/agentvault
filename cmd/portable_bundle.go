@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/crypto"
+	"github.com/nikolareljin/agentvault/internal/locations"
 	"github.com/nikolareljin/agentvault/internal/textutil"
 )
 
@@ -512,6 +514,17 @@ func decodePortableBundle(data []byte) (PortableBundle, bundleFormat, error) {
 				name = name[:80] + "..."
 			}
 			return PortableBundle{}, format, fmt.Errorf("bundle names %q with control characters; it was edited and is not trusted", name)
+		}
+	}
+	// A bundle from an earlier version may name an Azure DevOps project by a
+	// remote form that no longer is its identity.
+	for i := range bundle.Profiles {
+		s := &bundle.Profiles[i].Setup
+		if s.Locations != nil {
+			s.Locations.Canonicalize()
+		}
+		if len(s.SharedConfig.Instructions) > 0 {
+			s.SharedConfig.Instructions = agent.CanonicalizeSourceProjects(s.SharedConfig.Instructions, locations.CanonicalKey)
 		}
 	}
 	return bundle, format, nil

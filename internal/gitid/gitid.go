@@ -76,6 +76,7 @@ func NormalizeRemote(raw string) (string, bool) {
 		return "", false
 	}
 	var host, port, path string
+	scpLike := false
 	if i := strings.Index(s, "://"); i > 0 {
 		u, err := url.Parse(s)
 		if err != nil {
@@ -107,6 +108,7 @@ func NormalizeRemote(raw string) (string, bool) {
 			return "", false
 		}
 		host, path = rest[:colon], rest[colon+1:]
+		scpLike = true
 	}
 	// A trailing dot is the DNS root: github.com. is github.com.
 	host = strings.TrimRight(strings.ToLower(strings.Trim(host, "[]")), ".")
@@ -122,7 +124,8 @@ func NormalizeRemote(raw string) (string, bool) {
 			return "", false
 		}
 		// @ or : in a segment is credentials or a mis-parse; never keep it.
-		if strings.ContainsAny(seg, "@:") {
+		// # would split a ProjectKey ("remote:...#subdir") in the wrong place.
+		if strings.ContainsAny(seg, "@:#") {
 			return "", false
 		}
 		segs = append(segs, seg)
@@ -131,6 +134,11 @@ func NormalizeRemote(raw string) (string, bool) {
 		segs[n-1] = strings.TrimSuffix(segs[n-1], ".git")
 		if segs[n-1] == "" {
 			segs = segs[:n-1]
+		}
+	}
+	if port == "" {
+		if id, isAzure, ok := azureDevOps(host, segs, scpLike); isAzure {
+			return id, ok
 		}
 	}
 	if len(segs) < 2 {
@@ -148,6 +156,90 @@ func NormalizeRemote(raw string) (string, bool) {
 		host += ":" + port
 	}
 	return host + "/" + strings.Join(segs, "/"), true
+}
+
+// azureDevOps maps the Azure DevOps remote forms of one repository to
+// dev.azure.com/org/project/repo, lower-cased because Azure DevOps ignores
+// case in all three names:
+//
+//	https://dev.azure.com/org/project/_git/repo
+//	https://org.visualstudio.com[/DefaultCollection]/project/_git/repo
+//	git@ssh.dev.azure.com:v3/org/project/repo
+//	vs-ssh.visualstudio.com:v3/org/project/repo (SSH user: the organization)
+//
+// A repository named like its project may drop the project: .../org/_git/repo.
+// isAzure is false for any other host, and for an Azure DevOps host whose path
+// matches none of the forms, which then normalizes like any other remote. ok
+// is false for an Azure DevOps path that cannot be read safely.
+// azureNameForbidden may not appear in an organization, project or
+// repository name in an identity: each would mis-split it or a ProjectKey
+// ("remote:...#subdir"). A decoded scp-like name can hold any of them.
+const azureNameForbidden = `/\:@#`
+
+func azureDevOps(host string, segs []string, scpLike bool) (id string, isAzure, ok bool) {
+	var org string
+	switch {
+	case host == "dev.azure.com":
+		if len(segs) == 0 {
+			return "", false, false
+		}
+		org, segs = segs[0], segs[1:]
+	case host == "ssh.dev.azure.com" || host == "vs-ssh.visualstudio.com":
+		if len(segs) != 4 || !strings.EqualFold(segs[0], "v3") {
+			return "", false, false
+		}
+		org, segs = segs[1], []string{segs[2], "_git", segs[3]}
+	case strings.HasSuffix(host, ".visualstudio.com"):
+		org = strings.TrimSuffix(host, ".visualstudio.com")
+		if strings.Contains(org, ".") {
+			return "", false, false
+		}
+		if len(segs) > 0 && strings.EqualFold(segs[0], "DefaultCollection") {
+			segs = segs[1:]
+		}
+	default:
+		return "", false, false
+	}
+	var project, repo string
+	switch {
+	case len(segs) == 3 && strings.EqualFold(segs[1], "_git"):
+		project, repo = segs[0], segs[2]
+	case len(segs) == 2 && strings.EqualFold(segs[0], "_git"):
+		project, repo = segs[1], segs[1]
+	default:
+		return "", false, false
+	}
+	names := []string{org, project, repo}
+	for i, n := range names {
+		// An scp-like path is not URL-decoded on the way in; a project name
+		// with a space arrives as My%20Project there and as "My Project" in
+		// an https URL. Decode it so both give one identity.
+		if scpLike {
+			d, err := url.PathUnescape(n)
+			if err != nil {
+				return "", true, false
+			}
+			n = d
+		}
+		if n == "" || n[0] == '_' || strings.ContainsAny(n, azureNameForbidden) || hasControl(n) {
+			return "", true, false
+		}
+		names[i] = strings.ToLower(n)
+	}
+	return "dev.azure.com/" + strings.Join(names, "/"), true, true
+}
+
+// CanonicalStored brings a remote that NormalizeRemote returned in an
+// earlier version up to date. Only Azure DevOps remotes changed: they were
+// kept as typed (dev.azure.com/org/project/_git/repo, org.visualstudio.com/...)
+// and now map to one identity. Any other value is returned unchanged.
+// The stored names are already decoded, so they are not decoded again.
+func CanonicalStored(remote string) string {
+	host, path, _ := strings.Cut(remote, "/")
+	if id, isAzure, ok := azureDevOps(host, strings.Split(path, "/"), false); isAzure && ok {
+		return id
+	}
+	return remote
 }
 
 // caseInsensitiveHosts serve owner/repo paths without regard to case, so

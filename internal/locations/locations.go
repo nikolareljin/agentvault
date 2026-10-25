@@ -99,6 +99,44 @@ func (h HiddenConfirm) Covers(keys []string) bool {
 	return true
 }
 
+// CanonicalKey brings a ProjectKey, with or without a "#subdir" suffix,
+// stored by an earlier version up to date (see gitid.CanonicalStored).
+func CanonicalKey(key string) string {
+	rest, ok := strings.CutPrefix(key, "remote:")
+	if !ok {
+		return key
+	}
+	remote, sub, hasSub := strings.Cut(rest, "#")
+	key = "remote:" + gitid.CanonicalStored(remote)
+	if hasSub {
+		key += "#" + sub
+	}
+	return key
+}
+
+// Canonicalize brings the remotes and project keys in s, stored by an
+// earlier version, up to date. Projects that then share an identity (an
+// SSH and an HTTPS clone of one Azure DevOps repository) are folded into
+// one, the other paths kept as aliases, as Merge does.
+func (s *Set) Canonicalize() {
+	changed := false
+	for i := range s.Projects {
+		if c := gitid.CanonicalStored(s.Projects[i].GitRemote); c != s.Projects[i].GitRemote {
+			s.Projects[i].GitRemote = c
+			changed = true
+		}
+	}
+	for k, c := range s.ConfirmedHidden {
+		for i := range c.Projects {
+			c.Projects[i] = CanonicalKey(c.Projects[i])
+		}
+		s.ConfirmedHidden[k] = c
+	}
+	if changed {
+		*s = Merge(*s, Set{})
+	}
+}
+
 // ProjectKey is a project's identity for a hidden confirmation: its remote,
 // else its root commits, else its name in the work dir.
 func ProjectKey(p Project) string {
