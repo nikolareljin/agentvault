@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/crypto"
 	"github.com/nikolareljin/agentvault/internal/locations"
@@ -522,8 +523,8 @@ func decodePortableBundle(data []byte) (PortableBundle, bundleFormat, error) {
 		if s.Locations != nil {
 			s.Locations.Canonicalize()
 		}
-		for j := range s.SharedConfig.Instructions {
-			s.SharedConfig.Instructions[j].SourceProject = locations.CanonicalKey(s.SharedConfig.Instructions[j].SourceProject)
+		if len(s.SharedConfig.Instructions) > 0 {
+			s.SharedConfig.Instructions = agent.CanonicalizeSourceProjects(s.SharedConfig.Instructions, locations.CanonicalKey)
 		}
 	}
 	return bundle, format, nil

@@ -13,7 +13,10 @@
   to `dev.azure.com/org/project/repo`, lower-cased. Two repositories in one
   project stay apart. Identities a vault or bundle stored in the old form
   are rewritten on open and decode, so saved projects, hidden-folder
-  confirmations and referenced files still match.
+  confirmations and referenced files still match. Entries that then name
+  one repository (pulled from an SSH and an HTTPS clone) are folded: one
+  project with the other path as an alias, and the newer copy of each
+  referenced file.
 - A scp-like remote with `#` in its path (`git@host:owner/re#po`) kept
   the `#` in its identity, where it split the project key that names a
   subfolder (`remote:...#subdir`) in the wrong place. Such a remote now

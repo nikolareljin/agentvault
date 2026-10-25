@@ -26,3 +26,22 @@ func TestDecodeVaultDataCanonicalizesAzureIdentities(t *testing.T) {
 		t.Errorf("source project = %q", got)
 	}
 }
+
+// One referenced file pulled from an SSH and an HTTPS clone of one Azure
+// DevOps repository was two entries; after the rewrite it is one, the newer.
+func TestDecodeVaultDataFoldsAzureDuplicates(t *testing.T) {
+	plain := []byte(`{"agents": [], "shared": {"instructions": [
+		{"name": "notes/a.md", "filename": "notes/a.md", "content": "ssh", "updated_at": "2026-10-01T00:00:00Z",
+		 "source_project": "remote:ssh.dev.azure.com/v3/org/project/repo"},
+		{"name": "notes/a.md", "filename": "notes/a.md", "content": "https", "updated_at": "2026-10-02T00:00:00Z",
+		 "source_project": "remote:dev.azure.com/org/project/_git/repo"}
+	]}}`)
+	vd, err := decodeVaultData(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := vd.Shared.Instructions
+	if len(got) != 1 || got[0].Content != "https" || got[0].SourceProject != "remote:dev.azure.com/org/project/repo" {
+		t.Errorf("instructions = %+v", got)
+	}
+}

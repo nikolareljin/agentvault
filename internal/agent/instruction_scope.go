@@ -506,3 +506,37 @@ func CheckInstructionConflicts(existing, incoming []InstructionFile) []Instructi
 	}
 	return conflicts
 }
+
+// CanonicalizeSourceProjects rewrites each entry's SourceProject with canon.
+// Two entries an earlier version kept apart can then share one key (one
+// Azure DevOps repository pulled from an SSH and an HTTPS clone); of those,
+// only the newer (UpdatedAt, then the later entry) is kept, in the first
+// one's place, since setters and removers act on the first match only.
+func CanonicalizeSourceProjects(insts []InstructionFile, canon func(string) string) []InstructionFile {
+	changed := map[string]bool{}
+	out := make([]InstructionFile, len(insts))
+	for i, inst := range insts {
+		if c := canon(inst.SourceProject); c != inst.SourceProject {
+			inst.SourceProject = c
+			changed[InstructionKey(inst)] = true
+		}
+		out[i] = inst
+	}
+	if len(changed) == 0 {
+		return out
+	}
+	at := map[string]int{}
+	kept := out[:0]
+	for _, inst := range out {
+		key := InstructionKey(inst)
+		if j, ok := at[key]; ok && changed[key] {
+			if !inst.UpdatedAt.Before(kept[j].UpdatedAt) {
+				kept[j] = inst
+			}
+			continue
+		}
+		at[key] = len(kept)
+		kept = append(kept, inst)
+	}
+	return kept
+}

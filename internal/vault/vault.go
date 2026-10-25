@@ -170,8 +170,8 @@ func decodeVaultData(plaintext []byte) (vaultData, error) {
 // the repository they name.
 func (vd *vaultData) canonicalizeIdentities() {
 	vd.Locations.Canonicalize()
-	for i := range vd.Shared.Instructions {
-		vd.Shared.Instructions[i].SourceProject = locations.CanonicalKey(vd.Shared.Instructions[i].SourceProject)
+	if len(vd.Shared.Instructions) > 0 {
+		vd.Shared.Instructions = agent.CanonicalizeSourceProjects(vd.Shared.Instructions, locations.CanonicalKey)
 	}
 }
 

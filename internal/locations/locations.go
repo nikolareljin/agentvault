@@ -115,16 +115,25 @@ func CanonicalKey(key string) string {
 }
 
 // Canonicalize brings the remotes and project keys in s, stored by an
-// earlier version, up to date.
+// earlier version, up to date. Projects that then share an identity (an
+// SSH and an HTTPS clone of one Azure DevOps repository) are folded into
+// one, the other paths kept as aliases, as Merge does.
 func (s *Set) Canonicalize() {
+	changed := false
 	for i := range s.Projects {
-		s.Projects[i].GitRemote = gitid.CanonicalStored(s.Projects[i].GitRemote)
+		if c := gitid.CanonicalStored(s.Projects[i].GitRemote); c != s.Projects[i].GitRemote {
+			s.Projects[i].GitRemote = c
+			changed = true
+		}
 	}
 	for k, c := range s.ConfirmedHidden {
 		for i := range c.Projects {
 			c.Projects[i] = CanonicalKey(c.Projects[i])
 		}
 		s.ConfirmedHidden[k] = c
+	}
+	if changed {
+		*s = Merge(*s, Set{})
 	}
 }
 
