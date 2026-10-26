@@ -202,10 +202,10 @@ func isGitRepo(dir string) bool {
 func claudeProjectDir(home, dir string) string {
 	projects := filepath.Join(home, ".claude", "projects")
 	slug := claudeProjectSlug(dir)
-	if len(slug) <= 200 {
+	if len(slug) <= claudeSlugMax {
 		return filepath.Join(projects, slug)
 	}
-	matches, _ := filepath.Glob(filepath.Join(projects, slug[:200]+"-*")) // a slug has no glob characters
+	matches, _ := filepath.Glob(filepath.Join(projects, slug[:claudeSlugMax]+"-*")) // a slug has no glob characters
 	if len(matches) == 1 {
 		return matches[0]
 	}
@@ -213,18 +213,28 @@ func claudeProjectDir(home, dir string) string {
 }
 
 // claudeProjectSlug is the directory name Claude Code keeps a project's
-// memory under: the path with every character but letters and digits as "-".
+// memory under, before it cuts a long one: the path with every character
+// but ASCII letters and digits as "-". Claude does this in JavaScript, one
+// UTF-16 unit at a time, so a rune above U+FFFF (an emoji) is "--"; the
+// result's length is the one Claude compares with 200.
 func claudeProjectSlug(dir string) string {
 	var b strings.Builder
 	for _, r := range dir {
-		if r < 128 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+		switch {
+		case r < 128 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'):
 			b.WriteRune(r)
-		} else {
+		case r > 0xFFFF:
+			b.WriteString("--")
+		default:
 			b.WriteByte('-')
 		}
 	}
 	return b.String()
 }
+
+// claudeSlugMax is the longest folder name Claude Code keeps whole; a
+// longer one is cut to this and given "-<hash>".
+const claudeSlugMax = 200
 
 // listingRows sizes the listings Claude Code shows the model for root: each
 // skill's, agent's and command's name and description.

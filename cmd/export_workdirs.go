@@ -208,21 +208,19 @@ func (s workDirScope) applyMemory(bundle *SetupBundle, home string) {
 // much costs a line in the report; including too much leaks an employer's
 // memory.
 //
-// Runs of '-' are compared as one. Claude encodes in JavaScript, one '-' per
-// UTF-16 unit, where claudeProjectSlug writes one per rune, so a character
-// outside the BMP (an emoji) gives "--" in one and "-" in the other.
-// Collapsing can only make more folders match.
+// Runs of '-' are compared as one, so a folder written by a Claude Code
+// that encodes differently still matches; collapsing can only make more
+// folders match.
 func (s workDirScope) memoryOwner(folder string) string {
 	f := collapseDashes(folder)
 	for _, n := range s.unselected {
 		for _, root := range n.Roots() {
 			raw := claudeProjectSlug(root)
-			if len(raw) > claudeSlugKeep {
-				// Claude keeps the first 200 UTF-16 units of a long name
-				// and adds "-<hash>", so only a start of the root's slug is
-				// in the folder name. Compare a shorter start: the margin
-				// covers runes that are two units there.
-				if slugHasPrefix(f, collapseDashes(raw[:claudeSlugKeep])) {
+			if len(raw) > claudeSlugMax {
+				// Claude keeps the first 200 of a long name and adds
+				// "-<hash>": a folder under this root starts with the
+				// root's own first 200.
+				if slugHasPrefix(f, collapseDashes(raw[:claudeSlugMax])) {
 					return n.Name
 				}
 				continue
@@ -235,11 +233,6 @@ func (s workDirScope) memoryOwner(folder string) string {
 	}
 	return ""
 }
-
-// claudeSlugKeep is how much of a long root slug memoryOwner compares.
-// Claude Code cuts a project folder name to 200 UTF-16 units and adds a
-// hash; 190 leaves room for characters it counts as two.
-const claudeSlugKeep = 190
 
 func collapseDashes(s string) string {
 	var b strings.Builder

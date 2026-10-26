@@ -608,20 +608,24 @@ func TestMentionsFoldCase(t *testing.T) {
 	}
 }
 
-// Claude writes one '-' per UTF-16 unit, so an emoji in a path is "--"
-// there and "-" in claudeProjectSlug; the folder still matches.
-func TestMemoryOwnerAstralCharacters(t *testing.T) {
-	acme := filepath.Join(t.TempDir(), "work", "acme\U0001F680lab")
-	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}}
-	jsSlug := strings.Replace(claudeProjectSlug(filepath.Join(acme, "r")), "acme-lab", "acme--lab", 1)
-	if got := s.memoryOwner(jsSlug); got != "company" {
-		t.Errorf("JS-encoded folder %q owner = %q", jsSlug, got)
+// Claude writes one '-' per UTF-16 unit: an emoji is "--".
+func TestClaudeProjectSlugUTF16(t *testing.T) {
+	if got := claudeProjectSlug("/w/a\U0001F680b.c\u00e9"); got != "-w-a--b-c-" {
+		t.Fatalf("slug = %q", got)
 	}
-	// Trailing '-' in the root's slug still needs a component boundary.
-	trail := filepath.Join(t.TempDir(), "w.")
-	s2 := workDirScope{unselected: []locations.Named{{Name: "c", Path: trail}}}
-	if got := s2.memoryOwner(claudeProjectSlug(filepath.Join(trail, "x"))); got != "c" {
-		t.Errorf("trailing-dash root: owner = %q", got)
+}
+
+// A root whose slug is under 200 in runes but over 200 in UTF-16 units: the
+// folder Claude writes is cut inside the root's own prefix.
+func TestMemoryOwnerAstralLongRoot(t *testing.T) {
+	acme := filepath.Join(t.TempDir(), strings.Repeat("\U0001F680", 100))
+	if runes := len([]rune(acme)); runes > 190 || len(claudeProjectSlug(acme)) <= claudeSlugMax {
+		t.Fatalf("fixture: %d runes, %d UTF-16 units; want <= 190 and > 200", runes, len(claudeProjectSlug(acme)))
+	}
+	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}}
+	full := claudeProjectSlug(filepath.Join(acme, "repo"))
+	if got := s.memoryOwner(full[:claudeSlugMax] + "-1x2y3z"); got != "company" {
+		t.Errorf("cut folder owner = %q", got)
 	}
 }
 
