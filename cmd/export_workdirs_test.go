@@ -618,9 +618,15 @@ func TestClaudeProjectSlugUTF16(t *testing.T) {
 // A root whose slug is under 200 in runes but over 200 in UTF-16 units: the
 // folder Claude writes is cut inside the root's own prefix.
 func TestMemoryOwnerAstralLongRoot(t *testing.T) {
-	acme := filepath.Join(t.TempDir(), strings.Repeat("\U0001F680", 100))
-	if runes := len([]rune(acme)); runes > 190 || len(claudeProjectSlug(acme)) <= claudeSlugMax {
-		t.Fatalf("fixture: %d runes, %d UTF-16 units; want <= 190 and > 200", runes, len(claudeProjectSlug(acme)))
+	tmp := t.TempDir()
+	// Enough emoji to pass 200 units, whatever the temp dir's length.
+	base := len(claudeProjectSlug(tmp)) + 1
+	acme := filepath.Join(tmp, strings.Repeat("\U0001F680", (claudeSlugMax-base)/2+2))
+	if len(claudeProjectSlug(acme)) <= claudeSlugMax {
+		t.Fatalf("fixture is %d UTF-16 units, want > 200", len(claudeProjectSlug(acme)))
+	}
+	if runes := len([]rune(acme)); runes > 190 {
+		t.Skipf("temp dir too long for a root under 190 runes (%d)", runes)
 	}
 	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}}
 	full := claudeProjectSlug(filepath.Join(acme, "repo"))
