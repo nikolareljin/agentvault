@@ -125,3 +125,20 @@ func TestWorkDirLabel(t *testing.T) {
 		t.Errorf("no home: %q", got)
 	}
 }
+
+// macOS: the temp dir is /var/..., which resolves to /private/var/....
+func TestWorkDirLabelThroughSymlinkedHome(t *testing.T) {
+	realHome := t.TempDir()
+	link := filepath.Join(t.TempDir(), "home-link")
+	if err := os.Symlink(realHome, link); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	for _, abs := range []string{
+		filepath.Join(link, "a", "Projects"),     // raw form, not on disk
+		filepath.Join(realHome, "a", "Projects"), // resolved form
+	} {
+		if got := workDirLabel(abs, link); got != "a/Projects" {
+			t.Errorf("workDirLabel(%q, link) = %q, want a/Projects", abs, got)
+		}
+	}
+}

@@ -69,13 +69,24 @@ func declineWorkDirRepoScopeSettings(workDirs []string, projectDir string) []Dec
 // work dirs with one name (~/a/Projects, ~/b/Projects) stay apart, else its
 // base name. The bundle carries no other absolute path for it.
 func workDirLabel(abs, home string) string {
-	if home != "" {
-		if r, err := filepath.EvalSymlinks(home); err == nil {
-			home = r
+	if home == "" {
+		return filepath.Base(abs)
+	}
+	// Raw and resolved forms of both: macOS /var is /private/var, and Windows
+	// may spell the same home RUNNER~1 or runneradmin.
+	forms := func(p string) []string {
+		out := []string{p}
+		if r, err := filepath.EvalSymlinks(p); err == nil && r != p {
+			out = append(out, r)
 		}
-		if rel, err := filepath.Rel(home, abs); err == nil && rel != "." && rel != ".." &&
-			!strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return filepath.ToSlash(rel)
+		return out
+	}
+	for _, h := range forms(home) {
+		for _, a := range forms(abs) {
+			rel, err := filepath.Rel(h, a)
+			if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return filepath.ToSlash(rel)
+			}
 		}
 	}
 	return filepath.Base(abs)
