@@ -271,7 +271,7 @@ func TestWithoutCodexProjectsBlocksDottedKeys(t *testing.T) {
 	}
 }
 
-func TestMemoryOwnerByProofAndPrefix(t *testing.T) {
+func TestMemoryOwnerByPrefix(t *testing.T) {
 	root := t.TempDir()
 	personal, acme := filepath.Join(root, "p"), filepath.Join(root, "p-acme")
 	for _, d := range []string{filepath.Join(personal, "a-b"), filepath.Join(acme, "r")} {
@@ -283,9 +283,9 @@ func TestMemoryOwnerByProofAndPrefix(t *testing.T) {
 		selected:   []locations.Named{{Name: "personal", Path: personal}},
 		unselected: []locations.Named{{Name: "company", Path: acme}},
 	}
-	// p/a-b and p-acme... share slugs by prefix; proof decides.
+	// p/a-b does not start with p-acme's slug: kept.
 	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(personal, "a-b"))); got != "" {
-		t.Errorf("proved personal folder owned by %q", got)
+		t.Errorf("personal folder owned by %q", got)
 	}
 	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(acme, "r"))); got != "company" {
 		t.Errorf("company folder owner = %q", got)
@@ -293,12 +293,13 @@ func TestMemoryOwnerByProofAndPrefix(t *testing.T) {
 	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(acme, "gone"))); got != "company" {
 		t.Errorf("deleted company checkout owner = %q", got)
 	}
-	// p/acme/x has the slug of p-acme/x but exists under personal: kept.
+	// p/acme/x exists under personal, but a deleted p-acme/x has the same
+	// slug: it cannot be told apart, so it stays here.
 	if err := os.MkdirAll(filepath.Join(personal, "acme", "x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(personal, "acme", "x"))); got != "" {
-		t.Errorf("folder proved under personal owned by %q", got)
+	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(personal, "acme", "x"))); got != "company" {
+		t.Errorf("ambiguous folder under personal owner = %q, want company", got)
 	}
 }
 
@@ -525,10 +526,10 @@ func TestMemoryOwnerExcludesAmbiguousSibling(t *testing.T) {
 	if got := s.memoryOwner(claudeProjectSlug(tools)); got != "company" {
 		t.Errorf("ambiguous sibling owner = %q, want company", got)
 	}
-	// Proof under a selected work dir keeps it.
+	// Not even when acme-tools is itself a selected work dir.
 	s.selected = []locations.Named{{Name: "tools", Path: tools}}
-	if got := s.memoryOwner(claudeProjectSlug(tools)); got != "" {
-		t.Errorf("proved selected folder owned by %q", got)
+	if got := s.memoryOwner(claudeProjectSlug(tools)); got != "company" {
+		t.Errorf("ambiguous selected folder owner = %q, want company", got)
 	}
 	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(acme, "r"))); got != "company" {
 		t.Errorf("company repo owner = %q", got)
@@ -587,5 +588,22 @@ func TestExcludedExtendedLengthAndWindowsNeedles(t *testing.T) {
 		if !found {
 			t.Errorf("needles %v lack %s", n, want)
 		}
+	}
+}
+
+// On Windows and macOS a work dir typed as Work/Acme is found as work/acme.
+func TestMentionsFoldCase(t *testing.T) {
+	old := caseInsensitiveOS
+	t.Cleanup(func() { caseInsensitiveOS = old })
+	caseInsensitiveOS = func() bool { return true }
+	home := t.TempDir()
+	acme := filepath.Join(home, "Work", "Acme")
+	s := &workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}, left: map[string]map[string]int{}}
+	b := SetupBundle{ProviderFiles: []SetupAsset{{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "CLAUDE.md", ContentPresent: true, Content: []byte("see ~/WORK/acme/x")}}}
+	if _, err := s.apply(&b, home); err != nil {
+		t.Fatal(err)
+	}
+	if b.ProviderFiles[0].ContentPresent {
+		t.Fatal("case-folded mention not withheld")
 	}
 }

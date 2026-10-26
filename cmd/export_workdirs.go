@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -130,6 +129,11 @@ func (s *workDirScope) apply(bundle *SetupBundle, home string) ([]bool, error) {
 	s.needles = map[string][]string{}
 	for _, n := range s.unselected {
 		s.needles[n.Name] = workDirNeedles(n, home)
+		if caseInsensitiveOS() {
+			for i, nd := range s.needles[n.Name] {
+				s.needles[n.Name][i] = strings.ToLower(nd)
+			}
+		}
 	}
 	s.applyMemory(bundle, home)
 	s.applyPlugins(bundle)
@@ -196,62 +200,23 @@ func (s workDirScope) applyMemory(bundle *SetupBundle, home string) {
 
 // memoryOwner returns the unselected work dir a Claude memory folder belongs
 // to, or "" to keep it. Claude names the folder claudeProjectSlug(cwd),
-// which is lossy, and the slug of ~/Projects is a prefix of the slug of
-// ~/Projects-acme. So a folder is kept when a directory under a selected
-// work dir has exactly its name, and otherwise left out when its name starts
-// with an unselected work dir's slug: that also covers a deleted checkout,
-// and excluding too much costs a line in the report where including too
-// much leaks an employer's memory.
+// which turns every character but letters and digits into '-'. So a name
+// that starts with an unselected work dir's slug may be any path under it,
+// a deleted one included, and no directory found elsewhere can rule that
+// out: ~/work/acme-tools and ~/work/acme/tools, or ~/Projects/acme/x and
+// ~/Projects-acme/x, have one slug. Such a folder is left out. Excluding too
+// much costs a line in the report; including too much leaks an employer's
+// memory.
 func (s workDirScope) memoryOwner(folder string) string {
-	for _, n := range s.selected {
-		for _, root := range n.Roots() {
-			if slugUnder(root, folder) {
-				return ""
-			}
-		}
-	}
 	for _, n := range s.unselected {
 		for _, root := range n.Roots() {
 			slug := claudeProjectSlug(root)
-			// No existing directory can clear a prefix match: the slug of an
-			// undeclared ~/work/acme-tools is also the slug of a deleted
-			// ~/work/acme/tools. Only proof under a selected work dir (above)
-			// keeps such a folder.
 			if slugEqual(folder, slug) || slugHasPrefix(folder, slug+"-") {
 				return n.Name
 			}
 		}
 	}
 	return ""
-}
-
-// slugUnder reports whether root or a directory below it has the slug
-// target.
-func slugUnder(root, target string) bool {
-	return len(slugMatches(root, target, nil)) > 0
-}
-
-// slugMatches appends to out every directory, root or below it, whose slug
-// is target. It descends only into entries whose slug still leads to
-// target, and not through symlinks.
-func slugMatches(root, target string, out []string) []string {
-	slug := claudeProjectSlug(root)
-	if slugEqual(slug, target) {
-		return append(out, root)
-	}
-	if !slugHasPrefix(target, slug+"-") {
-		return out
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return out
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			out = slugMatches(filepath.Join(root, e.Name()), target, out)
-		}
-	}
-	return out
 }
 
 // caseInsensitiveOS is whether paths compare without case; tests set it.
@@ -551,6 +516,11 @@ func (s workDirScope) applyDetected(bundle *SetupBundle) {
 
 // mentions returns the unselected work dir that text names.
 func (s workDirScope) mentions(text []byte) (string, bool) {
+	// Paths that compare without case are matched without case: text is
+	// lowered once here, needles when they are made.
+	if caseInsensitiveOS() {
+		text = bytes.ToLower(text)
+	}
 	for _, n := range s.unselected {
 		for _, needle := range s.needles[n.Name] {
 			if containsPath(text, needle) {
@@ -802,9 +772,6 @@ func workDirNeedles(n locations.Named, home string) []string {
 // ends it, which can only make more text count as naming the work dir.
 func containsPath(text []byte, needle string) bool {
 	hay, nd := text, []byte(needle)
-	if caseInsensitiveOS() {
-		hay, nd = bytes.ToLower(text), bytes.ToLower(nd)
-	}
 	for off := 0; ; {
 		i := bytes.Index(hay[off:], nd)
 		if i < 0 {
