@@ -116,3 +116,29 @@ func foldCase(p string) string {
 	}
 	return p
 }
+
+// Holds reports whether p is the work dir or below it, compared as for
+// Declare: as given and symlink-resolved, without case on Windows.
+func (n Named) Holds(p string) bool {
+	if strings.TrimSpace(p) == "" {
+		return false
+	}
+	for _, x := range forms(n.Path) {
+		for _, y := range forms(p) {
+			if within(x, y) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Roots returns the work dir's path as declared and, when it differs, with
+// symlinks resolved: tools record a directory in either form.
+func (n Named) Roots() []string {
+	out := []string{filepath.Clean(n.Path)}
+	if r, err := filepath.EvalSymlinks(n.Path); err == nil && filepath.Clean(r) != out[0] {
+		out = append(out, filepath.Clean(r))
+	}
+	return out
+}

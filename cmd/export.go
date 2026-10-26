@@ -37,6 +37,7 @@ type exportOptions struct {
 	IncludeMemory       bool
 	ProjectDir          string
 	WorkDirs            []string
+	WorkDirSelection    string
 	Encrypt             bool
 	VaultOnly           bool
 	Confirm             bool
@@ -113,6 +114,7 @@ func init() {
 	exportCmd.Flags().Bool("include-status", defaults.IncludeStatus, "include a provider token/quota status snapshot")
 	exportCmd.Flags().Bool("detect", defaults.IncludeDetected, "include detected agent information")
 	exportCmd.Flags().String("project", "", "also capture project-local instruction, workflow and skill assets from this directory")
+	exportCmd.Flags().String("workdirs", "all", "declared work dirs to export: all, or names separated by commas (agentvault workdir add); what belongs to the others stays on this machine")
 	exportCmd.Flags().StringArray("workdir", nil, "record DIR as a work dir (a folder of projects) so import can place its projects by name and identity (repeatable)")
 	exportCmd.Flags().Bool("encrypt", defaults.Encrypt, "encrypt the bundle with a password")
 	exportCmd.Flags().Bool("plain", false, "write plaintext JSON (turns off encryption)")
@@ -252,6 +254,9 @@ func applyExportFlags(cmd *cobra.Command, opts *exportOptions) {
 	if dirs, err := flags.GetStringArray("workdir"); err == nil && len(dirs) > 0 {
 		opts.WorkDirs = dirs
 	}
+	if sel, err := flags.GetString("workdirs"); err == nil {
+		opts.WorkDirSelection = sel
+	}
 }
 
 // selectProfilesForExport narrows discovered profiles to the requested names.
@@ -312,6 +317,7 @@ func buildProfileBundle(cmd *cobra.Command, profile discoveredProfile, opts expo
 		IncludeMemory:        opts.IncludeMemory,
 		ProjectDir:           opts.ProjectDir,
 		WorkDirs:             opts.WorkDirs,
+		WorkDirSelection:     opts.WorkDirSelection,
 		IncludeLocalFiles:    opts.IncludeLocalFiles,
 	})
 	if err != nil {
@@ -469,6 +475,7 @@ type setupCollectOptions struct {
 	IncludeMemory        bool
 	ProjectDir           string
 	WorkDirs             []string
+	WorkDirSelection     string
 	AgentName            string
 	// Project-relative `.local.` files to carry anyway, named one at a time.
 	IncludeLocalFiles []string
@@ -494,6 +501,13 @@ type setupCollectResult struct {
 // SetupBundle. This is the single collection path shared by `export` and the
 // deprecated `setup export`.
 func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, opts setupCollectOptions) (setupCollectResult, error) {
+	scope, err := resolveWorkDirScope(v.Locations(), opts.WorkDirSelection)
+	if err != nil {
+		return setupCollectResult{}, err
+	}
+	if err := scope.checkPaths(opts.ProjectDir, opts.WorkDirs); err != nil {
+		return setupCollectResult{}, err
+	}
 	host, _ := os.Hostname()
 	bundle := SetupBundle{
 		Version:         "1.0",
@@ -612,6 +626,7 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 			bundle.StatusSnapshot = &report
 		}
 	}
+	scope.apply(&bundle, exportSourceHome())
 	bundle.InstallGuide = generateInstallGuide(bundle)
 	return setupCollectResult{Bundle: bundle, EnvKeyFilled: envKeyFilled}, nil
 }

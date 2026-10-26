@@ -925,6 +925,7 @@ Flags:
 - `--detect` (default: `true`)
 - `--project <dir>`: Also capture project-local instruction, workflow and skill assets.
 - `--workdir <dir>` (repeatable): Record a folder of projects. Projects under it are recorded relative to it, so import can place them in the folder of the same name on the other machine.
+- `--workdirs all|NAME[,NAME...]` (default `all`): Declared work dirs to export (`agentvault workdir add`). What belongs to the others stays on this machine: Claude memory folders, plugins installed only for their projects, recorded projects, Codex trusted projects and `[projects."PATH"]` tables in `config.toml`, sessions, and instructions for their directories or pulled from their projects. A memory folder is kept when a directory under a selected work dir has its name, and left out when its name starts with an unselected work dir's path (a checkout since deleted counts). A `config.toml` that names such a project outside its own table is not carried. The bundle lists each work dir left out, with counts and no paths. `--project` or `--workdir` inside an unselected work dir is an error.
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
 - `--vault-only` (default: `false`): Write the legacy single-vault export instead. It is the whole vault, API keys and secrets included, so it refuses `--include-keys=false` and `--include-secrets=false`.
