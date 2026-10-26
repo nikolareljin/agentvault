@@ -168,6 +168,11 @@ brew install nikolareljin/tap/agentvault
 | `gateway rotate` | Replace the token; the old one stays as the previous token |
 | `gateway env` | Print `OLLAMA_TOKEN` / `BASIC_AUTH` for a shell or a `.env` file |
 
+### Work directories
+| Command | Description |
+|---------|-------------|
+| `workdir add\|list\|remove` | Declare folders of projects by name (personal, one per employer or client) with their path on this machine |
+
 ### Export/Import
 | Command | Description |
 |---------|-------------|

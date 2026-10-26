@@ -4,6 +4,13 @@
 
 ### Added
 
+- `agentvault workdir add|list|remove` declares work directories by name,
+  such as `personal` at `~/Projects` and `company-a` at `~/work/company-a`.
+  The vault keeps each name with its path on this machine; a bundle does
+  not carry them. Two declared paths may not be the same or nested. Later
+  releases use the names to export and import each work directory
+  separately.
+
 - `agentvault doctor --context` estimates what Claude Code loads before the
   first prompt in a directory: instruction files per scope, `MEMORY.md`,
   and the skill, agent and command listings of user scope and each enabled
