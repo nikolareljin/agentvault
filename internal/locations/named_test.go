@@ -1,6 +1,8 @@
 package locations
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,11 +35,13 @@ func TestDeclareRefusesOverlap(t *testing.T) {
 		{"around", ".", "overlaps work dir personal"},
 		{"personal", "work/a", "already declared"},
 		{"Bad", "work/a", "use lowercase"},
-		{"missing", "nope", "no such file"},
 	} {
 		if _, err := s.Declare(c.name, filepath.Join(root, c.rel)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("Declare(%s, %s) = %v, want %q", c.name, c.rel, err, c.want)
 		}
+	}
+	if _, err := s.Declare("missing", filepath.Join(root, "nope")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Declare(missing) = %v, want a not-exist error", err)
 	}
 	// A sibling whose name shares a prefix is not nested.
 	s2, err := s.Declare("acme", filepath.Join(root, "Projects-acme"))
