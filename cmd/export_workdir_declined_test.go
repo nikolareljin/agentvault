@@ -9,7 +9,17 @@ import (
 	"testing"
 )
 
+// pinHome points the home directory at an empty folder, so a test's temp
+// dirs are outside it on every OS (on Windows they sit under USERPROFILE).
+func pinHome(t *testing.T) {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 func TestDeclineWorkDirRepoScopeSettings(t *testing.T) {
+	pinHome(t)
 	work := filepath.Join(t.TempDir(), "work")
 	write := func(rel string) {
 		t.Helper()
@@ -66,6 +76,7 @@ func TestDeclineWorkDirRepoScopeSettings(t *testing.T) {
 
 func TestCollectSetupBundleListsWorkDirRepoSettings(t *testing.T) {
 	v, root := sessionTestVault(t, nil)
+	pinHome(t)
 	work := filepath.Join(t.TempDir(), "work")
 	if err := os.MkdirAll(filepath.Join(work, "alpha", ".git"), 0o755); err != nil {
 		t.Fatal(err)
@@ -93,5 +104,24 @@ func TestCollectSetupBundleListsWorkDirRepoSettings(t *testing.T) {
 		if filepath.Base(f.LogicalPath) == "settings.json" {
 			t.Fatalf("repository settings exported: %+v", f)
 		}
+	}
+}
+
+func TestWorkDirLabel(t *testing.T) {
+	home := t.TempDir()
+	cases := []struct{ abs, want string }{
+		{filepath.Join(home, "a", "Projects"), "a/Projects"},
+		{filepath.Join(home, "b", "Projects"), "b/Projects"},
+		{filepath.Join(home, "Projects"), "Projects"},
+		{filepath.Join(filepath.Dir(home), "elsewhere", "Projects"), "Projects"},
+		{home, filepath.Base(home)},
+	}
+	for _, c := range cases {
+		if got := workDirLabel(c.abs, home); got != c.want {
+			t.Errorf("workDirLabel(%q) = %q, want %q", c.abs, got, c.want)
+		}
+	}
+	if got := workDirLabel(filepath.Join(home, "x"), ""); got != "x" {
+		t.Errorf("no home: %q", got)
 	}
 }

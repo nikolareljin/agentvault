@@ -189,7 +189,8 @@ projects anywhere under the candidate roots.
 - export `--workdir DIR`: record a work dir explicitly. The repository-scope
   settings of the work dir and of each git repository directly in it
   (`.claude/settings.json`, `.mcp.json` and the other tools' equivalents) are
-  not exported; the manifest lists each as declined, category `repository`.
+  not exported; the manifest lists each as declined, category `repository`,
+  as `<work dir under home>/<repo>/<file>` (the base name when outside home).
 - `--dry-run`: prints each match with its score and reason, asks nothing.
 
 ## How remap consumes it
