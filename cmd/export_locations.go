@@ -67,7 +67,8 @@ func recordProjectLocation(v *vault.Vault, dir string) error {
 // repository's other paths (aliases); a pattern naming one of them, or a path
 // below it, is rewritten to dir before matching.
 func aliasDirectoryPatterns(insts []agent.InstructionFile, known locations.Set, dir string, identify locations.Identifier) []agent.InstructionFile {
-	if known.Empty() {
+	// Aliases come from known projects; with none, skip running git.
+	if len(known.Projects) == 0 {
 		return insts
 	}
 	if identify == nil {

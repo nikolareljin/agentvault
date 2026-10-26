@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
+	"github.com/nikolareljin/agentvault/internal/gitid"
 	"github.com/nikolareljin/agentvault/internal/locations"
 	"github.com/nikolareljin/agentvault/internal/vault"
 )
@@ -138,5 +141,19 @@ func TestRecordLocationsKeepsNamed(t *testing.T) {
 	}
 	if got := storedNamed(t, cfgDir); len(got) != 1 || got[0].Name != "personal" {
 		t.Fatalf("declarations after a merge write: %v", got)
+	}
+}
+
+// Declared names are not projects: a vault holding only names has no
+// aliases, so resolving instructions must not run git in the directory.
+func TestAliasPatternsSkipGitWithOnlyNames(t *testing.T) {
+	known := locations.Set{Named: []locations.Named{{Name: "personal", Path: "/x"}}}
+	insts := []agent.InstructionFile{{Name: "a.md"}}
+	got := aliasDirectoryPatterns(insts, known, t.TempDir(), func(context.Context, string) (gitid.Repo, error) {
+		t.Fatal("git identify ran for a vault with no projects")
+		return gitid.Repo{}, nil
+	})
+	if len(got) != 1 {
+		t.Fatalf("instructions changed: %v", got)
 	}
 }
