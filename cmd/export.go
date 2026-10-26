@@ -566,6 +566,7 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
 		}
 	}
+	bundle.Declined = append(bundle.Declined, declineWorkDirRepoScopeSettings(opts.WorkDirs, opts.ProjectDir)...)
 
 	envKeyFilled := make([]bool, len(bundle.Agents))
 	if opts.IncludeKeys {
