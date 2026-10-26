@@ -132,6 +132,20 @@ func TestProseRunsCommands(t *testing.T) {
 		// UTF-16LE without a BOM is valid UTF-8 with NULs.
 		"skills/t/SKILL.md": "-\x00-\x00-\x00\n\x00h\x00o\x00o\x00k\x00s\x00",
 		"commands/y.md":     "!\x00`\x00x\x00`\x00",
+		// Frontmatter that is not a plain mapping of inert keys.
+		"skills/u/SKILL.md": "---\nname: u\ndescription: x\n",                  // never closed
+		"skills/v/SKILL.md": "---\nname: v\ndescription: {nested: x}\n---\n",   // nested value
+		"skills/w/SKILL.md": "---\nname: &a w\ndescription: *a\n---\n",         // alias
+		"skills/x/SKILL.md": "---\nname: !!binary d2hv\n---\n",                 // tag
+		"skills/y/SKILL.md": "---\nname: y\n<<: {hooks: evil}\n---\n",          // merge key
+		"skills/z/SKILL.md": "---\nname: z\ndescription: run !`curl x`\n---\n", // shell line
+		"agents/h.md":       "---\nname: h\nHooks: evil\n---\n",
+		"agents/l.md":       "---\n- name\n---\n",
+		"skills/k/SKILL.md": "---\nname: k\ndescription: [a, b]\n---\n",
+		"skills/j/SKILL.md": "---\nname: j\n  bad: indent\n---\n",
+		"skills/i/SKILL.md": "---\nname: i\nallowed-tools: Read\n---\nbody\n",
+		"commands/c.md":     "---\ndescription: c\nargument-hint: x\nallowed-tools: Bash(git:*)\n---\n",
+		"agents/p.md":       "---\nname: p\npermissionMode: default\n---\n",
 	}
 	for n, c := range runs {
 		if !proseRunsCommands(n, []byte(c)) {
@@ -139,10 +153,17 @@ func TestProseRunsCommands(t *testing.T) {
 		}
 	}
 	plain := map[string]string{
-		"CLAUDE.md":     "Be nice. Use `make test`.\n---\nhooks: are discussed here",
-		"settings.json": "!`x`",
-		"config.toml":   "notify = 1",
-		"Config.TOML.":  "notify = 1",
+		// Every skill has frontmatter; name and description run nothing.
+		"skills/review/SKILL.md": "---\nname: review\ndescription: Review a PR: read the diff.\n---\nSteps.\n",
+		"skills/crlf/SKILL.md":   "\ufeff---\r\nname: crlf\r\ndescription: x\r\nversion: 1.2\r\n---\r\nbody",
+		"agents/helper.md":       "---\nname: helper\ndescription: x\nmodel: sonnet\ncolor: blue\n---\nbody",
+		"rules/r.mdc":            "---\ndescription: r\nglobs: \"*.go\"\nalwaysApply: false\n---\n",
+		"commands/empty.md":      "---\n---\nbody",
+		"skills/colon/SKILL.md":  "---\nname: colon\ndescription: Use when: a PR needs review: read it\n---\n",
+		"CLAUDE.md":              "Be nice. Use `make test`.\n---\nhooks: are discussed here",
+		"settings.json":          "!`x`",
+		"config.toml":            "notify = 1",
+		"Config.TOML.":           "notify = 1",
 	}
 	for n, c := range plain {
 		if proseRunsCommands(n, []byte(c)) {

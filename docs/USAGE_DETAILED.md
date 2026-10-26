@@ -504,7 +504,7 @@ Flags:
   refused (`.git`, `.vscode`, `.claude/settings.json`, `pkg/.envrc`), as are
   `mise.toml`, `CMakeLists.txt`, `devcontainer.json`, `Directory.Build.*`,
   8.3 short names and `:`. Import takes `.aider.conf.yml`, referred-to files,
-  skill files that are not prose and files with frontmatter, shell lines or TOML that the bundle adds or
+  skill files that are not prose and files with frontmatter beyond `name`, `description` and the other inert keys, shell lines or TOML that the bundle adds or
   changes only with `--keep-bundle-commands`. With no `--file` or
   `--content`, `--filename` moves a stored instruction to a new name
 
@@ -540,7 +540,7 @@ Flags:
 - `--dry-run` (default: `false`): report what would be imported.
 - `--format <json|yaml>`: default from the file extension.
 - `--keep-bundle-commands` (default: `false`): take instructions that run
-  code (command files, frontmatter, shell lines); left out by default.
+  code (command files, frontmatter beyond the inert keys, shell lines); left out by default.
 
 An instruction equal to the vault's is unchanged. One that is not UTF-8
 text is listed as invalid and not stored.

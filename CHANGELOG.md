@@ -4,6 +4,9 @@
 
 ### Added
 
+- The export summary lists each provider file and skill asset with its size
+  in bytes (or `redacted`, `missing`).
+
 - Each release now installs the Homebrew formula on an Intel macOS runner
   and runs `brew test` and `agentvault version` there. Until now only the
   arm64 side ran (the Homebrew job runs on arm64), so a broken Intel binary,
@@ -26,6 +29,16 @@
   used `http://localhost:11434`.
 
 ### Fixed
+
+- A Claude skill from a bundle was never written on import: every Markdown
+  file with frontmatter was held back as one that might run commands, and
+  every skill has frontmatter (`name`, `description`). Frontmatter that only
+  holds keys that run nothing (`name`, `description`, `version`, `license`,
+  `author`, `when_to_use`, `argument-hint`, `color`, `model`, `globs`,
+  `alwaysApply`) with plain values is now treated as prose. Any other key
+  (`hooks`, `allowed-tools`, `tools`, `mcpServers`, `permissionMode`, ...),
+  a nested value, alias, tag or unclosed block is still held unless
+  `--keep-bundle-commands`.
 
 - `export --workdir` now lists the repository-scope settings of the work
   dir and of each git repository directly in it (`.claude/settings.json`,

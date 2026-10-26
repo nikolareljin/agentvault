@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/nikolareljin/agentvault/internal/agent"
+	"gopkg.in/yaml.v3"
 	"io"
 	"os"
 	"path"
@@ -738,8 +739,9 @@ var proseExtensions = map[string]bool{".md": true, ".markdown": true, ".mdx": tr
 // proseRunsCommands is whether a prose file can carry something an agent
 // runs, so a bundle's new or changed copy needs consent like a script: any
 // TOML command file (Gemini runs "!{cmd}", and TOML escapes hide it from a
-// byte check), any file with frontmatter (hooks, tools, mcpServers,
-// permissionMode and other keys), and a shell line ("!`cmd`", "!{cmd}").
+// byte check), frontmatter with any key outside inertFrontmatterKeys (hooks,
+// tools, mcpServers, permissionMode and the rest), and a shell line
+// ("!`cmd`", "!{cmd}").
 func proseRunsCommands(name string, content []byte) bool {
 	slashed := strings.TrimPrefix(agent.NormalizePathForMatch(name), "./")
 	ext := path.Ext(slashed)
@@ -759,7 +761,88 @@ func proseRunsCommands(name string, content []byte) bool {
 	if bytes.Contains(content, []byte("!`")) || bytes.Contains(content, []byte("!{")) {
 		return true
 	}
-	return bytes.HasPrefix(bytes.TrimLeft(content, "\ufeff \t\r\n"), []byte("---"))
+	trimmed := bytes.TrimLeft(content, "\ufeff \t\r\n")
+	if !bytes.HasPrefix(trimmed, []byte("---")) {
+		return false
+	}
+	return !inertFrontmatter(trimmed)
+}
+
+func inertFrontmatterLines(block []string) bool {
+	for _, l := range block {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(l, ":")
+		if !ok || k != strings.TrimSpace(k) || !inertFrontmatterKeys[strings.ToLower(k)] {
+			return false
+		}
+		v = strings.TrimSpace(v)
+		if v != "" && strings.ContainsAny(v[:1], "{[&*!|>%@`\"'") {
+			return false
+		}
+	}
+	return true
+}
+
+// inertFrontmatterKeys name a file, describe it or say when it applies; none
+// runs anything or grants a tool. Every skill needs name and description, so
+// holding all frontmatter held every skill.
+var inertFrontmatterKeys = map[string]bool{
+	"name": true, "description": true, "version": true, "license": true, "author": true,
+	"when_to_use": true, "argument-hint": true, "color": true, "model": true,
+	"globs": true, "alwaysapply": true,
+}
+
+// inertFrontmatter is whether content (starting with "---") has a closed
+// frontmatter block that parses as one YAML mapping of inertFrontmatterKeys
+// to plain scalars. Anything else (another key, a nested value, a tag, an
+// alias, a duplicate key, no closing line) is not inert.
+func inertFrontmatter(content []byte) bool {
+	lines := strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n")
+	if strings.TrimRight(lines[0], " \t") != "---" {
+		return false
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if l := strings.TrimRight(lines[i], " \t"); l == "---" || l == "..." {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return false
+	}
+	block := lines[1:end]
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(strings.Join(block, "\n")), &doc); err != nil {
+		// Not YAML; tools still read "description: Review a PR: read it."
+		// line by line. Inert only if every line is an inert key at column
+		// 0 and a value that opens no YAML structure.
+		return inertFrontmatterLines(block)
+	}
+	if doc.Kind == 0 {
+		return true // empty frontmatter
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return false
+	}
+	m := doc.Content[0]
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		k, v := m.Content[i], m.Content[i+1]
+		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" || !inertFrontmatterKeys[strings.ToLower(k.Value)] {
+			return false
+		}
+		if v.Kind != yaml.ScalarNode || v.Anchor != "" {
+			return false
+		}
+		switch v.Tag {
+		case "!!str", "!!int", "!!float", "!!bool", "!!null":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // scriptAsset is a provider file that may run as a program: anything in a
