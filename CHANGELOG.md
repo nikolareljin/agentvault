@@ -7,8 +7,9 @@
 - Each release now installs the Homebrew formula on an Intel macOS runner
   and runs `brew test` and `agentvault version` there. Until now only the
   arm64 side ran (the Homebrew job runs on arm64), so a broken Intel binary,
-  or a wrong amd64 URL or SHA-256 in the formula, would have shipped. The tap is published only when both pass. A manual run of
-  the Homebrew workflow can skip publishing with `publish: false`.
+  or a wrong amd64 URL or SHA-256 in the formula, would have shipped.
+  The tap is published only when both pass. A manual run of the Homebrew
+  workflow can skip publishing with `publish: false`.
 
 ### Changed
 
@@ -16,14 +17,21 @@
   read when `OLLAMA_BASE_URL` is unset, for this release only, and is
   reported as deprecated: the agent detail view names the variable, and
   `prompt`, `route` and `setup pull` print a warning (`local-ai` routing
-  included; its error carries the notice when the endpoint fails). `OLLAMA_HOST` is also Ollama's
-  own bind address, so one variable served two meanings. A value without a
-  scheme is read the way Ollama reads it (`0.0.0.0` means
-  `http://127.0.0.1:11434`, since a listen-on-all address does not
-  connect on Windows); before, it was used as is and every request failed. `local-ai` routing and `detect` use the variable too; they always
+  included; its error carries the notice when the endpoint fails).
+  `OLLAMA_HOST` is also Ollama's own bind address, so one variable served
+  two meanings. A value without a scheme is read the way Ollama reads it
+  (`0.0.0.0` means `http://127.0.0.1:11434`, since a listen-on-all address
+  does not connect on Windows); before, it was used as is and every request
+  failed. `local-ai` routing and `detect` use the variable too; they always
   used `http://localhost:11434`.
 
 ### Fixed
+
+- `export --workdir` now lists the repository-scope settings of the work
+  dir and of each git repository directly in it (`.claude/settings.json`,
+  `.mcp.json` and the other tools' equivalents) in the manifest, as declined
+  with category `repository`. They were already not exported, but nothing
+  said so, so the other machine could not tell they come back through git.
 
 - One Azure DevOps repository had up to four git identities: the
   `dev.azure.com`, `org.visualstudio.com`, `ssh.dev.azure.com` and
