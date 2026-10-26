@@ -262,7 +262,8 @@ func TestWithoutCodexProjectsBlocksDottedKeys(t *testing.T) {
 		}
 	}
 	// A header-looking line inside a multi-line string is text.
-	body := "notify = \"\"\"\n[projects." + tomlString(filepath.Join(acme, "r")) + "]\n\"\"\"\nmodel = \"x\"\n"
+	// A literal multi-line string takes a Windows path's backslashes as written.
+	body := "notify = '''\n[projects." + tomlString(filepath.Join(acme, "r")) + "]\n'''\nmodel = \"x\"\n"
 	out, dropped, blocked := s.withoutCodexProjects([]byte(body))
 	if blocked != "" || len(dropped) != 0 || string(out) != body {
 		t.Errorf("multi-line string edited: out=%q dropped=%v blocked=%q", out, dropped, blocked)
