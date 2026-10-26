@@ -51,6 +51,10 @@
 
 ### Fixed
 
+- `agentvault doctor --context` finds the memory of a directory whose
+  path is long: Claude Code cuts a project folder name over 200 characters
+  and adds a hash, so the full name never existed.
+
 - A Claude skill from a bundle was never written on import: every Markdown
   file with frontmatter was held back as one that might run commands, and
   every skill has frontmatter (`name`, `description`). Frontmatter that only

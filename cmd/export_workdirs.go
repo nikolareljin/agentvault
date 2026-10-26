@@ -216,7 +216,18 @@ func (s workDirScope) memoryOwner(folder string) string {
 	f := collapseDashes(folder)
 	for _, n := range s.unselected {
 		for _, root := range n.Roots() {
-			slug := collapseDashes(claudeProjectSlug(root))
+			raw := claudeProjectSlug(root)
+			if len(raw) > claudeSlugKeep {
+				// Claude keeps the first 200 UTF-16 units of a long name
+				// and adds "-<hash>", so only a start of the root's slug is
+				// in the folder name. Compare a shorter start: the margin
+				// covers runes that are two units there.
+				if slugHasPrefix(f, collapseDashes(raw[:claudeSlugKeep])) {
+					return n.Name
+				}
+				continue
+			}
+			slug := collapseDashes(raw)
 			if slugEqual(f, slug) || slugHasPrefix(f, strings.TrimSuffix(slug, "-")+"-") {
 				return n.Name
 			}
@@ -224,6 +235,11 @@ func (s workDirScope) memoryOwner(folder string) string {
 	}
 	return ""
 }
+
+// claudeSlugKeep is how much of a long root slug memoryOwner compares.
+// Claude Code cuts a project folder name to 200 UTF-16 units and adds a
+// hash; 190 leaves room for characters it counts as two.
+const claudeSlugKeep = 190
 
 func collapseDashes(s string) string {
 	var b strings.Builder

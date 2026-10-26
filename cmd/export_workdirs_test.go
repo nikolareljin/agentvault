@@ -624,3 +624,19 @@ func TestMemoryOwnerAstralCharacters(t *testing.T) {
 		t.Errorf("trailing-dash root: owner = %q", got)
 	}
 }
+
+// Claude Code cuts a folder name longer than 200 to 200 and adds
+// "-<hash>". A work dir whose own slug is longer still owns its folders.
+func TestMemoryOwnerLongPaths(t *testing.T) {
+	acme := filepath.Join(t.TempDir(), strings.Repeat("a", 120), strings.Repeat("b", 120))
+	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}}
+	full := claudeProjectSlug(filepath.Join(acme, "repo"))
+	cut := full[:200] + "-1x2y3z"
+	if got := s.memoryOwner(cut); got != "company" {
+		t.Errorf("cut folder owner = %q", got)
+	}
+	other := claudeProjectSlug(filepath.Join(filepath.Dir(filepath.Dir(acme)), "elsewhere"))
+	if got := s.memoryOwner(other); got != "" {
+		t.Errorf("unrelated folder owner = %q", got)
+	}
+}

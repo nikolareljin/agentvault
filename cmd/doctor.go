@@ -128,7 +128,7 @@ func contextRows(home, dir string) []contextRow {
 			}
 		}
 	}
-	if r, ok := memoryRow(filepath.Join(home, ".claude", "projects", claudeProjectSlug(dir), "memory", "MEMORY.md")); ok {
+	if r, ok := memoryRow(filepath.Join(claudeProjectDir(home, dir), "memory", "MEMORY.md")); ok {
 		rows = append(rows, r)
 	}
 	rows = append(rows, listingRows("user", filepath.Join(home, ".claude"))...)
@@ -193,6 +193,23 @@ func ancestorsTopDown(dir string) []string {
 func isGitRepo(dir string) bool {
 	_, err := os.Lstat(filepath.Join(dir, ".git"))
 	return err == nil
+}
+
+// claudeProjectDir is where Claude Code keeps dir's project data. A slug
+// longer than 200 is cut to 200 and given "-<hash>" of a hash this cannot
+// compute, so the one folder with that start is taken; with none or more
+// than one, the uncut name, which does not exist.
+func claudeProjectDir(home, dir string) string {
+	projects := filepath.Join(home, ".claude", "projects")
+	slug := claudeProjectSlug(dir)
+	if len(slug) <= 200 {
+		return filepath.Join(projects, slug)
+	}
+	matches, _ := filepath.Glob(filepath.Join(projects, slug[:200]+"-*")) // a slug has no glob characters
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return filepath.Join(projects, slug)
 }
 
 // claudeProjectSlug is the directory name Claude Code keeps a project's
