@@ -417,3 +417,22 @@ func TestApplyVerifyStopsOnUnknownField(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// JSON escapes & < > in strings; a work dir named with them is still found
+// in the encoded vault parts.
+func TestApplyMatchesJSONEscapedPaths(t *testing.T) {
+	home := t.TempDir()
+	rd := filepath.Join(home, "work", "R&D")
+	s := &workDirScope{unselected: []locations.Named{{Name: "lab", Path: rd}}, left: map[string]map[string]int{}}
+	b := SetupBundle{Agents: []agent.Agent{{Name: "a", SystemPrompt: "use " + filepath.Join(rd, "x")}}}
+	if _, err := s.apply(&b, home); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Agents) != 0 {
+		t.Fatalf("agent naming %s kept", rd)
+	}
+	b = SetupBundle{SharedConfig: agent.SharedConfig{SystemPrompt: "use " + filepath.Join(rd, "x")}}
+	if _, err := s.apply(&b, home); err == nil {
+		t.Fatal("verify missed an escaped path")
+	}
+}

@@ -724,7 +724,6 @@ func workDirNeedles(n locations.Named, home string) []string {
 	for _, root := range n.Roots() {
 		add(root)
 		add(filepath.ToSlash(root))
-		add(strings.ReplaceAll(root, `\`, `\\`)) // a Windows path inside JSON
 		if home != "" {
 			if rel, err := filepath.Rel(home, root); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
 				rel = filepath.ToSlash(rel)
@@ -732,6 +731,14 @@ func workDirNeedles(n locations.Named, home string) []string {
 				add("$HOME/" + rel)
 				add("${HOME}/" + rel)
 			}
+		}
+	}
+	// The same spellings as JSON writes them: a Windows path's backslashes
+	// doubled, & < > as \u0026 \u003c \u003e. Vault parts are matched in
+	// their encoded form.
+	for _, p := range append([]string(nil), out...) {
+		if enc, err := json.Marshal(p); err == nil {
+			add(string(enc[1 : len(enc)-1]))
 		}
 	}
 	return out
