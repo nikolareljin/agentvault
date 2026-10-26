@@ -358,7 +358,7 @@ a file is over its budget.
 Flags:
 - `--context`: run this check (required).
 - `--dir <path>` (default: current directory): the directory a session starts in.
-- `--json`: one JSON object per row.
+- `--json`: a JSON array, one object per row.
 
 Rows and budgets:
 - user: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, 4096 bytes each.
