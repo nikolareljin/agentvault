@@ -469,7 +469,7 @@ them.
 
 ### `agentvault workdir add <name> <path>`
 `<name>` is lowercase letters, digits and `-`, at most 32, not starting with
-`-`. `<path>` must be an existing directory. A name that exists is refused,
+`-`; `all` is reserved for `export --workdirs all`. `<path>` must be an existing directory. A name that exists is refused,
 and so is a path that is the same as, inside or around a declared work dir
 (compared as given and with symlinks resolved, without case on Windows).
 

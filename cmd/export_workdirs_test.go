@@ -227,6 +227,7 @@ func TestExportWorkDirsRefusals(t *testing.T) {
 		want string
 	}{
 		{setupCollectOptions{WorkDirSelection: "nope"}, "no work dir named nope"},
+		{setupCollectOptions{WorkDirSelection: ",personal,,nope"}, "no work dir named nope"},
 		{setupCollectOptions{WorkDirSelection: "personal", ProjectDir: w.acmeRepo}, "--project"},
 		{setupCollectOptions{WorkDirSelection: "personal", WorkDirs: []string{w.acme}}, "--workdir"},
 	} {
@@ -480,5 +481,13 @@ func TestWithoutCodexProjectsCRLFAndArrays(t *testing.T) {
 	arr := "[[projects." + tomlString(filepath.Join(acme, "r")) + "]]\nx = 1\n"
 	if _, _, blocked := s.withoutCodexProjects([]byte(arr)); blocked != "company" {
 		t.Errorf("array of tables not blocked: %q", blocked)
+	}
+}
+
+func TestResolveWorkDirScopeSkipsEmptyNames(t *testing.T) {
+	known := locations.Set{Named: []locations.Named{{Name: "personal", Path: "/p"}, {Name: "company", Path: "/c"}}}
+	s, err := resolveWorkDirScope(known, " personal , ")
+	if err != nil || len(s.selected) != 1 || len(s.unselected) != 1 || s.unselected[0].Name != "company" {
+		t.Fatalf("scope = %+v, %v", s, err)
 	}
 }

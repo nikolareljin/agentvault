@@ -17,6 +17,10 @@ type Named struct {
 	Path string `json:"path"`
 }
 
+// AllWorkDirs is the selection that takes every declared work dir; no work
+// dir may have it as its name.
+const AllWorkDirs = "all"
+
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 // ValidName reports whether name can name a work dir: lowercase letters,
@@ -43,6 +47,9 @@ func (s Set) Lookup(name string) (Named, bool) {
 func (s Set) Declare(name, dir string) (Set, error) {
 	if !ValidName(name) {
 		return s, fmt.Errorf("work dir name %q: use lowercase letters, digits and '-' (at most 32, not starting with '-')", name)
+	}
+	if name == AllWorkDirs {
+		return s, fmt.Errorf("work dir name %q is reserved: export --workdirs %s means every work dir", name, AllWorkDirs)
 	}
 	if _, ok := s.Lookup(name); ok {
 		return s, fmt.Errorf("work dir %s is already declared; remove it first", name)

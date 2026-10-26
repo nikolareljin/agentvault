@@ -36,7 +36,7 @@ type workDirScope struct {
 func resolveWorkDirScope(known locations.Set, spec string) (workDirScope, error) {
 	s := workDirScope{known: known, left: map[string]map[string]int{}}
 	spec = strings.TrimSpace(spec)
-	if spec == "" || spec == "all" {
+	if spec == "" || spec == locations.AllWorkDirs {
 		s.selected = known.Named
 		return s, nil
 	}
@@ -45,7 +45,9 @@ func resolveWorkDirScope(known locations.Set, spec string) (workDirScope, error)
 	}
 	want := map[string]bool{}
 	for _, name := range strings.Split(spec, ",") {
-		name = strings.TrimSpace(name)
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
 		if _, ok := known.Lookup(name); !ok {
 			return s, fmt.Errorf("--workdirs: no work dir named %s (declared: %s)", printable(name), declaredNames(known))
 		}
