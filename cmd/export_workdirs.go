@@ -213,20 +213,12 @@ func (s workDirScope) memoryOwner(folder string) string {
 	for _, n := range s.unselected {
 		for _, root := range n.Roots() {
 			slug := claudeProjectSlug(root)
-			if !slugEqual(folder, slug) && !slugHasPrefix(folder, slug+"-") {
-				continue
-			}
-			// ~/work/acme-tools shares the prefix of ~/work/acme. A folder
-			// whose directory exists, and every such directory is outside
-			// the unselected work dirs, is someone else's: keep it.
-			found := slugMatches(filepath.Dir(root), folder, nil)
-			if len(found) == 0 {
+			// No existing directory can clear a prefix match: the slug of an
+			// undeclared ~/work/acme-tools is also the slug of a deleted
+			// ~/work/acme/tools. Only proof under a selected work dir (above)
+			// keeps such a folder.
+			if slugEqual(folder, slug) || slugHasPrefix(folder, slug+"-") {
 				return n.Name
-			}
-			for _, f := range found {
-				if name, ok := s.excluded(f); ok {
-					return name
-				}
 			}
 		}
 	}

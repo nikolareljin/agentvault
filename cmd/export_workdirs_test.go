@@ -511,7 +511,7 @@ func TestContainsPathSentenceEnd(t *testing.T) {
 	}
 }
 
-func TestMemoryOwnerKeepsUndeclaredSibling(t *testing.T) {
+func TestMemoryOwnerExcludesAmbiguousSibling(t *testing.T) {
 	root := t.TempDir()
 	acme, tools := filepath.Join(root, "work", "acme"), filepath.Join(root, "work", "acme-tools")
 	for _, d := range []string{filepath.Join(acme, "r"), tools} {
@@ -520,8 +520,15 @@ func TestMemoryOwnerKeepsUndeclaredSibling(t *testing.T) {
 		}
 	}
 	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}}
+	// acme-tools and a deleted acme/tools have one slug: the folder cannot
+	// be told apart, so it stays on this machine.
+	if got := s.memoryOwner(claudeProjectSlug(tools)); got != "company" {
+		t.Errorf("ambiguous sibling owner = %q, want company", got)
+	}
+	// Proof under a selected work dir keeps it.
+	s.selected = []locations.Named{{Name: "tools", Path: tools}}
 	if got := s.memoryOwner(claudeProjectSlug(tools)); got != "" {
-		t.Errorf("undeclared sibling owned by %q", got)
+		t.Errorf("proved selected folder owned by %q", got)
 	}
 	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(acme, "r"))); got != "company" {
 		t.Errorf("company repo owner = %q", got)
