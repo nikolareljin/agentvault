@@ -779,7 +779,8 @@ func inertFrontmatterLines(block []string) bool {
 			return false
 		}
 		v = strings.TrimSpace(v)
-		if v != "" && strings.ContainsAny(v[:1], "{[&*!|>%@`\"'") {
+		// "[" stays: argument-hint: [base branch] [focus] is plain text here.
+		if v != "" && strings.ContainsAny(v[:1], "{&*!|>%@`\"'") {
 			return false
 		}
 	}
@@ -792,7 +793,8 @@ func inertFrontmatterLines(block []string) bool {
 var inertFrontmatterKeys = map[string]bool{
 	"name": true, "description": true, "version": true, "license": true, "author": true,
 	"when_to_use": true, "argument-hint": true, "color": true, "model": true,
-	"globs": true, "alwaysapply": true,
+	"globs": true, "alwaysapply": true, "disable-model-invocation": true,
+	"compatibility": true, "metadata": true,
 }
 
 // inertFrontmatter is whether content (starting with "---") has a closed
@@ -850,16 +852,38 @@ func inertFrontmatter(content []byte) bool {
 		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" || !inertFrontmatterKeys[strings.ToLower(k.Value)] {
 			return false
 		}
-		if v.Kind != yaml.ScalarNode || v.Anchor != "" {
+		var children []*yaml.Node
+		switch key := strings.ToLower(k.Value); {
+		case key == "argument-hint" && v.Kind == yaml.SequenceNode:
+			// argument-hint: [pr-number] is a list to YAML.
+			children = v.Content
+		case key == "metadata" && v.Kind == yaml.MappingNode:
+			// The Agent Skills spec's free-form string map.
+			children = v.Content
+		default:
+			children = []*yaml.Node{v}
+		}
+		if v.Anchor != "" {
 			return false
 		}
-		switch v.Tag {
-		case "!!str", "!!int", "!!float", "!!bool", "!!null":
-		default:
-			return false
+		for _, c := range children {
+			if !plainScalarNode(c) {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+func plainScalarNode(n *yaml.Node) bool {
+	if n.Kind != yaml.ScalarNode || n.Anchor != "" {
+		return false
+	}
+	switch n.Tag {
+	case "!!str", "!!int", "!!float", "!!bool", "!!null":
+		return true
+	}
+	return false
 }
 
 // scriptAsset is a provider file that may run as a program: anything in a

@@ -35,7 +35,9 @@
   every skill has frontmatter (`name`, `description`). Frontmatter that only
   holds keys that run nothing (`name`, `description`, `version`, `license`,
   `author`, `when_to_use`, `argument-hint`, `color`, `model`, `globs`,
-  `alwaysApply`) with plain values is now treated as prose. Any other key
+  `alwaysApply`, `disable-model-invocation`, `compatibility`, `metadata`)
+  with plain values is now treated as prose (`argument-hint` may be a list
+  and `metadata` a map, of plain values). Any other key
   (`hooks`, `allowed-tools`, `tools`, `mcpServers`, `permissionMode`, ...),
   a nested value, alias, tag, unclosed block, a `...` line, a control
   character or a lone CR or Unicode line break is still held unless

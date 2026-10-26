@@ -158,6 +158,10 @@ func TestProseRunsCommands(t *testing.T) {
 		"skills/ls/SKILL.md":  "---\nname: l\u2028hooks: evil\n---\n",
 		"skills/ps/SKILL.md":  "---\ndescription: p: q\u2029allowed-tools: Bash\n---\n",
 		"skills/nul/SKILL.md": "---\nname: z\x00\n---\n",
+		"skills/mh/SKILL.md":  "---\nname: m\nmetadata:\n  hooks: {Stop: evil}\n---\n",
+		"skills/ma/SKILL.md":  "---\nname: m\nmetadata: &x\n  a: b\n---\n",
+		"commands/ha.md":      "---\nargument-hint: [[nested]]\n---\n",
+		"skills/ev/SKILL.md":  "---\nname: rule\nevent: bash\naction: block\n---\n",
 	}
 	for n, c := range runs {
 		if !proseRunsCommands(n, []byte(c)) {
@@ -171,6 +175,9 @@ func TestProseRunsCommands(t *testing.T) {
 		"agents/helper.md":       "---\nname: helper\ndescription: x\nmodel: sonnet\ncolor: blue\n---\nbody",
 		"rules/r.mdc":            "---\ndescription: r\nglobs: \"*.go\"\nalwaysApply: false\n---\n",
 		"commands/empty.md":      "---\n---\nbody",
+		"skills/meta/SKILL.md":   "---\nname: meta\ndescription: x\ncompatibility: Claude Code\nmetadata:\n  author: me\n  version: \"2\"\ndisable-model-invocation: true\n---\n",
+		"commands/hint.md":       "---\ndescription: h\nargument-hint: [pr-number]\n---\n",
+		"commands/hint2.md":      "---\ndescription: h: x\nargument-hint: [base branch] [what to focus on]\n---\n",
 		"skills/colon/SKILL.md":  "---\nname: colon\ndescription: Use when: a PR needs review: read it\n---\n",
 		"CLAUDE.md":              "Be nice. Use `make test`.\n---\nhooks: are discussed here",
 		"settings.json":          "!`x`",
