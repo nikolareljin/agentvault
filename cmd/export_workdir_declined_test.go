@@ -133,9 +133,13 @@ func TestWorkDirLabelThroughSymlinkedHome(t *testing.T) {
 	if err := os.Symlink(realHome, link); err != nil {
 		t.Skip("symlinks unavailable:", err)
 	}
+	// A work dir exists: export has just read it.
+	if err := os.MkdirAll(filepath.Join(realHome, "a", "Projects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for _, abs := range []string{
-		filepath.Join(link, "a", "Projects"),     // raw form, not on disk
-		filepath.Join(realHome, "a", "Projects"), // resolved form
+		filepath.Join(link, "a", "Projects"),
+		filepath.Join(realHome, "a", "Projects"),
 	} {
 		if got := workDirLabel(abs, link); got != "a/Projects" {
 			t.Errorf("workDirLabel(%q, link) = %q, want a/Projects", abs, got)
