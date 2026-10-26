@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -137,6 +136,7 @@ func (s *workDirScope) apply(bundle *SetupBundle, home string) ([]bool, error) {
 	// additionalDirectories, an MCP argument, a note in CLAUDE.md.
 	s.applyMentions(bundle)
 	keepAgents = s.applyStructured(bundle)
+	pruneSessionRefs(&bundle.Sessions, bundle.Agents, keepAgents)
 	for _, n := range s.unselected {
 		kinds := s.left[n.Name]
 		if len(kinds) == 0 {
@@ -379,10 +379,9 @@ var codexProjectHeader = regexp.MustCompile(`^\s*\[\s*projects\s*\.\s*("(?:[^"\\
 func (s workDirScope) withoutCodexProjects(content []byte) (out []byte, dropped []string, blocked string) {
 	var buf bytes.Buffer
 	skipping, inMulti := false, false
-	sc := bufio.NewScanner(bytes.NewReader(content))
-	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
+	// SplitAfter keeps each line's own ending, so a CRLF file stays CRLF.
+	for _, raw := range bytes.SplitAfter(content, []byte("\n")) {
+		line := strings.TrimRight(string(raw), "\r\n")
 		// A line inside a multi-line string is text, not a header.
 		if !inMulti && strings.HasPrefix(strings.TrimSpace(line), "[") {
 			skipping = false
@@ -400,12 +399,8 @@ func (s workDirScope) withoutCodexProjects(content []byte) (out []byte, dropped 
 			inMulti = !inMulti
 		}
 		if !skipping {
-			buf.WriteString(line)
-			buf.WriteByte('\n')
+			buf.Write(raw)
 		}
-	}
-	if sc.Err() != nil {
-		return nil, nil, s.unselected[0].Name
 	}
 	out = content
 	if len(dropped) > 0 {
@@ -767,4 +762,54 @@ func containsPath(text []byte, needle string) bool {
 
 func pathNameByte(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.' || c >= 0x80
+}
+
+// pruneSessionRefs keeps the session config consistent after agents or
+// sessions were left out: a session loses the agents that are gone (and is
+// dropped when none of its agents is left), default agents lose them too,
+// and an active session that is gone is cleared.
+func pruneSessionRefs(sc *agent.SessionConfig, agents []agent.Agent, keepAgents []bool) {
+	dropped := false
+	for _, k := range keepAgents {
+		dropped = dropped || !k
+	}
+	if dropped {
+		names := map[string]bool{}
+		for _, a := range agents {
+			names[a.Name] = true
+		}
+		var sessions []agent.Session
+		for _, sess := range sc.Sessions {
+			if len(sess.Agents) > 0 {
+				var kept []agent.SessionAgent
+				for _, sa := range sess.Agents {
+					if names[sa.Name] {
+						kept = append(kept, sa)
+					}
+				}
+				if len(kept) == 0 {
+					continue
+				}
+				sess.Agents = kept
+			}
+			sessions = append(sessions, sess)
+		}
+		sc.Sessions = sessions
+		var defaults []string
+		for _, n := range sc.DefaultAgents {
+			if names[n] {
+				defaults = append(defaults, n)
+			}
+		}
+		sc.DefaultAgents = defaults
+	}
+	if sc.ActiveSession != "" {
+		found := false
+		for _, sess := range sc.Sessions {
+			found = found || sess.ID == sc.ActiveSession
+		}
+		if !found {
+			sc.ActiveSession = ""
+		}
+	}
 }

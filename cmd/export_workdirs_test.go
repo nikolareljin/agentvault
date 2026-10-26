@@ -436,3 +436,45 @@ func TestApplyMatchesJSONEscapedPaths(t *testing.T) {
 		t.Fatal("verify missed an escaped path")
 	}
 }
+
+// Leaving out an agent or a session leaves nothing pointing at it.
+func TestApplyPrunesSessionReferences(t *testing.T) {
+	s, home, acme := companyScope(t)
+	b := SetupBundle{
+		Agents: []agent.Agent{{Name: "me"}, {Name: "bot", SystemPrompt: "in " + filepath.Join(acme, "r")}},
+		Sessions: agent.SessionConfig{
+			Sessions: []agent.Session{
+				{ID: "s1", Agents: []agent.SessionAgent{{Name: "me"}, {Name: "bot"}}},
+				{ID: "s2", Agents: []agent.SessionAgent{{Name: "bot"}}},
+				{ID: "s3", ProjectDir: filepath.Join(acme, "r")},
+				{ID: "s4"},
+			},
+			ActiveSession: "s3",
+			DefaultAgents: []string{"me", "bot"},
+		},
+	}
+	if _, err := s.apply(&b, home); err != nil {
+		t.Fatal(err)
+	}
+	sc := b.Sessions
+	if len(sc.Sessions) != 2 || sc.Sessions[0].ID != "s1" || len(sc.Sessions[0].Agents) != 1 || sc.Sessions[1].ID != "s4" {
+		t.Errorf("sessions = %+v", sc.Sessions)
+	}
+	if sc.ActiveSession != "" || len(sc.DefaultAgents) != 1 || sc.DefaultAgents[0] != "me" {
+		t.Errorf("active %q defaults %v", sc.ActiveSession, sc.DefaultAgents)
+	}
+}
+
+func TestWithoutCodexProjectsCRLFAndArrays(t *testing.T) {
+	acme := filepath.Join(t.TempDir(), "acme")
+	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}, left: map[string]map[string]int{}}
+	body := "model = \"x\"\r\n[projects." + tomlString(filepath.Join(acme, "r")) + "]\r\ntrust_level = \"trusted\"\r\n[profiles.p]\r\nmodel = \"y\"\r\n"
+	out, dropped, blocked := s.withoutCodexProjects([]byte(body))
+	if blocked != "" || len(dropped) != 1 || string(out) != "model = \"x\"\r\n[profiles.p]\r\nmodel = \"y\"\r\n" {
+		t.Errorf("CRLF: out=%q dropped=%v blocked=%q", out, dropped, blocked)
+	}
+	arr := "[[projects." + tomlString(filepath.Join(acme, "r")) + "]]\nx = 1\n"
+	if _, _, blocked := s.withoutCodexProjects([]byte(arr)); blocked != "company" {
+		t.Errorf("array of tables not blocked: %q", blocked)
+	}
+}
