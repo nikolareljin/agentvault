@@ -102,3 +102,28 @@ func TestUndeclareAndMergeKeepNames(t *testing.T) {
 		t.Fatal("Undeclare of an unknown name reported found")
 	}
 }
+
+// On Windows C:\Users\Me\Projects and c:\users\me\projects are one folder.
+func TestDeclareRefusesOverlapWithoutCase(t *testing.T) {
+	old := caseInsensitivePaths
+	t.Cleanup(func() { caseInsensitivePaths = old })
+	root := t.TempDir()
+	mkdirs(t, filepath.Join(root, "Work", "a"), filepath.Join(root, "work", "b"))
+	s, err := Set{}.Declare("w", filepath.Join(root, "Work"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Work and work are two folders only on a case-sensitive filesystem.
+	upper, _ := os.Stat(filepath.Join(root, "Work"))
+	lower, _ := os.Stat(filepath.Join(root, "work"))
+	if !os.SameFile(upper, lower) {
+		caseInsensitivePaths = false
+		if _, err := s.Declare("b", filepath.Join(root, "work", "b")); err != nil {
+			t.Fatalf("case-sensitive: distinct folders refused: %v", err)
+		}
+	}
+	caseInsensitivePaths = true
+	if _, err := s.Declare("b", filepath.Join(root, "work", "b")); err == nil {
+		t.Fatal("case-insensitive: a path inside a declared work dir by case was accepted")
+	}
+}

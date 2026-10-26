@@ -106,8 +106,12 @@ func forms(p string) []string {
 	return out
 }
 
+// caseInsensitivePaths is whether this OS compares paths without case;
+// tests set it.
+var caseInsensitivePaths = runtime.GOOS == "windows"
+
 func foldCase(p string) string {
-	if runtime.GOOS == "windows" {
+	if caseInsensitivePaths {
 		return strings.ToLower(p)
 	}
 	return p
