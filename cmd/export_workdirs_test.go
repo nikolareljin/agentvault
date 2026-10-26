@@ -607,3 +607,20 @@ func TestMentionsFoldCase(t *testing.T) {
 		t.Fatal("case-folded mention not withheld")
 	}
 }
+
+// Claude writes one '-' per UTF-16 unit, so an emoji in a path is "--"
+// there and "-" in claudeProjectSlug; the folder still matches.
+func TestMemoryOwnerAstralCharacters(t *testing.T) {
+	acme := filepath.Join(t.TempDir(), "work", "acme\U0001F680lab")
+	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}}
+	jsSlug := strings.Replace(claudeProjectSlug(filepath.Join(acme, "r")), "acme-lab", "acme--lab", 1)
+	if got := s.memoryOwner(jsSlug); got != "company" {
+		t.Errorf("JS-encoded folder %q owner = %q", jsSlug, got)
+	}
+	// Trailing '-' in the root's slug still needs a component boundary.
+	trail := filepath.Join(t.TempDir(), "w.")
+	s2 := workDirScope{unselected: []locations.Named{{Name: "c", Path: trail}}}
+	if got := s2.memoryOwner(claudeProjectSlug(filepath.Join(trail, "x"))); got != "c" {
+		t.Errorf("trailing-dash root: owner = %q", got)
+	}
+}

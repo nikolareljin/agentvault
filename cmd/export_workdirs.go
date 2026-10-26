@@ -207,16 +207,33 @@ func (s workDirScope) applyMemory(bundle *SetupBundle, home string) {
 // ~/Projects-acme/x, have one slug. Such a folder is left out. Excluding too
 // much costs a line in the report; including too much leaks an employer's
 // memory.
+//
+// Runs of '-' are compared as one. Claude encodes in JavaScript, one '-' per
+// UTF-16 unit, where claudeProjectSlug writes one per rune, so a character
+// outside the BMP (an emoji) gives "--" in one and "-" in the other.
+// Collapsing can only make more folders match.
 func (s workDirScope) memoryOwner(folder string) string {
+	f := collapseDashes(folder)
 	for _, n := range s.unselected {
 		for _, root := range n.Roots() {
-			slug := claudeProjectSlug(root)
-			if slugEqual(folder, slug) || slugHasPrefix(folder, slug+"-") {
+			slug := collapseDashes(claudeProjectSlug(root))
+			if slugEqual(f, slug) || slugHasPrefix(f, strings.TrimSuffix(slug, "-")+"-") {
 				return n.Name
 			}
 		}
 	}
 	return ""
+}
+
+func collapseDashes(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '-' && i > 0 && s[i-1] == '-' {
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // caseInsensitiveOS is whether paths compare without case; tests set it.
