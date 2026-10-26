@@ -13,11 +13,23 @@ import (
 // them so the other machine knows they come back through git, not the bundle.
 // The --project directory is skipped: its own collection already lists it.
 func declineWorkDirRepoScopeSettings(workDirs []string, projectDir string) []DeclinedAsset {
-	project := absOrEmpty(projectDir)
+	// Resolved, so a project or work dir named through a symlink (macOS
+	// /tmp is /private/tmp) is still recognised as the same directory.
+	real := func(dir string) string {
+		abs := absOrEmpty(dir)
+		if r, err := filepath.EvalSymlinks(abs); err == nil {
+			return r
+		}
+		return abs
+	}
+	project := ""
+	if strings.TrimSpace(projectDir) != "" {
+		project = real(projectDir)
+	}
 	var out []DeclinedAsset
 	seen := map[string]bool{}
 	add := func(dir, prefix string) {
-		abs := absOrEmpty(dir)
+		abs := real(dir)
 		if abs == "" || seen[abs] || abs == project {
 			return
 		}

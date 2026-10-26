@@ -50,6 +50,15 @@ func TestDeclineWorkDirRepoScopeSettings(t *testing.T) {
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("paths = %q, want %q", paths, want)
 	}
+	// The same project named through a symlink is still skipped.
+	link := filepath.Join(t.TempDir(), "gamma-link")
+	if err := os.Symlink(filepath.Join(work, "gamma"), link); err == nil {
+		for _, d := range declineWorkDirRepoScopeSettings([]string{work}, link) {
+			if d.Path == "work/gamma/.claude/settings.json" {
+				t.Fatalf("project named through a symlink listed again: %+v", d)
+			}
+		}
+	}
 	if got := declineWorkDirRepoScopeSettings(nil, ""); len(got) != 0 {
 		t.Fatalf("no work dirs: got %v", got)
 	}
