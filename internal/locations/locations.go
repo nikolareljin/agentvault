@@ -54,6 +54,9 @@ type Set struct {
 	// same target, and only for the projects it lists. Only the vault keeps
 	// them, never a bundle.
 	ConfirmedHidden map[string]HiddenConfirm `json:"confirmed_hidden,omitempty"`
+	// Named are the work dirs declared by name on this machine. Only the
+	// vault keeps them, never a bundle.
+	Named []Named `json:"named_work_dirs,omitempty"`
 }
 
 // HiddenConfirm is one confirmed hidden mapping: its target and the keys
@@ -153,7 +156,7 @@ func ProjectKey(p Project) string {
 
 // Empty reports whether the set names nothing.
 func (s *Set) Empty() bool {
-	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0 && len(s.WorkDirMaps) == 0 && len(s.ConfirmedHidden) == 0
+	return s == nil || len(s.WorkDirs) == 0 && len(s.Projects) == 0 && len(s.WorkDirMaps) == 0 && len(s.ConfirmedHidden) == 0 && len(s.Named) == 0
 }
 
 // Identifier is gitid.Identify; tests replace it.
@@ -325,7 +328,24 @@ func Merge(s, other Set) Set {
 	if len(out.ConfirmedHidden) == 0 {
 		out.ConfirmedHidden = nil
 	}
+	// A name declared in other replaces the same name in s.
+	for _, n := range append(append([]Named(nil), s.Named...), other.Named...) {
+		if i := namedIndex(out.Named, n.Name); i >= 0 {
+			out.Named[i] = n
+		} else {
+			out.Named = append(out.Named, n)
+		}
+	}
 	return out
+}
+
+func namedIndex(ns []Named, name string) int {
+	for i, n := range ns {
+		if n.Name == name {
+			return i
+		}
+	}
+	return -1
 }
 
 func unionStrings(a, b []string) []string {

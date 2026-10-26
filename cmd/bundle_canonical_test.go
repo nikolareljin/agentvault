@@ -37,3 +37,27 @@ func TestDecodePortableBundleCanonicalizesAzureIdentities(t *testing.T) {
 		t.Errorf("source project = %q", k)
 	}
 }
+
+// A bundle edited to carry this machine's choices loses them on decode, so
+// a set holding nothing else stays empty and import skips matching.
+func TestDecodePortableBundleDropsMachineOnlyLocations(t *testing.T) {
+	b := newPortableBundle(nowFunc())
+	b.Profiles = []PortableProfile{{Name: "default", Setup: SetupBundle{
+		Locations: &locations.Set{
+			WorkDirMaps:     map[string]string{"/old": "/new"},
+			ConfirmedHidden: map[string]locations.HiddenConfirm{"/old": {Target: "/new"}},
+			Named:           []locations.Named{{Name: "personal", Path: "/x"}},
+		},
+	}}}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := decodePortableBundle(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := got.Profiles[0].Setup.Locations; !s.Empty() {
+		t.Fatalf("decoded locations keep machine-only fields: %+v", *s)
+	}
+}

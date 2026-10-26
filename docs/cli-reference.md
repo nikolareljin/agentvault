@@ -35,6 +35,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `doctor`
 - `capability`
 - `gateway`
+- `workdir`
 - `routing-model`
 - `rules`
 - `roles`
@@ -458,6 +459,26 @@ Export and import: gateways travel in the bundle. Tokens and the basic auth
 password follow `--include-keys`. On import, a blank secret is filled from
 the local gateway of the same name only when the URL (and, for the password,
 the user) match.
+
+## Work directories
+
+A work directory is a folder of projects: a personal `~/Projects`, one per
+employer or client. Declaring each by name keeps them apart. The path is
+this machine's; the vault keeps the declarations and a bundle does not carry
+them.
+
+### `agentvault workdir add <name> <path>`
+`<name>` is lowercase letters, digits and `-`, at most 32, not starting with
+`-`. `<path>` must be an existing directory. A name that exists is refused,
+and so is a path that is the same as, inside or around a declared work dir
+(compared as given and with symlinks resolved, without case on Windows).
+
+### `agentvault workdir list`
+Optional:
+- `--json`: print `[{"name": ..., "path": ...}]`
+
+### `agentvault workdir remove <name>`
+Forgets the declaration. The directory is not touched.
 
 ## Embedded inference model
 

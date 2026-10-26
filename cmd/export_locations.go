@@ -46,6 +46,7 @@ func captureBundleLocations(cmd *cobra.Command, v *vault.Vault, bundle SetupBund
 	// Work dir mappings are this machine's choices, not the bundle's.
 	merged.WorkDirMaps = nil
 	merged.ConfirmedHidden = nil
+	merged.Named = nil
 	if merged.Empty() {
 		return nil
 	}
@@ -66,7 +67,8 @@ func recordProjectLocation(v *vault.Vault, dir string) error {
 // repository's other paths (aliases); a pattern naming one of them, or a path
 // below it, is rewritten to dir before matching.
 func aliasDirectoryPatterns(insts []agent.InstructionFile, known locations.Set, dir string, identify locations.Identifier) []agent.InstructionFile {
-	if known.Empty() {
+	// Aliases come from known projects; with none, skip running git.
+	if len(known.Projects) == 0 {
 		return insts
 	}
 	if identify == nil {
