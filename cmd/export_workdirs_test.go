@@ -452,6 +452,7 @@ func TestApplyPrunesSessionReferences(t *testing.T) {
 			ActiveSession: "s3",
 			DefaultAgents: []string{"me", "bot"},
 		},
+		VaultBlanks: []VaultBlank{{Section: blankAgent, Name: "me", Field: "base_url"}, {Section: blankAgent, Name: "bot", Field: "base_url"}},
 	}
 	if _, err := s.apply(&b, home); err != nil {
 		t.Fatal(err)
@@ -462,6 +463,9 @@ func TestApplyPrunesSessionReferences(t *testing.T) {
 	}
 	if sc.ActiveSession != "" || len(sc.DefaultAgents) != 1 || sc.DefaultAgents[0] != "me" {
 		t.Errorf("active %q defaults %v", sc.ActiveSession, sc.DefaultAgents)
+	}
+	if len(b.VaultBlanks) != 1 || b.VaultBlanks[0].Name != "me" {
+		t.Errorf("blanks = %+v", b.VaultBlanks)
 	}
 }
 

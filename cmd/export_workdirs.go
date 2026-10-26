@@ -137,6 +137,8 @@ func (s *workDirScope) apply(bundle *SetupBundle, home string) ([]bool, error) {
 	s.applyMentions(bundle)
 	keepAgents = s.applyStructured(bundle)
 	pruneSessionRefs(&bundle.Sessions, bundle.Agents, keepAgents)
+	pruneAgentBlanks(bundle)
+	bundle.VaultBlanks = dropMentioning(*s, bundle.VaultBlanks, "blanked values")
 	for _, n := range s.unselected {
 		kinds := s.left[n.Name]
 		if len(kinds) == 0 {
@@ -811,5 +813,25 @@ func pruneSessionRefs(sc *agent.SessionConfig, agents []agent.Agent, keepAgents 
 		if !found {
 			sc.ActiveSession = ""
 		}
+	}
+}
+
+// pruneAgentBlanks drops the blanked-value notes of agents that were left
+// out: import has nothing to fill, and the note would still carry the
+// agent's name.
+func pruneAgentBlanks(bundle *SetupBundle) {
+	names := map[string]bool{}
+	for _, a := range bundle.Agents {
+		names[a.Name] = true
+	}
+	var keep []VaultBlank
+	for _, b := range bundle.VaultBlanks {
+		if b.Section == blankAgent && !names[b.Name] {
+			continue
+		}
+		keep = append(keep, b)
+	}
+	if len(keep) != len(bundle.VaultBlanks) {
+		bundle.VaultBlanks = keep
 	}
 }
