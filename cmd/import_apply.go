@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/nikolareljin/agentvault/internal/textutil"
@@ -803,9 +804,15 @@ func inertFrontmatter(content []byte) bool {
 	if strings.TrimRight(lines[0], " \t") != "---" {
 		return false
 	}
+	// Tools end frontmatter at "---" only. A "..." line would end it for
+	// YAML and hide the keys after it from this check, so it is not inert.
 	end := -1
 	for i := 1; i < len(lines); i++ {
-		if l := strings.TrimRight(lines[i], " \t"); l == "---" || l == "..." {
+		l := strings.TrimRight(lines[i], " \t")
+		if l == "..." {
+			return false
+		}
+		if l == "---" {
 			end = i
 			break
 		}
@@ -814,6 +821,16 @@ func inertFrontmatter(content []byte) bool {
 		return false
 	}
 	block := lines[1:end]
+	for _, l := range block {
+		// A lone CR, NEL or Unicode line break is a new line to some readers
+		// and not to others; a key could hide behind it. Tabs aside, no
+		// control character belongs in frontmatter.
+		for _, r := range l {
+			if r == '\u0085' || r == '\u2028' || r == '\u2029' || r == utf8.RuneError || (r < 0x20 && r != '\t') || r == 0x7f {
+				return false
+			}
+		}
+	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(strings.Join(block, "\n")), &doc); err != nil {
 		// Not YAML; tools still read "description: Review a PR: read it."

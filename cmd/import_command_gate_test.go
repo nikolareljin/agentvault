@@ -146,6 +146,18 @@ func TestProseRunsCommands(t *testing.T) {
 		"skills/i/SKILL.md": "---\nname: i\nallowed-tools: Read\n---\nbody\n",
 		"commands/c.md":     "---\ndescription: c\nargument-hint: x\nallowed-tools: Bash(git:*)\n---\n",
 		"agents/p.md":       "---\nname: p\npermissionMode: default\n---\n",
+		// Not YAML, and a line that is not an inert key.
+		"skills/m/SKILL.md": "---\nname: m: x\nhooks: evil: y\n---\n",
+		"skills/n/SKILL.md": "---\nname: n: x\n  hooks: y\n---\n",
+		"skills/o/SKILL.md": "---\nname: o: x\ndescription: {a: b: c}\n---\n",
+		// "..." ends YAML, not the tool's frontmatter: hooks after it count.
+		"skills/dots/SKILL.md": "---\nname: d\n...\nhooks: evil\n---\n",
+		// A lone CR or Unicode line break hides a second line in a value.
+		"skills/cr/SKILL.md":  "---\nname: c: x\rhooks: evil\n---\n",
+		"skills/nel/SKILL.md": "---\nname: n: x\u0085hooks: evil\n---\n",
+		"skills/ls/SKILL.md":  "---\nname: l\u2028hooks: evil\n---\n",
+		"skills/ps/SKILL.md":  "---\ndescription: p: q\u2029allowed-tools: Bash\n---\n",
+		"skills/nul/SKILL.md": "---\nname: z\x00\n---\n",
 	}
 	for n, c := range runs {
 		if !proseRunsCommands(n, []byte(c)) {

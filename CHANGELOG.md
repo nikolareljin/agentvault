@@ -37,7 +37,8 @@
   `author`, `when_to_use`, `argument-hint`, `color`, `model`, `globs`,
   `alwaysApply`) with plain values is now treated as prose. Any other key
   (`hooks`, `allowed-tools`, `tools`, `mcpServers`, `permissionMode`, ...),
-  a nested value, alias, tag or unclosed block is still held unless
+  a nested value, alias, tag, unclosed block, a `...` line, a control
+  character or a lone CR or Unicode line break is still held unless
   `--keep-bundle-commands`.
 
 - `export --workdir` now lists the repository-scope settings of the work
