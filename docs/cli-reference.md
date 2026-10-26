@@ -603,7 +603,7 @@ Flags:
   refused (`.git`, `.vscode`, `.claude/settings.json`, `pkg/.envrc`), as are
   `mise.toml`, `CMakeLists.txt`, `devcontainer.json`, `Directory.Build.*`,
   8.3 short names and `:`. Import takes `.aider.conf.yml`, referred-to files,
-  skill files that are not prose and files with frontmatter, shell lines or TOML that the bundle adds or
+  skill files that are not prose and files with frontmatter beyond `name`, `description` and the other inert keys, shell lines or TOML that the bundle adds or
   changes only with `--keep-bundle-commands`. With no `--file` or
   `--content`, `--filename` moves a stored instruction to a new name
 
@@ -677,7 +677,7 @@ Flags:
 - `--dry-run` (default: `false`): report what would be imported.
 - `--format <json|yaml>`: default from the file extension.
 - `--keep-bundle-commands` (default: `false`): take instructions that run
-  code (command files, frontmatter, shell lines); left out by default.
+  code (command files, frontmatter beyond the inert keys, shell lines); left out by default.
 
 An instruction equal to the vault's is unchanged. One that is not UTF-8
 text is listed as invalid and not stored.
@@ -966,7 +966,7 @@ Flags:
   - scripts: a file under `hooks/`, or any file that is not prose or settings by extension (`.md`, `.txt`, `.rst`, `.json`, `.toml` and the like; extensionless files included), that is new or differs is not written;
   - trusted projects from the Codex provider config that are new or changed;
   - the vault's router `langgraph_command`, shared and per-agent MCP servers in the vault (a server named in `--mcp-servers` is taken), and `.aider.conf.yml`, files instructions refer to that are not prose, and every file in a skill directory (`.claude/skills/NAME/`) that is not prose;
-  - Claude agents, commands and skills, rules and prompts with any frontmatter (it can add hooks, tools, MCP servers or a permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every TOML file but Codex `config.toml` (Gemini commands run `!{cmd}`), in the home, the project and vault instructions. `.clinerules/hooks/` is never written.
+  - Claude agents, commands and skills, rules and prompts with frontmatter holding any key but the inert ones (`name`, `description`, `version`, `license`, `author`, `when_to_use`, `argument-hint`, `color`, `model`, `globs`, `alwaysApply`, `disable-model-invocation`, `compatibility`, `metadata`; plain values only, `argument-hint` may be a list and `metadata` a map of them; other keys can add hooks, tools, MCP servers or a permission mode) or a shell line (`` !`cmd` ``, `!{cmd}`), and every TOML file but Codex `config.toml` (Gemini commands run `!{cmd}`), in the home, the project and vault instructions. `.clinerules/hooks/` is never written.
 
   A Codex `config.toml` is compared after parsing: if its `notify`, `model_providers`, `shell_environment_policy`, `projects`, `approval_policy`, `sandbox_mode` or `sandbox_workspace_write` (top level or under a profile), `hooks`, `otel`, any key ending in `url` or `endpoint` (`chatgpt_base_url`), or any command field, differ, only its MCP servers are applied (this machine's file is kept otherwise). If it does not parse, or its servers are not written as `[mcp_servers.<name>]` tables that can be edited one by one, it is not applied. The Codex provider config is applied as `config.toml` and `rules/<name>.md` files through the same checks; a rule name that is not a plain file name is left out, and local rules are kept.
 - `--mcp-servers <a,b|all|none>`: Which MCP servers to take from the bundle, without asking. `all` and `none` stand alone; combined with names they are an error. A name no bundle server has is warned about. MCP servers in `mcpServers`, `servers`, `mcp.servers` (VS Code) and `context_servers` (Zed) of JSON settings (Claude `~/.claude.json` and `settings.json`, Gemini, Copilot, Cursor, Windsurf) and in Codex `config.toml` are merged one by one:

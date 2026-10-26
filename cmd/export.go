@@ -3,8 +3,10 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/nikolareljin/agentvault/internal/agent"
@@ -439,6 +441,7 @@ func printExportSummary(cmd *cobra.Command, bundle PortableBundle, opts exportOp
 		fmt.Fprintf(out, "    Workflow templates: %d\n", len(p.Setup.Templates.Assets))
 		fmt.Fprintf(out, "    Provider files: %d, Skill assets: %d, Project files: %d\n",
 			len(p.Setup.ProviderFiles), len(p.Setup.SkillAssets), len(p.Setup.ProjectFiles))
+		printAssetSizes(out, p.Setup.ProviderFiles, p.Setup.SkillAssets)
 	}
 	fmt.Fprintf(out, "  API keys included: %s\n", yesNo(opts.IncludeKeys))
 	fmt.Fprintf(out, "  Secret file content included: %s\n", yesNo(opts.IncludeSecrets))
@@ -611,4 +614,28 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 	}
 	bundle.InstallGuide = generateInstallGuide(bundle)
 	return setupCollectResult{Bundle: bundle, EnvKeyFilled: envKeyFilled}, nil
+}
+
+// printAssetSizes lists each user-scope file the bundle carries with its size,
+// so the person exporting sees what leaves the machine, not only a count.
+func printAssetSizes(out io.Writer, groups ...[]SetupAsset) {
+	var rows []string
+	for _, g := range groups {
+		for _, a := range g {
+			size := "missing"
+			switch {
+			case a.Redacted:
+				size = "redacted"
+			case a.ContentPresent:
+				size = fmt.Sprintf("%d bytes", len(a.Content))
+			case !a.Missing:
+				size = "no content"
+			}
+			rows = append(rows, fmt.Sprintf("      %s/%s  %s", printable(a.LogicalRoot), printable(a.LogicalPath), size))
+		}
+	}
+	sort.Strings(rows)
+	for _, r := range rows {
+		fmt.Fprintln(out, r)
+	}
 }
