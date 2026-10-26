@@ -8,7 +8,9 @@
   work dirs (`agentvault workdir add`). Nothing tied to the others leaves
   the machine: Claude memory, project-scope plugins, recorded projects,
   Codex trusted projects and project tables, sessions and directory
-  instructions. The default, `all`, exports as before.
+  instructions, and any carried file or vault entry whose text names the
+  work dir's path. An export that would still name it stops with the
+  field's name. The default, `all`, exports as before.
 
 - `agentvault workdir add|list|remove` declares work directories by name,
   such as `personal` at `~/Projects` and `company-a` at `~/work/company-a`.

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,8 @@ type workDirScope struct {
 	known locations.Set
 	// left counts what was left out per unselected name, by kind.
 	left map[string]map[string]int
+	// needles are the spellings of each unselected work dir's path.
+	needles map[string][]string
 }
 
 // resolveWorkDirScope reads --workdirs: "all", or names declared with
@@ -103,10 +106,24 @@ func (s workDirScope) checkPaths(projectDir string, workDirs []string) error {
 // apply removes from bundle what belongs to an unselected work dir and
 // records one Declined entry per work dir with counts. The entry names no
 // path: a memory folder's name is the project's path, and the bundle is
-// what must not carry it.
-func (s workDirScope) apply(bundle *SetupBundle, home string) {
+// what must not carry it. It returns which agents stay (parallel to
+// bundle.Agents before the call), and an error when something still names
+// an unselected work dir after every filter: the export then stops rather
+// than ship it.
+func (s *workDirScope) apply(bundle *SetupBundle, home string) ([]bool, error) {
+	keepAgents := make([]bool, len(bundle.Agents))
+	for i := range keepAgents {
+		keepAgents[i] = true
+	}
 	if len(s.unselected) == 0 {
-		return
+		return keepAgents, nil
+	}
+	if s.left == nil {
+		s.left = map[string]map[string]int{}
+	}
+	s.needles = map[string][]string{}
+	for _, n := range s.unselected {
+		s.needles[n.Name] = workDirNeedles(n, home)
 	}
 	s.applyMemory(bundle, home)
 	s.applyPlugins(bundle)
@@ -115,6 +132,11 @@ func (s workDirScope) apply(bundle *SetupBundle, home string) {
 	s.applySessions(bundle)
 	s.applyInstructions(bundle)
 	s.applyDetected(bundle)
+	s.applyDeclined(bundle)
+	// Then anything else that names the work dir: a hook script path,
+	// additionalDirectories, an MCP argument, a note in CLAUDE.md.
+	s.applyMentions(bundle)
+	keepAgents = s.applyStructured(bundle)
 	for _, n := range s.unselected {
 		kinds := s.left[n.Name]
 		if len(kinds) == 0 {
@@ -131,6 +153,7 @@ func (s workDirScope) apply(bundle *SetupBundle, home string) {
 			Reason:   "not selected with --workdirs; left out " + strings.Join(parts, ", "),
 		})
 	}
+	return keepAgents, s.verify(bundle)
 }
 
 // --- memory --------------------------------------------------------------
@@ -491,4 +514,250 @@ func (s workDirScope) applyDetected(bundle *SetupBundle) {
 			bundle.DetectedAgents[i].Settings["trusted_projects"] = keep
 		}
 	}
+}
+
+// --- anything else that names the work dir ------------------------------
+
+// mentions returns the unselected work dir that text names.
+func (s workDirScope) mentions(text []byte) (string, bool) {
+	for _, n := range s.unselected {
+		for _, needle := range s.needles[n.Name] {
+			if containsPath(text, needle) {
+				return n.Name, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (s workDirScope) mentionsValue(v any) (string, bool) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "", false
+	}
+	return s.mentions(data)
+}
+
+// applyMentions withholds each carried file, and drops each instruction,
+// whose text names an unselected work dir: as an absolute path, with
+// forward slashes, or relative to home (~/, $HOME/, ${HOME}/). The formats
+// that hold paths are many (settings, hooks, MCP arguments, prose), so this
+// reads the text rather than each format.
+func (s workDirScope) applyMentions(bundle *SetupBundle) {
+	for _, group := range []*[]SetupAsset{&bundle.ProviderFiles, &bundle.SkillAssets, &bundle.ProjectFiles, &bundle.InstructionOverrides} {
+		for i := range *group {
+			a := &(*group)[i]
+			name, ok := s.mentions([]byte(a.LogicalPath))
+			if !ok && a.ContentPresent {
+				name, ok = s.mentions(a.Content)
+			}
+			if ok {
+				a.Content, a.ContentPresent, a.SHA256, a.SizeBytes, a.Redacted = nil, false, "", 0, true
+				s.leave(name, "files naming it (withheld)")
+			}
+		}
+	}
+	bundle.SharedConfig.Instructions = dropMentioning(s, bundle.SharedConfig.Instructions, "instructions")
+}
+
+// dropMentioning returns list without the entries that name an unselected
+// work dir, counting them as kind.
+func dropMentioning[T any](s workDirScope, list []T, kind string) []T {
+	if len(list) == 0 {
+		return list
+	}
+	out := list[:0:0]
+	for _, v := range list {
+		if name, ok := s.mentionsValue(v); ok {
+			s.leave(name, kind)
+			continue
+		}
+		out = append(out, v)
+	}
+	if len(out) == len(list) {
+		return list
+	}
+	return out
+}
+
+// dropKeysMentioning removes the entries of m whose key or value names an
+// unselected work dir.
+func dropKeysMentioning[V any](s workDirScope, m map[string]V, kind string) map[string]V {
+	if len(m) == 0 {
+		return m
+	}
+	out := make(map[string]V, len(m))
+	for k, v := range m {
+		name, ok := s.mentions([]byte(k))
+		if !ok {
+			name, ok = s.mentionsValue(v)
+		}
+		if ok {
+			s.leave(name, kind)
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+// applyStructured filters the vault parts of the bundle entry by entry.
+// It returns which agents stay.
+func (s workDirScope) applyStructured(bundle *SetupBundle) []bool {
+	keepAgents := make([]bool, len(bundle.Agents))
+	var agents []agent.Agent
+	for i, a := range bundle.Agents {
+		if name, ok := s.mentionsValue(a); ok {
+			s.leave(name, "agents")
+			continue
+		}
+		keepAgents[i] = true
+		agents = append(agents, a)
+	}
+	if len(agents) != len(bundle.Agents) {
+		bundle.Agents = agents
+	}
+	bundle.Sessions.Sessions = dropMentioning(s, bundle.Sessions.Sessions, "sessions")
+	sc := &bundle.SharedConfig
+	sc.MCPServers = dropMentioning(s, sc.MCPServers, "MCP servers")
+	sc.Rules = dropMentioning(s, sc.Rules, "rules")
+	sc.Roles = dropMentioning(s, sc.Roles, "roles")
+	sc.Pricing = dropMentioning(s, sc.Pricing, "pricing")
+	bundle.Templates.Assets = dropMentioning(s, bundle.Templates.Assets, "workflow templates")
+	bundle.ModelCapabilities = dropMentioning(s, bundle.ModelCapabilities, "model capabilities")
+	bundle.Gateways = dropMentioning(s, bundle.Gateways, "gateways")
+	bundle.DetectedAgents = dropMentioning(s, bundle.DetectedAgents, "detected agents")
+	if p := bundle.Plugins; p != nil {
+		p.Marketplaces = dropMentioning(s, p.Marketplaces, "plugin marketplaces")
+		p.Plugins = dropMentioning(s, p.Plugins, "plugins")
+	}
+	if c := bundle.ProviderConfigs.Claude; c != nil {
+		cc := *c
+		cc.MCPServers = dropKeysMentioning(s, cc.MCPServers, "Claude MCP servers")
+		cc.CustomSettings = dropKeysMentioning(s, cc.CustomSettings, "Claude settings")
+		cc.Keybindings = dropKeysMentioning(s, cc.Keybindings, "Claude settings")
+		cc.EnabledPlugins = dropKeysMentioning(s, cc.EnabledPlugins, "Claude settings")
+		cc.AutoApprove = dropMentioning(s, cc.AutoApprove, "Claude settings")
+		bundle.ProviderConfigs.Claude = &cc
+	}
+	if c := bundle.ProviderConfigs.Codex; c != nil {
+		cc := *c
+		cc.TrustedProjects = dropKeysMentioning(s, cc.TrustedProjects, "trusted projects")
+		cc.Rules = dropKeysMentioning(s, cc.Rules, "Codex rules")
+		cc.CustomSettings = dropKeysMentioning(s, cc.CustomSettings, "Codex settings")
+		if projects, ok := cc.CustomSettings["projects"].(map[string]any); ok {
+			cc.CustomSettings["projects"] = dropKeysMentioning(s, projects, "trusted projects")
+		}
+		bundle.ProviderConfigs.Codex = &cc
+	}
+	if bundle.StatusSnapshot != nil {
+		if name, ok := s.mentionsValue(bundle.StatusSnapshot); ok {
+			s.leave(name, "status snapshot")
+			bundle.StatusSnapshot = nil
+		}
+	}
+	return keepAgents
+}
+
+// applyDeclined drops declines that name an unselected work dir: a memory
+// file the collector refused is listed by its folder, which is the
+// project's path.
+func (s workDirScope) applyDeclined(bundle *SetupBundle) {
+	var keep []DeclinedAsset
+	for _, d := range bundle.Declined {
+		if m := memoryAssetPath.FindStringSubmatch(strings.TrimPrefix(filepath.ToSlash(d.Path), ".claude/")); m != nil {
+			if name := s.memoryOwner(m[1]); name != "" {
+				s.leave(name, "declined entries")
+				continue
+			}
+		}
+		if name, ok := s.mentionsValue(d); ok {
+			s.leave(name, "declined entries")
+			continue
+		}
+		if name, ok := s.excluded(d.Path); ok && filepath.IsAbs(d.Path) {
+			s.leave(name, "declined entries")
+			continue
+		}
+		keep = append(keep, d)
+	}
+	if len(keep) != len(bundle.Declined) {
+		bundle.Declined = keep
+	}
+}
+
+// verify fails when any part of the bundle still names an unselected work
+// dir. Each filter above handles a known field; this catches the field
+// added later that none of them knows.
+func (s workDirScope) verify(bundle *SetupBundle) error {
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	var hits []string
+	for field, raw := range fields {
+		if name, ok := s.mentions(raw); ok {
+			hits = append(hits, fmt.Sprintf("%s (work dir %s)", field, name))
+		}
+	}
+	if len(hits) == 0 {
+		return nil
+	}
+	sort.Strings(hits)
+	return fmt.Errorf("--workdirs: the bundle still names an unselected work dir in %s; export it with --workdirs all, or remove the reference", strings.Join(hits, ", "))
+}
+
+// workDirNeedles are the spellings of a work dir's path a file may hold.
+func workDirNeedles(n locations.Named, home string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, root := range n.Roots() {
+		add(root)
+		add(filepath.ToSlash(root))
+		add(strings.ReplaceAll(root, `\`, `\\`)) // a Windows path inside JSON
+		if home != "" {
+			if rel, err := filepath.Rel(home, root); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+				rel = filepath.ToSlash(rel)
+				add("~/" + rel)
+				add("$HOME/" + rel)
+				add("${HOME}/" + rel)
+			}
+		}
+	}
+	return out
+}
+
+// containsPath reports whether text holds needle as a whole path: what
+// follows it ends the path or starts a component, so ~/work/acme does not
+// match ~/work/acme-old.
+func containsPath(text []byte, needle string) bool {
+	hay, nd := text, []byte(needle)
+	if caseInsensitiveOS() {
+		hay, nd = bytes.ToLower(text), bytes.ToLower(nd)
+	}
+	for off := 0; ; {
+		i := bytes.Index(hay[off:], nd)
+		if i < 0 {
+			return false
+		}
+		end := off + i + len(nd)
+		if end == len(hay) || !pathNameByte(hay[end]) {
+			return true
+		}
+		off += i + 1
+	}
+}
+
+func pathNameByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.' || c >= 0x80
 }

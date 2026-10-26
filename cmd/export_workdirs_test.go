@@ -308,7 +308,9 @@ func TestApplyDetectedDropsTrustedProjects(t *testing.T) {
 		{Name: "codex", Settings: map[string]any{"trusted_projects": []string{filepath.Join(root, "me"), filepath.Join(acme, "r")}}},
 		{Name: "codex2", Settings: map[string]any{"trusted_projects": []string{filepath.Join(acme, "r")}}},
 	}}
-	s.apply(&b, root)
+	if _, err := s.apply(&b, root); err != nil {
+		t.Fatal(err)
+	}
 	if got := b.DetectedAgents[0].Settings["trusted_projects"].([]string); len(got) != 1 || got[0] != filepath.Join(root, "me") {
 		t.Errorf("trusted = %v", got)
 	}
@@ -317,5 +319,100 @@ func TestApplyDetectedDropsTrustedProjects(t *testing.T) {
 	}
 	if s.left["company"]["trusted projects"] != 2 {
 		t.Errorf("left = %v", s.left)
+	}
+}
+
+// A carried file or instruction that still names the work dir is withheld;
+// one naming a different folder with a longer name is not.
+func TestApplyMentionsWithholdsFilesNamingWorkDir(t *testing.T) {
+	home := t.TempDir()
+	acme := filepath.Join(home, "work", "acme")
+	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}, left: map[string]map[string]int{}}
+	asset := func(path, body string) SetupAsset {
+		return SetupAsset{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: path, ContentPresent: true, Content: []byte(body)}
+	}
+	b := SetupBundle{
+		ProviderFiles: []SetupAsset{
+			asset("settings.json", `{"permissions":{"additionalDirectories":[`+jsonString(acme)+`]}}`),
+			asset("hooks/x.sh", "cd ~/work/acme/team && make\n"),
+			asset("CLAUDE.md", "Old notes live in ~/work/acme-old/x and ~/work/acmes.\n"),
+		},
+		SharedConfig: agent.SharedConfig{Instructions: []agent.InstructionFile{
+			{Name: "a", Content: "run $HOME/work/acme/bin/t"},
+			{Name: "b", Content: "nothing here"},
+		}},
+	}
+	if _, err := s.apply(&b, home); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []bool{false, false, true} {
+		if got := b.ProviderFiles[i].ContentPresent; got != want {
+			t.Errorf("%s carried = %v, want %v", b.ProviderFiles[i].LogicalPath, got, want)
+		}
+	}
+	if len(b.SharedConfig.Instructions) != 1 || b.SharedConfig.Instructions[0].Name != "b" {
+		t.Errorf("instructions = %+v", b.SharedConfig.Instructions)
+	}
+	if data, _ := json.Marshal(b); bytes.Contains(data, []byte("work/acme/")) || bytes.Contains(data, []byte(jsonString(acme))) {
+		t.Errorf("bundle still names the work dir: %s", data)
+	}
+}
+
+func companyScope(t *testing.T) (*workDirScope, string, string) {
+	t.Helper()
+	home := t.TempDir()
+	acme := filepath.Join(home, "work", "acme")
+	return &workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}, left: map[string]map[string]int{}}, home, acme
+}
+
+func TestApplyFiltersVaultPartsAndDeclines(t *testing.T) {
+	s, home, acme := companyScope(t)
+	repo := filepath.Join(acme, "billing")
+	b := SetupBundle{
+		Agents: []agent.Agent{{Name: "me"}, {Name: "acme-bot", SystemPrompt: "Work in " + repo}, {Name: "you"}},
+		ProviderConfigs: agent.ProviderConfig{
+			Claude: &agent.ClaudeConfig{
+				MCPServers:     map[string]any{"local": map[string]any{"command": "x"}, "acme": map[string]any{"args": []string{repo}}},
+				CustomSettings: map[string]any{"permissions": map[string]any{"additionalDirectories": []string{repo}}, "theme": "dark"},
+			},
+			Codex: &agent.CodexConfig{CustomSettings: map[string]any{"projects": map[string]any{repo: map[string]any{"trust_level": "trusted"}}}},
+		},
+		Plugins: &PluginInventory{Marketplaces: []PluginMarketplace{{Name: "own", Source: repo + "/mp", Kind: "directory"}, {Name: "pub", Source: "o/r", Kind: "github"}}},
+		Declined: []DeclinedAsset{
+			{Path: "projects/" + claudeProjectSlug(repo) + "/memory/secret.md", Category: DeclinedByPolicy, Reason: "sensitive"},
+			{Path: "settings.local.json", Category: DeclinedByPolicy, Reason: "local"},
+		},
+	}
+	keep, err := s.apply(&b, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Agents) != 2 || keep[1] || !keep[0] || !keep[2] {
+		t.Errorf("agents = %v keep = %v", b.Agents, keep)
+	}
+	if got := keepParallel([]bool{true, false, true}, keep); len(got) != 2 || !got[0] || !got[1] {
+		t.Errorf("keepParallel = %v", got)
+	}
+	if _, ok := b.ProviderConfigs.Claude.MCPServers["acme"]; ok || len(b.ProviderConfigs.Claude.MCPServers) != 1 {
+		t.Errorf("mcp = %v", b.ProviderConfigs.Claude.MCPServers)
+	}
+	if _, ok := b.ProviderConfigs.Claude.CustomSettings["permissions"]; ok || b.ProviderConfigs.Claude.CustomSettings["theme"] != "dark" {
+		t.Errorf("custom = %v", b.ProviderConfigs.Claude.CustomSettings)
+	}
+	if len(b.Plugins.Marketplaces) != 1 || b.Plugins.Marketplaces[0].Name != "pub" {
+		t.Errorf("marketplaces = %v", b.Plugins.Marketplaces)
+	}
+	if data, _ := json.Marshal(b); bytes.Contains(data, []byte(claudeProjectSlug(repo))) || bytes.Contains(data, []byte(filepath.ToSlash(acme)+"/")) {
+		t.Errorf("bundle names the work dir: %s", data)
+	}
+}
+
+// A field no filter knows still cannot carry the work dir: the export stops.
+func TestApplyVerifyStopsOnUnknownField(t *testing.T) {
+	s, home, acme := companyScope(t)
+	b := SetupBundle{SharedConfig: agent.SharedConfig{SystemPrompt: "Work in " + filepath.Join(acme, "x") + " only."}}
+	_, err := s.apply(&b, home)
+	if err == nil || !strings.Contains(err.Error(), "shared_config (work dir company)") {
+		t.Fatalf("err = %v", err)
 	}
 }

@@ -626,7 +626,11 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 			bundle.StatusSnapshot = &report
 		}
 	}
-	scope.apply(&bundle, exportSourceHome())
+	keepAgents, err := scope.apply(&bundle, exportSourceHome())
+	if err != nil {
+		return setupCollectResult{}, err
+	}
+	envKeyFilled = keepParallel(envKeyFilled, keepAgents)
 	bundle.InstallGuide = generateInstallGuide(bundle)
 	return setupCollectResult{Bundle: bundle, EnvKeyFilled: envKeyFilled}, nil
 }
@@ -653,4 +657,15 @@ func printAssetSizes(out io.Writer, groups ...[]SetupAsset) {
 	for _, r := range rows {
 		fmt.Fprintln(out, r)
 	}
+}
+
+// keepParallel returns the entries of flags whose keep is true.
+func keepParallel(flags, keep []bool) []bool {
+	var out []bool
+	for i, f := range flags {
+		if i < len(keep) && keep[i] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
