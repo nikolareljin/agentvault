@@ -126,49 +126,36 @@ jobs:
           path: ${{ runner.temp }}/agentvault.rb
           if-no-files-found: error
 
-  # The package job runs on arm64, so it only executes the arm64 binary.
+  # The package job runs on arm64, so it only takes the formula's arm branch.
+  # This installs the same formula on Intel: its amd64 URL and SHA-256.
   intel:
+    needs: package
     runs-on: macos-15-intel
     timeout-minutes: 15
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
-      - name: Validate release tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.+-]+)?$ ]]
+      - name: Download formula
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2 @ 2026-10-16
+        with:
+          name: homebrew-formula-agentvault
+          path: ${{ runner.temp }}/formula
 
-      - name: Run the darwin-amd64 release binary
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Install and run the formula on Intel
         shell: bash
         run: |
           set -euo pipefail
           if [ "$(uname -m)" != x86_64 ]; then
-            echo "runner is $(uname -m), not x86_64: the amd64 binary would not be tested natively" >&2
+            echo "runner is $(uname -m), not x86_64: the formula's Intel branch would not be tested" >&2
             exit 1
           fi
-          asset=agentvault-darwin-amd64
-          for attempt in {1..20}; do
-            if gh release download "$RELEASE_TAG" -R "${{ github.repository }}" -p "$asset" -D "$RUNNER_TEMP"; then
-              break
-            fi
-            if [ "$attempt" = 20 ]; then
-              echo "could not download $asset from release $RELEASE_TAG" >&2
-              exit 1
-            fi
-            sleep 15
-          done
-          want="$(gh api "repos/${{ github.repository }}/releases/tags/${RELEASE_TAG}" \
-            --jq ".assets[] | select(.name == \"$asset\") | .digest")"
-          got="sha256:$(shasum -a 256 "$RUNNER_TEMP/$asset" | cut -d' ' -f1)"
-          if [ "$got" != "$want" ]; then
-            echo "digest mismatch for $asset: got $got, release says $want" >&2
-            exit 1
-          fi
-          chmod +x "$RUNNER_TEMP/$asset"
-          "$RUNNER_TEMP/$asset" version | grep -F "$RELEASE_TAG"
+          brew tap-new local/tap
+          tap_path="$(brew --repository)/Library/Taps/local/homebrew-tap/Formula"
+          cp "$RUNNER_TEMP/formula/agentvault.rb" "$tap_path/agentvault.rb"
+          brew install --build-from-source local/tap/agentvault
+          brew test local/tap/agentvault
+          file "$(brew --prefix)/bin/agentvault" | grep -F x86_64
+          agentvault version | grep -F "$RELEASE_TAG"
 
   # Commits the formula to the tap with its deploy key; the tap's ruleset lets
   # that key, and only it, push to main.

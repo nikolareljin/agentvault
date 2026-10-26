@@ -4,10 +4,10 @@
 
 ### Added
 
-- Each release now runs the `darwin-amd64` binary on an Intel macOS runner,
-  after checking its SHA-256 against the release. Until now only the arm64
-  binary ran (the Homebrew job runs on arm64), so a broken Intel build would
-  have shipped. The tap is published only when both pass. A manual run of
+- Each release now installs the Homebrew formula on an Intel macOS runner
+  and runs `brew test` and `agentvault version` there. Until now only the
+  arm64 side ran (the Homebrew job runs on arm64), so a broken Intel binary,
+  or a wrong amd64 URL or SHA-256 in the formula, would have shipped. The tap is published only when both pass. A manual run of
   the Homebrew workflow can skip publishing with `publish: false`.
 
 ### Changed
