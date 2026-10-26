@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Each release now installs the Homebrew formula on an Intel macOS runner
+  and runs `brew test` and `agentvault version` there. Until now only the
+  arm64 side ran (the Homebrew job runs on arm64), so a broken Intel binary,
+  or a wrong amd64 URL or SHA-256 in the formula, would have shipped. The tap is published only when both pass. A manual run of
+  the Homebrew workflow can skip publishing with `publish: false`.
+
 ### Changed
 
 - The Ollama endpoint is read from `OLLAMA_BASE_URL`. `OLLAMA_HOST` is still
