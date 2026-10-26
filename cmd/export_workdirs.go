@@ -53,6 +53,9 @@ func resolveWorkDirScope(known locations.Set, spec string) (workDirScope, error)
 		}
 		want[name] = true
 	}
+	if len(want) == 0 {
+		return s, fmt.Errorf("--workdirs %q names no work dir; use all, or names (declared: %s)", spec, declaredNames(known))
+	}
 	for _, n := range known.Named {
 		if want[n.Name] {
 			s.selected = append(s.selected, n)
@@ -73,6 +76,8 @@ func declaredNames(known locations.Set) string {
 
 // excluded returns the unselected work dir that holds p.
 func (s workDirScope) excluded(p string) (string, bool) {
+	// Windows extended-length form, as Codex writes project keys.
+	p = strings.TrimPrefix(p, `\\?\`)
 	for _, n := range s.unselected {
 		if n.Holds(p) {
 			return n.Name, true
@@ -208,8 +213,20 @@ func (s workDirScope) memoryOwner(folder string) string {
 	for _, n := range s.unselected {
 		for _, root := range n.Roots() {
 			slug := claudeProjectSlug(root)
-			if slugEqual(folder, slug) || slugHasPrefix(folder, slug+"-") {
+			if !slugEqual(folder, slug) && !slugHasPrefix(folder, slug+"-") {
+				continue
+			}
+			// ~/work/acme-tools shares the prefix of ~/work/acme. A folder
+			// whose directory exists, and every such directory is outside
+			// the unselected work dirs, is someone else's: keep it.
+			found := slugMatches(filepath.Dir(root), folder, nil)
+			if len(found) == 0 {
 				return n.Name
+			}
+			for _, f := range found {
+				if name, ok := s.excluded(f); ok {
+					return name
+				}
 			}
 		}
 	}
@@ -217,35 +234,39 @@ func (s workDirScope) memoryOwner(folder string) string {
 }
 
 // slugUnder reports whether root or a directory below it has the slug
-// target. It descends only into entries whose slug still leads to target,
-// and not through symlinks.
+// target.
 func slugUnder(root, target string) bool {
+	return len(slugMatches(root, target, nil)) > 0
+}
+
+// slugMatches appends to out every directory, root or below it, whose slug
+// is target. It descends only into entries whose slug still leads to
+// target, and not through symlinks.
+func slugMatches(root, target string, out []string) []string {
 	slug := claudeProjectSlug(root)
 	if slugEqual(slug, target) {
-		return true
+		return append(out, root)
 	}
 	if !slugHasPrefix(target, slug+"-") {
-		return false
+		return out
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return false
+		return out
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if slugUnder(filepath.Join(root, e.Name()), target) {
-			return true
+		if e.IsDir() {
+			out = slugMatches(filepath.Join(root, e.Name()), target, out)
 		}
 	}
-	return false
+	return out
 }
 
 // caseInsensitiveOS is whether paths compare without case; tests set it.
-var caseInsensitiveOS = func() bool { return runtime.GOOS == "windows" }
+var caseInsensitiveOS = func() bool { return runtime.GOOS == "windows" || runtime.GOOS == "darwin" }
 
-// Paths on Windows compare without case, so their slugs do too.
+// Paths on Windows and macOS (by default) compare without case, so their
+// slugs do too.
 func slugEqual(a, b string) bool {
 	if caseInsensitiveOS() {
 		return strings.EqualFold(a, b)
@@ -373,6 +394,10 @@ func (s workDirScope) applyCodex(bundle *SetupBundle) {
 // codexProjectHeader matches a table header for one project, with the key
 // as a basic or literal TOML string: [projects."/p"] or
 // [projects.'/p'.sub].
+// tomlHeaderLine is a [table] or [[array]] header line, not a row of a
+// multi-line array such as  ["x"],
+var tomlHeaderLine = regexp.MustCompile(`^\s*\[\[?[^\[\],]*\]\]?\s*(#.*)?$`)
+
 var codexProjectHeader = regexp.MustCompile(`^\s*\[\s*projects\s*\.\s*("(?:[^"\\]|\\.)*"|'[^']*')\s*[.\]]`)
 
 // withoutCodexProjects removes the [projects."PATH"] tables whose PATH lies
@@ -382,12 +407,14 @@ var codexProjectHeader = regexp.MustCompile(`^\s*\[\s*projects\s*\.\s*("(?:[^"\\
 // belongs to, and the caller does not ship the file.
 func (s workDirScope) withoutCodexProjects(content []byte) (out []byte, dropped []string, blocked string) {
 	var buf bytes.Buffer
-	skipping, inMulti := false, false
+	skipping, inMulti, depth := false, false, 0
 	// SplitAfter keeps each line's own ending, so a CRLF file stays CRLF.
 	for _, raw := range bytes.SplitAfter(content, []byte("\n")) {
 		line := strings.TrimRight(string(raw), "\r\n")
 		// A line inside a multi-line string is text, not a header.
-		if !inMulti && strings.HasPrefix(strings.TrimSpace(line), "[") {
+		// A row of a multi-line array ([ "x" ]) is a value, not a header.
+		header := !inMulti && depth == 0 && tomlHeaderLine.MatchString(line)
+		if header {
 			skipping = false
 			if m := codexProjectHeader.FindStringSubmatch(line); m != nil {
 				var key struct{ K string }
@@ -397,6 +424,12 @@ func (s workDirScope) withoutCodexProjects(content []byte) (out []byte, dropped 
 						dropped = append(dropped, name)
 					}
 				}
+			}
+		}
+		if !header && !inMulti {
+			depth += bracketDepth(line)
+			if depth < 0 {
+				depth = 0
 			}
 		}
 		if (strings.Count(line, `"""`)+strings.Count(line, `'''`))%2 == 1 {
@@ -414,6 +447,13 @@ func (s workDirScope) withoutCodexProjects(content []byte) (out []byte, dropped 
 		Projects map[string]any `toml:"projects"`
 	}
 	if _, err := toml.Decode(string(out), &doc); err != nil {
+		// The edit broke a file that decoded: do not ship what it made.
+		if len(dropped) > 0 {
+			var orig map[string]any
+			if _, oerr := toml.Decode(string(content), &orig); oerr == nil {
+				return nil, nil, dropped[0]
+			}
+		}
 		for _, n := range s.unselected {
 			for _, root := range n.Roots() {
 				if bytes.Contains(out, []byte(filepath.ToSlash(root))) || bytes.Contains(out, []byte(root)) {
@@ -627,8 +667,24 @@ func (s workDirScope) applyStructured(bundle *SetupBundle) []bool {
 	bundle.Gateways = dropMentioning(s, bundle.Gateways, "gateways")
 	bundle.DetectedAgents = dropMentioning(s, bundle.DetectedAgents, "detected agents")
 	if p := bundle.Plugins; p != nil {
+		before := map[string]bool{}
+		for _, m := range p.Marketplaces {
+			before[m.Name] = true
+		}
 		p.Marketplaces = dropMentioning(s, p.Marketplaces, "plugin marketplaces")
+		for _, m := range p.Marketplaces {
+			delete(before, m.Name)
+		}
 		p.Plugins = dropMentioning(s, p.Plugins, "plugins")
+		// A plugin from a marketplace left out cannot be installed there.
+		var keep []InstalledPlugin
+		for _, pl := range p.Plugins {
+			if i := strings.LastIndex(pl.ID, "@"); i >= 0 && before[pl.ID[i+1:]] {
+				continue
+			}
+			keep = append(keep, pl)
+		}
+		p.Plugins = keep
 	}
 	if c := bundle.ProviderConfigs.Claude; c != nil {
 		cc := *c
@@ -729,6 +785,10 @@ func workDirNeedles(n locations.Named, home string) []string {
 				add("~/" + rel)
 				add("$HOME/" + rel)
 				add("${HOME}/" + rel)
+				back := strings.ReplaceAll(rel, "/", `\`)
+				add(`~\` + back)
+				add(`%USERPROFILE%\` + back)
+				add(`$env:USERPROFILE\` + back)
 			}
 		}
 	}
@@ -745,7 +805,9 @@ func workDirNeedles(n locations.Named, home string) []string {
 
 // containsPath reports whether text holds needle as a whole path: what
 // follows it ends the path or starts a component, so ~/work/acme does not
-// match ~/work/acme-old.
+// match ~/work/acme-old, while "in ~/work/acme." does. '.', '-' and '_'
+// continue a name only when a name character follows them; any byte >= 0x80
+// ends it, which can only make more text count as naming the work dir.
 func containsPath(text []byte, needle string) bool {
 	hay, nd := text, []byte(needle)
 	if caseInsensitiveOS() {
@@ -756,16 +818,27 @@ func containsPath(text []byte, needle string) bool {
 		if i < 0 {
 			return false
 		}
-		end := off + i + len(nd)
-		if end == len(hay) || !pathNameByte(hay[end]) {
+		if !continuesName(hay[off+i+len(nd):]) {
 			return true
 		}
 		off += i + 1
 	}
 }
 
-func pathNameByte(c byte) bool {
-	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.' || c >= 0x80
+// continuesName reports whether rest, the text after a match, carries on
+// the last path component.
+func continuesName(rest []byte) bool {
+	for _, c := range rest {
+		switch {
+		case c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9':
+			return true
+		case c == '.' || c == '-' || c == '_':
+			continue
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // pruneSessionRefs keeps the session config consistent after agents or
@@ -836,4 +909,31 @@ func pruneAgentBlanks(bundle *SetupBundle) {
 	if len(keep) != len(bundle.VaultBlanks) {
 		bundle.VaultBlanks = keep
 	}
+}
+
+// bracketDepth is the change in [ ] nesting over one TOML line, not
+// counting brackets inside strings or after a comment.
+func bracketDepth(line string) int {
+	d := 0
+	var quote byte
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quote != 0:
+			if c == '\\' && quote == '"' {
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '#':
+			return d
+		case c == '[':
+			d++
+		case c == ']':
+			d--
+		}
+	}
+	return d
 }

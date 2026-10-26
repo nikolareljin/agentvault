@@ -491,3 +491,94 @@ func TestResolveWorkDirScopeSkipsEmptyNames(t *testing.T) {
 		t.Fatalf("scope = %+v, %v", s, err)
 	}
 }
+
+// Review findings, one test each.
+
+func TestContainsPathSentenceEnd(t *testing.T) {
+	for text, want := range map[string]bool{
+		"work lives in ~/work/acme.":  true,
+		"cd ~/work/acme. then build":  true,
+		"see ~/work/acme-":            true,
+		"~/work/acme\u2019s repo":     true,
+		"~/work/acme.old is archived": false,
+		"~/work/acme-tools/x":         false,
+		"~/work/acme_2":               false,
+		"(~/work/acme)":               true,
+	} {
+		if got := containsPath([]byte(text), "~/work/acme"); got != want {
+			t.Errorf("containsPath(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
+func TestMemoryOwnerKeepsUndeclaredSibling(t *testing.T) {
+	root := t.TempDir()
+	acme, tools := filepath.Join(root, "work", "acme"), filepath.Join(root, "work", "acme-tools")
+	for _, d := range []string{filepath.Join(acme, "r"), tools} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}}
+	if got := s.memoryOwner(claudeProjectSlug(tools)); got != "" {
+		t.Errorf("undeclared sibling owned by %q", got)
+	}
+	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(acme, "r"))); got != "company" {
+		t.Errorf("company repo owner = %q", got)
+	}
+	if got := s.memoryOwner(claudeProjectSlug(filepath.Join(acme, "gone"))); got != "company" {
+		t.Errorf("deleted company repo owner = %q", got)
+	}
+}
+
+func TestResolveWorkDirScopeRefusesEmptySelection(t *testing.T) {
+	known := locations.Set{Named: []locations.Named{{Name: "personal", Path: "/p"}}}
+	for _, spec := range []string{",", " , ,"} {
+		if _, err := resolveWorkDirScope(known, spec); err == nil {
+			t.Errorf("--workdirs %q accepted", spec)
+		}
+	}
+}
+
+func TestWithoutCodexProjectsArrayRows(t *testing.T) {
+	acme := filepath.Join(t.TempDir(), "acme")
+	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}, left: map[string]map[string]int{}}
+	body := "model = \"x\"\n[projects." + tomlString(acme) + "]\nallow = [\n  [\"a\"],\n  [\"b\"]\n]\n[profiles.p]\nmodel = \"y\"\n"
+	out, dropped, blocked := s.withoutCodexProjects([]byte(body))
+	if blocked != "" || len(dropped) != 1 || string(out) != "model = \"x\"\n[profiles.p]\nmodel = \"y\"\n" {
+		t.Errorf("out=%q dropped=%v blocked=%q", out, dropped, blocked)
+	}
+}
+
+func TestApplyDropsPluginsOfDroppedMarketplace(t *testing.T) {
+	s, home, acme := companyScope(t)
+	b := SetupBundle{Plugins: &PluginInventory{
+		Marketplaces: []PluginMarketplace{{Name: "own", Source: filepath.Join(acme, "mp"), Kind: "directory"}, {Name: "pub", Source: "o/r"}},
+		Plugins:      []InstalledPlugin{{ID: "x@own", Scope: "user"}, {ID: "y@pub", Scope: "user"}},
+	}}
+	if _, err := s.apply(&b, home); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Plugins.Plugins) != 1 || b.Plugins.Plugins[0].ID != "y@pub" {
+		t.Errorf("plugins = %+v", b.Plugins.Plugins)
+	}
+}
+
+func TestExcludedExtendedLengthAndWindowsNeedles(t *testing.T) {
+	home := t.TempDir()
+	acme := filepath.Join(home, "work", "acme")
+	s := workDirScope{unselected: []locations.Named{{Name: "company", Path: acme}}}
+	if _, ok := s.excluded(`\\?\` + filepath.Join(acme, "r")); !ok {
+		t.Error(`\\?\ form not matched`)
+	}
+	n := workDirNeedles(s.unselected[0], home)
+	for _, want := range []string{`~\work\acme`, `%USERPROFILE%\work\acme`} {
+		found := false
+		for _, x := range n {
+			found = found || x == want
+		}
+		if !found {
+			t.Errorf("needles %v lack %s", n, want)
+		}
+	}
+}

@@ -92,7 +92,7 @@ func (s Set) Undeclare(name string) (Set, bool) {
 
 // overlaps reports whether a and b are the same directory or one holds the
 // other, comparing both the paths as given and their symlink-resolved forms
-// (on macOS /var is /private/var), without case on Windows.
+// (on macOS /var is /private/var), without case on Windows and macOS.
 func overlaps(a, b string) bool {
 	as, bs := forms(a), forms(b)
 	for _, x := range as {
@@ -113,9 +113,9 @@ func forms(p string) []string {
 	return out
 }
 
-// caseInsensitivePaths is whether this OS compares paths without case;
-// tests set it.
-var caseInsensitivePaths = runtime.GOOS == "windows"
+// caseInsensitivePaths is whether this OS compares paths without case
+// (Windows, and macOS on its default volumes); tests set it.
+var caseInsensitivePaths = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 
 func foldCase(p string) string {
 	if caseInsensitivePaths {
@@ -125,7 +125,7 @@ func foldCase(p string) string {
 }
 
 // Holds reports whether p is the work dir or below it, compared as for
-// Declare: as given and symlink-resolved, without case on Windows.
+// Declare: as given and symlink-resolved, without case on Windows and macOS.
 func (n Named) Holds(p string) bool {
 	if strings.TrimSpace(p) == "" {
 		return false

@@ -471,7 +471,7 @@ them.
 `<name>` is lowercase letters, digits and `-`, at most 32, not starting with
 `-`; `all` is reserved for `export --workdirs all`. `<path>` must be an existing directory. A name that exists is refused,
 and so is a path that is the same as, inside or around a declared work dir
-(compared as given and with symlinks resolved, without case on Windows).
+(compared as given and with symlinks resolved, without case on Windows and macOS).
 
 ### `agentvault workdir list`
 Optional:
