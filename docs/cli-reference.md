@@ -368,7 +368,9 @@ Rows and budgets:
 - memory: the directory's `MEMORY.md` under `~/.claude/projects/`, 120 lines;
   bytes count the first 200 lines, which is what loads.
 - listings: the name and description of each skill, agent and command, for
-  user scope and for each plugin `settings.json` enables. No budget.
+  user scope and for each enabled plugin (`~/.claude/settings.json`, overridden
+  plugin by plugin by the directory's `.claude/settings.json` and
+  `.claude/settings.local.json`). No budget.
 - SessionStart hook output is listed as not measured: measuring it means
   running the hooks.
 

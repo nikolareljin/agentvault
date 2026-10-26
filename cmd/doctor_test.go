@@ -115,3 +115,28 @@ func TestPrintContextRowsEscapesControlCharacters(t *testing.T) {
 		t.Fatalf("control characters reached the terminal: %q", out.String())
 	}
 }
+
+func TestEnabledPluginDirsProjectOverrides(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"a@m":true,"b@m":false,"c@m":true}}`)
+	writeTestFile(t, filepath.Join(dir, ".claude", "settings.json"), `{"enabledPlugins":{"a@m":false,"b@m":true}}`)
+	writeTestFile(t, filepath.Join(dir, ".claude", "settings.local.json"), `{"enabledPlugins":{"c@m":false,"d@m":true}}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+		`{"plugins":{"a@m":[{"installPath":"/a"}],"b@m":[{"installPath":"/b"}],"c@m":[{"installPath":"/c"}],"d@m":[{"installPath":"/d"}]}}`)
+	var ids []string
+	for _, p := range enabledPluginDirs(home, dir) {
+		ids = append(ids, p.id)
+	}
+	if strings.Join(ids, ",") != "b@m,d@m" {
+		t.Fatalf("enabled = %v, want b@m,d@m", ids)
+	}
+	// A broken project file does not drop the user's plugins.
+	writeTestFile(t, filepath.Join(dir, ".claude", "settings.json"), `{`)
+	ids = nil
+	for _, p := range enabledPluginDirs(home, dir) {
+		ids = append(ids, p.id)
+	}
+	if strings.Join(ids, ",") != "a@m,d@m" {
+		t.Fatalf("with a broken project file: %v, want a@m,d@m", ids)
+	}
+}

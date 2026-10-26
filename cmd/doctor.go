@@ -131,7 +131,7 @@ func contextRows(home, dir string) []contextRow {
 		rows = append(rows, r)
 	}
 	rows = append(rows, listingRows("user", filepath.Join(home, ".claude"))...)
-	for _, p := range enabledPluginDirs(home) {
+	for _, p := range enabledPluginDirs(home, dir) {
 		rows = append(rows, listingRows("plugin "+p.id, p.dir)...)
 	}
 	rows = append(rows, contextRow{Scope: "hooks", Source: "SessionStart hook output", Note: "not measured: it runs the hooks"})
@@ -283,14 +283,26 @@ func frontmatterNameDescription(path string) (string, string) {
 
 type pluginDir struct{ id, dir string }
 
-// enabledPluginDirs is each plugin settings.json enables, with its install
-// directory from installed_plugins.json.
-func enabledPluginDirs(home string) []pluginDir {
-	var settings struct {
-		EnabledPlugins map[string]bool `json:"enabledPlugins"`
-	}
-	if readJSONIfPresent(filepath.Join(home, ".claude", "settings.json"), &settings) != nil {
-		return nil
+// enabledPluginDirs is each plugin enabled for a session in dir, with its
+// install directory from installed_plugins.json. As in Claude Code, the
+// project's .claude/settings.json and then settings.local.json override the
+// user's settings.json, plugin by plugin.
+func enabledPluginDirs(home, dir string) []pluginDir {
+	enabled := map[string]bool{}
+	for _, p := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(dir, ".claude", "settings.json"),
+		filepath.Join(dir, ".claude", "settings.local.json"),
+	} {
+		var settings struct {
+			EnabledPlugins map[string]bool `json:"enabledPlugins"`
+		}
+		if readJSONIfPresent(p, &settings) != nil {
+			continue
+		}
+		for id, on := range settings.EnabledPlugins {
+			enabled[id] = on
+		}
 	}
 	var installed struct {
 		Plugins map[string][]struct {
@@ -301,7 +313,7 @@ func enabledPluginDirs(home string) []pluginDir {
 		return nil
 	}
 	var out []pluginDir
-	for id, on := range settings.EnabledPlugins {
+	for id, on := range enabled {
 		entries := installed.Plugins[id]
 		if !on || len(entries) == 0 || entries[0].InstallPath == "" {
 			continue
