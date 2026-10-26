@@ -522,6 +522,12 @@ func decodePortableBundle(data []byte) (PortableBundle, bundleFormat, error) {
 		s := &bundle.Profiles[i].Setup
 		if s.Locations != nil {
 			s.Locations.Canonicalize()
+			// Saved mappings, confirmations and declared names are one
+			// machine's choices; export never writes them, and an edited
+			// bundle does not get to supply them.
+			s.Locations.WorkDirMaps = nil
+			s.Locations.ConfirmedHidden = nil
+			s.Locations.Named = nil
 		}
 		if len(s.SharedConfig.Instructions) > 0 {
 			s.SharedConfig.Instructions = agent.CanonicalizeSourceProjects(s.SharedConfig.Instructions, locations.CanonicalKey)
