@@ -104,3 +104,14 @@ func TestDoctorRequiresContextAndFailsOverBudget(t *testing.T) {
 		t.Errorf("within budget: err = %v", err)
 	}
 }
+
+func TestPrintContextRowsEscapesControlCharacters(t *testing.T) {
+	var out strings.Builder
+	printContextRows(&out, []contextRow{
+		{Scope: "plugin evil\x1b]0;x\x07@m", Source: "skills listing (1)"},
+		{Scope: "user", Source: "/tmp/a\x1b[2Jb/CLAUDE.md", Budget: 1, BudgetUnit: "bytes", Over: true},
+	})
+	if strings.ContainsAny(out.String(), "\x1b\x07") {
+		t.Fatalf("control characters reached the terminal: %q", out.String())
+	}
+}

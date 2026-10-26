@@ -88,7 +88,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 	rows := contextRows(home, dir)
 	if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
-		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc := json.NewEncoder(c1Writer(cmd.OutOrStdout()))
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(rows); err != nil {
 			return err
@@ -99,7 +99,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	var over []string
 	for _, r := range rows {
 		if r.Over {
-			over = append(over, r.Source)
+			over = append(over, printable(r.Source))
 		}
 	}
 	if len(over) > 0 {
@@ -328,11 +328,11 @@ func printContextRows(out io.Writer, rows []contextRow) {
 			source += fmt.Sprintf(" (%d lines)", r.Lines)
 		}
 		if r.Note != "" {
-			source += "  [" + r.Note + "]"
+			source += "  [" + printable(r.Note) + "]"
 		}
 		scope := r.Scope
 		if strings.HasPrefix(scope, "plugin ") {
-			source = strings.TrimPrefix(scope, "plugin ") + ": " + source
+			source = printable(strings.TrimPrefix(scope, "plugin ")) + ": " + source
 			scope = "plugin"
 		}
 		fmt.Fprintf(out, "%-10s %8d %8d  %-12s %s\n", scope, r.Bytes, r.Tokens, budget, source)
