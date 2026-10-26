@@ -140,3 +140,18 @@ func TestEnabledPluginDirsProjectOverrides(t *testing.T) {
 		t.Fatalf("with a broken project file: %v, want a@m,d@m", ids)
 	}
 }
+
+func TestEnabledPluginDirsPicksThisProjectsInstall(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	other := filepath.Join(t.TempDir(), "other")
+	writeTestFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"p@m":true,"q@m":true}}`)
+	installed := `{"plugins":{` +
+		`"p@m":[{"scope":"project","projectPath":"` + filepath.ToSlash(other) + `","installPath":"/other"},` +
+		`{"scope":"project","projectPath":"` + filepath.ToSlash(dir) + `","installPath":"/here"}],` +
+		`"q@m":[{"scope":"local","projectPath":"` + filepath.ToSlash(other) + `","installPath":"/q-other"}]}}`
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), installed)
+	got := enabledPluginDirs(home, dir)
+	if len(got) != 1 || got[0].id != "p@m" || got[0].dir != "/here" {
+		t.Fatalf("got %+v, want only p@m at /here", got)
+	}
+}

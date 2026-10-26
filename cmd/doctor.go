@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -306,6 +307,8 @@ func enabledPluginDirs(home, dir string) []pluginDir {
 	}
 	var installed struct {
 		Plugins map[string][]struct {
+			Scope       string `json:"scope"`
+			ProjectPath string `json:"projectPath"`
 			InstallPath string `json:"installPath"`
 		} `json:"plugins"`
 	}
@@ -314,11 +317,19 @@ func enabledPluginDirs(home, dir string) []pluginDir {
 	}
 	var out []pluginDir
 	for id, on := range enabled {
-		entries := installed.Plugins[id]
-		if !on || len(entries) == 0 || entries[0].InstallPath == "" {
+		if !on {
 			continue
 		}
-		out = append(out, pluginDir{id: id, dir: entries[0].InstallPath})
+		// One plugin can be installed per user and per project: take the
+		// user install or this directory's, never another project's.
+		for _, e := range installed.Plugins[id] {
+			forHere := e.Scope == "" || e.Scope == "user" ||
+				e.ProjectPath != "" && samePath(e.ProjectPath, dir)
+			if forHere && e.InstallPath != "" {
+				out = append(out, pluginDir{id: id, dir: e.InstallPath})
+				break
+			}
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
 	return out
@@ -351,4 +362,13 @@ func printContextRows(out io.Writer, rows []contextRow) {
 		total += r.Bytes
 	}
 	fmt.Fprintf(out, "%-10s %8d %8d\n", "total", total, estimateTokens(total))
+}
+
+// samePath compares two directory paths, without letter case on Windows.
+func samePath(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
