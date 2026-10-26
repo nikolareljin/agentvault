@@ -1,0 +1,157 @@
+package cmd
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func writeTestFile(t *testing.T, p, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestContextRows(t *testing.T) {
+	home := t.TempDir()
+	work := filepath.Join(home, "Projects")
+	repo := filepath.Join(work, "app")
+	writeTestFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), strings.Repeat("u", 100))
+	writeTestFile(t, filepath.Join(work, "CLAUDE.md"), strings.Repeat("w", directoryInstructionBudget+1))
+	writeTestFile(t, filepath.Join(repo, ".git", "HEAD"), "ref")
+	writeTestFile(t, filepath.Join(repo, "CLAUDE.md"), strings.Repeat("r", 10000))
+	writeTestFile(t, filepath.Join(home, ".claude", "projects", claudeProjectSlug(repo), "memory", "MEMORY.md"),
+		strings.Repeat("- line\n", 250))
+	writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", "SKILL.md"), "---\nname: review\ndescription: Review: a PR\n---\nbody")
+	plug := filepath.Join(home, "cache", "p")
+	writeTestFile(t, filepath.Join(plug, "agents", "a.md"), "---\nname: a\ndescription: an agent\n---\n")
+	writeTestFile(t, filepath.Join(home, "cache", "off", "agents", "b.md"), "---\nname: b\ndescription: off\n---\n")
+	writeTestFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"p@m":true,"off@m":false}}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+		`{"plugins":{"p@m":[{"installPath":"`+filepath.ToSlash(plug)+`"}],"off@m":[{"installPath":"`+filepath.ToSlash(filepath.Join(home, "cache", "off"))+`"}]}}`)
+
+	rows := contextRows(home, repo)
+	find := func(scope, suffix string) contextRow {
+		t.Helper()
+		for _, r := range rows {
+			if r.Scope == scope && strings.HasSuffix(r.Source, suffix) {
+				return r
+			}
+		}
+		t.Fatalf("no %s row ending %q in %+v", scope, suffix, rows)
+		return contextRow{}
+	}
+	if r := find("user", filepath.Join(".claude", "CLAUDE.md")); r.Bytes != 100 || r.Tokens != 25 || r.Over {
+		t.Errorf("user row = %+v", r)
+	}
+	if r := find("directory", filepath.Join("Projects", "CLAUDE.md")); !r.Over || r.Budget != directoryInstructionBudget {
+		t.Errorf("work dir row = %+v, want over budget", r)
+	}
+	if r := find("repository", filepath.Join("app", "CLAUDE.md")); r.Over || r.Budget != 0 {
+		t.Errorf("repository row = %+v, want no budget", r)
+	}
+	if r := find("memory", "MEMORY.md"); r.Lines != 250 || !r.Over || r.Bytes != 200*len("- line\n") {
+		t.Errorf("memory row = %+v, want 250 lines, over, 200 lines loaded", r)
+	}
+	if r := find("user", "skills listing (1)"); r.Bytes != len("review")+len("Review: a PR")+5 {
+		t.Errorf("skills row = %+v", r)
+	}
+	find("plugin p@m", "agents listing (1)")
+	for _, r := range rows {
+		if strings.Contains(r.Scope, "off@m") {
+			t.Errorf("disabled plugin listed: %+v", r)
+		}
+	}
+	find("hooks", "SessionStart hook output")
+}
+
+func TestClaudeProjectSlug(t *testing.T) {
+	if got := claudeProjectSlug("/home/me/Projects/my.app"); got != "-home-me-Projects-my-app" {
+		t.Fatalf("slug = %q", got)
+	}
+}
+
+func TestDoctorRequiresContextAndFailsOverBudget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeTestFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), strings.Repeat("x", userInstructionBudget+1))
+	dir := t.TempDir()
+	for _, tc := range []struct {
+		args    []string
+		wantErr string
+	}{
+		{[]string{"--dir", dir}, "nothing to check"},
+		{[]string{"--context", "--dir", dir}, "over budget"},
+	} {
+		doctorCmd.Flags().Set("context", "false")
+		if err := doctorCmd.ParseFlags(tc.args); err != nil {
+			t.Fatal(err)
+		}
+		err := runDoctor(doctorCmd, nil)
+		if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			t.Errorf("%v: err = %v, want %q", tc.args, err, tc.wantErr)
+		}
+	}
+	writeTestFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "small")
+	doctorCmd.Flags().Set("context", "true")
+	if err := runDoctor(doctorCmd, nil); err != nil {
+		t.Errorf("within budget: err = %v", err)
+	}
+}
+
+func TestPrintContextRowsEscapesControlCharacters(t *testing.T) {
+	var out strings.Builder
+	printContextRows(&out, []contextRow{
+		{Scope: "plugin evil\x1b]0;x\x07@m", Source: "skills listing (1)"},
+		{Scope: "user", Source: "/tmp/a\x1b[2Jb/CLAUDE.md", Budget: 1, BudgetUnit: "bytes", Over: true},
+	})
+	if strings.ContainsAny(out.String(), "\x1b\x07") {
+		t.Fatalf("control characters reached the terminal: %q", out.String())
+	}
+}
+
+func TestEnabledPluginDirsProjectOverrides(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"a@m":true,"b@m":false,"c@m":true}}`)
+	writeTestFile(t, filepath.Join(dir, ".claude", "settings.json"), `{"enabledPlugins":{"a@m":false,"b@m":true}}`)
+	writeTestFile(t, filepath.Join(dir, ".claude", "settings.local.json"), `{"enabledPlugins":{"c@m":false,"d@m":true}}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+		`{"plugins":{"a@m":[{"installPath":"/a"}],"b@m":[{"installPath":"/b"}],"c@m":[{"installPath":"/c"}],"d@m":[{"installPath":"/d"}]}}`)
+	var ids []string
+	for _, p := range enabledPluginDirs(home, dir) {
+		ids = append(ids, p.id)
+	}
+	if strings.Join(ids, ",") != "b@m,d@m" {
+		t.Fatalf("enabled = %v, want b@m,d@m", ids)
+	}
+	// A broken project file does not drop the user's plugins.
+	writeTestFile(t, filepath.Join(dir, ".claude", "settings.json"), `{`)
+	ids = nil
+	for _, p := range enabledPluginDirs(home, dir) {
+		ids = append(ids, p.id)
+	}
+	if strings.Join(ids, ",") != "a@m,d@m" {
+		t.Fatalf("with a broken project file: %v, want a@m,d@m", ids)
+	}
+}
+
+func TestEnabledPluginDirsPicksThisProjectsInstall(t *testing.T) {
+	home, dir := t.TempDir(), t.TempDir()
+	other := filepath.Join(t.TempDir(), "other")
+	writeTestFile(t, filepath.Join(home, ".claude", "settings.json"), `{"enabledPlugins":{"p@m":true,"q@m":true}}`)
+	installed := `{"plugins":{` +
+		`"p@m":[{"scope":"project","projectPath":"` + filepath.ToSlash(other) + `","installPath":"/other"},` +
+		`{"scope":"project","projectPath":"` + filepath.ToSlash(dir) + `","installPath":"/here"}],` +
+		`"q@m":[{"scope":"local","projectPath":"` + filepath.ToSlash(other) + `","installPath":"/q-other"}]}}`
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"), installed)
+	got := enabledPluginDirs(home, dir)
+	if len(got) != 1 || got[0].id != "p@m" || got[0].dir != "/here" {
+		t.Fatalf("got %+v, want only p@m at /here", got)
+	}
+}

@@ -32,6 +32,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `prompt`
 - `route`
 - `status`
+- `doctor`
 - `capability`
 - `gateway`
 - `routing-model`
@@ -347,6 +348,33 @@ Behavior:
 - `llm-router` mode calls an external OpenAI-compatible server OR an embedded GGUF engine (when `--llm-router-model-path` is set) for intelligent cost-aware routing; falls back to heuristic on error when `--allow-fallbacks` is set, otherwise returns an error
 - returns fallback candidates when `--allow-fallbacks` is set
 - output includes: Mode, Importance, Deadline, task class, top reasons, and fallback list
+
+### `agentvault doctor --context`
+
+Estimates what Claude Code loads before the first prompt in a directory, one
+row per source with bytes and estimated tokens (bytes / 4), and exits 1 when
+a file is over its budget.
+
+Flags:
+- `--context`: run this check (required).
+- `--dir <path>` (default: current directory): the directory a session starts in.
+- `--json`: a JSON array, one object per row.
+
+Rows and budgets:
+- user: `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, 4096 bytes each.
+- directory: `CLAUDE.md` and `CLAUDE.local.md` in the directory and every one
+  above it, 3584 bytes each; a git repository's own files are listed with no
+  budget.
+- memory: the directory's `MEMORY.md` under `~/.claude/projects/`, 120 lines;
+  bytes count the first 200 lines, which is what loads.
+- listings: the name and description of each skill, agent and command, for
+  user scope and for each enabled plugin (`~/.claude/settings.json`, overridden
+  plugin by plugin by the directory's `.claude/settings.json` and
+  `.claude/settings.local.json`). No budget.
+- SessionStart hook output is listed as not measured: measuring it means
+  running the hooks.
+
+Files pulled in by `@path` imports are not counted.
 
 ## Capability registry
 

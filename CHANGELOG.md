@@ -4,6 +4,12 @@
 
 ### Added
 
+- `agentvault doctor --context` estimates what Claude Code loads before the
+  first prompt in a directory: instruction files per scope, `MEMORY.md`,
+  and the skill, agent and command listings of user scope and each enabled
+  plugin, with bytes and estimated tokens. It exits 1 when a file is over
+  its budget (user 4096 bytes, directory 3584 bytes, memory 120 lines).
+
 - The export summary lists each provider file and skill asset with its size
   in bytes (or `redacted`, `missing`).
 

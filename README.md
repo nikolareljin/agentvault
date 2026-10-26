@@ -100,6 +100,7 @@ brew install nikolareljin/tap/agentvault
 | `route` | Explain which configured agent/runner/model would handle a prompt |
 | `-p, --prompt-mode[=true\|false]` (flag) | Enter interactive prompt mode (submit/cancel/exit flow) |
 | `status` | Show token usage and quota status (JSON for orchestration) |
+| `doctor --context` | Estimate what loads before the first prompt, per source, and fail over budget |
 | `--tui`, `-t` (flags) | Launch interactive terminal UI (default with no command). Optional target: `agents`, `instructions`, `rules`, `sessions`, `detected`, `commands`, `status`, `about` |
 
 ### Agent Management
