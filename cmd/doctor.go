@@ -128,7 +128,7 @@ func contextRows(home, dir string) []contextRow {
 			}
 		}
 	}
-	if r, ok := memoryRow(filepath.Join(home, ".claude", "projects", claudeProjectSlug(dir), "memory", "MEMORY.md")); ok {
+	if r, ok := memoryRow(filepath.Join(claudeProjectDir(home, dir), "memory", "MEMORY.md")); ok {
 		rows = append(rows, r)
 	}
 	rows = append(rows, listingRows("user", filepath.Join(home, ".claude"))...)
@@ -195,19 +195,46 @@ func isGitRepo(dir string) bool {
 	return err == nil
 }
 
+// claudeProjectDir is where Claude Code keeps dir's project data. A slug
+// longer than 200 is cut to 200 and given "-<hash>" of a hash this cannot
+// compute, so the one folder with that start is taken; with none or more
+// than one, the uncut name, which does not exist.
+func claudeProjectDir(home, dir string) string {
+	projects := filepath.Join(home, ".claude", "projects")
+	slug := claudeProjectSlug(dir)
+	if len(slug) <= claudeSlugMax {
+		return filepath.Join(projects, slug)
+	}
+	matches, _ := filepath.Glob(filepath.Join(projects, slug[:claudeSlugMax]+"-*")) // a slug has no glob characters
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	return filepath.Join(projects, slug)
+}
+
 // claudeProjectSlug is the directory name Claude Code keeps a project's
-// memory under: the path with every character but letters and digits as "-".
+// memory under, before it cuts a long one: the path with every character
+// but ASCII letters and digits as "-". Claude does this in JavaScript, one
+// UTF-16 unit at a time, so a rune above U+FFFF (an emoji) is "--"; the
+// result's length is the one Claude compares with 200.
 func claudeProjectSlug(dir string) string {
 	var b strings.Builder
 	for _, r := range dir {
-		if r < 128 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+		switch {
+		case r < 128 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'):
 			b.WriteRune(r)
-		} else {
+		case r > 0xFFFF:
+			b.WriteString("--")
+		default:
 			b.WriteByte('-')
 		}
 	}
 	return b.String()
 }
+
+// claudeSlugMax is the longest folder name Claude Code keeps whole; a
+// longer one is cut to this and given "-<hash>".
+const claudeSlugMax = 200
 
 // listingRows sizes the listings Claude Code shows the model for root: each
 // skill's, agent's and command's name and description.

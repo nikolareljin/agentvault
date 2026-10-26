@@ -469,9 +469,9 @@ them.
 
 ### `agentvault workdir add <name> <path>`
 `<name>` is lowercase letters, digits and `-`, at most 32, not starting with
-`-`. `<path>` must be an existing directory. A name that exists is refused,
+`-`; `all` is reserved for `export --workdirs all`. `<path>` must be an existing directory. A name that exists is refused,
 and so is a path that is the same as, inside or around a declared work dir
-(compared as given and with symlinks resolved, without case on Windows).
+(compared as given and with symlinks resolved, without case on Windows and macOS).
 
 ### `agentvault workdir list`
 Optional:
@@ -925,6 +925,7 @@ Flags:
 - `--detect` (default: `true`)
 - `--project <dir>`: Also capture project-local instruction, workflow and skill assets.
 - `--workdir <dir>` (repeatable): Record a folder of projects. Projects under it are recorded relative to it, so import can place them in the folder of the same name on the other machine.
+- `--workdirs all|NAME[,NAME...]` (default `all`): Declared work dirs to export (`agentvault workdir add`). What belongs to the others stays on this machine: Claude memory folders, plugins installed only for their projects, recorded projects, Codex trusted projects and `[projects."PATH"]` tables in `config.toml`, sessions, and instructions for their directories or pulled from their projects. A memory folder is left out when its name starts with an unselected work dir's path as Claude encodes it (every character but letters and digits becomes `-`). That encoding cannot tell `~/work/acme-tools` from `~/work/acme/tools`, so such a folder stays on this machine wherever its directory is; the bundle counts it. A `config.toml` that names such a project outside its own table is not carried. Last, any carried file whose text still names an unselected work dir (its absolute path, or `~/`, `$HOME/` or `${HOME}/` and its path from home) is withheld, and any instruction, agent, session, MCP server, rule, role, template, marketplace, provider setting or declined entry that does is left out: settings, hook scripts and notes are too many formats to edit. If the path is still anywhere in the bundle after that, the export stops and names the field. A global instruction that does not name the path travels; it records no directory. The bundle lists each work dir left out, with counts and no paths. `--project` or `--workdir` inside an unselected work dir is an error.
 - `--encrypt` (default: `true`)
 - `--plain` (default: `false`): Plaintext JSON; turns encryption off.
 - `--vault-only` (default: `false`): Write the legacy single-vault export instead. It is the whole vault, API keys and secrets included, so it refuses `--include-keys=false` and `--include-secrets=false`.

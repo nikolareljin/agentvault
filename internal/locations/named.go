@@ -17,6 +17,10 @@ type Named struct {
 	Path string `json:"path"`
 }
 
+// AllWorkDirs is the selection that takes every declared work dir; no work
+// dir may have it as its name.
+const AllWorkDirs = "all"
+
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 // ValidName reports whether name can name a work dir: lowercase letters,
@@ -43,6 +47,9 @@ func (s Set) Lookup(name string) (Named, bool) {
 func (s Set) Declare(name, dir string) (Set, error) {
 	if !ValidName(name) {
 		return s, fmt.Errorf("work dir name %q: use lowercase letters, digits and '-' (at most 32, not starting with '-')", name)
+	}
+	if name == AllWorkDirs {
+		return s, fmt.Errorf("work dir name %q is reserved: export --workdirs %s means every work dir", name, AllWorkDirs)
 	}
 	if _, ok := s.Lookup(name); ok {
 		return s, fmt.Errorf("work dir %s is already declared; remove it first", name)
@@ -85,7 +92,7 @@ func (s Set) Undeclare(name string) (Set, bool) {
 
 // overlaps reports whether a and b are the same directory or one holds the
 // other, comparing both the paths as given and their symlink-resolved forms
-// (on macOS /var is /private/var), without case on Windows.
+// (on macOS /var is /private/var), without case on Windows and macOS.
 func overlaps(a, b string) bool {
 	as, bs := forms(a), forms(b)
 	for _, x := range as {
@@ -106,13 +113,39 @@ func forms(p string) []string {
 	return out
 }
 
-// caseInsensitivePaths is whether this OS compares paths without case;
-// tests set it.
-var caseInsensitivePaths = runtime.GOOS == "windows"
+// caseInsensitivePaths is whether this OS compares paths without case
+// (Windows, and macOS on its default volumes); tests set it.
+var caseInsensitivePaths = runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 
 func foldCase(p string) string {
 	if caseInsensitivePaths {
 		return strings.ToLower(p)
 	}
 	return p
+}
+
+// Holds reports whether p is the work dir or below it, compared as for
+// Declare: as given and symlink-resolved, without case on Windows and macOS.
+func (n Named) Holds(p string) bool {
+	if strings.TrimSpace(p) == "" {
+		return false
+	}
+	for _, x := range forms(n.Path) {
+		for _, y := range forms(p) {
+			if within(x, y) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Roots returns the work dir's path as declared and, when it differs, with
+// symlinks resolved: tools record a directory in either form.
+func (n Named) Roots() []string {
+	out := []string{filepath.Clean(n.Path)}
+	if r, err := filepath.EvalSymlinks(n.Path); err == nil && filepath.Clean(r) != out[0] {
+		out = append(out, filepath.Clean(r))
+	}
+	return out
 }

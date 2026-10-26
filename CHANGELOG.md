@@ -4,6 +4,14 @@
 
 ### Added
 
+- `agentvault export --workdirs NAME[,NAME...]` exports only the named
+  work dirs (`agentvault workdir add`). Nothing tied to the others leaves
+  the machine: Claude memory, project-scope plugins, recorded projects,
+  Codex trusted projects and project tables, sessions and directory
+  instructions, and any carried file or vault entry whose text names the
+  work dir's path. An export that would still name it stops with the
+  field's name. The default, `all`, exports as before.
+
 - `agentvault workdir add|list|remove` declares work directories by name,
   such as `personal` at `~/Projects` and `company-a` at `~/work/company-a`.
   The vault keeps each name with its path on this machine; a bundle does
@@ -42,6 +50,10 @@
   used `http://localhost:11434`.
 
 ### Fixed
+
+- `agentvault doctor --context` finds the memory of a directory whose
+  path is long: Claude Code cuts a project folder name over 200 characters
+  and adds a hash, so the full name never existed.
 
 - A Claude skill from a bundle was never written on import: every Markdown
   file with frontmatter was held back as one that might run commands, and

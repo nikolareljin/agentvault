@@ -35,6 +35,7 @@ func TestDeclareRefusesOverlap(t *testing.T) {
 		{"around", ".", "overlaps work dir personal"},
 		{"personal", "work/a", "already declared"},
 		{"Bad", "work/a", "use lowercase"},
+		{"all", "work/a", "reserved"},
 	} {
 		if _, err := s.Declare(c.name, filepath.Join(root, c.rel)); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("Declare(%s, %s) = %v, want %q", c.name, c.rel, err, c.want)

@@ -155,3 +155,20 @@ func TestEnabledPluginDirsPicksThisProjectsInstall(t *testing.T) {
 		t.Fatalf("got %+v, want only p@m at /here", got)
 	}
 }
+
+// Claude Code cuts a long folder name to 200 and adds "-<hash>".
+func TestClaudeProjectDirLongPath(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, strings.Repeat("d", 230))
+	cut := claudeProjectSlug(dir)[:200] + "-abc123"
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects", cut), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := claudeProjectDir(home, dir); filepath.Base(got) != cut {
+		t.Fatalf("claudeProjectDir = %s, want %s", got, cut)
+	}
+	short := filepath.Join(home, "p")
+	if got := claudeProjectDir(home, short); filepath.Base(got) != claudeProjectSlug(short) {
+		t.Fatalf("short path = %s", got)
+	}
+}

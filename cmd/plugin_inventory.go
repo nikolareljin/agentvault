@@ -38,6 +38,13 @@ type InstalledPlugin struct {
 	ID      string `json:"id"`
 	Version string `json:"version,omitempty"`
 	Scope   string `json:"scope,omitempty"`
+	// installs are where it is installed on this machine; they decide what
+	// a work dir selection leaves out and never reach the bundle.
+	installs []pluginInstall
+}
+
+type pluginInstall struct {
+	scope, projectPath string
 }
 
 func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
@@ -69,8 +76,9 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 
 	var installed struct {
 		Plugins map[string][]struct {
-			Scope   string `json:"scope"`
-			Version string `json:"version"`
+			Scope       string `json:"scope"`
+			Version     string `json:"version"`
+			ProjectPath string `json:"projectPath"`
 		} `json:"plugins"`
 	}
 	if err := readJSONIfPresent(filepath.Join(dir, "installed_plugins.json"), &installed); err != nil {
@@ -80,6 +88,13 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 		p := InstalledPlugin{ID: id}
 		if len(entries) > 0 {
 			p.Version, p.Scope = entries[0].Version, entries[0].Scope
+		}
+		for _, e := range entries {
+			path := e.ProjectPath
+			if e.Scope == "user" {
+				path = ""
+			}
+			p.installs = append(p.installs, pluginInstall{scope: e.Scope, projectPath: path})
 		}
 		inv.Plugins = append(inv.Plugins, p)
 	}
