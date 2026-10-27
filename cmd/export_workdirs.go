@@ -276,6 +276,15 @@ func (s workDirScope) applyPlugins(bundle *SetupBundle) {
 			s.leave(name, "plugins")
 			continue
 		}
+		// A plugin that stays keeps only its local installs in selected
+		// work dirs.
+		var local []string
+		for _, dir := range p.LocalProjects {
+			if _, ok := s.excluded(dir); !ok {
+				local = append(local, dir)
+			}
+		}
+		p.LocalProjects = local
 		keep = append(keep, p)
 	}
 	bundle.Plugins.Plugins = keep

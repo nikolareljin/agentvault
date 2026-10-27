@@ -43,6 +43,14 @@ type InstalledPlugin struct {
 	// false when there is none (Claude then treats it as disabled). nil only
 	// in a bundle from before this field.
 	Enabled *bool `json:"enabled,omitempty"`
+	// LocalProjects are the project directories it is installed for at
+	// local scope, which writes the untracked .claude/settings.local.json.
+	// Project scope is left out: the repository's .claude/settings.json
+	// carries it.
+	LocalProjects []string `json:"local_projects,omitempty"`
+	// placed and unplaced are LocalProjects after import placed them on
+	// this machine; never in a bundle.
+	placed, unplaced []string
 	// installs are where it is installed on this machine; they decide what
 	// a work dir selection leaves out and never reach the bundle.
 	installs []pluginInstall
@@ -107,6 +115,9 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 				p.Version, p.Scope = e.Version, e.Scope
 			}
 			p.installs = append(p.installs, pluginInstall{scope: e.Scope, projectPath: path})
+			if e.Scope == "local" && path != "" {
+				p.LocalProjects = append(p.LocalProjects, path)
+			}
 		}
 		inv.Plugins = append(inv.Plugins, p)
 	}

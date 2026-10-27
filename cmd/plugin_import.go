@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -69,13 +70,14 @@ func resolvePluginPolicy(flag string, interactive, dryRun bool) (pluginPolicy, e
 // reads. Only user-scope installs count: the bundle's plugins are installed
 // for the user.
 type localPlugins struct {
-	markets   map[string]string // name -> source
-	installed map[string]string // id -> version
-	enabled   map[string]bool   // explicit enabledPlugins entries only
+	markets   map[string]string   // name -> source
+	installed map[string]string   // id -> version
+	enabled   map[string]bool     // explicit enabledPlugins entries only
+	localAt   map[string][]string // id -> project dirs of local installs
 }
 
 func readLocalPlugins(home string) (localPlugins, error) {
-	l := localPlugins{markets: map[string]string{}, installed: map[string]string{}, enabled: map[string]bool{}}
+	l := localPlugins{markets: map[string]string{}, installed: map[string]string{}, enabled: map[string]bool{}, localAt: map[string][]string{}}
 	inv, err := collectClaudePluginInventory(home)
 	if err != nil {
 		return l, err
@@ -88,6 +90,7 @@ func readLocalPlugins(home string) (localPlugins, error) {
 			if p.userScope() {
 				l.installed[p.ID] = p.Version
 			}
+			l.localAt[p.ID] = p.LocalProjects
 		}
 	}
 	enabled, err := readEnabledPlugins(home)
@@ -124,6 +127,8 @@ type pluginStep struct {
 	// then runs after args succeeded, for a fresh install the bundle has
 	// disabled.
 	then []string
+	// dir is where claude runs: the project of a local-scope install.
+	dir string
 }
 
 // planPluginImport compares the bundle with this machine. It returns the
@@ -162,8 +167,16 @@ func planPluginImport(inv *PluginInventory, local localPlugins) (steps []pluginS
 			notes = append(notes, fmt.Sprintf("plugin %s: skipped, not name@marketplace", strconv.Quote(p.ID)))
 			continue
 		}
+		steps, notes = planLocalInstalls(p, local, steps, notes)
 		if !p.userScope() {
-			notes = append(notes, fmt.Sprintf("plugin %s: not installed, installed for projects only (scope %s)", p.ID, p.Scope))
+			switch {
+			case len(p.LocalProjects) > 0:
+			case p.Scope == "project":
+				notes = append(notes, fmt.Sprintf("plugin %s: not installed, project scope: the repository's .claude/settings.json carries it", p.ID))
+			default:
+				// A bundle from before LocalProjects names no project.
+				notes = append(notes, fmt.Sprintf("plugin %s: not installed, installed for projects only (scope %s)", p.ID, p.Scope))
+			}
 			continue
 		}
 		have, installed := local.installed[p.ID]
@@ -216,6 +229,74 @@ func planPluginImport(inv *PluginInventory, local localPlugins) (steps []pluginS
 	return steps, notes
 }
 
+// planLocalInstalls adds a local-scope install for each of the plugin's
+// projects this import placed, and a line for each it did not.
+func planLocalInstalls(p InstalledPlugin, local localPlugins, steps []pluginStep, notes []string) ([]pluginStep, []string) {
+	for _, dir := range p.unplaced {
+		notes = append(notes, fmt.Sprintf("plugin %s for project %s: not installed, the project was not placed by this import",
+			p.ID, strconv.Quote(dir)))
+	}
+	for _, dir := range p.placed {
+		here := false
+		for _, d := range local.localAt[p.ID] {
+			here = here || samePath(d, dir)
+		}
+		if here {
+			notes = append(notes, fmt.Sprintf("plugin %s for project %s: already here", p.ID, strconv.Quote(dir)))
+			continue
+		}
+		steps = append(steps, pluginStep{
+			what:   fmt.Sprintf("install plugin %s for project %s (local scope)", p.ID, strconv.Quote(dir)),
+			args:   []string{"plugin", "install", "--scope", "local", p.ID},
+			market: p.ID[strings.LastIndex(p.ID, "@")+1:],
+			dir:    dir,
+		})
+	}
+	return steps, notes
+}
+
+// placePluginProjects rewrites each local-scope project of inv for this
+// machine. A project is placed only under a place this import confirmed:
+// an accepted match, --map, a work dir mapping or --project-root. The home
+// rewrite alone is not one, so a bundle cannot pick a directory to write
+// settings.local.json into. It returns a copy; inv is unchanged.
+func placePluginProjects(inv *PluginInventory, remaps []pathRemap, confirmed []string) *PluginInventory {
+	if inv == nil {
+		return nil
+	}
+	out := *inv
+	out.Plugins = make([]InstalledPlugin, len(inv.Plugins))
+	for i, p := range inv.Plugins {
+		p.placed, p.unplaced = nil, nil
+		for _, dir := range p.LocalProjects {
+			to, _ := remapText(dir, remaps)
+			if placedUnder(to, confirmed) {
+				p.placed = append(p.placed, to)
+			} else {
+				p.unplaced = append(p.unplaced, dir)
+			}
+		}
+		out.Plugins[i] = p
+	}
+	return &out
+}
+
+// placedUnder is whether dir is an existing directory under one of roots.
+func placedUnder(dir string, roots []string) bool {
+	if !filepath.IsAbs(dir) || printable(dir) != dir {
+		return false
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return false
+	}
+	for _, r := range roots {
+		if r != "" && pathWithin(r, dir) {
+			return true
+		}
+	}
+	return false
+}
+
 func onOff(on bool) string {
 	if on {
 		return "enabled"
@@ -223,10 +304,10 @@ func onOff(on bool) string {
 	return "disabled"
 }
 
-// runClaude runs the claude CLI with args and no shell. in is nil, or the
-// terminal when a person is answering, so claude can ask its own questions.
-// Tests replace it.
-var runClaude = func(ctx context.Context, in io.Reader, out io.Writer, args ...string) error {
+// runClaude runs the claude CLI with args and no shell, in dir when it is
+// set. in is nil, or the terminal when a person is answering, so claude can
+// ask its own questions. Tests replace it.
+var runClaude = func(ctx context.Context, dir string, in io.Reader, out io.Writer, args ...string) error {
 	path, err := exec.LookPath("claude")
 	if err != nil {
 		return errors.New("claude is not on PATH")
@@ -235,6 +316,7 @@ var runClaude = func(ctx context.Context, in io.Reader, out io.Writer, args ...s
 		ctx = context.Background()
 	}
 	c := exec.CommandContext(ctx, path, args...)
+	c.Dir = dir
 	c.Stdin, c.Stdout, c.Stderr = in, out, out
 	return c.Run()
 }
@@ -265,6 +347,10 @@ func importPlugins(ctx context.Context, inv *PluginInventory, local localPlugins
 			fmt.Fprintln(o.Out, "  To apply the bundle's plugins here, run:")
 		}
 		for _, s := range steps {
+			if s.dir != "" {
+				fmt.Fprintf(o.Out, "    (cd %s && claude %s)\n", shellQuote(s.dir), strings.Join(s.args, " "))
+				continue
+			}
 			fmt.Fprintf(o.Out, "    claude %s\n", strings.Join(s.args, " "))
 			if s.then != nil {
 				fmt.Fprintf(o.Out, "    claude %s\n", strings.Join(s.then, " "))
@@ -294,13 +380,13 @@ func importPlugins(ctx context.Context, inv *PluginInventory, local localPlugins
 		if o.Policy == pluginsAsk {
 			term = o.Terminal
 		}
-		if err := runClaude(ctx, term, o.Err, s.args...); err != nil {
+		if err := runClaude(ctx, s.dir, term, o.Err, s.args...); err != nil {
 			failed++
 			fmt.Fprintf(o.Out, "  failed: %s: %v\n", printable(s.what), err)
 			continue
 		}
 		if s.then != nil {
-			if err := runClaude(ctx, term, o.Err, s.then...); err != nil {
+			if err := runClaude(ctx, s.dir, term, o.Err, s.then...); err != nil {
 				failed++
 				fmt.Fprintf(o.Out, "  failed: %s: installed, but not disabled: %v\n", printable(s.what), err)
 				continue
@@ -340,7 +426,7 @@ func (o pluginImportOptions) decide(s pluginStep) (bool, error) {
 // The first profile that lists a marketplace or plugin wins.
 func mergePluginInventories(invs []*PluginInventory) *PluginInventory {
 	out := &PluginInventory{}
-	markets, plugins := map[string]bool{}, map[string]bool{}
+	markets, plugins := map[string]bool{}, map[string]int{}
 	for _, inv := range invs {
 		if inv == nil {
 			continue
@@ -352,14 +438,32 @@ func mergePluginInventories(invs []*PluginInventory) *PluginInventory {
 			}
 		}
 		for _, p := range inv.Plugins {
-			if !plugins[p.ID] {
-				plugins[p.ID] = true
-				out.Plugins = append(out.Plugins, p)
+			if at, ok := plugins[p.ID]; ok {
+				// Local installs from every profile count.
+				q := &out.Plugins[at]
+				q.placed = appendNewPaths(q.placed, p.placed)
+				q.unplaced = appendNewPaths(q.unplaced, p.unplaced)
+				continue
 			}
+			plugins[p.ID] = len(out.Plugins)
+			out.Plugins = append(out.Plugins, p)
 		}
 	}
 	if len(out.Marketplaces) == 0 && len(out.Plugins) == 0 {
 		return nil
 	}
 	return out
+}
+
+func appendNewPaths(have, add []string) []string {
+	for _, a := range add {
+		dup := false
+		for _, h := range have {
+			dup = dup || samePath(h, a)
+		}
+		if !dup {
+			have = append(have, a)
+		}
+	}
+	return have
 }

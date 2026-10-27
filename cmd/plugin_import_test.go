@@ -21,8 +21,11 @@ func fakeClaude(t *testing.T, fail ...string) *[]string {
 	t.Helper()
 	var calls []string
 	orig := runClaude
-	runClaude = func(_ context.Context, _ io.Reader, _ io.Writer, args ...string) error {
+	runClaude = func(_ context.Context, dir string, _ io.Reader, _ io.Writer, args ...string) error {
 		line := strings.Join(args, " ")
+		if dir != "" {
+			line = "in " + dir + ": " + line
+		}
 		calls = append(calls, line)
 		for _, f := range fail {
 			if line == f {
@@ -94,7 +97,7 @@ func TestPlanPluginImport(t *testing.T) {
 		`marketplace "moved": kept, source here "o/old", in bundle "o/new"`,
 		`marketplace "dir": not added, a local directory`,
 		`plugin kept@same: already here`,
-		`plugin proj@same: not installed, installed for projects only`,
+		`plugin proj@same: not installed, project scope: the repository's .claude/settings.json carries it`,
 	} {
 		if !strings.Contains(joined, w) {
 			t.Errorf("notes lack %q:\n%s", w, joined)
@@ -329,7 +332,7 @@ func TestImportPluginsEndToEnd(t *testing.T) {
 
 	// A failed step makes the import exit non-zero.
 	*calls = nil
-	runClaude = func(_ context.Context, _ io.Reader, _ io.Writer, args ...string) error {
+	runClaude = func(_ context.Context, _ string, _ io.Reader, _ io.Writer, args ...string) error {
 		return errors.New("exit status 1")
 	}
 	in.Reset()
@@ -372,7 +375,7 @@ func TestImportPluginsTerminalAndPartialFailure(t *testing.T) {
 	}{{pluginsAsk, true}, {pluginsMissing, false}, {pluginsBundle, false}} {
 		var gotTTY []bool
 		orig := runClaude
-		runClaude = func(_ context.Context, in io.Reader, _ io.Writer, args ...string) error {
+		runClaude = func(_ context.Context, _ string, in io.Reader, _ io.Writer, args ...string) error {
 			gotTTY = append(gotTTY, in != nil)
 			if args[1] == "disable" {
 				return errors.New("exit status 1")
