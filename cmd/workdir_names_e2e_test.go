@@ -310,6 +310,11 @@ func TestCheckWorkDirNames(t *testing.T) {
 	if err := checkWorkDirNames(dup, map[string]string{"x": "/t"}); err == nil || !strings.Contains(err.Error(), "more than one") {
 		t.Errorf("duplicated name accepted: %v", err)
 	}
+	// A name on a path import drops places nothing.
+	bad := []PortableProfile{{Setup: SetupBundle{Locations: &locations.Set{WorkDirs: []locations.WorkDir{{Abs: "rel/x", Name: "x"}}}}}}
+	if err := checkWorkDirNames(bad, map[string]string{"x": "/t"}); err == nil {
+		t.Errorf("name on an unusable path accepted")
+	}
 	if err := checkWorkDirNames(append(profiles, profiles[0]), map[string]string{"personal": "/x"}); err != nil {
 		t.Errorf("name in two profiles refused: %v", err)
 	}

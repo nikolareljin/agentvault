@@ -320,8 +320,9 @@ func parseWorkDirMaps(values []string) (paths, names map[string]string, err erro
 }
 
 // checkWorkDirNames refuses a --workdir-map NAME that no selected profile
-// exported, or that one profile gives to several work dirs (import ignores
-// such a name), so the flag is never silently ignored.
+// exported on a work dir import can use, or that one profile gives to
+// several work dirs (import ignores such a name), so the flag is never
+// silently ignored.
 func checkWorkDirNames(profiles []PortableProfile, names map[string]string) error {
 	have, dup := map[string]bool{}, map[string]bool{}
 	for _, p := range profiles {
@@ -335,17 +336,21 @@ func checkWorkDirNames(profiles []PortableProfile, names map[string]string) erro
 			}
 		}
 		for n, c := range count {
-			have[n] = true
 			dup[n] = dup[n] || c > 1
+		}
+		for _, w := range usableLocations(p.Setup.Locations, io.Discard).WorkDirs {
+			if w.Name != "" {
+				have[w.Name] = true
+			}
 		}
 	}
 	var unknown, ambiguous []string
 	for n := range names {
 		switch {
-		case !have[n]:
-			unknown = append(unknown, n)
 		case dup[n]:
 			ambiguous = append(ambiguous, n)
+		case !have[n]:
+			unknown = append(unknown, n)
 		}
 	}
 	sort.Strings(unknown)
