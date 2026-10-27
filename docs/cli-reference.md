@@ -464,8 +464,9 @@ the user) match.
 
 A work directory is a folder of projects: a personal `~/Projects`, one per
 employer or client. Declaring each by name keeps them apart. The path is
-this machine's; the vault keeps the declarations and a bundle does not carry
-them.
+this machine's; the vault keeps the declarations. A bundle carries only the
+names of the work dirs it exports (`export --workdirs`), never this list, and
+import uses a name to place that work dir (see `--workdir-map`).
 
 ### `agentvault workdir add <name> <path>`
 `<name>` is lowercase letters, digits and `-`, at most 32, not starting with
