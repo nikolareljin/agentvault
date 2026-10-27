@@ -165,7 +165,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	interactive := term.IsTerminal(stdinFD())
 	stdin := bufio.NewReader(os.Stdin)
-	pluginPol, err := resolvePluginPolicy(mustString(cmd, "plugins"), interactive)
+	pluginPol, err := resolvePluginPolicy(mustString(cmd, "plugins"), interactive, dryRun)
 	if err != nil {
 		return err
 	}

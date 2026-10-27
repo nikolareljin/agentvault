@@ -212,20 +212,24 @@ func TestResolvePluginPolicy(t *testing.T) {
 	for _, c := range []struct {
 		flag        string
 		interactive bool
+		dryRun      bool
 		want        pluginPolicy
 		err         bool
 	}{
-		{"", true, pluginsAsk, false},
-		{"", false, pluginsPrint, false},
-		{"ask", false, "", true},
-		{"ask", true, pluginsAsk, false},
-		{"missing", false, pluginsMissing, false},
-		{"bundle", false, pluginsBundle, false},
-		{"all", false, "", true},
+		{"", true, false, pluginsAsk, false},
+		{"", false, false, pluginsPrint, false},
+		{"ask", false, false, "", true},
+		{"ask", true, false, pluginsAsk, false},
+		{"missing", false, false, pluginsMissing, false},
+		{"bundle", false, false, pluginsBundle, false},
+		{"all", false, false, "", true},
+		{"ask", false, true, pluginsPrint, false},
+		{"bundle", true, true, pluginsPrint, false},
+		{"all", false, true, "", true},
 	} {
-		got, err := resolvePluginPolicy(c.flag, c.interactive)
+		got, err := resolvePluginPolicy(c.flag, c.interactive, c.dryRun)
 		if (err != nil) != c.err || got != c.want {
-			t.Errorf("resolvePluginPolicy(%q, %v) = %q, %v", c.flag, c.interactive, got, err)
+			t.Errorf("resolvePluginPolicy(%q, %v, %v) = %q, %v", c.flag, c.interactive, c.dryRun, got, err)
 		}
 	}
 }

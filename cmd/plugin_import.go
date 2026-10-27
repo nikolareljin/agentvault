@@ -36,10 +36,19 @@ func parsePluginPolicy(v string) (pluginPolicy, error) {
 	return "", fmt.Errorf("--plugins %q: want ask, print, missing or bundle", v)
 }
 
-// resolvePluginPolicy is the policy for this run: the flag, else ask on a
-// terminal and print without one. Installing a plugin runs its code, so
-// nothing is installed without a person saying so here or by the flag.
-func resolvePluginPolicy(flag string, interactive bool) (pluginPolicy, error) {
+// resolvePluginPolicy is the policy for this run: print for a dry run, else
+// the flag, else ask on a terminal and print without one. Installing a
+// plugin runs its code, so nothing is installed without a person saying so
+// here or by the flag.
+func resolvePluginPolicy(flag string, interactive, dryRun bool) (pluginPolicy, error) {
+	if dryRun {
+		if flag != "" {
+			if _, err := parsePluginPolicy(flag); err != nil {
+				return "", err
+			}
+		}
+		return pluginsPrint, nil
+	}
 	if flag == "" {
 		if interactive {
 			return pluginsAsk, nil
