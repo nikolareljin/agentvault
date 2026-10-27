@@ -178,7 +178,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := checkWorkDirNames(selected, locOpts.WorkDirNames); err != nil {
+	if err := checkWorkDirNames(selected, locOpts.WorkDirMaps, locOpts.WorkDirNames); err != nil {
 		cmd.SilenceUsage = true
 		return err
 	}

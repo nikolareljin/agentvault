@@ -207,6 +207,21 @@ func TestWorkDirPlacedByName(t *testing.T) {
 	if len(res.NewMaps) != 0 || len(res.ConfirmedHidden) != 0 {
 		t.Errorf("declared target saved as a choice: %+v", res)
 	}
+	// A mapping the user saved on an earlier import wins over the name the
+	// bundle gives.
+	saved := filepath.Join(o.Home, "saved")
+	mustMkdirAll(t, saved)
+	withSaved := o
+	withSaved.Known.WorkDirMaps = map[string]string{"/old/Projects": saved}
+	if got := remapTo(run(withSaved), "/old/Projects"); got != saved {
+		t.Errorf("declared name beat a saved mapping: got %q, want %q", got, saved)
+	}
+	var savedRows bytes.Buffer
+	withSaved.AcceptMatches, withSaved.Out = false, &savedRows
+	run(withSaved)
+	if !strings.Contains(savedRows.String(), "saved mapping") || strings.Contains(savedRows.String(), "declared here") {
+		t.Errorf("row note does not show the saved mapping:\n%s", savedRows.String())
+	}
 	unconfirmed := o
 	unconfirmed.AcceptMatches = false
 	var rows bytes.Buffer
@@ -299,24 +314,28 @@ func TestWorkDirNameFromBundleChecked(t *testing.T) {
 
 func TestCheckWorkDirNames(t *testing.T) {
 	profiles := []PortableProfile{{Setup: SetupBundle{Locations: &locations.Set{WorkDirs: []locations.WorkDir{{Abs: "/a", Name: "personal"}}}}}, {}}
-	if err := checkWorkDirNames(profiles, map[string]string{"personal": "/x"}); err != nil {
+	if err := checkWorkDirNames(profiles, nil, map[string]string{"personal": "/x"}); err != nil {
 		t.Error(err)
 	}
-	if err := checkWorkDirNames(profiles, map[string]string{"persnal": "/x"}); err == nil || !strings.Contains(err.Error(), "persnal") {
+	if err := checkWorkDirNames(profiles, nil, map[string]string{"persnal": "/x"}); err == nil || !strings.Contains(err.Error(), "persnal") {
 		t.Errorf("typo accepted: %v", err)
 	}
 	// Import ignores a name on two work dirs of one profile, so the flag
 	// would do nothing. One name in each of two profiles is fine.
 	dup := []PortableProfile{{Setup: SetupBundle{Locations: &locations.Set{WorkDirs: []locations.WorkDir{{Abs: "/a", Name: "x"}, {Abs: "/b", Name: "x"}}}}}}
-	if err := checkWorkDirNames(dup, map[string]string{"x": "/t"}); err == nil || !strings.Contains(err.Error(), "more than one") {
+	if err := checkWorkDirNames(dup, nil, map[string]string{"x": "/t"}); err == nil || !strings.Contains(err.Error(), "more than one") {
 		t.Errorf("duplicated name accepted: %v", err)
 	}
 	// A name on a path import drops places nothing.
 	bad := []PortableProfile{{Setup: SetupBundle{Locations: &locations.Set{WorkDirs: []locations.WorkDir{{Abs: "rel/x", Name: "x"}}}}}}
-	if err := checkWorkDirNames(bad, map[string]string{"x": "/t"}); err == nil {
+	if err := checkWorkDirNames(bad, nil, map[string]string{"x": "/t"}); err == nil {
 		t.Errorf("name on an unusable path accepted")
 	}
-	if err := checkWorkDirNames(append(profiles, profiles[0]), map[string]string{"personal": "/x"}); err != nil {
+	// The same work dir by path and by name: one would be dropped.
+	if err := checkWorkDirNames(profiles, map[string]string{"/a": "/y"}, map[string]string{"personal": "/x"}); err == nil || !strings.Contains(err.Error(), "same work dir") {
+		t.Errorf("path and name for one work dir accepted: %v", err)
+	}
+	if err := checkWorkDirNames(append(profiles, profiles[0]), nil, map[string]string{"personal": "/x"}); err != nil {
 		t.Errorf("name in two profiles refused: %v", err)
 	}
 }

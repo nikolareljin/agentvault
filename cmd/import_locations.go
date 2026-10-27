@@ -323,7 +323,7 @@ func parseWorkDirMaps(values []string) (paths, names map[string]string, err erro
 // exported on a work dir import can use, or that one profile gives to
 // several work dirs (import ignores such a name), so the flag is never
 // silently ignored.
-func checkWorkDirNames(profiles []PortableProfile, names map[string]string) error {
+func checkWorkDirNames(profiles []PortableProfile, paths, names map[string]string) error {
 	have, dup := map[string]bool{}, map[string]bool{}
 	for _, p := range profiles {
 		if p.Setup.Locations == nil {
@@ -339,8 +339,12 @@ func checkWorkDirNames(profiles []PortableProfile, names map[string]string) erro
 			dup[n] = dup[n] || c > 1
 		}
 		for _, w := range usableLocations(p.Setup.Locations, io.Discard).WorkDirs {
-			if w.Name != "" {
-				have[w.Name] = true
+			if w.Name == "" {
+				continue
+			}
+			have[w.Name] = true
+			if _, both := paths[w.Abs]; both && names[w.Name] != "" {
+				return fmt.Errorf("--workdir-map: %s and %s name the same work dir; give one", w.Name, printable(w.Abs))
 			}
 		}
 	}
@@ -418,13 +422,18 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 	}
 	set = usableLocations(set, out)
 	o.WorkDirMaps, o.declared = byName(set, o)
-	// Saved mappings come from earlier imports; a declared name wins over
-	// them, and --workdir-map over both.
+	// A declared name is the bundle's word; a mapping saved by an earlier
+	// import is the user's, so it wins, and --workdir-map over both.
+	for k := range o.declared {
+		if _, saved := o.Known.WorkDirMaps[k]; saved {
+			delete(o.declared, k)
+		}
+	}
 	maps := map[string]string{}
-	for k, v := range o.Known.WorkDirMaps {
+	for k, v := range o.declared {
 		maps[k] = v
 	}
-	for k, v := range o.declared {
+	for k, v := range o.Known.WorkDirMaps {
 		maps[k] = v
 	}
 	for k, v := range o.WorkDirMaps {

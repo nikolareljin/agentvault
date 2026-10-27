@@ -6,15 +6,16 @@
 
 - A bundle names each work dir it exports from `--workdirs`, and import
   places it by that name: `--workdir-map NAME=PATH`, else this machine's
-  work dir declared under the same name, before the usual matching by
-  path. The bundle picks the name, so a declared target is confirmed like
-  a computed match (a terminal, or `--accept-matches`; a hidden folder
-  needs its own yes) and is not saved as a mapping. Memory and paths under
-  it are rewritten to that place. Nothing else on this machine changes:
-  importing `personal` leaves a local `company-a` tree and its memory as
-  they were. An unknown NAME in `--workdir-map` is an error, and so is
-  `--workdir-map` with `--no-match`, which turns placement off. Older
-  releases ignore the name and place the work dir by path as before.
+  work dir declared under the same name unless an earlier import saved a
+  mapping for it, before the usual matching by path. The bundle picks the
+  name, so a declared target is confirmed like a computed match (a
+  terminal, or `--accept-matches`; a hidden folder needs its own yes) and
+  is not saved as a mapping. Memory and paths under it are rewritten to
+  that place. Nothing else on this machine changes: importing `personal`
+  leaves a local `company-a` tree and its memory as they were. An unknown
+  NAME in `--workdir-map` is an error, and so is `--workdir-map` with
+  `--no-match`, which turns placement off. Older releases ignore the name
+  and place the work dir by path as before.
 
 - `agentvault export --workdirs NAME[,NAME...]` exports only the named
   work dirs (`agentvault workdir add`). Nothing tied to the others leaves
