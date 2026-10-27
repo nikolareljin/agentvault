@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -332,5 +333,35 @@ func TestLocalDisabledRoundTrip(t *testing.T) {
 		"in " + filepath.Join(dst, "off") + ": plugin disable --scope local a@m"
 	if strings.Join(*calls, "\n") != want {
 		t.Errorf("ran:\n%s\nwant:\n%s", strings.Join(*calls, "\n"), want)
+	}
+}
+
+// Installed for the project on both machines, with another enabled state:
+// a difference to settle, not "already here".
+func TestPlanLocalEnabledConflict(t *testing.T) {
+	base := t.TempDir()
+	on, off, same := filepath.Join(base, "on"), filepath.Join(base, "off"), filepath.Join(base, "same")
+	mustWriteFile(t, filepath.Join(on, ".claude", "settings.local.json"), `{"enabledPlugins":{"a@m":true}}`)
+	mustWriteFile(t, filepath.Join(off, ".claude", "settings.local.json"), `{"enabledPlugins":{"a@m":false}}`)
+	mustWriteFile(t, filepath.Join(same, ".claude", "settings.local.json"), `{"enabledPlugins":{"a@m":false}}`)
+	inv := &PluginInventory{Plugins: []InstalledPlugin{{
+		ID: "a@m", Scope: "local", LocalProjects: []string{"x"},
+		placed: []string{on, off, same}, placedOff: []string{on, same},
+	}}}
+	local := localPlugins{localAt: map[string][]string{"a@m": {on, off, same}}}
+	steps, notes := planPluginImport(inv, local)
+	var got []string
+	for _, s := range steps {
+		got = append(got, s.dir+": "+strings.Join(s.args, " ")+fmt.Sprint(" ", s.conflict))
+	}
+	want := []string{on + ": plugin disable --scope local a@m true", off + ": plugin enable --scope local a@m true"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("steps:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if !strings.Contains(steps[0].what, "(enabled here, disabled in bundle)") {
+		t.Errorf("what = %q", steps[0].what)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "already here") {
+		t.Errorf("notes = %q", notes)
 	}
 }

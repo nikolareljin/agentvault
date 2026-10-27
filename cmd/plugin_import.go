@@ -241,8 +241,29 @@ func planLocalInstalls(p InstalledPlugin, local localPlugins, steps []pluginStep
 		for _, d := range local.localAt[p.ID] {
 			here = here || samePath(d, dir)
 		}
+		bundleOff := false
+		for _, off := range p.placedOff {
+			bundleOff = bundleOff || samePath(off, dir)
+		}
 		if here {
-			notes = append(notes, fmt.Sprintf("plugin %s for project %s: already here", p.ID, strconv.Quote(dir)))
+			// Installed for this project here too: only the enabled state
+			// in its settings.local.json can differ.
+			hereOff := localPluginDisabled(dir, p.ID)
+			if hereOff == bundleOff {
+				notes = append(notes, fmt.Sprintf("plugin %s for project %s: already here", p.ID, strconv.Quote(dir)))
+				continue
+			}
+			verb := "disable"
+			if !bundleOff {
+				verb = "enable"
+			}
+			steps = append(steps, pluginStep{
+				what: fmt.Sprintf("%s plugin %s for project %s (%s here, %s in bundle)",
+					verb, p.ID, strconv.Quote(dir), onOff(!hereOff), onOff(!bundleOff)),
+				args:     []string{"plugin", verb, "--scope", "local", p.ID},
+				conflict: true,
+				dir:      dir,
+			})
 			continue
 		}
 		s := pluginStep{
@@ -251,11 +272,9 @@ func planLocalInstalls(p InstalledPlugin, local localPlugins, steps []pluginStep
 			market: p.ID[strings.LastIndex(p.ID, "@")+1:],
 			dir:    dir,
 		}
-		for _, off := range p.placedOff {
-			if samePath(off, dir) {
-				s.what = fmt.Sprintf("install plugin %s for project %s (local scope, disabled, as in the bundle)", p.ID, strconv.Quote(dir))
-				s.then = []string{"plugin", "disable", "--scope", "local", p.ID}
-			}
+		if bundleOff {
+			s.what = fmt.Sprintf("install plugin %s for project %s (local scope, disabled, as in the bundle)", p.ID, strconv.Quote(dir))
+			s.then = []string{"plugin", "disable", "--scope", "local", p.ID}
 		}
 		steps = append(steps, s)
 	}
