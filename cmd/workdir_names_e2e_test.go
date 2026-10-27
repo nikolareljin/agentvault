@@ -16,6 +16,7 @@ import (
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/locations"
 	"github.com/nikolareljin/agentvault/internal/vault"
+	"github.com/spf13/pflag"
 )
 
 // treeHash hashes every file under each root by relative path and content.
@@ -366,5 +367,18 @@ func TestRecordLocationsDropsBundleNames(t *testing.T) {
 	}
 	if match.Stored.WorkDirs[0].Name != "personal" {
 		t.Errorf("caller's result changed")
+	}
+}
+
+func TestWorkDirMapRefusedWithNoMatch(t *testing.T) {
+	withFlags(t, importCmd, map[string]string{"no-match": "true"})
+	// withFlags restores by Set, which appends to a string array.
+	wm := importCmd.Flags().Lookup("workdir-map")
+	if err := wm.Value.(pflag.SliceValue).Replace([]string{"personal=" + t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = wm.Value.(pflag.SliceValue).Replace(nil) })
+	if _, err := locationOptionsFromFlags(importCmd, false, false, nil, nil); err == nil || !strings.Contains(err.Error(), "--no-match") {
+		t.Errorf("--workdir-map with --no-match accepted: %v", err)
 	}
 }

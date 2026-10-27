@@ -996,6 +996,10 @@ func locationOptionsFromFlags(cmd *cobra.Command, interactive, dryRun bool, in *
 	o.NoMatch, _ = cmd.Flags().GetBool("no-match")
 	o.AcceptMatches, _ = cmd.Flags().GetBool("accept-matches")
 	values, _ := cmd.Flags().GetStringArray("workdir-map")
+	if o.NoMatch && len(values) > 0 {
+		cmd.SilenceUsage = true
+		return o, fmt.Errorf("--workdir-map places work dirs, which --no-match turns off; use one or the other")
+	}
 	wm, names, err := parseWorkDirMaps(values)
 	if err != nil {
 		return o, err
