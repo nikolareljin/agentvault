@@ -37,13 +37,17 @@ func TestApplyPluginsFiltersLocalProjects(t *testing.T) {
 	mine := filepath.Join(home, "Projects", "x")
 	b := SetupBundle{Plugins: &PluginInventory{Plugins: []InstalledPlugin{{
 		ID: "a@m", Scope: "user", LocalProjects: []string{filepath.Join(acme, "r"), mine},
-		installs: []pluginInstall{{scope: "user"}, {scope: "local", projectPath: filepath.Join(acme, "r")}, {scope: "local", projectPath: mine}},
+		LocalDisabled: []string{filepath.Join(acme, "r"), mine},
+		installs:      []pluginInstall{{scope: "user"}, {scope: "local", projectPath: filepath.Join(acme, "r")}, {scope: "local", projectPath: mine}},
 	}}}}
 	if _, err := s.apply(&b, home); err != nil {
 		t.Fatal(err)
 	}
 	if got := b.Plugins.Plugins[0].LocalProjects; len(got) != 1 || got[0] != mine {
 		t.Errorf("LocalProjects = %q", got)
+	}
+	if got := b.Plugins.Plugins[0].LocalDisabled; len(got) != 1 || got[0] != mine {
+		t.Errorf("LocalDisabled = %q", got)
 	}
 }
 
@@ -114,9 +118,9 @@ func TestPlanLocalInstalls(t *testing.T) {
 // Two profiles with the same plugin bring both profiles' local installs.
 func TestMergePluginInventoriesUnionsLocal(t *testing.T) {
 	a := &PluginInventory{Plugins: []InstalledPlugin{{ID: "a@m", placed: []string{"/t/1"}}}}
-	b := &PluginInventory{Plugins: []InstalledPlugin{{ID: "a@m", placed: []string{"/t/1", "/t/2"}, unplaced: []string{"/s/3"}}}}
+	b := &PluginInventory{Plugins: []InstalledPlugin{{ID: "a@m", placed: []string{"/t/1", "/t/2"}, unplaced: []string{"/s/3"}, placedOff: []string{"/t/2"}}}}
 	got := mergePluginInventories([]*PluginInventory{a, b}).Plugins[0]
-	if strings.Join(got.placed, ",") != "/t/1,/t/2" || strings.Join(got.unplaced, ",") != "/s/3" {
+	if strings.Join(got.placed, ",") != "/t/1,/t/2" || strings.Join(got.unplaced, ",") != "/s/3" || strings.Join(got.placedOff, ",") != "/t/2" {
 		t.Errorf("merged = %+v", got)
 	}
 }
@@ -287,5 +291,46 @@ func TestPlacePluginProjectsRefusesLinkOut(t *testing.T) {
 	got := placePluginProjects(inv, []pathRemap{{From: "/src", To: root}}, []string{root})
 	if p := got.Plugins[0]; len(p.placed) != 0 || len(p.unplaced) != 2 {
 		t.Errorf("placed = %q, unplaced = %q", p.placed, p.unplaced)
+	}
+}
+
+// A plugin disabled for one project travels disabled, and only there.
+func TestLocalDisabledRoundTrip(t *testing.T) {
+	home, base := t.TempDir(), t.TempDir()
+	on, off := filepath.Join(base, "on"), filepath.Join(base, "off")
+	mustMkdirAll(t, on)
+	mustWriteFile(t, filepath.Join(off, ".claude", "settings.local.json"), `{"enabledPlugins":{"a@m":false,"b@m":true}}`)
+	mustWriteFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"a@m":[{"scope":"local","projectPath":"`+on+`"},{"scope":"local","projectPath":"`+off+`"}]}}`)
+	inv, err := collectClaudePluginInventory(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := inv.Plugins[0].LocalDisabled; len(got) != 1 || got[0] != off {
+		t.Fatalf("LocalDisabled = %q", got)
+	}
+
+	dst := t.TempDir()
+	mustMkdirAll(t, filepath.Join(dst, "on"))
+	mustMkdirAll(t, filepath.Join(dst, "off"))
+	placed := placePluginProjects(inv, []pathRemap{{From: base, To: dst}}, []string{dst})
+	calls := fakeClaude(t)
+	var out bytes.Buffer
+	local := localPlugins{markets: map[string]string{"m": "o/m"}}
+	if _, err := importPlugins(context.Background(), placed, local, pluginImportOptions{Policy: pluginsPrint, Out: &out, Err: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	offDst := shellQuote(filepath.Join(dst, "off"))
+	if !strings.Contains(out.String(), "    (cd "+offDst+" && claude plugin disable --scope local a@m)") {
+		t.Errorf("print lacks the local disable:\n%s", out.String())
+	}
+	if _, err := importPlugins(context.Background(), placed, local, pluginImportOptions{Policy: pluginsMissing, Out: &out, Err: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	want := "in " + filepath.Join(dst, "on") + ": plugin install --scope local a@m\n" +
+		"in " + filepath.Join(dst, "off") + ": plugin install --scope local a@m\n" +
+		"in " + filepath.Join(dst, "off") + ": plugin disable --scope local a@m"
+	if strings.Join(*calls, "\n") != want {
+		t.Errorf("ran:\n%s\nwant:\n%s", strings.Join(*calls, "\n"), want)
 	}
 }

@@ -6,7 +6,8 @@
 
 - Import installs a Claude plugin that was installed for a project at
   local scope into that project on this machine: `claude plugin install
-  --scope local`, run in the project's directory. Only a project placed
+  --scope local`, run in the project's directory, and disabled there
+  when that project disabled it. Only a project placed
   by a confirmed match, `--map`, `--workdir-map` or `--project-root`
   counts; the home rewrite alone does not. `export --workdirs` leaves out
   local installs in unselected work dirs.

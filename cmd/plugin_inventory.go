@@ -48,9 +48,13 @@ type InstalledPlugin struct {
 	// Project scope is left out: the repository's .claude/settings.json
 	// carries it.
 	LocalProjects []string `json:"local_projects,omitempty"`
+	// LocalDisabled are the LocalProjects whose .claude/settings.local.json
+	// disables it.
+	LocalDisabled []string `json:"local_disabled,omitempty"`
 	// placed and unplaced are LocalProjects after import placed them on
-	// this machine; never in a bundle.
-	placed, unplaced []string
+	// this machine, and placedOff the placed ones LocalDisabled names;
+	// never in a bundle.
+	placed, unplaced, placedOff []string
 	// installs are where it is installed on this machine; they decide what
 	// a work dir selection leaves out and never reach the bundle.
 	installs []pluginInstall
@@ -117,6 +121,9 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 			p.installs = append(p.installs, pluginInstall{scope: e.Scope, projectPath: path})
 			if e.Scope == "local" && path != "" {
 				p.LocalProjects = append(p.LocalProjects, path)
+				if localPluginDisabled(path, id) {
+					p.LocalDisabled = append(p.LocalDisabled, path)
+				}
 			}
 		}
 		inv.Plugins = append(inv.Plugins, p)
@@ -212,3 +219,16 @@ var (
 	safePluginID          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	safeMarketplaceSource = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*|https://[A-Za-z0-9][A-Za-z0-9.-]*(/[A-Za-z0-9._~/-]*)?)$`)
 )
+
+// localPluginDisabled is whether the project's .claude/settings.local.json
+// sets id to false. An unreadable file says nothing.
+func localPluginDisabled(project, id string) bool {
+	var settings struct {
+		EnabledPlugins map[string]bool `json:"enabledPlugins"`
+	}
+	if readJSONIfPresent(filepath.Join(project, ".claude", "settings.local.json"), &settings) != nil {
+		return false
+	}
+	on, ok := settings.EnabledPlugins[id]
+	return ok && !on
+}

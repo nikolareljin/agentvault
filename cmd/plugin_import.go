@@ -245,12 +245,19 @@ func planLocalInstalls(p InstalledPlugin, local localPlugins, steps []pluginStep
 			notes = append(notes, fmt.Sprintf("plugin %s for project %s: already here", p.ID, strconv.Quote(dir)))
 			continue
 		}
-		steps = append(steps, pluginStep{
+		s := pluginStep{
 			what:   fmt.Sprintf("install plugin %s for project %s (local scope)", p.ID, strconv.Quote(dir)),
 			args:   []string{"plugin", "install", "--scope", "local", p.ID},
 			market: p.ID[strings.LastIndex(p.ID, "@")+1:],
 			dir:    dir,
-		})
+		}
+		for _, off := range p.placedOff {
+			if samePath(off, dir) {
+				s.what = fmt.Sprintf("install plugin %s for project %s (local scope, disabled, as in the bundle)", p.ID, strconv.Quote(dir))
+				s.then = []string{"plugin", "disable", "--scope", "local", p.ID}
+			}
+		}
+		steps = append(steps, s)
 	}
 	return steps, notes
 }
@@ -267,12 +274,17 @@ func placePluginProjects(inv *PluginInventory, remaps []pathRemap, confirmed []s
 	out := *inv
 	out.Plugins = make([]InstalledPlugin, len(inv.Plugins))
 	for i, p := range inv.Plugins {
-		p.placed, p.unplaced = nil, nil
+		p.placed, p.unplaced, p.placedOff = nil, nil, nil
 		for _, dir := range p.LocalProjects {
 			to, _ := remapText(dir, remaps)
 			to = filepath.Clean(to)
 			if placedUnder(to, confirmed) {
 				p.placed = append(p.placed, to)
+				for _, off := range p.LocalDisabled {
+					if off == dir {
+						p.placedOff = append(p.placedOff, to)
+					}
+				}
 			} else {
 				p.unplaced = append(p.unplaced, dir)
 			}
@@ -357,13 +369,14 @@ func importPlugins(ctx context.Context, inv *PluginInventory, local localPlugins
 			fmt.Fprintln(o.Out, "  To apply the bundle's plugins here, run:")
 		}
 		for _, s := range steps {
-			if s.dir != "" {
-				fmt.Fprintf(o.Out, "    (cd %s && claude %s)\n", shellQuote(s.dir), strings.Join(s.args, " "))
-				continue
-			}
-			fmt.Fprintf(o.Out, "    claude %s\n", strings.Join(s.args, " "))
-			if s.then != nil {
-				fmt.Fprintf(o.Out, "    claude %s\n", strings.Join(s.then, " "))
+			for _, args := range [][]string{s.args, s.then} {
+				switch {
+				case args == nil:
+				case s.dir != "":
+					fmt.Fprintf(o.Out, "    (cd %s && claude %s)\n", shellQuote(s.dir), strings.Join(args, " "))
+				default:
+					fmt.Fprintf(o.Out, "    claude %s\n", strings.Join(args, " "))
+				}
 			}
 		}
 		return 0, nil
@@ -453,6 +466,7 @@ func mergePluginInventories(invs []*PluginInventory) *PluginInventory {
 				q := &out.Plugins[at]
 				q.placed = appendNewPaths(q.placed, p.placed)
 				q.unplaced = appendNewPaths(q.unplaced, p.unplaced)
+				q.placedOff = appendNewPaths(q.placedOff, p.placedOff)
 				continue
 			}
 			plugins[p.ID] = len(out.Plugins)

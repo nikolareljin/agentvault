@@ -285,6 +285,13 @@ func (s workDirScope) applyPlugins(bundle *SetupBundle) {
 			}
 		}
 		p.LocalProjects = local
+		var off []string
+		for _, dir := range p.LocalDisabled {
+			if _, ok := s.excluded(dir); !ok {
+				off = append(off, dir)
+			}
+		}
+		p.LocalDisabled = off
 		keep = append(keep, p)
 	}
 	bundle.Plugins.Plugins = keep
