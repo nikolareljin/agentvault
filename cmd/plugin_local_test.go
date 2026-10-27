@@ -301,7 +301,7 @@ func TestLocalDisabledRoundTrip(t *testing.T) {
 	mustMkdirAll(t, on)
 	mustWriteFile(t, filepath.Join(off, ".claude", "settings.local.json"), `{"enabledPlugins":{"a@m":false,"b@m":true}}`)
 	mustWriteFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
-		`{"version":2,"plugins":{"a@m":[{"scope":"local","projectPath":"`+on+`"},{"scope":"local","projectPath":"`+off+`"}]}}`)
+		`{"version":2,"plugins":{"a@m":[{"scope":"local","projectPath":`+jsonString(on)+`},{"scope":"local","projectPath":`+jsonString(off)+`}]}}`)
 	inv, err := collectClaudePluginInventory(home)
 	if err != nil {
 		t.Fatal(err)
