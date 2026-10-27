@@ -98,6 +98,7 @@ func init() {
 	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine, MCP server, router and script commands that the bundle adds or changes; left out by default")
 	importCmd.Flags().String("mcp-servers", "", "MCP servers to take from the bundle, new or changed: a comma-separated list of names, all, or none (default: ask on a terminal, else none)")
 	importCmd.Flags().String("on-conflict", "", "when a local file differs from the bundle: backup-replace or keep (default: ask on a terminal, else backup-replace; --strategy merge means keep)")
+	importCmd.Flags().String("plugins", "", "the bundle's Claude Code plugins: ask, print, missing (add what this machine lacks) or bundle (also take the bundle's side where they differ) (default: ask on a terminal, else print)")
 	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
 	importCmd.Flags().Bool("plain", false, "deprecated: the export format is detected automatically")
 	_ = importCmd.Flags().MarkDeprecated("plain", "the export format is detected automatically")
@@ -164,6 +165,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	interactive := term.IsTerminal(stdinFD())
 	stdin := bufio.NewReader(os.Stdin)
+	pluginPol, err := resolvePluginPolicy(mustString(cmd, "plugins"), interactive)
+	if err != nil {
+		return err
+	}
 	if strategy.deletesLocalOnly() && !dryRun {
 		if err := confirmDestructiveImport(confirmFlag, interactive, stdin, cmd.ErrOrStderr(), selected); err != nil {
 			return err
@@ -196,6 +201,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	var allMissed []missedEntry
+	var invs []*PluginInventory
 	now := time.Now()
 	total := importReport{}
 	for _, profile := range selected {
@@ -223,6 +229,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			profileOpts.ProjectRoot = match.ProjectRoot
 		}
 		allMissed = append(allMissed, match.Missed...)
+		invs = append(invs, profile.Setup.Plugins)
 		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" && match.SourceSkipped {
 			// Listed in the summary at the end; the rest of the import goes on.
 			profileOpts.ApplyProjects = false
@@ -256,6 +263,24 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	pluginsFailed := 0
+	if inv := mergePluginInventories(invs); inv != nil {
+		home := exportSourceHome()
+		if home == "" {
+			return errors.New("reading this machine's plugins: no home directory")
+		}
+		local, err := readLocalPlugins(home)
+		if err != nil {
+			return fmt.Errorf("reading this machine's plugins: %w", err)
+		}
+		pluginsFailed, err = importPlugins(cmd.Context(), inv, local, pluginImportOptions{
+			Policy: pluginPol, DryRun: dryRun, In: stdin, Terminal: os.Stdin, Out: out, Err: cmd.ErrOrStderr(),
+		})
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, n := range mcpUnknownNames(assetOpts) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: --mcp-servers: no MCP server %s in the bundle\n", strconv.Quote(n))
 	}
@@ -277,11 +302,20 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	printInstallGuide(cmd, selected)
-	if len(allMissed) > 0 {
-		// Everything else was imported; the exit status says it was not all.
-		return fmt.Errorf("%d work dir(s) or project(s) not imported; see \"Not imported\" above", len(allMissed))
+	return importIncomplete(pluginsFailed, len(allMissed))
+}
+
+// importIncomplete is the exit error of an import that did everything else:
+// it names each part that was not done.
+func importIncomplete(pluginsFailed, missed int) error {
+	var errs []error
+	if pluginsFailed > 0 {
+		errs = append(errs, fmt.Errorf("%d plugin step(s) failed; see \"Plugins\" above", pluginsFailed))
 	}
-	return nil
+	if missed > 0 {
+		errs = append(errs, fmt.Errorf("%d work dir(s) or project(s) not imported; see \"Not imported\" above", missed))
+	}
+	return errors.Join(errs...)
 }
 
 // mustString reads a string flag, returning "" when the flag is absent.
@@ -738,7 +772,6 @@ func importProfileAssets(cmd *cobra.Command, setup SetupBundle, opts importAsset
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", printable(warn))
 	}
 
-	printPluginInstallCommands(cmd.OutOrStdout(), setup.Plugins)
 	if opts.ApplyProjects {
 		// The writer refuses symlinks on the way to a file; the root the user
 		// named may sit under one (/tmp on macOS). Paths in files keep the

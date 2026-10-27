@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,8 +16,8 @@ import (
 // PluginInventory lists the Claude Code plugins and marketplaces of the
 // exporting machine. The plugin files themselves are not carried: Claude
 // Code's installed_plugins.json holds absolute cache paths that do not exist
-// on the other machine. The inventory says what to install, and import prints
-// the commands.
+// on the other machine. The inventory says what to install, and import
+// installs it or prints the commands (see plugin_import.go).
 type PluginInventory struct {
 	Marketplaces []PluginMarketplace `json:"marketplaces,omitempty"`
 	Plugins      []InstalledPlugin   `json:"plugins,omitempty"`
@@ -37,10 +36,21 @@ type PluginMarketplace struct {
 type InstalledPlugin struct {
 	ID      string `json:"id"`
 	Version string `json:"version,omitempty"`
-	Scope   string `json:"scope,omitempty"`
+	// Scope is "user" when the plugin is installed for the user, else the
+	// scope of its first install.
+	Scope string `json:"scope,omitempty"`
+	// Enabled is its enabledPlugins entry in the user's Claude settings;
+	// nil when there is none.
+	Enabled *bool `json:"enabled,omitempty"`
 	// installs are where it is installed on this machine; they decide what
 	// a work dir selection leaves out and never reach the bundle.
 	installs []pluginInstall
+}
+
+// userScope is whether the plugin is installed for the user. A bundle from
+// before Scope was set says nothing, and counts as user.
+func (p InstalledPlugin) userScope() bool {
+	return p.Scope == "" || p.Scope == "user"
 }
 
 type pluginInstall struct {
@@ -93,12 +103,24 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 			path := e.ProjectPath
 			if e.Scope == "user" {
 				path = ""
+				p.Version, p.Scope = e.Version, e.Scope
 			}
 			p.installs = append(p.installs, pluginInstall{scope: e.Scope, projectPath: path})
 		}
 		inv.Plugins = append(inv.Plugins, p)
 	}
 	sort.Slice(inv.Plugins, func(i, j int) bool { return inv.Plugins[i].ID < inv.Plugins[j].ID })
+	if len(inv.Plugins) > 0 {
+		enabled, err := readEnabledPlugins(homeDir)
+		if err != nil {
+			return nil, err
+		}
+		for i := range inv.Plugins {
+			if on, ok := enabled[inv.Plugins[i].ID]; ok {
+				inv.Plugins[i].Enabled = &on
+			}
+		}
+	}
 
 	if len(inv.Marketplaces) == 0 && len(inv.Plugins) == 0 {
 		return nil, nil
@@ -171,37 +193,9 @@ func readJSONIfPresent(path string, v any) error {
 	return nil
 }
 
-// printPluginInstallCommands prints what to run on this machine to get the
-// exporting machine's plugins. It runs nothing: installing a plugin runs its
-// code, and that is a decision for the person importing.
-func printPluginInstallCommands(out io.Writer, inv *PluginInventory) {
-	if inv == nil {
-		return
-	}
-	fmt.Fprintf(out, "  Plugins in bundle: %d marketplace(s), %d plugin(s). To install them:\n",
-		len(inv.Marketplaces), len(inv.Plugins))
-	for _, m := range inv.Marketplaces {
-		switch {
-		case m.Kind == "directory":
-			fmt.Fprintf(out, "    # %q is a local directory on the exporting machine: %q\n", m.Name, m.Source)
-		case safeMarketplaceSource.MatchString(m.Source):
-			fmt.Fprintf(out, "    claude plugin marketplace add %s\n", m.Source)
-		case m.Source != "":
-			fmt.Fprintf(out, "    # skipped marketplace %q: source %q is not owner/repo or an https URL\n", m.Name, m.Source)
-		}
-	}
-	for _, p := range inv.Plugins {
-		if safePluginID.MatchString(p.ID) {
-			fmt.Fprintf(out, "    claude plugin install %s\n", p.ID)
-			continue
-		}
-		fmt.Fprintf(out, "    # skipped plugin %q: not name@marketplace\n", p.ID)
-	}
-}
-
-// The commands are printed for a person to paste into a shell, and the values
-// come from a bundle. Only shapes that cannot carry shell syntax are printed
-// as commands; anything else is printed quoted, as a comment.
+// The values come from a bundle, and import runs them as arguments or prints
+// them for a person to paste into a shell. Only shapes that cannot carry
+// shell syntax or start with "-" are used; anything else is reported quoted.
 var (
 	safePluginID          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	safeMarketplaceSource = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*|https://[A-Za-z0-9][A-Za-z0-9.-]*(/[A-Za-z0-9._~/-]*)?)$`)
