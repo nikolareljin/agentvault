@@ -228,7 +228,7 @@ func TestResolvePluginPolicy(t *testing.T) {
 }
 
 // Scope is "user" when any install is, and Enabled comes from the user's
-// settings.
+// settings; no entry there is disabled.
 func TestPluginInventoryScopeAndEnabled(t *testing.T) {
 	home := t.TempDir()
 	mustWriteFile(t, filepath.Join(home, ".claude", "plugins", "installed_plugins.json"),
@@ -248,7 +248,7 @@ func TestPluginInventoryScopeAndEnabled(t *testing.T) {
 	if p := byID["proj@m"]; p.userScope() || p.Enabled == nil || !*p.Enabled {
 		t.Errorf("proj@m = %+v", p)
 	}
-	if p := byID["plain@m"]; !p.userScope() || p.Enabled != nil {
+	if p := byID["plain@m"]; !p.userScope() || p.Enabled == nil || *p.Enabled {
 		t.Errorf("plain@m = %+v", p)
 	}
 }
@@ -428,6 +428,23 @@ func TestPlanPluginImportRefusesOddMarketplaceName(t *testing.T) {
 		t.Errorf("odd name planned: %+v", steps)
 	}
 	if len(notes) != 1 || !strings.Contains(notes[0], "not a plain name") {
+		t.Errorf("notes = %q", notes)
+	}
+}
+
+// A plugin with no enabledPlugins entry here is disabled (claude 2.1.311
+// lists it so); the bundle enabling it is a difference, disabling it is not.
+func TestPlanPluginImportUnsetEnabled(t *testing.T) {
+	inv := &PluginInventory{Plugins: []InstalledPlugin{
+		{ID: "off@m", Enabled: boolPtr(false)}, {ID: "on@m", Enabled: boolPtr(true)},
+	}}
+	local := localPlugins{installed: map[string]string{"off@m": "", "on@m": ""}, enabled: map[string]bool{}}
+	steps, notes := planPluginImport(inv, local)
+	if len(steps) != 1 || strings.Join(steps[0].args, " ") != "plugin enable --scope user on@m" ||
+		!strings.Contains(steps[0].what, "(not set here, enabled in bundle)") {
+		t.Errorf("steps = %+v", steps)
+	}
+	if len(notes) != 1 || notes[0] != "plugin off@m: already here" {
 		t.Errorf("notes = %q", notes)
 	}
 }

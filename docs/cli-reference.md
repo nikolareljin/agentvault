@@ -951,7 +951,7 @@ Also carried:
 - Every file a user-level instruction file names (backticked paths, markdown links, `@path` imports), followed through the files those name, up to 10 hops. `~/`, `$HOME/` and paths under the home directory are allowed. Anything outside the home directory is listed as declined.
 - The scripts that `settings.json` runs from `hooks` and `statusLine`, when they are under the home directory.
 - With `--project <dir>`: the instruction files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `CONVENTIONS.md`, ...), the rule directories (`.github/instructions/`, `.github/prompts/`, `.cursor/rules/`, `.windsurf/rules/`, `.gemini/commands/`, `.clinerules`), `.claude/agents/` and `.claude/commands/`, `skills/`, and every file or directory those name.
-- A Claude Code plugin inventory: marketplaces, user-scope plugins with their version and `enabledPlugins` state. Import installs them with the `claude` CLI or prints the commands; see `--plugins`.
+- A Claude Code plugin inventory: marketplaces, user-scope plugins with their version and `enabledPlugins` state (no entry counts as disabled, as Claude Code treats it). Import installs them with the `claude` CLI or prints the commands; see `--plugins`.
 
 Never carried:
 - Login tokens: `~/.claude/.credentials.json`, `~/.codex/auth.json`, `~/.gemini/oauth_creds.json`, `~/.gemini/google_accounts.json`, `~/.config/github-copilot/hosts.json` and `apps.json`. The login keys of `~/.copilot/config.json` (`copilot_tokens`, `logged_in_users`, `last_logged_in_user`, any key named like a token, except counts and limits such as `max_tokens` and `tokenLimit`) are removed; the rest of that file is carried. They are not carried even with `--include-secrets`. Sign in on the other machine.

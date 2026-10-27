@@ -172,14 +172,21 @@ func planPluginImport(inv *PluginInventory, local localPlugins) (steps []pluginS
 			continue
 		}
 		same := true
-		if on, ok := local.enabled[p.ID]; ok && p.Enabled != nil && on != *p.Enabled {
+		// No entry here means disabled, as `claude plugin list` reports it:
+		// only the bundle enabling it differs.
+		on, set := local.enabled[p.ID]
+		if p.Enabled != nil && on != *p.Enabled {
 			same = false
 			verb := "enable"
 			if !*p.Enabled {
 				verb = "disable"
 			}
+			here := onOff(on)
+			if !set {
+				here = "not set"
+			}
 			steps = append(steps, pluginStep{
-				what:     fmt.Sprintf("%s plugin %s (%s here, %s in bundle)", verb, p.ID, onOff(on), onOff(*p.Enabled)),
+				what:     fmt.Sprintf("%s plugin %s (%s here, %s in bundle)", verb, p.ID, here, onOff(*p.Enabled)),
 				args:     []string{"plugin", verb, "--scope", "user", p.ID},
 				conflict: true,
 			})

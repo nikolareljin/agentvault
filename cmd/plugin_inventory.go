@@ -39,8 +39,9 @@ type InstalledPlugin struct {
 	// Scope is "user" when the plugin is installed for the user, else the
 	// scope of its first install.
 	Scope string `json:"scope,omitempty"`
-	// Enabled is its enabledPlugins entry in the user's Claude settings;
-	// nil when there is none.
+	// Enabled is its enabledPlugins entry in the user's Claude settings,
+	// false when there is none (Claude then treats it as disabled). nil only
+	// in a bundle from before this field.
 	Enabled *bool `json:"enabled,omitempty"`
 	// installs are where it is installed on this machine; they decide what
 	// a work dir selection leaves out and never reach the bundle.
@@ -116,9 +117,8 @@ func collectClaudePluginInventory(homeDir string) (*PluginInventory, error) {
 			return nil, err
 		}
 		for i := range inv.Plugins {
-			if on, ok := enabled[inv.Plugins[i].ID]; ok {
-				inv.Plugins[i].Enabled = &on
-			}
+			on := enabled[inv.Plugins[i].ID]
+			inv.Plugins[i].Enabled = &on
 		}
 	}
 
