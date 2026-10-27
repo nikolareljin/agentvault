@@ -270,6 +270,7 @@ func placePluginProjects(inv *PluginInventory, remaps []pathRemap, confirmed []s
 		p.placed, p.unplaced = nil, nil
 		for _, dir := range p.LocalProjects {
 			to, _ := remapText(dir, remaps)
+			to = filepath.Clean(to)
 			if placedUnder(to, confirmed) {
 				p.placed = append(p.placed, to)
 			} else {
@@ -281,7 +282,9 @@ func placePluginProjects(inv *PluginInventory, remaps []pathRemap, confirmed []s
 	return &out
 }
 
-// placedUnder is whether dir is an existing directory under one of roots.
+// placedUnder is whether dir is an existing directory under one of roots,
+// with links resolved on both sides: a link inside a project must not
+// carry the write out of it.
 func placedUnder(dir string, roots []string) bool {
 	if !filepath.IsAbs(dir) || printable(dir) != dir {
 		return false
@@ -289,8 +292,15 @@ func placedUnder(dir string, roots []string) bool {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return false
 	}
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
 	for _, r := range roots {
-		if r != "" && pathWithin(r, dir) {
+		if r == "" {
+			continue
+		}
+		if rr, err := filepath.EvalSymlinks(r); err == nil && pathWithin(rr, real) {
 			return true
 		}
 	}

@@ -270,3 +270,22 @@ func TestProfilePluginsConfirmedPlaces(t *testing.T) {
 		}
 	}
 }
+
+// A link inside a confirmed project does not place a project outside it.
+func TestPlacePluginProjectsRefusesLinkOut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	base := t.TempDir()
+	root, outside := filepath.Join(base, "code"), filepath.Join(base, "elsewhere")
+	mustMkdirAll(t, root)
+	mustMkdirAll(t, outside)
+	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	inv := &PluginInventory{Plugins: []InstalledPlugin{{ID: "a@m", LocalProjects: []string{"/src/link", "/src/x/../../elsewhere"}}}}
+	got := placePluginProjects(inv, []pathRemap{{From: "/src", To: root}}, []string{root})
+	if p := got.Plugins[0]; len(p.placed) != 0 || len(p.unplaced) != 2 {
+		t.Errorf("placed = %q, unplaced = %q", p.placed, p.unplaced)
+	}
+}
