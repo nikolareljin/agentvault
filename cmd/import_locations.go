@@ -29,10 +29,13 @@ type locationOptions struct {
 	Interactive   bool
 	DryRun        bool
 	WorkDirMaps   map[string]string
-	UserMaps      []pathRemap
-	Home          string
-	In            *bufio.Reader
-	Out           io.Writer
+	// WorkDirNames are --workdir-map NAME=PATH: a bundle work dir exported
+	// under NAME goes to PATH.
+	WorkDirNames map[string]string
+	UserMaps     []pathRemap
+	Home         string
+	In           *bufio.Reader
+	Out          io.Writer
 	// Known is what the vault already records; aliases are checked against it.
 	Known locations.Set
 	// Identify replaces locations.DefaultIdentifier in tests.
@@ -279,30 +282,88 @@ type locationResult struct {
 	SourceSkipped bool
 }
 
-// parseWorkDirMaps reads --workdir-map OLD=NEW. OLD is the bundle's path;
-// NEW must be a directory here.
-func parseWorkDirMaps(values []string) (map[string]string, error) {
-	out := map[string]string{}
+// parseWorkDirMaps reads --workdir-map OLD=NEW. OLD is the bundle's path,
+// or the name a work dir was exported under; NEW must be a directory here.
+// A name has no "/", "\\" or ":", so it cannot be read as a path.
+func parseWorkDirMaps(values []string) (paths, names map[string]string, err error) {
+	paths, names = map[string]string{}, map[string]string{}
 	for _, m := range values {
 		from, to, ok := strings.Cut(m, "=")
 		from, to = strings.TrimSpace(from), strings.TrimSpace(to)
 		if !ok || from == "" || to == "" {
-			return nil, fmt.Errorf("--workdir-map %q: want OLD=NEW", m)
+			return nil, nil, fmt.Errorf("--workdir-map %q: want OLD=NEW or NAME=NEW", m)
 		}
-		from = locations.CleanForeign(from)
-		if !remappableRoot(from) {
-			return nil, fmt.Errorf("--workdir-map %q: OLD must be an absolute path below the filesystem root", m)
+		isName := locations.ValidName(from)
+		if !isName {
+			from = locations.CleanForeign(from)
+			if !remappableRoot(from) {
+				return nil, nil, fmt.Errorf("--workdir-map %q: OLD must be a work dir name or an absolute path below the filesystem root", m)
+			}
 		}
 		abs, err := filepath.Abs(expandUserPath(to))
 		if err != nil {
-			return nil, fmt.Errorf("--workdir-map %q: %w", m, err)
+			return nil, nil, fmt.Errorf("--workdir-map %q: %w", m, err)
 		}
 		if info, err := os.Stat(abs); err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("--workdir-map %q: %s is not a directory", m, abs)
+			return nil, nil, fmt.Errorf("--workdir-map %q: %s is not a directory", m, abs)
 		}
-		out[from] = filepath.Clean(abs)
+		if isName {
+			names[from] = filepath.Clean(abs)
+		} else {
+			paths[from] = filepath.Clean(abs)
+		}
 	}
-	return out, nil
+	return paths, names, nil
+}
+
+// checkWorkDirNames refuses a --workdir-map NAME that no selected profile
+// exported, so a typo is not silently ignored.
+func checkWorkDirNames(profiles []PortableProfile, names map[string]string) error {
+	have := map[string]bool{}
+	for _, p := range profiles {
+		if p.Setup.Locations == nil {
+			continue
+		}
+		for _, w := range p.Setup.Locations.WorkDirs {
+			if w.Name != "" {
+				have[w.Name] = true
+			}
+		}
+	}
+	var unknown []string
+	for n := range names {
+		if !have[n] {
+			unknown = append(unknown, n)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf("--workdir-map: the bundle has no work dir named %s", strings.Join(unknown, ", "))
+}
+
+// byName places each bundle work dir that was exported under a name and
+// that no --workdir-map OLD names: --workdir-map NAME=PATH first, then the
+// work dir this machine declared under the same name. Both count as the
+// user's choice, as --workdir-map OLD=NEW does. It returns a new map.
+func byName(set *locations.Set, o locationOptions) map[string]string {
+	out := make(map[string]string, len(o.WorkDirMaps))
+	for k, v := range o.WorkDirMaps {
+		out[k] = v
+	}
+	for _, w := range set.WorkDirs {
+		key := locations.CleanForeign(w.Abs)
+		if _, given := out[key]; given || w.Name == "" {
+			continue
+		}
+		if to, ok := o.WorkDirNames[w.Name]; ok {
+			out[key] = to
+		} else if n, ok := o.Known.Lookup(w.Name); ok {
+			out[key] = filepath.Clean(n.Path)
+		}
+	}
+	return out
 }
 
 // skipGitRunner gives no root commits, so a scan where every bundle project
@@ -330,6 +391,7 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		out = io.Discard
 	}
 	set = usableLocations(set, out)
+	o.WorkDirMaps = byName(set, o)
 	// Saved mappings come from earlier imports; --workdir-map wins over them.
 	maps := map[string]string{}
 	for k, v := range o.Known.WorkDirMaps {
@@ -457,7 +519,11 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 				continue
 			}
 		}
-		res.Missed = append(res.Missed, missedEntry{Path: w.Abs, Reason: reason, Hint: flagHint("--workdir-map", w.Abs), Suggest: locations.Suggest(o.Home, w)})
+		hint := flagHint("--workdir-map", w.Abs)
+		if w.Name != "" {
+			hint = "--workdir-map " + w.Name + "=<path here>, or agentvault workdir add " + w.Name + " <path here>"
+		}
+		res.Missed = append(res.Missed, missedEntry{Path: w.Abs, Reason: reason, Hint: hint, Suggest: locations.Suggest(o.Home, w)})
 		if sourceProject != "" {
 			for _, p := range set.Projects {
 				if p.WorkDir == w.ID && locations.CleanForeign(p.Abs) == locations.CleanForeign(sourceProject) {
@@ -803,6 +869,10 @@ func usableLocations(in *locations.Set, out io.Writer) *locations.Set {
 	for _, w := range in.WorkDirs {
 		if c, ok := clean("work dir", w.Abs); ok && printable(w.Label) == w.Label {
 			w.Abs = c
+			if w.Name != "" && !locations.ValidName(w.Name) {
+				fmt.Fprintf(out, "  warning: ignoring the name %q of work dir %s from the bundle: not a valid work dir name\n", printable(w.Name), printable(c))
+				w.Name = ""
+			}
 			res.WorkDirs = append(res.WorkDirs, w)
 		}
 	}

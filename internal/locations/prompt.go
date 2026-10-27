@@ -126,7 +126,11 @@ func readLine(in *bufio.Reader) (string, error) {
 // suggestions. It returns "" when the user skips it.
 func AskWorkDir(w WorkDir, suggestions []string, home string, in *bufio.Reader, out io.Writer) (string, error) {
 	for {
-		fmt.Fprintf(out, "Work dir %s (%q) was not found here.\n", textutil.Printable(w.Abs), w.Label)
+		if w.Name != "" {
+			fmt.Fprintf(out, "Work dir %s (%q, named %s) was not found here.\n", textutil.Printable(w.Abs), w.Label, textutil.Printable(w.Name))
+		} else {
+			fmt.Fprintf(out, "Work dir %s (%q) was not found here.\n", textutil.Printable(w.Abs), w.Label)
+		}
 		for i, s := range suggestions {
 			fmt.Fprintf(out, "  %d. %s\n", i+1, textutil.Printable(s))
 		}

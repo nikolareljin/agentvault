@@ -4,6 +4,15 @@
 
 ### Added
 
+- A bundle names each work dir it exports from `--workdirs`, and import
+  places it by that name: `--workdir-map NAME=PATH`, else this machine's
+  work dir declared under the same name, before the usual matching by
+  path. Memory and paths under it are rewritten to that place. Nothing
+  else on this machine changes: importing `personal` leaves a local
+  `company-a` tree and its memory as they were. An unknown NAME in
+  `--workdir-map` is an error. Older releases ignore the name and place
+  the work dir by path as before.
+
 - `agentvault export --workdirs NAME[,NAME...]` exports only the named
   work dirs (`agentvault workdir add`). Nothing tied to the others leaves
   the machine: Claude memory, project-scope plugins, recorded projects,
@@ -14,10 +23,9 @@
 
 - `agentvault workdir add|list|remove` declares work directories by name,
   such as `personal` at `~/Projects` and `company-a` at `~/work/company-a`.
-  The vault keeps each name with its path on this machine; a bundle does
-  not carry them. Two declared paths may not be the same or nested. Later
-  releases use the names to export and import each work directory
-  separately.
+  The vault keeps each name with its path on this machine; a bundle
+  carries only the names of the work dirs it exports, never this list.
+  Two declared paths may not be the same or nested.
 
 - `agentvault doctor --context` estimates what Claude Code loads before the
   first prompt in a directory: instruction files per scope, `MEMORY.md`,

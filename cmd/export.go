@@ -11,6 +11,7 @@ import (
 
 	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
+	"github.com/nikolareljin/agentvault/internal/locations"
 	statuspkg "github.com/nikolareljin/agentvault/internal/status"
 	"github.com/nikolareljin/agentvault/internal/vault"
 	"github.com/nikolareljin/agentvault/internal/workflowtemplates"
@@ -476,7 +477,10 @@ type setupCollectOptions struct {
 	ProjectDir           string
 	WorkDirs             []string
 	WorkDirSelection     string
-	AgentName            string
+	// namedWorkDirs are the declared work dirs the selection takes; each is
+	// recorded in the bundle under its name.
+	namedWorkDirs []locations.Named
+	AgentName     string
 	// Project-relative `.local.` files to carry anyway, named one at a time.
 	IncludeLocalFiles []string
 }
@@ -508,6 +512,7 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 	if err := scope.checkPaths(opts.ProjectDir, opts.WorkDirs); err != nil {
 		return setupCollectResult{}, err
 	}
+	opts.namedWorkDirs = scope.selected
 	host, _ := os.Hostname()
 	bundle := SetupBundle{
 		Version:         "1.0",

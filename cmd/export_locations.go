@@ -33,8 +33,22 @@ func captureBundleLocations(cmd *cobra.Command, v *vault.Vault, bundle SetupBund
 	if cmd != nil && cmd.Context() != nil {
 		ctx = cmd.Context()
 	}
-	captured := locations.Capture(ctx, bundle.SourceHome, projects, opts.WorkDirs, nil)
+	workDirs := append([]string(nil), opts.WorkDirs...)
+	for _, n := range opts.namedWorkDirs {
+		workDirs = append(workDirs, n.Path)
+	}
+	captured := locations.Capture(ctx, bundle.SourceHome, projects, workDirs, nil)
 	merged := locations.Merge(v.Locations(), captured)
+	// A name comes only from this export's selection, never from a work
+	// dir the vault learned from another machine's bundle.
+	for i := range merged.WorkDirs {
+		merged.WorkDirs[i].Name = ""
+		for _, n := range opts.namedWorkDirs {
+			if locations.CleanForeign(n.Path) == locations.CleanForeign(merged.WorkDirs[i].Abs) {
+				merged.WorkDirs[i].Name = n.Name
+			}
+		}
+	}
 	if merged.Empty() {
 		return nil
 	}

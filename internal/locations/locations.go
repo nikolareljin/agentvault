@@ -25,6 +25,9 @@ type WorkDir struct {
 	// "." for home itself, empty when the work dir is outside home.
 	HomeRel string `json:"home_rel,omitempty"`
 	Abs     string `json:"abs"`
+	// Name is the declared work dir name (agentvault workdir add) this
+	// directory was exported under, so import can place it by name.
+	Name string `json:"name,omitempty"`
 }
 
 // Project is one checkout.
