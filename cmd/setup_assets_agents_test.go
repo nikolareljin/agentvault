@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -319,12 +320,14 @@ func TestPluginInventoryAndInstallCommands(t *testing.T) {
 		t.Fatalf("inventory = %+v, %v", inv, err)
 	}
 	var out bytes.Buffer
-	printPluginInstallCommands(&out, inv)
+	if _, err := importPlugins(context.Background(), inv, localPlugins{}, pluginImportOptions{Policy: pluginsPrint, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
 	got := out.String()
 	for _, want := range []string{
 		"claude plugin marketplace add anthropics/claude-plugins-official",
 		"claude plugin install superpowers@official",
-		`# "mine" is a local directory`,
+		`marketplace "mine": not added, a local directory`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output lacks %q:\n%s", want, got)
@@ -495,10 +498,12 @@ func TestHomeReferencedNonProseIsSensitive(t *testing.T) {
 // Values from a bundle printed as shell commands must not carry shell syntax.
 func TestPluginInstallCommandsRefuseShellSyntax(t *testing.T) {
 	var out bytes.Buffer
-	printPluginInstallCommands(&out, &PluginInventory{
+	if _, err := importPlugins(context.Background(), &PluginInventory{
 		Marketplaces: []PluginMarketplace{{Name: "m", Source: "x/y; rm -rf ~", Kind: "github"}},
 		Plugins:      []InstalledPlugin{{ID: "p@m$(curl evil)"}, {ID: "ok@m"}},
-	})
+	}, localPlugins{}, pluginImportOptions{Policy: pluginsPrint, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
 	for _, line := range strings.Split(out.String(), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "claude ") && strings.ContainsAny(trimmed, ";$()`|&") {

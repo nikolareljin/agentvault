@@ -4,6 +4,16 @@
 
 ### Added
 
+- Import installs the bundle's Claude Code plugins with the `claude` CLI.
+  `--plugins` picks what happens: `ask` per marketplace and plugin (the
+  default on a terminal), `print` the commands and run nothing (the
+  default without one, as before), `missing` to add what this machine
+  lacks, `bundle` to also take the bundle's side where the two differ in
+  enabled state or version. The bundle now records each plugin's enabled
+  state, and a fresh install the bundle has disabled is disabled. Every
+  marketplace and plugin gets a line in the report; a failed step makes
+  the import exit non-zero.
+
 - A bundle names each work dir it exports from `--workdirs`, and import
   places it by that name: `--workdir-map NAME=PATH`, else this machine's
   work dir declared under the same name unless an earlier import saved a

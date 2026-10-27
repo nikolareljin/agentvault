@@ -475,7 +475,7 @@ A bundle contains, per profile:
 - Sessions
 - Workflow templates
 - User-level setup of Claude Code, Codex, Gemini CLI, GitHub Copilot, Cursor and Windsurf: instruction files, settings, agents, commands, output styles, MCP servers and skills, plus every file those instructions name and the hook scripts settings run (list in `docs/cli-reference.md`)
-- A Claude Code plugin inventory; import prints the install commands
+- A Claude Code plugin inventory with each plugin's enabled state; import installs the plugins after asking, or prints the commands (`--plugins`)
 - Agent memory, only with `--include-memory` (the wizard asks)
 - Login tokens are never carried; a project's own settings files are listed, not carried
 - Provider pricing rows
