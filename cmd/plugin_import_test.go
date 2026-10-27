@@ -161,8 +161,11 @@ func TestImportPluginsPolicies(t *testing.T) {
 				if !strings.Contains(prompts.String(), "install plugin fresh@pub, it can run code on this machine? [y/N]") {
 					t.Errorf("install prompt does not warn:\n%s", prompts.String())
 				}
-				if strings.Contains(prompts.String(), "update plugin old@same to the marketplace's latest (\"2.9\" here, \"3.0\" in bundle), it can") {
-					t.Errorf("update prompt warns as an install:\n%s", prompts.String())
+				if !strings.Contains(prompts.String(), "update plugin old@same to the marketplace's latest (\"2.9\" here, \"3.0\" in bundle), it can run code") {
+					t.Errorf("update prompt does not warn:\n%s", prompts.String())
+				}
+				if strings.Contains(prompts.String(), "disable plugin flip@same (enabled here, disabled in bundle), it can") {
+					t.Errorf("disable prompt warns:\n%s", prompts.String())
 				}
 			}
 		})

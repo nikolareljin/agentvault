@@ -314,7 +314,8 @@ func (o pluginImportOptions) decide(s pluginStep) (bool, error) {
 		return !s.conflict, nil
 	}
 	note := ""
-	if s.market != "" || s.adds != "" {
+	// Only disabling stops code; every other step can start or change it.
+	if s.args[1] != "disable" {
 		note = ", it can run code on this machine"
 	}
 	fmt.Fprintf(o.Err, "  %s%s? [y/N]: ", printable(s.what), note)
