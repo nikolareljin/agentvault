@@ -453,3 +453,31 @@ func TestConfirmRowsAskedOncePerImport(t *testing.T) {
 		t.Errorf("new rows not asked\n%s", out.String())
 	}
 }
+
+func TestConfirmRowsMemoKeysAndLabels(t *testing.T) {
+	o := locationOptions{Asked: newAskMemo(), Home: t.TempDir()}
+	var out bytes.Buffer
+	pick := filepath.Join(o.Home, "b")
+	mustMkdirAll(t, pick)
+	amb := []locations.Row{{From: "/old/x", Choices: []string{filepath.Join(o.Home, "a"), pick}}}
+	o.In = bufio.NewReader(strings.NewReader("1\nb\n\n"))
+	if got, err := confirmRows(o, amb, &out); err != nil || got[0].To != pick {
+		t.Fatalf("%v %+v", err, got)
+	}
+	// Other candidates for the same path are a new question.
+	other := []locations.Row{{From: "/old/x", Choices: []string{filepath.Join(o.Home, "c"), filepath.Join(o.Home, "d")}}}
+	o.In = bufio.NewReader(strings.NewReader("\n"))
+	if got, err := confirmRows(o, other, &out); err != nil || got[0].To != "" {
+		t.Errorf("pick from another list reused: %v %+v", err, got)
+	}
+	// A skipped row replays as skipped, not ambiguous.
+	skip := []locations.Row{{From: "/old/y", To: pick}}
+	o.In = bufio.NewReader(strings.NewReader("1\n-\n\n"))
+	if _, err := confirmRows(o, skip, &out); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if got, err := confirmRows(o, skip, &out); err != nil || got[0].To != "" || !strings.Contains(out.String(), "(skipped)") {
+		t.Errorf("skipped replay: %v %+v\n%s", err, got, out.String())
+	}
+}

@@ -71,8 +71,10 @@ func newAskMemo() *askMemo {
 	return &askMemo{workDir: map[string]string{}, hidden: map[string]string{}, rows: map[string]string{}}
 }
 
+// rowKey is one confirm question: the row, its proposal and, for an
+// ambiguous row, its candidates.
 func rowKey(r locations.Row) string {
-	return locations.CleanForeign(r.From) + "\x00" + r.To
+	return strings.Join(append([]string{locations.CleanForeign(r.From), r.To}, r.Choices...), "\x00")
 }
 
 // confirmRows is locations.Confirm, asked once per import: when every row
@@ -1078,8 +1080,11 @@ func printRows(out io.Writer, rows []locations.Row, status string) {
 	fmt.Fprintf(out, "  Matched projects (%s):\n", status)
 	for i, r := range rows {
 		to := r.To
-		if to == "" {
+		switch {
+		case to == "" && len(r.Choices) > 0:
 			to = "(ambiguous)"
+		case to == "":
+			to = "(skipped)"
 		}
 		fmt.Fprintf(out, "    %d. %s -> %s  [%s]\n", i+1, printable(r.From), printable(to), printable(r.Note))
 		for _, c := range r.Choices {
