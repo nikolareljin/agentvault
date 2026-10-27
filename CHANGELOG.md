@@ -4,6 +4,14 @@
 
 ### Added
 
+- Import installs a Claude plugin that was installed for a project at
+  local scope into that project on this machine: `claude plugin install
+  --scope local`, run in the project's directory, and disabled there
+  when that project disabled it. Only a project placed
+  by a confirmed match, `--map`, `--workdir-map` or `--project-root`
+  counts; the home rewrite alone does not. `export --workdirs` leaves out
+  local installs in unselected work dirs.
+
 - Import installs the bundle's Claude Code plugins with the `claude` CLI.
   `--plugins` picks what happens: `ask` per marketplace and plugin (the
   default on a terminal), `print` the commands and run nothing (the

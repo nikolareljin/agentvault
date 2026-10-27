@@ -229,7 +229,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			profileOpts.ProjectRoot = match.ProjectRoot
 		}
 		allMissed = append(allMissed, match.Missed...)
-		invs = append(invs, profile.Setup.Plugins)
+		invs = append(invs, profilePlugins(profile.Setup, profileOpts))
 		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" && match.SourceSkipped {
 			// Listed in the summary at the end; the rest of the import goes on.
 			profileOpts.ApplyProjects = false
@@ -294,6 +294,28 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	printInstallGuide(cmd, selected)
 	return importIncomplete(pluginsFailed, len(allMissed))
+}
+
+// profilePlugins is the profile's plugin inventory with its local-scope
+// projects placed on this machine.
+func profilePlugins(setup SetupBundle, opts importAssetOptions) *PluginInventory {
+	if setup.Plugins == nil {
+		return nil
+	}
+	remaps, err := profileRemaps(setup, opts, exportSourceHome())
+	if err != nil {
+		remaps = nil
+	}
+	confirmed := []string{opts.ProjectRoot}
+	for _, r := range opts.Computed {
+		confirmed = append(confirmed, r.To)
+	}
+	if userMaps, err := buildPathRemaps("", "", "", "", opts.Maps); err == nil {
+		for _, r := range userMaps {
+			confirmed = append(confirmed, r.To)
+		}
+	}
+	return placePluginProjects(setup.Plugins, remaps, confirmed)
 }
 
 // settlePlugins runs importPlugins against this machine's plugins and
