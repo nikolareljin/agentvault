@@ -121,7 +121,9 @@ func TestWorkDirNamesMoveIsolated(t *testing.T) {
 	importCmd.SetOut(&in)
 	importCmd.SetErr(&in)
 	t.Cleanup(func() { importCmd.SetOut(nil); importCmd.SetErr(nil) })
-	withFlags(t, importCmd, map[string]string{"apply-provider-configs": "true"})
+	// The bundle picks the name, so the place it gives is confirmed like
+	// any computed match: without a terminal, by --accept-matches.
+	withFlags(t, importCmd, map[string]string{"apply-provider-configs": "true", "accept-matches": "true"})
 	if err := runImport(importCmd, []string{bundlePath}); err != nil {
 		t.Fatalf("import: %v\n%s", err, in.String())
 	}
@@ -195,13 +197,42 @@ func TestWorkDirPlacedByName(t *testing.T) {
 		}
 		return res
 	}
-	if got := remapTo(run(o), "/old/Projects"); got != declared {
+	res := run(o)
+	if got := remapTo(res, "/old/Projects"); got != declared {
 		t.Errorf("declared name: got %q, want %q", got, declared)
+	}
+	// The bundle picked the name: confirmed like a computed match, never
+	// saved as the user's mapping.
+	if len(res.NewMaps) != 0 || len(res.ConfirmedHidden) != 0 {
+		t.Errorf("declared target saved as a choice: %+v", res)
+	}
+	unconfirmed := o
+	unconfirmed.AcceptMatches = false
+	var rows bytes.Buffer
+	unconfirmed.Out = &rows
+	if res := run(unconfirmed); remapTo(res, "/old/Projects") != "" || !res.Refused || !strings.Contains(rows.String(), "declared here as personal") {
+		t.Errorf("declared target used without a yes: %+v\n%s", res, rows.String())
+	}
+	hidden := o
+	hidden.Known.Named = []locations.Named{{Name: "personal", Path: filepath.Join(o.Home, ".hidden")}}
+	mustMkdirAll(t, filepath.Join(o.Home, ".hidden"))
+	if got := remapTo(run(hidden), "/old/Projects"); got != "" {
+		t.Errorf("hidden declared target used without its own yes: %q", got)
+	}
+	// A declared directory that is gone places nothing.
+	gone := o
+	gone.Known.Named = []locations.Named{{Name: "personal", Path: filepath.Join(o.Home, "gone")}}
+	if got := remapTo(run(gone), "/old/Projects"); got != "" {
+		t.Errorf("placed at a missing declared dir: %q", got)
 	}
 	o.WorkDirNames = map[string]string{"personal": flagged}
 	o.WorkDirMaps = map[string]string{}
-	if got := remapTo(run(o), "/old/Projects"); got != flagged {
+	res = run(o)
+	if got := remapTo(res, "/old/Projects"); got != flagged {
 		t.Errorf("--workdir-map NAME: got %q, want %q", got, flagged)
+	}
+	if len(res.NewMaps) != 1 || res.NewMaps[0].To != flagged {
+		t.Errorf("typed name map not saved: %+v", res.NewMaps)
 	}
 	if len(o.WorkDirMaps) != 0 {
 		t.Errorf("caller's map changed: %v", o.WorkDirMaps)
@@ -238,6 +269,23 @@ func TestWorkDirNameFromBundleChecked(t *testing.T) {
 		t.Errorf("bad name used or printed raw: %+v\n%q", res.Remaps, out.String())
 	}
 
+	// One name on two work dirs was edited in: neither is placed by it.
+	o.Known.Named = []locations.Named{{Name: "personal", Path: o.Home}}
+	o.AcceptMatches = true
+	two := *set
+	two.WorkDirs = []locations.WorkDir{set.WorkDirs[0], {ID: "w2", Abs: "/etc", Name: "personal"}}
+	two.WorkDirs[0].Name = "personal"
+	out.Reset()
+	res, err = resolveBundleLocations(context.Background(), &two, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remapTo(res, "/old/Projects") != "" || remapTo(res, "/etc") != "" || !strings.Contains(out.String(), "more than one work dir") {
+		t.Errorf("duplicate name used: %+v\n%s", res.Remaps, out.String())
+	}
+
+	o.Known.Named = nil
+	o.AcceptMatches = false
 	set.WorkDirs[0].Name = "personal"
 	res, err = resolveBundleLocations(context.Background(), set, "", o)
 	if err != nil {

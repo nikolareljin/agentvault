@@ -51,6 +51,9 @@ type locationOptions struct {
 	// confirmedHidden are the work dir ids whose saved hidden mapping was
 	// confirmed on an earlier import (locations.Set.ConfirmedHidden).
 	confirmedHidden map[string]bool
+	// declared are the bundle work dirs (cleaned path) placed at this
+	// machine's work dir of the same name; each is a proposal to confirm.
+	declared map[string]string
 	// verifiedHidden are the bundle projects (path) under a confirmed hidden
 	// work dir and the local checkout each was verified at. Only that exact
 	// target skips the hidden question.
@@ -344,26 +347,31 @@ func checkWorkDirNames(profiles []PortableProfile, names map[string]string) erro
 }
 
 // byName places each bundle work dir that was exported under a name and
-// that no --workdir-map OLD names: --workdir-map NAME=PATH first, then the
-// work dir this machine declared under the same name. Both count as the
-// user's choice, as --workdir-map OLD=NEW does. It returns a new map.
-func byName(set *locations.Set, o locationOptions) map[string]string {
-	out := make(map[string]string, len(o.WorkDirMaps))
+// that no --workdir-map OLD names. chosen is --workdir-map OLD=NEW plus
+// NAME=PATH: the user typed both. declared maps a bundle work dir to this
+// machine's work dir of the same name, if that directory still exists. The
+// bundle picks that name, so declared is only a proposal, confirmed like a
+// saved mapping. Both maps are new.
+func byName(set *locations.Set, o locationOptions) (chosen, declared map[string]string) {
+	chosen = make(map[string]string, len(o.WorkDirMaps))
 	for k, v := range o.WorkDirMaps {
-		out[k] = v
+		chosen[k] = v
 	}
+	declared = map[string]string{}
 	for _, w := range set.WorkDirs {
 		key := locations.CleanForeign(w.Abs)
-		if _, given := out[key]; given || w.Name == "" {
+		if _, given := chosen[key]; given || w.Name == "" {
 			continue
 		}
 		if to, ok := o.WorkDirNames[w.Name]; ok {
-			out[key] = to
+			chosen[key] = to
 		} else if n, ok := o.Known.Lookup(w.Name); ok {
-			out[key] = filepath.Clean(n.Path)
+			if info, err := os.Stat(n.Path); err == nil && info.IsDir() {
+				declared[key] = filepath.Clean(n.Path)
+			}
 		}
 	}
-	return out
+	return chosen, declared
 }
 
 // skipGitRunner gives no root commits, so a scan where every bundle project
@@ -391,10 +399,14 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		out = io.Discard
 	}
 	set = usableLocations(set, out)
-	o.WorkDirMaps = byName(set, o)
-	// Saved mappings come from earlier imports; --workdir-map wins over them.
+	o.WorkDirMaps, o.declared = byName(set, o)
+	// Saved mappings come from earlier imports; a declared name wins over
+	// them, and --workdir-map over both.
 	maps := map[string]string{}
 	for k, v := range o.Known.WorkDirMaps {
+		maps[k] = v
+	}
+	for k, v := range o.declared {
 		maps[k] = v
 	}
 	for k, v := range o.WorkDirMaps {
@@ -653,7 +665,9 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 			continue
 		}
 		note := "work dir"
-		if _, saved := o.Known.WorkDirMaps[locations.CleanForeign(w.Abs)]; saved {
+		if _, ok := o.declared[locations.CleanForeign(w.Abs)]; ok {
+			note = "work dir, declared here as " + w.Name
+		} else if _, saved := o.Known.WorkDirMaps[locations.CleanForeign(w.Abs)]; saved {
 			note = "work dir, saved mapping"
 		}
 		rows = append(rows, locations.Row{From: w.Abs, To: to, Note: note})
@@ -866,7 +880,19 @@ func usableLocations(in *locations.Set, out io.Writer) *locations.Set {
 		}
 		return c, true
 	}
+	// Export writes each name once; a name on two work dirs was edited in,
+	// and placing both at one target would merge them.
+	named := map[string]int{}
 	for _, w := range in.WorkDirs {
+		if w.Name != "" {
+			named[w.Name]++
+		}
+	}
+	for _, w := range in.WorkDirs {
+		if w.Name != "" && named[w.Name] > 1 {
+			fmt.Fprintf(out, "  warning: ignoring the name %q from the bundle: it names more than one work dir\n", printable(w.Name))
+			w.Name = ""
+		}
 		if c, ok := clean("work dir", w.Abs); ok && printable(w.Label) == w.Label {
 			w.Abs = c
 			if w.Name != "" && !locations.ValidName(w.Name) {
