@@ -92,7 +92,7 @@ func init() {
 	importCmd.Flags().StringArray("map", nil, "rewrite a path prefix from the exporting machine, OLD=NEW (repeatable); the home directory is rewritten without it")
 	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root, or into the confirmed match of the bundle's project")
 	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects (default: the confirmed match of the bundle's project)")
-	importCmd.Flags().StringArray("workdir-map", nil, "place a work dir from the bundle here, OLD=NEW (repeatable); projects under it match by identity")
+	importCmd.Flags().StringArray("workdir-map", nil, "place a work dir from the bundle here, OLD=NEW or NAME=NEW (repeatable); projects under it match by identity")
 	importCmd.Flags().Bool("no-match", false, "do not look for the bundle's projects on this machine; rewrite paths only by --map and the home directory")
 	importCmd.Flags().Bool("accept-matches", false, "apply computed project matches without asking (for non-interactive imports)")
 	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine, MCP server, router and script commands that the bundle adds or changes; left out by default")
@@ -176,6 +176,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	locOpts, err := locationOptionsFromFlags(cmd, interactive, dryRun, stdin, assetOpts.Maps)
 	if err != nil {
+		return err
+	}
+	if err := checkWorkDirNames(selected, locOpts.WorkDirMaps, locOpts.WorkDirNames); err != nil {
+		cmd.SilenceUsage = true
 		return err
 	}
 
@@ -992,11 +996,15 @@ func locationOptionsFromFlags(cmd *cobra.Command, interactive, dryRun bool, in *
 	o.NoMatch, _ = cmd.Flags().GetBool("no-match")
 	o.AcceptMatches, _ = cmd.Flags().GetBool("accept-matches")
 	values, _ := cmd.Flags().GetStringArray("workdir-map")
-	wm, err := parseWorkDirMaps(values)
+	if o.NoMatch && len(values) > 0 {
+		cmd.SilenceUsage = true
+		return o, fmt.Errorf("--workdir-map places work dirs, which --no-match turns off; use one or the other")
+	}
+	wm, names, err := parseWorkDirMaps(values)
 	if err != nil {
 		return o, err
 	}
-	o.WorkDirMaps = wm
+	o.WorkDirMaps, o.WorkDirNames = wm, names
 	userMaps, err := buildPathRemaps("", "", "", "", maps)
 	if err != nil {
 		return o, err
@@ -1009,6 +1017,11 @@ func locationOptionsFromFlags(cmd *cobra.Command, interactive, dryRun bool, in *
 // refreshes what the next profile's alias checks see.
 func recordLocations(v *vault.Vault, match locationResult, o *locationOptions) error {
 	add := match.Stored
+	// A name is the exporting machine's label; this vault keeps its own.
+	add.WorkDirs = append([]locations.WorkDir(nil), add.WorkDirs...)
+	for i := range add.WorkDirs {
+		add.WorkDirs[i].Name = ""
+	}
 	for _, m := range match.NewMaps {
 		if add.WorkDirMaps == nil {
 			add.WorkDirMaps = map[string]string{}

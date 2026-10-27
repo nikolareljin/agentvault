@@ -193,11 +193,15 @@ func TestAmbiguousMatchSkippedEvenWithAccept(t *testing.T) {
 
 func TestParseWorkDirMaps(t *testing.T) {
 	dir := t.TempDir()
-	if m, err := parseWorkDirMaps([]string{"/old/P/=" + dir}); err != nil || m["/old/P"] != dir {
+	if m, _, err := parseWorkDirMaps([]string{"/old/P/=" + dir}); err != nil || m["/old/P"] != dir {
 		t.Errorf("%v %v", m, err)
 	}
-	for _, bad := range []string{"x", "rel=" + dir, "/=" + dir, "/old=/no/such/dir"} {
-		if _, err := parseWorkDirMaps([]string{bad}); err == nil {
+	// A work dir name is a key of its own, never a path.
+	if m, n, err := parseWorkDirMaps([]string{"personal=" + dir}); err != nil || n["personal"] != dir || len(m) != 0 {
+		t.Errorf("%v %v %v", m, n, err)
+	}
+	for _, bad := range []string{"x", "Rel=" + dir, "a/b=" + dir, "/=" + dir, "/old=/no/such/dir", "personal=/no/such/dir"} {
+		if _, _, err := parseWorkDirMaps([]string{bad}); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
 	}

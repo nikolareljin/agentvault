@@ -1,0 +1,483 @@
+package cmd
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/nikolareljin/agentvault/internal/config"
+	"github.com/nikolareljin/agentvault/internal/locations"
+	"github.com/nikolareljin/agentvault/internal/vault"
+	"github.com/spf13/pflag"
+)
+
+// treeHash hashes every file under each root by relative path and content.
+func treeHash(t *testing.T, roots ...string) string {
+	t.Helper()
+	var lines []string
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			sum := sha256.Sum256(b)
+			lines = append(lines, p+" "+hex.EncodeToString(sum[:]))
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	sort.Strings(lines)
+	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// Machine A declares personal and company work dirs and exports only
+// personal. Machine B has its own company tree and declared personal at
+// another path. Import places personal by name, re-slugs its memory there,
+// and leaves B's company tree and memory byte-identical.
+func TestWorkDirNamesMoveIsolated(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("paths in this test are POSIX")
+	}
+	base := t.TempDir()
+	srcHome := filepath.Join(base, "a", "alex")
+	dstHome := filepath.Join(base, "b", "alex")
+	srcPersonal := filepath.Join(srcHome, "Projects")
+	srcCompany := filepath.Join(srcHome, "work", "acme")
+	dstPersonal := filepath.Join(dstHome, "code")
+	dstCompany := filepath.Join(dstHome, "corp", "acme")
+	for _, d := range []string{srcPersonal, srcCompany, dstPersonal, dstCompany} {
+		mustMkdirAll(t, d)
+	}
+	mem := func(home, dir, body string) string {
+		p := filepath.Join(home, ".claude", "projects", claudeProjectSlug(dir), "memory", "MEMORY.md")
+		mustWriteFile(t, p, body)
+		return p
+	}
+	mem(srcHome, srcPersonal, "personal note\n")
+	mem(srcHome, srcCompany, "company-a secret note\n")
+	dstCompanyMem := mem(dstHome, dstCompany, "machine B company note\n")
+	mustWriteFile(t, filepath.Join(dstCompany, "CLAUDE.md"), "B company rules\n")
+
+	setTestHomeDir(t, srcHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(srcHome, ".config"))
+	t.Setenv(ConfigDirsEnv, "")
+	t.Setenv(VaultPasswordEnv, e2eMasterPassword)
+	t.Setenv(ExportPasswordEnv, e2eBundlePassword)
+	t.Setenv(ImportPasswordEnv, e2eBundlePassword)
+	srcCfg := filepath.Join(srcHome, ".config", config.AppName)
+	seedProfileVault(t, srcCfg, nil, nil)
+	useConfigDir(t, srcCfg)
+	declare(t, srcCfg, map[string]string{"personal": srcPersonal, "company": srcCompany})
+
+	bundlePath := filepath.Join(base, "move"+DefaultExportExtension)
+	var out bytes.Buffer
+	exportCmd.SetOut(&out)
+	exportCmd.SetErr(&out)
+	t.Cleanup(func() { exportCmd.SetOut(nil); exportCmd.SetErr(nil) })
+	withFlags(t, exportCmd, map[string]string{
+		"yes": "true", "include-secrets": "false", "detect": "false", "include-memory": "true", "workdirs": "personal",
+	})
+	if err := runExport(exportCmd, []string{bundlePath}); err != nil {
+		t.Fatalf("export: %v\n%s", err, out.String())
+	}
+	raw, err := os.ReadFile(bundlePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := decryptBundlePayload(raw, e2eBundlePassword)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(payload, []byte(`"name": "personal"`)) {
+		t.Fatalf("bundle does not name the personal work dir")
+	}
+	if bytes.Contains(payload, []byte("company-a secret")) || bytes.Contains(payload, []byte(`"name": "company"`)) || bytes.Contains(payload, []byte(srcCompany)) {
+		t.Fatalf("bundle carries the unselected work dir")
+	}
+
+	setTestHomeDir(t, dstHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dstHome, ".config"))
+	dstCfg := filepath.Join(dstHome, ".config", config.AppName)
+	seedProfileVault(t, dstCfg, nil, nil)
+	useConfigDir(t, dstCfg)
+	declare(t, dstCfg, map[string]string{"personal": dstPersonal, "company": dstCompany})
+	before := treeHash(t, dstCompany, filepath.Dir(filepath.Dir(dstCompanyMem)))
+
+	var in bytes.Buffer
+	importCmd.SetOut(&in)
+	importCmd.SetErr(&in)
+	t.Cleanup(func() { importCmd.SetOut(nil); importCmd.SetErr(nil) })
+	// The bundle picks the name, so the place it gives is confirmed like
+	// any computed match: without a terminal, by --accept-matches.
+	withFlags(t, importCmd, map[string]string{"apply-provider-configs": "true", "accept-matches": "true"})
+	if err := runImport(importCmd, []string{bundlePath}); err != nil {
+		t.Fatalf("import: %v\n%s", err, in.String())
+	}
+
+	got, err := os.ReadFile(filepath.Join(dstHome, ".claude", "projects", claudeProjectSlug(dstPersonal), "memory", "MEMORY.md"))
+	if err != nil || string(got) != "personal note\n" {
+		t.Fatalf("personal memory not placed by name: %q %v\n%s", got, err, in.String())
+	}
+	if _, err := os.Stat(filepath.Join(dstHome, ".claude", "projects", claudeProjectSlug(srcPersonal))); !os.IsNotExist(err) {
+		t.Errorf("memory kept the source folder name: %v", err)
+	}
+	if after := treeHash(t, dstCompany, filepath.Dir(filepath.Dir(dstCompanyMem))); after != before {
+		t.Errorf("import changed machine B's company tree or memory")
+	}
+}
+
+// declare adds named work dirs to the vault in cfgDir.
+func declare(t *testing.T, cfgDir string, names map[string]string) {
+	t.Helper()
+	v := vault.New(filepath.Join(cfgDir, config.VaultFile))
+	if err := v.Unlock(e2eMasterPassword); err != nil {
+		t.Fatal(err)
+	}
+	set := v.Locations()
+	keys := make([]string, 0, len(names))
+	for k := range names {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var err error
+	for _, k := range keys {
+		if set, err = set.Declare(k, names[k]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := v.SetLocations(set); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// remapTo returns where res sends the bundle path from, or "".
+func remapTo(res locationResult, from string) string {
+	for _, r := range res.Remaps {
+		if r.From == from {
+			return r.To
+		}
+	}
+	return ""
+}
+
+func TestWorkDirPlacedByName(t *testing.T) {
+	_, set, o := matchFixture(t)
+	set.WorkDirs[0].Name = "personal"
+	// Nothing computed: only a name can place it.
+	if err := os.RemoveAll(filepath.Join(o.Home, "Projects")); err != nil {
+		t.Fatal(err)
+	}
+	declared := filepath.Join(o.Home, "declared")
+	flagged := filepath.Join(o.Home, "flagged")
+	byPath := filepath.Join(o.Home, "bypath")
+	for _, d := range []string{declared, flagged, byPath} {
+		mustMkdirAll(t, d)
+	}
+	o.AcceptMatches = true
+	o.Known.Named = []locations.Named{{Name: "personal", Path: declared}}
+	run := func(o locationOptions) locationResult {
+		t.Helper()
+		res, err := resolveBundleLocations(context.Background(), set, "", o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	res := run(o)
+	if got := remapTo(res, "/old/Projects"); got != declared {
+		t.Errorf("declared name: got %q, want %q", got, declared)
+	}
+	// The bundle picked the name: confirmed like a computed match, never
+	// saved as the user's mapping.
+	if len(res.NewMaps) != 0 || len(res.ConfirmedHidden) != 0 {
+		t.Errorf("declared target saved as a choice: %+v", res)
+	}
+	// A mapping the user saved on an earlier import wins over the name the
+	// bundle gives.
+	saved := filepath.Join(o.Home, "saved")
+	mustMkdirAll(t, saved)
+	withSaved := o
+	withSaved.Known.WorkDirMaps = map[string]string{"/old/Projects": saved}
+	if got := remapTo(run(withSaved), "/old/Projects"); got != saved {
+		t.Errorf("declared name beat a saved mapping: got %q, want %q", got, saved)
+	}
+	var savedRows bytes.Buffer
+	withSaved.AcceptMatches, withSaved.Out = false, &savedRows
+	run(withSaved)
+	if !strings.Contains(savedRows.String(), "saved mapping") || strings.Contains(savedRows.String(), "declared here") {
+		t.Errorf("row note does not show the saved mapping:\n%s", savedRows.String())
+	}
+	unconfirmed := o
+	unconfirmed.AcceptMatches = false
+	var rows bytes.Buffer
+	unconfirmed.Out = &rows
+	if res := run(unconfirmed); remapTo(res, "/old/Projects") != "" || !res.Refused || !strings.Contains(rows.String(), "declared here as personal") {
+		t.Errorf("declared target used without a yes: %+v\n%s", res, rows.String())
+	}
+	hidden := o
+	hidden.Known.Named = []locations.Named{{Name: "personal", Path: filepath.Join(o.Home, ".hidden")}}
+	mustMkdirAll(t, filepath.Join(o.Home, ".hidden"))
+	if got := remapTo(run(hidden), "/old/Projects"); got != "" {
+		t.Errorf("hidden declared target used without its own yes: %q", got)
+	}
+	// A declared directory that is gone places nothing.
+	gone := o
+	gone.Known.Named = []locations.Named{{Name: "personal", Path: filepath.Join(o.Home, "gone")}}
+	if got := remapTo(run(gone), "/old/Projects"); got != "" {
+		t.Errorf("placed at a missing declared dir: %q", got)
+	}
+	o.WorkDirNames = map[string]string{"personal": flagged}
+	o.WorkDirMaps = map[string]string{}
+	res = run(o)
+	if got := remapTo(res, "/old/Projects"); got != flagged {
+		t.Errorf("--workdir-map NAME: got %q, want %q", got, flagged)
+	}
+	if len(res.NewMaps) != 1 || res.NewMaps[0].To != flagged {
+		t.Errorf("typed name map not saved: %+v", res.NewMaps)
+	}
+	if len(o.WorkDirMaps) != 0 {
+		t.Errorf("caller's map changed: %v", o.WorkDirMaps)
+	}
+	o.WorkDirMaps = map[string]string{"/old/Projects": byPath}
+	if got := remapTo(run(o), "/old/Projects"); got != byPath {
+		t.Errorf("--workdir-map OLD: got %q, want %q", got, byPath)
+	}
+	if o.WorkDirMaps["/old/Projects"] != byPath || len(o.WorkDirMaps) != 1 {
+		t.Errorf("caller's map changed: %v", o.WorkDirMaps)
+	}
+	// Another name, or none, is not placed by this one.
+	o.WorkDirMaps, o.WorkDirNames = nil, nil
+	set.WorkDirs[0].Name = "other"
+	if got := remapTo(run(o), "/old/Projects"); got != "" {
+		t.Errorf("placed by an unrelated name: %q", got)
+	}
+}
+
+func TestWorkDirNameFromBundleChecked(t *testing.T) {
+	_, set, o := matchFixture(t)
+	if err := os.RemoveAll(filepath.Join(o.Home, "Projects")); err != nil {
+		t.Fatal(err)
+	}
+	set.WorkDirs[0].Name = "Bad\x1bName"
+	o.Known.Named = []locations.Named{{Name: "Bad\x1bName", Path: o.Home}}
+	var out bytes.Buffer
+	o.Out = &out
+	res, err := resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remapTo(res, "/old/Projects") != "" || !strings.Contains(out.String(), "not a valid work dir name") || strings.Contains(out.String(), "\x1b") {
+		t.Errorf("bad name used or printed raw: %+v\n%q", res.Remaps, out.String())
+	}
+
+	// One name on two work dirs was edited in: neither is placed by it.
+	o.Known.Named = []locations.Named{{Name: "personal", Path: o.Home}}
+	o.AcceptMatches = true
+	two := *set
+	two.WorkDirs = []locations.WorkDir{set.WorkDirs[0], {ID: "w2", Abs: "/etc", Name: "personal"}}
+	two.WorkDirs[0].Name = "personal"
+	out.Reset()
+	res, err = resolveBundleLocations(context.Background(), &two, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remapTo(res, "/old/Projects") != "" || remapTo(res, "/etc") != "" || !strings.Contains(out.String(), "more than one work dir") {
+		t.Errorf("duplicate name used: %+v\n%s", res.Remaps, out.String())
+	}
+
+	o.Known.Named = nil
+	o.AcceptMatches = false
+	set.WorkDirs[0].Name = "personal"
+	res, err = resolveBundleLocations(context.Background(), set, "", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Missed) != 1 || !strings.Contains(res.Missed[0].Hint, "--workdir-map personal=<path here>") {
+		t.Errorf("missed = %+v", res.Missed)
+	}
+}
+
+func TestCheckWorkDirNames(t *testing.T) {
+	profiles := []PortableProfile{{Setup: SetupBundle{Locations: &locations.Set{WorkDirs: []locations.WorkDir{{Abs: "/a", Name: "personal"}}}}}, {}}
+	if err := checkWorkDirNames(profiles, nil, map[string]string{"personal": "/x"}); err != nil {
+		t.Error(err)
+	}
+	if err := checkWorkDirNames(profiles, nil, map[string]string{"persnal": "/x"}); err == nil || !strings.Contains(err.Error(), "persnal") {
+		t.Errorf("typo accepted: %v", err)
+	}
+	// Import ignores a name on two work dirs of one profile, so the flag
+	// would do nothing. One name in each of two profiles is fine.
+	dup := []PortableProfile{{Setup: SetupBundle{Locations: &locations.Set{WorkDirs: []locations.WorkDir{{Abs: "/a", Name: "x"}, {Abs: "/b", Name: "x"}}}}}}
+	if err := checkWorkDirNames(dup, nil, map[string]string{"x": "/t"}); err == nil || !strings.Contains(err.Error(), "more than one") {
+		t.Errorf("duplicated name accepted: %v", err)
+	}
+	// A name on a path import drops places nothing.
+	bad := []PortableProfile{{Setup: SetupBundle{Locations: &locations.Set{WorkDirs: []locations.WorkDir{{Abs: "rel/x", Name: "x"}}}}}}
+	if err := checkWorkDirNames(bad, nil, map[string]string{"x": "/t"}); err == nil {
+		t.Errorf("name on an unusable path accepted")
+	}
+	// The same work dir by path and by name: one would be dropped.
+	if err := checkWorkDirNames(profiles, map[string]string{"/a": "/y"}, map[string]string{"personal": "/x"}); err == nil || !strings.Contains(err.Error(), "same work dir") {
+		t.Errorf("path and name for one work dir accepted: %v", err)
+	}
+	if err := checkWorkDirNames(append(profiles, profiles[0]), nil, map[string]string{"personal": "/x"}); err != nil {
+		t.Errorf("name in two profiles refused: %v", err)
+	}
+}
+
+func TestExportNamesOnlySelectedWorkDirs(t *testing.T) {
+	w := setupTwoWorkDirs(t)
+	// A name the vault learned from another machine's bundle is not this
+	// machine's to export.
+	set := w.v.Locations()
+	set.WorkDirs = append(set.WorkDirs, locations.WorkDir{ID: "w9", Abs: filepath.Join(w.home, "elsewhere"), Name: "foreign"})
+	if err := w.v.SetLocations(set); err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]string{}
+	for _, d := range exportTwo(t, w, "personal").Locations.WorkDirs {
+		if d.Name != "" {
+			names[d.Name] = d.Abs
+		}
+	}
+	if len(names) != 1 || names["personal"] != w.personal {
+		t.Errorf("names = %v", names)
+	}
+	names = map[string]string{}
+	for _, d := range exportTwo(t, w, "all").Locations.WorkDirs {
+		if d.Name != "" {
+			names[d.Name] = d.Abs
+		}
+	}
+	if len(names) != 2 || names["personal"] != w.personal || names["company"] != w.acme {
+		t.Errorf("names = %v", names)
+	}
+}
+
+func TestRecordLocationsDropsBundleNames(t *testing.T) {
+	v, _ := sessionTestVault(t, nil)
+	match := locationResult{Stored: locations.Set{
+		WorkDirs: []locations.WorkDir{{ID: "w1", Abs: "/x", Name: "personal"}},
+		Projects: []locations.Project{{ID: "p1", WorkDir: "w1", Abs: "/x/app", GitRemote: "github.com/me/app"}},
+	}}
+	o := locationOptions{}
+	if err := recordLocations(v, match, &o); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range v.Locations().WorkDirs {
+		if d.Name != "" {
+			t.Errorf("vault kept the bundle's name: %+v", d)
+		}
+	}
+	if match.Stored.WorkDirs[0].Name != "personal" {
+		t.Errorf("caller's result changed")
+	}
+}
+
+func TestWorkDirMapRefusedWithNoMatch(t *testing.T) {
+	withFlags(t, importCmd, map[string]string{"no-match": "true"})
+	// withFlags restores by Set, which appends to a string array.
+	wm := importCmd.Flags().Lookup("workdir-map")
+	if err := wm.Value.(pflag.SliceValue).Replace([]string{"personal=" + t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = wm.Value.(pflag.SliceValue).Replace(nil) })
+	if _, err := locationOptionsFromFlags(importCmd, false, false, nil, nil); err == nil || !strings.Contains(err.Error(), "--no-match") {
+		t.Errorf("--workdir-map with --no-match accepted: %v", err)
+	}
+}
+
+// A multi-profile import asks the confirm list once: a later profile with
+// the same rows takes the earlier answers; other rows are asked.
+func TestConfirmRowsAskedOncePerImport(t *testing.T) {
+	_, set, o := matchFixture(t)
+	if err := os.RemoveAll(filepath.Join(o.Home, "Projects")); err != nil {
+		t.Fatal(err)
+	}
+	declared := filepath.Join(o.Home, "declared")
+	edited := filepath.Join(o.Home, "edited")
+	mustMkdirAll(t, declared)
+	mustMkdirAll(t, edited)
+	set.WorkDirs[0].Name = "personal"
+	o.Known.Named = []locations.Named{{Name: "personal", Path: declared}}
+	o.Interactive, o.Asked = true, newAskMemo()
+	var out bytes.Buffer
+	o.Out = &out
+	// Row 1 (the work dir) moved to edited, then accept; nothing more to read.
+	o.In = bufio.NewReader(strings.NewReader("1\n" + edited + "\n\n\n"))
+	asked := func() int { return strings.Count(out.String(), "empty line to accept all") }
+	var first int
+	for i := 0; i < 2; i++ {
+		res, err := resolveBundleLocations(context.Background(), set, "", o)
+		if err != nil {
+			t.Fatalf("profile %d: %v\n%s", i, err, out.String())
+		}
+		if got := remapTo(res, "/old/Projects"); got != edited {
+			t.Errorf("profile %d: got %q, want %q\n%s", i, got, edited, out.String())
+		}
+		if i == 0 {
+			first = asked()
+		}
+	}
+	if first == 0 || asked() != first {
+		t.Errorf("second profile asked again (%d, then %d)\n%s", first, asked(), out.String())
+	}
+	if !strings.Contains(out.String(), "as answered earlier in this import") {
+		t.Errorf("reuse not shown\n%s", out.String())
+	}
+	// Another row set is a new question.
+	other := *set
+	other.Projects = append([]locations.Project(nil), set.Projects...)
+	other.Projects[0].Abs = "/old/Projects/app2"
+	o.In = bufio.NewReader(strings.NewReader("\n"))
+	if _, err := resolveBundleLocations(context.Background(), &other, "", o); err != nil {
+		t.Fatal(err)
+	}
+	if asked() != first+1 {
+		t.Errorf("new rows not asked\n%s", out.String())
+	}
+}
+
+func TestConfirmRowsMemoKeysAndLabels(t *testing.T) {
+	o := locationOptions{Asked: newAskMemo(), Home: t.TempDir()}
+	var out bytes.Buffer
+	pick := filepath.Join(o.Home, "b")
+	mustMkdirAll(t, pick)
+	amb := []locations.Row{{From: "/old/x", Choices: []string{filepath.Join(o.Home, "a"), pick}}}
+	o.In = bufio.NewReader(strings.NewReader("1\nb\n\n"))
+	if got, err := confirmRows(o, amb, &out); err != nil || got[0].To != pick {
+		t.Fatalf("%v %+v", err, got)
+	}
+	// Other candidates for the same path are a new question.
+	other := []locations.Row{{From: "/old/x", Choices: []string{filepath.Join(o.Home, "c"), filepath.Join(o.Home, "d")}}}
+	o.In = bufio.NewReader(strings.NewReader("\n"))
+	if got, err := confirmRows(o, other, &out); err != nil || got[0].To != "" {
+		t.Errorf("pick from another list reused: %v %+v", err, got)
+	}
+	// A skipped row replays as skipped, not ambiguous.
+	skip := []locations.Row{{From: "/old/y", To: pick}}
+	o.In = bufio.NewReader(strings.NewReader("1\n-\n\n"))
+	if _, err := confirmRows(o, skip, &out); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if got, err := confirmRows(o, skip, &out); err != nil || got[0].To != "" || !strings.Contains(out.String(), "(skipped)") {
+		t.Errorf("skipped replay: %v %+v\n%s", err, got, out.String())
+	}
+}

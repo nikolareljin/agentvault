@@ -29,10 +29,13 @@ type locationOptions struct {
 	Interactive   bool
 	DryRun        bool
 	WorkDirMaps   map[string]string
-	UserMaps      []pathRemap
-	Home          string
-	In            *bufio.Reader
-	Out           io.Writer
+	// WorkDirNames are --workdir-map NAME=PATH: a bundle work dir exported
+	// under NAME goes to PATH.
+	WorkDirNames map[string]string
+	UserMaps     []pathRemap
+	Home         string
+	In           *bufio.Reader
+	Out          io.Writer
 	// Known is what the vault already records; aliases are checked against it.
 	Known locations.Set
 	// Identify replaces locations.DefaultIdentifier in tests.
@@ -48,6 +51,9 @@ type locationOptions struct {
 	// confirmedHidden are the work dir ids whose saved hidden mapping was
 	// confirmed on an earlier import (locations.Set.ConfirmedHidden).
 	confirmedHidden map[string]bool
+	// declared are the bundle work dirs (cleaned path) placed at this
+	// machine's work dir of the same name; each is a proposal to confirm.
+	declared map[string]string
 	// verifiedHidden are the bundle projects (path) under a confirmed hidden
 	// work dir and the local checkout each was verified at. Only that exact
 	// target skips the hidden question.
@@ -58,10 +64,47 @@ type locationOptions struct {
 type askMemo struct {
 	workDir map[string]string // bundle work dir path -> answer ("" = skipped)
 	hidden  map[string]string // from + NUL + target -> answer ("" = skipped)
+	rows    map[string]string // confirm row from + NUL + proposed -> answer ("" = skipped)
 }
 
 func newAskMemo() *askMemo {
-	return &askMemo{workDir: map[string]string{}, hidden: map[string]string{}}
+	return &askMemo{workDir: map[string]string{}, hidden: map[string]string{}, rows: map[string]string{}}
+}
+
+// rowKey is one confirm question: the row, its proposal and, for an
+// ambiguous row, its candidates.
+func rowKey(r locations.Row) string {
+	return strings.Join(append([]string{locations.CleanForeign(r.From), r.To}, r.Choices...), "\x00")
+}
+
+// confirmRows is locations.Confirm, asked once per import: when every row
+// was answered for an earlier profile, those answers are used again.
+func confirmRows(o locationOptions, rows []locations.Row, out io.Writer) ([]locations.Row, error) {
+	if o.Asked != nil {
+		answered := make([]locations.Row, len(rows))
+		all := true
+		for i, r := range rows {
+			to, ok := o.Asked.rows[rowKey(r)]
+			if !ok {
+				all = false
+				break
+			}
+			answered[i] = r
+			answered[i].To = to
+		}
+		if all {
+			printRows(out, answered, "as answered earlier in this import")
+			return answered, nil
+		}
+	}
+	proposed := append([]locations.Row(nil), rows...)
+	got, err := locations.Confirm(rows, o.Home, o.In, out)
+	if err == nil && o.Asked != nil {
+		for i, r := range proposed {
+			o.Asked.rows[rowKey(r)] = got[i].To
+		}
+	}
+	return got, err
 }
 
 // askHidden is ConfirmHidden, asked once per entry per import. remembered
@@ -279,30 +322,115 @@ type locationResult struct {
 	SourceSkipped bool
 }
 
-// parseWorkDirMaps reads --workdir-map OLD=NEW. OLD is the bundle's path;
-// NEW must be a directory here.
-func parseWorkDirMaps(values []string) (map[string]string, error) {
-	out := map[string]string{}
+// parseWorkDirMaps reads --workdir-map OLD=NEW. OLD is the bundle's path,
+// or the name a work dir was exported under; NEW must be a directory here.
+// A name has no "/", "\\" or ":", so it cannot be read as a path.
+func parseWorkDirMaps(values []string) (paths, names map[string]string, err error) {
+	paths, names = map[string]string{}, map[string]string{}
 	for _, m := range values {
 		from, to, ok := strings.Cut(m, "=")
 		from, to = strings.TrimSpace(from), strings.TrimSpace(to)
 		if !ok || from == "" || to == "" {
-			return nil, fmt.Errorf("--workdir-map %q: want OLD=NEW", m)
+			return nil, nil, fmt.Errorf("--workdir-map %q: want OLD=NEW or NAME=NEW", m)
 		}
-		from = locations.CleanForeign(from)
-		if !remappableRoot(from) {
-			return nil, fmt.Errorf("--workdir-map %q: OLD must be an absolute path below the filesystem root", m)
+		isName := locations.ValidName(from)
+		if !isName {
+			from = locations.CleanForeign(from)
+			if !remappableRoot(from) {
+				return nil, nil, fmt.Errorf("--workdir-map %q: OLD must be a work dir name or an absolute path below the filesystem root", m)
+			}
 		}
 		abs, err := filepath.Abs(expandUserPath(to))
 		if err != nil {
-			return nil, fmt.Errorf("--workdir-map %q: %w", m, err)
+			return nil, nil, fmt.Errorf("--workdir-map %q: %w", m, err)
 		}
 		if info, err := os.Stat(abs); err != nil || !info.IsDir() {
-			return nil, fmt.Errorf("--workdir-map %q: %s is not a directory", m, abs)
+			return nil, nil, fmt.Errorf("--workdir-map %q: %s is not a directory", m, abs)
 		}
-		out[from] = filepath.Clean(abs)
+		if isName {
+			names[from] = filepath.Clean(abs)
+		} else {
+			paths[from] = filepath.Clean(abs)
+		}
 	}
-	return out, nil
+	return paths, names, nil
+}
+
+// checkWorkDirNames refuses a --workdir-map NAME that no selected profile
+// exported on a work dir import can use, or that one profile gives to
+// several work dirs (import ignores such a name), so the flag is never
+// silently ignored.
+func checkWorkDirNames(profiles []PortableProfile, paths, names map[string]string) error {
+	have, dup := map[string]bool{}, map[string]bool{}
+	for _, p := range profiles {
+		if p.Setup.Locations == nil {
+			continue
+		}
+		count := map[string]int{}
+		for _, w := range p.Setup.Locations.WorkDirs {
+			if w.Name != "" {
+				count[w.Name]++
+			}
+		}
+		for n, c := range count {
+			dup[n] = dup[n] || c > 1
+		}
+		for _, w := range usableLocations(p.Setup.Locations, io.Discard).WorkDirs {
+			if w.Name == "" {
+				continue
+			}
+			have[w.Name] = true
+			if _, both := paths[w.Abs]; both && names[w.Name] != "" {
+				return fmt.Errorf("--workdir-map: %s and %s name the same work dir; give one", w.Name, printable(w.Abs))
+			}
+		}
+	}
+	var unknown, ambiguous []string
+	for n := range names {
+		switch {
+		case dup[n]:
+			ambiguous = append(ambiguous, n)
+		case !have[n]:
+			unknown = append(unknown, n)
+		}
+	}
+	sort.Strings(unknown)
+	sort.Strings(ambiguous)
+	if len(unknown) > 0 {
+		return fmt.Errorf("--workdir-map: the bundle has no work dir named %s", strings.Join(unknown, ", "))
+	}
+	if len(ambiguous) > 0 {
+		return fmt.Errorf("--workdir-map: the bundle gives the name %s to more than one work dir; map its path with --workdir-map OLD=NEW", strings.Join(ambiguous, ", "))
+	}
+	return nil
+}
+
+// byName places each bundle work dir that was exported under a name and
+// that no --workdir-map OLD names. chosen is --workdir-map OLD=NEW plus
+// NAME=PATH: the user typed both. declared maps a bundle work dir to this
+// machine's work dir of the same name, if that directory still exists. The
+// bundle picks that name, so declared is only a proposal, confirmed like a
+// saved mapping. Both maps are new.
+func byName(set *locations.Set, o locationOptions) (chosen, declared map[string]string) {
+	chosen = make(map[string]string, len(o.WorkDirMaps))
+	for k, v := range o.WorkDirMaps {
+		chosen[k] = v
+	}
+	declared = map[string]string{}
+	for _, w := range set.WorkDirs {
+		key := locations.CleanForeign(w.Abs)
+		if _, given := chosen[key]; given || w.Name == "" {
+			continue
+		}
+		if to, ok := o.WorkDirNames[w.Name]; ok {
+			chosen[key] = to
+		} else if n, ok := o.Known.Lookup(w.Name); ok {
+			if info, err := os.Stat(n.Path); err == nil && info.IsDir() {
+				declared[key] = filepath.Clean(n.Path)
+			}
+		}
+	}
+	return chosen, declared
 }
 
 // skipGitRunner gives no root commits, so a scan where every bundle project
@@ -330,8 +458,18 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 		out = io.Discard
 	}
 	set = usableLocations(set, out)
-	// Saved mappings come from earlier imports; --workdir-map wins over them.
+	o.WorkDirMaps, o.declared = byName(set, o)
+	// A declared name is the bundle's word; a mapping saved by an earlier
+	// import is the user's, so it wins, and --workdir-map over both.
+	for k := range o.declared {
+		if _, saved := o.Known.WorkDirMaps[k]; saved {
+			delete(o.declared, k)
+		}
+	}
 	maps := map[string]string{}
+	for k, v := range o.declared {
+		maps[k] = v
+	}
 	for k, v := range o.Known.WorkDirMaps {
 		maps[k] = v
 	}
@@ -457,7 +595,11 @@ func resolveBundleLocations(ctx context.Context, set *locations.Set, sourceProje
 				continue
 			}
 		}
-		res.Missed = append(res.Missed, missedEntry{Path: w.Abs, Reason: reason, Hint: flagHint("--workdir-map", w.Abs), Suggest: locations.Suggest(o.Home, w)})
+		hint := flagHint("--workdir-map", w.Abs)
+		if w.Name != "" {
+			hint = "--workdir-map " + w.Name + "=<path here>, or agentvault workdir add " + w.Name + " <path here>"
+		}
+		res.Missed = append(res.Missed, missedEntry{Path: w.Abs, Reason: reason, Hint: hint, Suggest: locations.Suggest(o.Home, w)})
 		if sourceProject != "" {
 			for _, p := range set.Projects {
 				if p.WorkDir == w.ID && locations.CleanForeign(p.Abs) == locations.CleanForeign(sourceProject) {
@@ -587,7 +729,9 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 			continue
 		}
 		note := "work dir"
-		if _, saved := o.Known.WorkDirMaps[locations.CleanForeign(w.Abs)]; saved {
+		if _, ok := o.declared[locations.CleanForeign(w.Abs)]; ok {
+			note = "work dir, declared here as " + w.Name
+		} else if _, saved := o.Known.WorkDirMaps[locations.CleanForeign(w.Abs)]; saved {
 			note = "work dir, saved mapping"
 		}
 		rows = append(rows, locations.Row{From: w.Abs, To: to, Note: note})
@@ -630,7 +774,7 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 		printRows(out, rows, "would ask to confirm")
 	case o.Interactive:
 		var err error
-		rows, err = locations.Confirm(rows, o.Home, o.In, out)
+		rows, err = confirmRows(o, rows, out)
 		if err != nil {
 			return fmt.Errorf("import aborted: %w", err)
 		}
@@ -800,9 +944,25 @@ func usableLocations(in *locations.Set, out io.Writer) *locations.Set {
 		}
 		return c, true
 	}
+	// Export writes each name once; a name on two work dirs was edited in,
+	// and placing both at one target would merge them.
+	named := map[string]int{}
 	for _, w := range in.WorkDirs {
+		if w.Name != "" {
+			named[w.Name]++
+		}
+	}
+	for _, w := range in.WorkDirs {
+		if w.Name != "" && named[w.Name] > 1 {
+			fmt.Fprintf(out, "  warning: ignoring the name %q from the bundle: it names more than one work dir\n", printable(w.Name))
+			w.Name = ""
+		}
 		if c, ok := clean("work dir", w.Abs); ok && printable(w.Label) == w.Label {
 			w.Abs = c
+			if w.Name != "" && !locations.ValidName(w.Name) {
+				fmt.Fprintf(out, "  warning: ignoring the name %q of work dir %s from the bundle: not a valid work dir name\n", printable(w.Name), printable(c))
+				w.Name = ""
+			}
 			res.WorkDirs = append(res.WorkDirs, w)
 		}
 	}
@@ -920,8 +1080,11 @@ func printRows(out io.Writer, rows []locations.Row, status string) {
 	fmt.Fprintf(out, "  Matched projects (%s):\n", status)
 	for i, r := range rows {
 		to := r.To
-		if to == "" {
+		switch {
+		case to == "" && len(r.Choices) > 0:
 			to = "(ambiguous)"
+		case to == "":
+			to = "(skipped)"
 		}
 		fmt.Fprintf(out, "    %d. %s -> %s  [%s]\n", i+1, printable(r.From), printable(to), printable(r.Note))
 		for _, c := range r.Choices {
