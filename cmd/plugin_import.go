@@ -132,6 +132,8 @@ func planPluginImport(inv *PluginInventory, local localPlugins) (steps []pluginS
 		case ok:
 			notes = append(notes, fmt.Sprintf("marketplace %s: kept, source here %s, in bundle %s",
 				strconv.Quote(m.Name), strconv.Quote(have), strconv.Quote(m.Source)))
+		case !safeMarketplaceName.MatchString(m.Name):
+			notes = append(notes, fmt.Sprintf("marketplace %s: not added, not a plain name", strconv.Quote(m.Name)))
 		case m.Kind == "directory":
 			notes = append(notes, fmt.Sprintf("marketplace %s: not added, a local directory on the exporting machine (%s)",
 				strconv.Quote(m.Name), strconv.Quote(m.Source)))
@@ -140,7 +142,7 @@ func planPluginImport(inv *PluginInventory, local localPlugins) (steps []pluginS
 				strconv.Quote(m.Name), strconv.Quote(m.Source)))
 		default:
 			steps = append(steps, pluginStep{
-				what: fmt.Sprintf("add marketplace %s (%s)", m.Name, m.Source),
+				what: fmt.Sprintf("add marketplace from %s (named %s)", strconv.Quote(m.Source), strconv.Quote(m.Name)),
 				args: []string{"plugin", "marketplace", "add", m.Source},
 				adds: m.Name,
 			})

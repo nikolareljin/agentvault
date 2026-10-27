@@ -976,7 +976,7 @@ With `--apply-provider-configs`, a provider file the bundle carries redacted who
 
 Files referenced outside the tools' own directories are written back on import only when they are prose. They are written 0600 and never executable. `~/.claude.json` only gets its `mcpServers` key merged in. Referenced scripts and config files are staged under `<config dir>/imported-assets/provider/provider_home/` for review, and never written to the home directory: placed on `PATH` or named by a hook, a file from a bundle runs code.
 
-Import runs or prints plugin commands only for plugin IDs shaped like `name@marketplace` and sources shaped like `owner/repo` or an `https://` URL. Anything else is reported quoted and not used.
+Import runs or prints plugin commands only for plugin IDs shaped like `name@marketplace`, marketplace names of letters, digits and `._-`, and sources shaped like `owner/repo` or an `https://` URL. Anything else is reported quoted and not used.
 
 Stored prompt sessions are excluded from bundles: they are local run history holding
 prompt and response text. Encryption follows the flags and the wizard answer, never the

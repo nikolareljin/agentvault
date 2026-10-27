@@ -197,6 +197,7 @@ func readJSONIfPresent(path string, v any) error {
 // them for a person to paste into a shell. Only shapes that cannot carry
 // shell syntax or start with "-" are used; anything else is reported quoted.
 var (
+	safeMarketplaceName   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	safePluginID          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	safeMarketplaceSource = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*|https://[A-Za-z0-9][A-Za-z0-9.-]*(/[A-Za-z0-9._~/-]*)?)$`)
 )

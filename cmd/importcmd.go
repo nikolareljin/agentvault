@@ -263,22 +263,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// The vault and files are written by now, so a plugin error is counted
+	// and reported, and the backups below are still listed.
 	pluginsFailed := 0
 	if inv := mergePluginInventories(invs); inv != nil {
-		home := exportSourceHome()
-		if home == "" {
-			return errors.New("reading this machine's plugins: no home directory")
-		}
-		local, err := readLocalPlugins(home)
-		if err != nil {
-			return fmt.Errorf("reading this machine's plugins: %w", err)
-		}
-		pluginsFailed, err = importPlugins(cmd.Context(), inv, local, pluginImportOptions{
+		pluginsFailed = settlePlugins(cmd, inv, pluginImportOptions{
 			Policy: pluginPol, DryRun: dryRun, In: stdin, Terminal: os.Stdin, Out: out, Err: cmd.ErrOrStderr(),
 		})
-		if err != nil {
-			return err
-		}
 	}
 
 	for _, n := range mcpUnknownNames(assetOpts) {
@@ -303,6 +294,27 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 	printInstallGuide(cmd, selected)
 	return importIncomplete(pluginsFailed, len(allMissed))
+}
+
+// settlePlugins runs importPlugins against this machine's plugins and
+// returns the failed step count; an error that stops it counts as one.
+func settlePlugins(cmd *cobra.Command, inv *PluginInventory, o pluginImportOptions) int {
+	home := exportSourceHome()
+	if home == "" {
+		fmt.Fprintln(o.Out, "\nPlugins:\n  failed: reading this machine's plugins: no home directory")
+		return 1
+	}
+	local, err := readLocalPlugins(home)
+	if err != nil {
+		fmt.Fprintf(o.Out, "\nPlugins:\n  failed: reading this machine's plugins: %s\n", printable(err.Error()))
+		return 1
+	}
+	failed, err := importPlugins(cmd.Context(), inv, local, o)
+	if err != nil {
+		fmt.Fprintf(o.Out, "  failed: %s\n", printable(err.Error()))
+		failed++
+	}
+	return failed
 }
 
 // importIncomplete is the exit error of an import that did everything else:

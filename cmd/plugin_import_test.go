@@ -193,8 +193,8 @@ func TestImportPluginsNeedsMarketplace(t *testing.T) {
 		t.Errorf("ran %q", *calls)
 	}
 	for _, w := range []string{
-		"kept: add marketplace a (o/a) not done",
-		"failed: add marketplace b (o/b): exit status 1",
+		`kept: add marketplace from "o/a" (named "a") not done`,
+		`failed: add marketplace from "o/b" (named "b"): exit status 1`,
 		`not done: install plugin x@a: marketplace "a" is not on this machine`,
 		`not done: install plugin y@b: marketplace "b" is not on this machine`,
 		`not done: install plugin z@nowhere: marketplace "nowhere" is not on this machine`,
@@ -396,5 +396,38 @@ func TestImportIncompleteNamesEachPart(t *testing.T) {
 	err := importIncomplete(2, 1)
 	if err == nil || !strings.Contains(err.Error(), "2 plugin step(s) failed") || !strings.Contains(err.Error(), "1 work dir(s) or project(s) not imported") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// A damaged plugin file on this machine fails the plugin step, not the
+// import: the report still ends with the summary.
+func TestSettlePluginsDamagedLocalFile(t *testing.T) {
+	home := t.TempDir()
+	setTestHomeDir(t, home)
+	mustWriteFile(t, filepath.Join(home, ".claude", "settings.json"), "{not json")
+	calls := fakeClaude(t)
+	var out bytes.Buffer
+	failed := settlePlugins(importCmd, &PluginInventory{Plugins: []InstalledPlugin{{ID: "a@m"}}},
+		pluginImportOptions{Policy: pluginsBundle, Out: &out, Err: io.Discard})
+	if failed != 1 || len(*calls) != 0 {
+		t.Errorf("failed=%d calls=%q", failed, *calls)
+	}
+	if !strings.Contains(out.String(), "failed: reading this machine's plugins: parsing") {
+		t.Errorf("report:\n%s", out.String())
+	}
+}
+
+// A marketplace name from the bundle is shown in a yes/no prompt, so only a
+// plain name is used: anything else could word the question.
+func TestPlanPluginImportRefusesOddMarketplaceName(t *testing.T) {
+	inv := &PluginInventory{Marketplaces: []PluginMarketplace{
+		{Name: "x (o/safe)? [y/N]: y\n  add marketplace", Source: "evil/repo", Kind: "github"},
+	}}
+	steps, notes := planPluginImport(inv, localPlugins{})
+	if len(steps) != 0 {
+		t.Errorf("odd name planned: %+v", steps)
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "not a plain name") {
+		t.Errorf("notes = %q", notes)
 	}
 }
