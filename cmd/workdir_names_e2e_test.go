@@ -304,6 +304,15 @@ func TestCheckWorkDirNames(t *testing.T) {
 	if err := checkWorkDirNames(profiles, map[string]string{"persnal": "/x"}); err == nil || !strings.Contains(err.Error(), "persnal") {
 		t.Errorf("typo accepted: %v", err)
 	}
+	// Import ignores a name on two work dirs of one profile, so the flag
+	// would do nothing. One name in each of two profiles is fine.
+	dup := []PortableProfile{{Setup: SetupBundle{Locations: &locations.Set{WorkDirs: []locations.WorkDir{{Abs: "/a", Name: "x"}, {Abs: "/b", Name: "x"}}}}}}
+	if err := checkWorkDirNames(dup, map[string]string{"x": "/t"}); err == nil || !strings.Contains(err.Error(), "more than one") {
+		t.Errorf("duplicated name accepted: %v", err)
+	}
+	if err := checkWorkDirNames(append(profiles, profiles[0]), map[string]string{"personal": "/x"}); err != nil {
+		t.Errorf("name in two profiles refused: %v", err)
+	}
 }
 
 func TestExportNamesOnlySelectedWorkDirs(t *testing.T) {

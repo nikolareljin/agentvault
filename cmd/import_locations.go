@@ -320,30 +320,43 @@ func parseWorkDirMaps(values []string) (paths, names map[string]string, err erro
 }
 
 // checkWorkDirNames refuses a --workdir-map NAME that no selected profile
-// exported, so a typo is not silently ignored.
+// exported, or that one profile gives to several work dirs (import ignores
+// such a name), so the flag is never silently ignored.
 func checkWorkDirNames(profiles []PortableProfile, names map[string]string) error {
-	have := map[string]bool{}
+	have, dup := map[string]bool{}, map[string]bool{}
 	for _, p := range profiles {
 		if p.Setup.Locations == nil {
 			continue
 		}
+		count := map[string]int{}
 		for _, w := range p.Setup.Locations.WorkDirs {
 			if w.Name != "" {
-				have[w.Name] = true
+				count[w.Name]++
 			}
 		}
-	}
-	var unknown []string
-	for n := range names {
-		if !have[n] {
-			unknown = append(unknown, n)
+		for n, c := range count {
+			have[n] = true
+			dup[n] = dup[n] || c > 1
 		}
 	}
-	if len(unknown) == 0 {
-		return nil
+	var unknown, ambiguous []string
+	for n := range names {
+		switch {
+		case !have[n]:
+			unknown = append(unknown, n)
+		case dup[n]:
+			ambiguous = append(ambiguous, n)
+		}
 	}
 	sort.Strings(unknown)
-	return fmt.Errorf("--workdir-map: the bundle has no work dir named %s", strings.Join(unknown, ", "))
+	sort.Strings(ambiguous)
+	if len(unknown) > 0 {
+		return fmt.Errorf("--workdir-map: the bundle has no work dir named %s", strings.Join(unknown, ", "))
+	}
+	if len(ambiguous) > 0 {
+		return fmt.Errorf("--workdir-map: the bundle gives the name %s to more than one work dir; map its path with --workdir-map OLD=NEW", strings.Join(ambiguous, ", "))
+	}
+	return nil
 }
 
 // byName places each bundle work dir that was exported under a name and
