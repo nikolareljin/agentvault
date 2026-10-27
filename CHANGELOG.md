@@ -63,6 +63,10 @@
 
 ### Fixed
 
+- A multi-profile import on a terminal asks the project and work dir
+  confirm list once: a later profile with the same rows takes the earlier
+  answers. Before, the list was shown again for each profile.
+
 - `agentvault doctor --context` finds the memory of a directory whose
   path is long: Claude Code cuts a project folder name over 200 characters
   and adds a hash, so the full name never existed.

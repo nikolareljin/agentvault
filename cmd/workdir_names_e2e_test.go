@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -399,5 +400,56 @@ func TestWorkDirMapRefusedWithNoMatch(t *testing.T) {
 	t.Cleanup(func() { _ = wm.Value.(pflag.SliceValue).Replace(nil) })
 	if _, err := locationOptionsFromFlags(importCmd, false, false, nil, nil); err == nil || !strings.Contains(err.Error(), "--no-match") {
 		t.Errorf("--workdir-map with --no-match accepted: %v", err)
+	}
+}
+
+// A multi-profile import asks the confirm list once: a later profile with
+// the same rows takes the earlier answers; other rows are asked.
+func TestConfirmRowsAskedOncePerImport(t *testing.T) {
+	_, set, o := matchFixture(t)
+	if err := os.RemoveAll(filepath.Join(o.Home, "Projects")); err != nil {
+		t.Fatal(err)
+	}
+	declared := filepath.Join(o.Home, "declared")
+	edited := filepath.Join(o.Home, "edited")
+	mustMkdirAll(t, declared)
+	mustMkdirAll(t, edited)
+	set.WorkDirs[0].Name = "personal"
+	o.Known.Named = []locations.Named{{Name: "personal", Path: declared}}
+	o.Interactive, o.Asked = true, newAskMemo()
+	var out bytes.Buffer
+	o.Out = &out
+	// Row 1 (the work dir) moved to edited, then accept; nothing more to read.
+	o.In = bufio.NewReader(strings.NewReader("1\n" + edited + "\n\n\n"))
+	asked := func() int { return strings.Count(out.String(), "empty line to accept all") }
+	var first int
+	for i := 0; i < 2; i++ {
+		res, err := resolveBundleLocations(context.Background(), set, "", o)
+		if err != nil {
+			t.Fatalf("profile %d: %v\n%s", i, err, out.String())
+		}
+		if got := remapTo(res, "/old/Projects"); got != edited {
+			t.Errorf("profile %d: got %q, want %q\n%s", i, got, edited, out.String())
+		}
+		if i == 0 {
+			first = asked()
+		}
+	}
+	if first == 0 || asked() != first {
+		t.Errorf("second profile asked again (%d, then %d)\n%s", first, asked(), out.String())
+	}
+	if !strings.Contains(out.String(), "as answered earlier in this import") {
+		t.Errorf("reuse not shown\n%s", out.String())
+	}
+	// Another row set is a new question.
+	other := *set
+	other.Projects = append([]locations.Project(nil), set.Projects...)
+	other.Projects[0].Abs = "/old/Projects/app2"
+	o.In = bufio.NewReader(strings.NewReader("\n"))
+	if _, err := resolveBundleLocations(context.Background(), &other, "", o); err != nil {
+		t.Fatal(err)
+	}
+	if asked() != first+1 {
+		t.Errorf("new rows not asked\n%s", out.String())
 	}
 }

@@ -64,10 +64,45 @@ type locationOptions struct {
 type askMemo struct {
 	workDir map[string]string // bundle work dir path -> answer ("" = skipped)
 	hidden  map[string]string // from + NUL + target -> answer ("" = skipped)
+	rows    map[string]string // confirm row from + NUL + proposed -> answer ("" = skipped)
 }
 
 func newAskMemo() *askMemo {
-	return &askMemo{workDir: map[string]string{}, hidden: map[string]string{}}
+	return &askMemo{workDir: map[string]string{}, hidden: map[string]string{}, rows: map[string]string{}}
+}
+
+func rowKey(r locations.Row) string {
+	return locations.CleanForeign(r.From) + "\x00" + r.To
+}
+
+// confirmRows is locations.Confirm, asked once per import: when every row
+// was answered for an earlier profile, those answers are used again.
+func confirmRows(o locationOptions, rows []locations.Row, out io.Writer) ([]locations.Row, error) {
+	if o.Asked != nil {
+		answered := make([]locations.Row, len(rows))
+		all := true
+		for i, r := range rows {
+			to, ok := o.Asked.rows[rowKey(r)]
+			if !ok {
+				all = false
+				break
+			}
+			answered[i] = r
+			answered[i].To = to
+		}
+		if all {
+			printRows(out, answered, "as answered earlier in this import")
+			return answered, nil
+		}
+	}
+	proposed := append([]locations.Row(nil), rows...)
+	got, err := locations.Confirm(rows, o.Home, o.In, out)
+	if err == nil && o.Asked != nil {
+		for i, r := range proposed {
+			o.Asked.rows[rowKey(r)] = got[i].To
+		}
+	}
+	return got, err
 }
 
 // askHidden is ConfirmHidden, asked once per entry per import. remembered
@@ -737,7 +772,7 @@ func matchAndConfirm(ctx context.Context, set *locations.Set, sourceProject stri
 		printRows(out, rows, "would ask to confirm")
 	case o.Interactive:
 		var err error
-		rows, err = locations.Confirm(rows, o.Home, o.In, out)
+		rows, err = confirmRows(o, rows, out)
 		if err != nil {
 			return fmt.Errorf("import aborted: %w", err)
 		}
