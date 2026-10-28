@@ -67,6 +67,7 @@ type SetupBundle struct {
 	InstallGuide         InstallGuide                 `json:"install_guide"`
 	Declined             []DeclinedAsset              `json:"declined,omitempty"`
 	Plugins              *PluginInventory             `json:"plugins,omitempty"`
+	CodexPlugins         *PluginInventory             `json:"codex_plugins,omitempty"`
 	// SourceHome and SourceProject are where the files lived on the exporting
 	// machine. Import rewrites them to this machine's paths.
 	SourceHome    string `json:"source_home,omitempty"`
