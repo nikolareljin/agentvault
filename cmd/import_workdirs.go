@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 
@@ -13,20 +12,15 @@ import (
 // everything a bundle work dir not named in spec owns is removed by the
 // export filter, run on the exporting machine's paths, before anything is
 // planned. The bundle has no per-name sections, so this is how a part of it
-// is taken. An empty spec or "all" takes the whole bundle.
-func filterImportWorkDirs(profiles []PortableProfile, spec string, out io.Writer) error {
-	spec = strings.TrimSpace(spec)
-	if spec == "" || spec == locations.AllWorkDirs {
-		return nil
-	}
-	want := map[string]bool{}
-	for _, name := range strings.Split(spec, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			want[name] = true
-		}
+// is taken. An empty spec or "all" takes the whole bundle. It returns one
+// line per work dir left out, with counts.
+func filterImportWorkDirs(profiles []PortableProfile, spec string) ([]string, error) {
+	want, all := workDirSpec(spec)
+	if all {
+		return nil, nil
 	}
 	if len(want) == 0 {
-		return fmt.Errorf("--workdirs %q names no work dir; use all, or names from the bundle", spec)
+		return nil, fmt.Errorf("--workdirs %q names no work dir; use all, or names from the bundle", spec)
 	}
 	// Names as the bundle writes them, invalid ones included: a work dir
 	// whose name import would ignore is still not one the user asked for.
@@ -37,7 +31,7 @@ func filterImportWorkDirs(profiles []PortableProfile, spec string, out io.Writer
 		}
 	}
 	if len(count) == 0 {
-		return fmt.Errorf("--workdirs %s: the bundle names no work dirs; import it without --workdirs", printable(spec))
+		return nil, fmt.Errorf("--workdirs %s: the bundle names no work dirs; import it without --workdirs", printable(spec))
 	}
 	var unknown []string
 	for n := range want {
@@ -47,37 +41,74 @@ func filterImportWorkDirs(profiles []PortableProfile, spec string, out io.Writer
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return fmt.Errorf("--workdirs: the bundle has no work dir named %s (it names: %s)", strings.Join(unknown, ", "), strings.Join(nameList(count), ", "))
+		return nil, fmt.Errorf("--workdirs: the bundle has no work dir named %s (it names: %s)", strings.Join(unknown, ", "), strings.Join(nameList(count), ", "))
 	}
+	var lines []string
 	for i := range profiles {
 		setup := &profiles[i].Setup
 		if dup := duplicateNames(setup.Locations, want); len(dup) > 0 {
-			return fmt.Errorf("--workdirs: profile %q gives the name %s to more than one work dir; the bundle was edited, export it again", profiles[i].Name, strings.Join(dup, ", "))
+			return nil, fmt.Errorf("--workdirs: profile %q gives the name %s to more than one work dir; the bundle was edited, export it again", profiles[i].Name, strings.Join(dup, ", "))
 		}
 		s := importWorkDirScope(setup, want)
 		if len(s.unselected) == 0 {
 			continue
 		}
 		if _, err := s.apply(setup, setup.SourceHome); err != nil {
-			return fmt.Errorf("profile %q: %w", profiles[i].Name, err)
+			return nil, fmt.Errorf("profile %q: %w", profiles[i].Name, err)
 		}
 		for _, n := range s.unselected {
 			if kinds := s.left[n.Name]; len(kinds) > 0 {
-				fmt.Fprintf(out, "Profile %q: work dir %s not selected with --workdirs; left out %s\n", profiles[i].Name, printable(n.Name), leftCounts(kinds))
+				lines = append(lines, fmt.Sprintf("Profile %q: work dir %s not selected with --workdirs; left out %s", profiles[i].Name, printable(n.Name), leftCounts(kinds)))
 			}
 		}
 	}
-	return nil
+	return lines, nil
+}
+
+// checkWorkDirMapsSelected refuses --workdir-map NAME=PATH for a work dir
+// --workdirs leaves out: it names something this import does not take.
+func checkWorkDirMapsSelected(spec string, names map[string]string) error {
+	want, all := workDirSpec(spec)
+	if all {
+		return nil
+	}
+	var off []string
+	for n := range names {
+		if !want[n] {
+			off = append(off, printable(n))
+		}
+	}
+	if len(off) == 0 {
+		return nil
+	}
+	sort.Strings(off)
+	return fmt.Errorf("--workdir-map %s: --workdirs %s leaves that work dir out", strings.Join(off, ", "), printable(spec))
 }
 
 // checkWorkDirsStrategy refuses --strategy mirror with part of a bundle:
 // mirror deletes what the bundle lacks, which would be this machine's copy
 // of everything the other work dirs own.
 func checkWorkDirsStrategy(spec string, strategy importStrategy) error {
-	if spec = strings.TrimSpace(spec); spec == "" || spec == locations.AllWorkDirs || !strategy.deletesLocalOnly() {
+	if _, all := workDirSpec(spec); all || !strategy.deletesLocalOnly() {
 		return nil
 	}
 	return fmt.Errorf("--strategy mirror deletes what the bundle lacks, and --workdirs %s leaves the other work dirs out of it; use --strategy merge or replace", printable(spec))
+}
+
+// workDirSpec reads --workdirs: all is true for "" or "all", else want
+// holds the names given.
+func workDirSpec(spec string) (want map[string]bool, all bool) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" || spec == locations.AllWorkDirs {
+		return nil, true
+	}
+	want = map[string]bool{}
+	for _, name := range strings.Split(spec, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			want[name] = true
+		}
+	}
+	return want, false
 }
 
 // importWorkDirScope is the export scope for one profile: its named work

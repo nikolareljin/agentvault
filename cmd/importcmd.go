@@ -156,9 +156,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err := checkWorkDirsStrategy(mustString(cmd, "workdirs"), strategy); err != nil {
+		cmd.SilenceUsage = true
 		return err
 	}
-	if err := filterImportWorkDirs(selected, mustString(cmd, "workdirs"), out); err != nil {
+	leftOut, err := filterImportWorkDirs(selected, mustString(cmd, "workdirs"))
+	if err != nil {
 		cmd.SilenceUsage = true
 		return err
 	}
@@ -191,6 +193,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := checkWorkDirMapsSelected(mustString(cmd, "workdirs"), locOpts.WorkDirNames); err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
 	if err := checkWorkDirNames(selected, locOpts.WorkDirMaps, locOpts.WorkDirNames); err != nil {
 		cmd.SilenceUsage = true
 		return err
@@ -206,6 +212,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 		format, bundleOrigin(bundle), bundle.CreatedAt.Format("2006-01-02 15:04"), strategy)
 	if dryRun {
 		fmt.Fprintln(out, "Dry run: no changes are written.")
+	}
+	for _, line := range leftOut {
+		fmt.Fprintln(out, line)
 	}
 
 	var allMissed []missedEntry

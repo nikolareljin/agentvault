@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -97,8 +96,9 @@ func TestImportWorkDirsTakesPart(t *testing.T) {
 		}
 		return nil
 	})
-	if !strings.Contains(in.String(), `work dir company not selected with --workdirs; left out memory folders: 2`) {
-		t.Errorf("import does not report what it left out:\n%s", in.String())
+	report := in.String()
+	if i, h := strings.Index(report, `work dir company not selected with --workdirs; left out memory folders: 2`), strings.Index(report, "Importing "); i < 0 || h < 0 || i < h {
+		t.Errorf("import does not report what it left out after its header:\n%s", report)
 	}
 }
 
@@ -121,14 +121,14 @@ func TestImportWorkDirsRefusals(t *testing.T) {
 		{"duplicate", "personal", named("personal", "personal"), "gives the name personal to more than one work dir"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := filterImportWorkDirs(tc.profiles, tc.spec, io.Discard)
+			_, err := filterImportWorkDirs(tc.profiles, tc.spec)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
 	}
 	for _, spec := range []string{"", "all"} {
-		if err := filterImportWorkDirs([]PortableProfile{{Name: "default"}}, spec, io.Discard); err != nil {
+		if _, err := filterImportWorkDirs([]PortableProfile{{Name: "default"}}, spec); err != nil {
 			t.Errorf("--workdirs %q: %v", spec, err)
 		}
 	}
@@ -163,9 +163,12 @@ func TestImportWorkDirsForeignPaths(t *testing.T) {
 		}},
 	}
 	profiles := []PortableProfile{{Name: "default", Setup: setup}}
-	var out bytes.Buffer
-	if err := filterImportWorkDirs(profiles, "personal", &out); err != nil {
-		t.Fatalf("filter: %v\n%s", err, out.String())
+	lines, err := filterImportWorkDirs(profiles, "personal")
+	if err != nil {
+		t.Fatalf("filter: %v", err)
+	}
+	if want := `Profile "default": work dir company not selected with --workdirs; left out files naming it (withheld): 1, memory folders: 1, plugins: 1, projects: 1`; strings.Join(lines, "\n") != want {
+		t.Errorf("lines = %q, want %q", lines, want)
 	}
 	got := profiles[0].Setup
 	var paths []string
@@ -206,7 +209,7 @@ func TestImportWorkDirsFoldsMacOSCase(t *testing.T) {
 		},
 	}
 	profiles := []PortableProfile{{Name: "default", Setup: setup}}
-	if err := filterImportWorkDirs(profiles, "personal", io.Discard); err != nil {
+	if _, err := filterImportWorkDirs(profiles, "personal"); err != nil {
 		t.Fatal(err)
 	}
 	if got := profiles[0].Setup; len(got.ProviderFiles) != 0 || len(got.Locations.Projects) != 0 {
@@ -225,5 +228,18 @@ func TestImportWorkDirsRefusesMirror(t *testing.T) {
 		if err := checkWorkDirsStrategy(tc.spec, tc.strategy); err != nil {
 			t.Errorf("%q %s: %v", tc.spec, tc.strategy, err)
 		}
+	}
+}
+
+func TestImportWorkDirMapMustBeSelected(t *testing.T) {
+	err := checkWorkDirMapsSelected("personal", map[string]string{"company": "/x", "personal": "/y"})
+	if err == nil || !strings.Contains(err.Error(), "--workdir-map company: --workdirs personal leaves that work dir out") {
+		t.Errorf("err = %v", err)
+	}
+	if err := checkWorkDirMapsSelected("personal", map[string]string{"personal": "/y"}); err != nil {
+		t.Error(err)
+	}
+	if err := checkWorkDirMapsSelected("all", map[string]string{"company": "/x"}); err != nil {
+		t.Error(err)
 	}
 }
