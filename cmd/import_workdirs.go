@@ -152,7 +152,8 @@ func bundleWorkDirNames(set *locations.Set) []string {
 	}
 	var out []string
 	for _, w := range set.WorkDirs {
-		if w.Name != "" {
+		// A name with no path places and filters nothing.
+		if w.Name != "" && strings.TrimSpace(w.Abs) != "" {
 			out = append(out, w.Name)
 		}
 	}

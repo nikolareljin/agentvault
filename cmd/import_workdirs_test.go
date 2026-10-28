@@ -332,3 +332,40 @@ func TestImportWorkDirsDropsSourceProject(t *testing.T) {
 		t.Errorf("lines = %q, err = %v", lines, err)
 	}
 }
+
+// A Windows bundle read on any OS: settings and MCP arguments often write
+// its paths with forward slashes.
+func TestImportWorkDirsWindowsForwardSlashes(t *testing.T) {
+	setup := SetupBundle{
+		SourceOS: "windows/amd64", SourceHome: `C:\Users\a`,
+		Locations: &locations.Set{WorkDirs: []locations.WorkDir{
+			{ID: "w1", Abs: `C:\Users\a\code`, Name: "personal"},
+			{ID: "w2", Abs: `C:\Users\a\Work\Acme`, Name: "company"},
+		}},
+		ProviderFiles: []SetupAsset{{LogicalRoot: setupAssetRootProviderClaude, LogicalPath: "settings.json",
+			Content: []byte(`{"additionalDirectories":["C:/Users/a/Work/Acme/api"]}`), ContentPresent: true}},
+	}
+	setup.SharedConfig.MCPServers = []agent.MCPServer{
+		{Name: "acme", Args: []string{"C:/Users/a/Work/Acme/tool"}},
+		{Name: "mine", Args: []string{"C:/Users/a/code/tool"}},
+	}
+	profiles := []PortableProfile{{Name: "default", Setup: setup}}
+	if _, err := filterImportWorkDirs(profiles, "personal"); err != nil {
+		t.Fatal(err)
+	}
+	got := profiles[0].Setup
+	if a := got.ProviderFiles[0]; !a.Redacted || a.Content != nil {
+		t.Errorf("settings.json kept: %s", a.Content)
+	}
+	if len(got.SharedConfig.MCPServers) != 1 || got.SharedConfig.MCPServers[0].Name != "mine" {
+		t.Errorf("MCP servers left: %+v", got.SharedConfig.MCPServers)
+	}
+}
+
+func TestImportWorkDirsNameWithoutPath(t *testing.T) {
+	set := &locations.Set{WorkDirs: []locations.WorkDir{{ID: "w1", Abs: "/home/a/code", Name: "personal"}, {ID: "w2", Name: "company"}}}
+	_, err := filterImportWorkDirs([]PortableProfile{{Name: "default", Setup: SetupBundle{Locations: set}}}, "company")
+	if err == nil || !strings.Contains(err.Error(), "no work dir named company") {
+		t.Errorf("err = %v", err)
+	}
+}

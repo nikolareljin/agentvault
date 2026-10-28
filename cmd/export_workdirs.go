@@ -843,6 +843,9 @@ func workDirNeedles(n locations.Named, home string) []string {
 	for _, root := range n.Roots() {
 		add(root)
 		add(filepath.ToSlash(root))
+		// A Windows path in a bundle read elsewhere: ToSlash only knows
+		// this OS's separator, and JSON and prose often write C:/Users/a.
+		add(strings.ReplaceAll(root, `\`, "/"))
 		if rel := relUnderHome(home, root); rel != "" {
 			add("~/" + rel)
 			add("$HOME/" + rel)
