@@ -370,9 +370,15 @@ func onOff(on bool) string {
 // set. in is nil, or the terminal when a person is answering, so claude can
 // ask its own questions. Tests replace it.
 var runClaude = func(ctx context.Context, dir string, in io.Reader, out io.Writer, args ...string) error {
-	path, err := exec.LookPath("claude")
+	return runPluginCLI(ctx, "claude", dir, in, out, args...)
+}
+
+// runPluginCLI runs a fixed tool by name with args and no shell. Every
+// argument from a bundle matched a plain-word pattern in the plan first.
+func runPluginCLI(ctx context.Context, name, dir string, in io.Reader, out io.Writer, args ...string) error {
+	path, err := exec.LookPath(name)
 	if err != nil {
-		return errors.New("claude is not on PATH")
+		return fmt.Errorf("%s is not on PATH", name)
 	}
 	if ctx == nil {
 		ctx = context.Background()

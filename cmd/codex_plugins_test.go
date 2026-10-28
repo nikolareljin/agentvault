@@ -459,3 +459,10 @@ func TestCodexPluginFromBuiltinMarketplace(t *testing.T) {
 		t.Errorf("calls=%v\n%s", calls, out.String())
 	}
 }
+
+func TestRunPluginCLINotOnPath(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if err := runCodex(context.Background(), "", nil, io.Discard, "plugin", "list"); err == nil || err.Error() != "codex is not on PATH" {
+		t.Errorf("err = %v", err)
+	}
+}

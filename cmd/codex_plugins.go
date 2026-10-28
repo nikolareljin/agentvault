@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -273,17 +272,7 @@ func codexRefsSafe(m PluginMarketplace) bool {
 
 // runCodex runs the codex CLI as runClaude runs claude. Tests replace it.
 var runCodex = func(ctx context.Context, dir string, in io.Reader, out io.Writer, args ...string) error {
-	path, err := exec.LookPath("codex")
-	if err != nil {
-		return errors.New("codex is not on PATH")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	c := exec.CommandContext(ctx, path, args...)
-	c.Dir = dir
-	c.Stdin, c.Stdout, c.Stderr = in, out, out
-	return c.Run()
+	return runPluginCLI(ctx, "codex", dir, in, out, args...)
 }
 
 // codexPluginTool settles Codex plugins in home.
