@@ -203,6 +203,10 @@ func planCodexPluginImport(inv *PluginInventory, local localPlugins) (steps []pl
 			})
 		}
 	}
+	listed := map[string]bool{}
+	for _, m := range inv.Marketplaces {
+		listed[m.Name] = true
+	}
 	for _, p := range inv.Plugins {
 		if !safePluginID.MatchString(p.ID) {
 			notes = append(notes, fmt.Sprintf("plugin %s: skipped, not name@marketplace", strconv.Quote(p.ID)))
@@ -211,9 +215,13 @@ func planCodexPluginImport(inv *PluginInventory, local localPlugins) (steps []pl
 		have, installed := local.installed[p.ID]
 		if !installed {
 			s := pluginStep{
-				what:   "install plugin " + p.ID,
-				args:   []string{"plugin", "add", p.ID},
-				market: p.ID[strings.LastIndex(p.ID, "@")+1:],
+				what: "install plugin " + p.ID,
+				args: []string{"plugin", "add", p.ID},
+			}
+			// A built-in marketplace (openai-curated) has no table and is
+			// on every machine; only one the bundle lists can be missing.
+			if m := p.ID[strings.LastIndex(p.ID, "@")+1:]; listed[m] {
+				s.market = m
 			}
 			if p.Enabled != nil && !*p.Enabled {
 				// codex plugin add enables it, so this comes after.

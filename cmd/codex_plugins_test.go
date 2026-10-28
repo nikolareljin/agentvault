@@ -431,3 +431,31 @@ func TestCodexPluginsExportImport(t *testing.T) {
 		t.Errorf("print changed config.toml: %q", got)
 	}
 }
+
+// A plugin from a built-in marketplace is installed: that marketplace has
+// no table on any machine. One from a listed marketplace that was not
+// added waits for it.
+func TestCodexPluginFromBuiltinMarketplace(t *testing.T) {
+	var calls []string
+	orig := runCodex
+	runCodex = func(_ context.Context, _ string, _ io.Reader, _ io.Writer, args ...string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+	t.Cleanup(func() { runCodex = orig })
+	on := true
+	inv := &PluginInventory{
+		Marketplaces: []PluginMarketplace{{Name: "loc", Source: "/src/mkt", Kind: "local"}},
+		Plugins:      []InstalledPlugin{{ID: "github@openai-curated", Enabled: &on}, {ID: "x@loc", Enabled: &on}},
+	}
+	var out bytes.Buffer
+	if _, err := importPlugins(context.Background(), inv, localPlugins{}, pluginImportOptions{
+		Tool: codexPluginTool(t.TempDir()), Policy: pluginsBundle, Out: &out, Err: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(calls, "|") != "plugin add github@openai-curated" ||
+		!strings.Contains(out.String(), `not done: install plugin x@loc: marketplace "loc" is not on this machine`) {
+		t.Errorf("calls=%v\n%s", calls, out.String())
+	}
+}
