@@ -92,6 +92,7 @@ func init() {
 	importCmd.Flags().StringArray("map", nil, "rewrite a path prefix from the exporting machine, OLD=NEW (repeatable); the home directory is rewritten without it")
 	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root, or into the confirmed match of the bundle's project")
 	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects (default: the confirmed match of the bundle's project)")
+	importCmd.Flags().String("workdirs", "all", "work dirs of the bundle to import: all, or names separated by commas; what belongs to the others is left out")
 	importCmd.Flags().StringArray("workdir-map", nil, "place a work dir from the bundle here, OLD=NEW or NAME=NEW (repeatable); projects under it match by identity")
 	importCmd.Flags().Bool("no-match", false, "do not look for the bundle's projects on this machine; rewrite paths only by --map and the home directory")
 	importCmd.Flags().Bool("accept-matches", false, "apply computed project matches without asking (for non-interactive imports)")
@@ -152,6 +153,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 
 	selected, err := selectProfilesForImport(cmd, bundle, profileName)
 	if err != nil {
+		return err
+	}
+	if err := checkWorkDirsStrategy(mustString(cmd, "workdirs"), strategy); err != nil {
+		return err
+	}
+	if err := filterImportWorkDirs(selected, mustString(cmd, "workdirs"), out); err != nil {
+		cmd.SilenceUsage = true
 		return err
 	}
 
