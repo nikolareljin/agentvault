@@ -264,6 +264,6 @@ func MatchProjects(set Set, workDirTargets map[string]string, cands []Candidate)
 }
 
 func isDir(p string) bool {
-	info, err := os.Stat(p)
+	info, err := os.Stat(p) // #nosec G703 -- metadata only: whether a candidate place on this machine is a directory
 	return err == nil && info.IsDir()
 }

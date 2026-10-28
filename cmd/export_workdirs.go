@@ -28,6 +28,16 @@ type workDirScope struct {
 	left map[string]map[string]int
 	// needles are the spellings of each unselected work dir's path.
 	needles map[string][]string
+	// bundleOS is set when import filters a bundle: its paths are the
+	// exporting machine's ("unknown" when the bundle does not say).
+	bundleOS string
+}
+
+// foldCase is whether paths compare without case: on this OS, or on the
+// OS that wrote the bundle unless it is known to be Linux. Folding can
+// only leave more out.
+func (s workDirScope) foldCase() bool {
+	return caseInsensitiveOS() || s.bundleOS != "" && s.bundleOS != "linux"
 }
 
 // resolveWorkDirScope reads --workdirs: "all", or names declared with
@@ -78,11 +88,20 @@ func (s workDirScope) excluded(p string) (string, bool) {
 	// Windows extended-length form, as Codex writes project keys.
 	p = strings.TrimPrefix(p, `\\?\`)
 	for _, n := range s.unselected {
-		if n.Holds(p) {
+		if n.Holds(p) || s.bundleOS != "" && foreignHolds(n.Path, p, s.foldCase()) {
 			return n.Name, true
 		}
 	}
 	return "", false
+}
+
+// foreignHolds is Holds for paths of another OS, which filepath cannot
+// split: C:\Users\a\work on Linux, or /home/a/work on Windows.
+func foreignHolds(root, p string, fold bool) bool {
+	if fold {
+		root, p = strings.ToLower(root), strings.ToLower(p)
+	}
+	return locations.Below(root, p)
 }
 
 func (s workDirScope) leave(name, kind string) {
@@ -129,12 +148,13 @@ func (s *workDirScope) apply(bundle *SetupBundle, home string) ([]bool, error) {
 	s.needles = map[string][]string{}
 	for _, n := range s.unselected {
 		s.needles[n.Name] = workDirNeedles(n, home)
-		if caseInsensitiveOS() {
+		if s.foldCase() {
 			for i, nd := range s.needles[n.Name] {
 				s.needles[n.Name][i] = strings.ToLower(nd)
 			}
 		}
 	}
+	s.applySourceProject(bundle)
 	s.applyMemory(bundle, home)
 	s.applyPlugins(bundle)
 	s.applyLocations(bundle)
@@ -155,18 +175,45 @@ func (s *workDirScope) apply(bundle *SetupBundle, home string) ([]bool, error) {
 		if len(kinds) == 0 {
 			continue
 		}
-		var parts []string
-		for k, c := range kinds {
-			parts = append(parts, fmt.Sprintf("%s: %d", k, c))
-		}
-		sort.Strings(parts)
 		bundle.Declined = append(bundle.Declined, DeclinedAsset{
 			Path:     "work dir " + n.Name,
 			Category: DeclinedByPolicy,
-			Reason:   "not selected with --workdirs; left out " + strings.Join(parts, ", "),
+			Reason:   "not selected with --workdirs; left out " + leftCounts(kinds),
 		})
 	}
 	return keepAgents, s.verify(bundle)
+}
+
+// applySourceProject leaves out the bundle's project when it lies in an
+// unselected work dir, with every file taken from it. Export refuses such
+// a --project, so this acts at import, on a bundle exported whole.
+func (s workDirScope) applySourceProject(bundle *SetupBundle) {
+	name, ok := s.excluded(bundle.SourceProject)
+	if !ok {
+		return
+	}
+	for _, group := range []*[]SetupAsset{&bundle.ProjectFiles, &bundle.InstructionOverrides, &bundle.SkillAssets} {
+		var keep []SetupAsset
+		for _, a := range *group {
+			if a.LogicalRoot == setupAssetRootProject {
+				s.leave(name, "project files")
+				continue
+			}
+			keep = append(keep, a)
+		}
+		*group = keep
+	}
+	// Export records the project in Locations too, counted there.
+	listed := false
+	if bundle.Locations != nil {
+		for _, p := range bundle.Locations.Projects {
+			listed = listed || locations.CleanForeign(p.Abs) == locations.CleanForeign(bundle.SourceProject)
+		}
+	}
+	if !listed {
+		s.leave(name, "projects")
+	}
+	bundle.SourceProject = ""
 }
 
 // --- memory --------------------------------------------------------------
@@ -220,13 +267,13 @@ func (s workDirScope) memoryOwner(folder string) string {
 				// Claude keeps the first 200 of a long name and adds
 				// "-<hash>": a folder under this root starts with the
 				// root's own first 200.
-				if slugHasPrefix(f, collapseDashes(raw[:claudeSlugMax])) {
+				if slugHasPrefix(f, collapseDashes(raw[:claudeSlugMax]), s.foldCase()) {
 					return n.Name
 				}
 				continue
 			}
 			slug := collapseDashes(raw)
-			if slugEqual(f, slug) || slugHasPrefix(f, strings.TrimSuffix(slug, "-")+"-") {
+			if slugEqual(f, slug, s.foldCase()) || slugHasPrefix(f, strings.TrimSuffix(slug, "-")+"-", s.foldCase()) {
 				return n.Name
 			}
 		}
@@ -250,15 +297,15 @@ var caseInsensitiveOS = func() bool { return runtime.GOOS == "windows" || runtim
 
 // Paths on Windows and macOS (by default) compare without case, so their
 // slugs do too.
-func slugEqual(a, b string) bool {
-	if caseInsensitiveOS() {
+func slugEqual(a, b string, fold bool) bool {
+	if fold {
 		return strings.EqualFold(a, b)
 	}
 	return a == b
 }
 
-func slugHasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && slugEqual(s[:len(prefix)], prefix)
+func slugHasPrefix(s, prefix string, fold bool) bool {
+	return len(s) >= len(prefix) && slugEqual(s[:len(prefix)], prefix, fold)
 }
 
 // --- plugins -------------------------------------------------------------
@@ -283,6 +330,16 @@ func (s workDirScope) applyPlugins(bundle *SetupBundle) {
 			if _, ok := s.excluded(dir); !ok {
 				local = append(local, dir)
 			}
+		}
+		// In a bundle the installs are gone: a plugin installed only for
+		// local projects, all of them left out, goes with them.
+		var owner string
+		if len(p.installs) == 0 && !p.userScope() && len(p.LocalProjects) > 0 && len(local) == 0 {
+			owner, _ = s.excluded(p.LocalProjects[0])
+		}
+		if owner != "" {
+			s.leave(owner, "plugins")
+			continue
 		}
 		p.LocalProjects = local
 		var off []string
@@ -560,7 +617,7 @@ func (s workDirScope) applyDetected(bundle *SetupBundle) {
 func (s workDirScope) mentions(text []byte) (string, bool) {
 	// Paths that compare without case are matched without case: text is
 	// lowered once here, needles when they are made.
-	if caseInsensitiveOS() {
+	if s.foldCase() {
 		text = bytes.ToLower(text)
 	}
 	for _, n := range s.unselected {
@@ -767,6 +824,9 @@ func (s workDirScope) verify(bundle *SetupBundle) error {
 		return nil
 	}
 	sort.Strings(hits)
+	if s.bundleOS != "" {
+		return fmt.Errorf("--workdirs: the bundle still names an unselected work dir in %s after filtering; import it with --workdirs all, or export only the work dirs you want", strings.Join(hits, ", "))
+	}
 	return fmt.Errorf("--workdirs: the bundle still names an unselected work dir in %s; export it with --workdirs all, or remove the reference", strings.Join(hits, ", "))
 }
 
@@ -783,17 +843,17 @@ func workDirNeedles(n locations.Named, home string) []string {
 	for _, root := range n.Roots() {
 		add(root)
 		add(filepath.ToSlash(root))
-		if home != "" {
-			if rel, err := filepath.Rel(home, root); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-				rel = filepath.ToSlash(rel)
-				add("~/" + rel)
-				add("$HOME/" + rel)
-				add("${HOME}/" + rel)
-				back := strings.ReplaceAll(rel, "/", `\`)
-				add(`~\` + back)
-				add(`%USERPROFILE%\` + back)
-				add(`$env:USERPROFILE\` + back)
-			}
+		// A Windows path in a bundle read elsewhere: ToSlash only knows
+		// this OS's separator, and JSON and prose often write C:/Users/a.
+		add(strings.ReplaceAll(root, `\`, "/"))
+		if rel := relUnderHome(home, root); rel != "" {
+			add("~/" + rel)
+			add("$HOME/" + rel)
+			add("${HOME}/" + rel)
+			back := strings.ReplaceAll(rel, "/", `\`)
+			add(`~\` + back)
+			add(`%USERPROFILE%\` + back)
+			add(`$env:USERPROFILE\` + back)
 		}
 	}
 	// The same spellings as JSON writes them: a Windows path's backslashes
@@ -805,6 +865,24 @@ func workDirNeedles(n locations.Named, home string) []string {
 		}
 	}
 	return out
+}
+
+// relUnderHome is root relative to home, slash-separated, or "" when root
+// is not below home. A bundle from another OS has paths filepath cannot
+// relate, so those are related as written.
+func relUnderHome(home, root string) string {
+	if home == "" {
+		return ""
+	}
+	if rel, err := filepath.Rel(home, root); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(rel)
+	}
+	h := strings.ReplaceAll(locations.CleanForeign(home), `\`, "/")
+	r := strings.ReplaceAll(locations.CleanForeign(root), `\`, "/")
+	if !locations.Below(h, r) || len(r) <= len(h) {
+		return ""
+	}
+	return strings.TrimPrefix(r[len(h):], "/")
 }
 
 // containsPath reports whether text holds needle as a whole path: what

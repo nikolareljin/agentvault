@@ -1054,7 +1054,7 @@ func resolveLangGraphScriptPath(raw string) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("resolve langgraph router symlink: %w", err)
 	}
-	info, err := os.Stat(resolved)
+	info, err := os.Stat(resolved) // #nosec G703 -- metadata of the script the user configured; checked below to be a regular file
 	if err != nil {
 		return "", fmt.Errorf("stat langgraph router script: %w", err)
 	}

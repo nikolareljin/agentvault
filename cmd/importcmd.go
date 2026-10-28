@@ -92,6 +92,7 @@ func init() {
 	importCmd.Flags().StringArray("map", nil, "rewrite a path prefix from the exporting machine, OLD=NEW (repeatable); the home directory is rewritten without it")
 	importCmd.Flags().Bool("apply-projects", false, "write the bundle's project files (instructions, rules, agents, commands) into --project-root, or into the confirmed match of the bundle's project")
 	importCmd.Flags().String("project-root", "", "directory to write project files into with --apply-projects (default: the confirmed match of the bundle's project)")
+	importCmd.Flags().String("workdirs", "all", "work dirs of the bundle to import: all, or names separated by commas; what belongs to the others is left out")
 	importCmd.Flags().StringArray("workdir-map", nil, "place a work dir from the bundle here, OLD=NEW or NAME=NEW (repeatable); projects under it match by identity")
 	importCmd.Flags().Bool("no-match", false, "do not look for the bundle's projects on this machine; rewrite paths only by --map and the home directory")
 	importCmd.Flags().Bool("accept-matches", false, "apply computed project matches without asking (for non-interactive imports)")
@@ -154,6 +155,15 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := checkWorkDirsStrategy(mustString(cmd, "workdirs"), strategy); err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
+	leftOut, err := filterImportWorkDirs(selected, mustString(cmd, "workdirs"))
+	if err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
 
 	// Mirroring several profiles into one vault is incoherent: each profile would
 	// delete what the previous one just added, leaving only the last. Profiles are
@@ -183,6 +193,10 @@ func runImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := checkWorkDirMapsSelected(mustString(cmd, "workdirs"), locOpts.WorkDirNames); err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
 	if err := checkWorkDirNames(selected, locOpts.WorkDirMaps, locOpts.WorkDirNames); err != nil {
 		cmd.SilenceUsage = true
 		return err
@@ -198,6 +212,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 		format, bundleOrigin(bundle), bundle.CreatedAt.Format("2006-01-02 15:04"), strategy)
 	if dryRun {
 		fmt.Fprintln(out, "Dry run: no changes are written.")
+	}
+	for _, line := range leftOut {
+		fmt.Fprintln(out, line)
 	}
 
 	var allMissed []missedEntry

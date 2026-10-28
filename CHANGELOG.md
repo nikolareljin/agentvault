@@ -4,6 +4,11 @@
 
 ### Added
 
+- `agentvault import --workdirs NAME[,NAME...]` imports part of a bundle
+  that carries several named work dirs. What belongs to the others is
+  removed with the `export --workdirs` filter, applied to the exporting
+  machine's paths, before anything is planned or written.
+
 - Import installs a Claude plugin that was installed for a project at
   local scope into that project on this machine: `claude plugin install
   --scope local`, run in the project's directory, and disabled there
