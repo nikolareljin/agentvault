@@ -290,3 +290,33 @@ func TestImportWorkDirsNotesUnnamedProfile(t *testing.T) {
 		t.Errorf("lines = %q", lines)
 	}
 }
+
+// A bundle exported with --project inside the company work dir: importing
+// personal leaves the project and its files out instead of refusing.
+func TestImportWorkDirsDropsSourceProject(t *testing.T) {
+	setup := SetupBundle{
+		SourceOS: "linux/amd64", SourceHome: "/home/a", SourceProject: "/home/a/work/acme/api",
+		Locations: &locations.Set{WorkDirs: []locations.WorkDir{
+			{ID: "w1", Abs: "/home/a/code", Name: "personal"},
+			{ID: "w2", Abs: "/home/a/work/acme", Name: "company"},
+		}},
+		ProjectFiles:         []SetupAsset{{LogicalRoot: setupAssetRootProject, LogicalPath: "CLAUDE.md", Content: []byte("acme rules"), ContentPresent: true}},
+		InstructionOverrides: []SetupAsset{{LogicalRoot: setupAssetRootProject, LogicalPath: "AGENTS.md", Content: []byte("acme agents"), ContentPresent: true}},
+		SkillAssets: []SetupAsset{
+			{LogicalRoot: setupAssetRootProject, LogicalPath: "skills/deploy/SKILL.md", Content: []byte("acme deploy"), ContentPresent: true},
+			{LogicalRoot: setupAssetRootProviderClaudeSkill, LogicalPath: "notes/SKILL.md", Content: []byte("mine"), ContentPresent: true},
+		},
+	}
+	profiles := []PortableProfile{{Name: "default", Setup: setup}}
+	lines, err := filterImportWorkDirs(profiles, "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := profiles[0].Setup
+	if got.SourceProject != "" || len(got.ProjectFiles) != 0 || len(got.InstructionOverrides) != 0 || len(got.SkillAssets) != 1 || got.SkillAssets[0].LogicalPath != "notes/SKILL.md" {
+		t.Errorf("left in: %q %v %v %v", got.SourceProject, got.ProjectFiles, got.InstructionOverrides, got.SkillAssets)
+	}
+	if want := `Profile "default": work dir company not selected with --workdirs; left out project files: 3, projects: 1`; strings.Join(lines, "\n") != want {
+		t.Errorf("lines = %q", lines)
+	}
+}

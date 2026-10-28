@@ -154,6 +154,7 @@ func (s *workDirScope) apply(bundle *SetupBundle, home string) ([]bool, error) {
 			}
 		}
 	}
+	s.applySourceProject(bundle)
 	s.applyMemory(bundle, home)
 	s.applyPlugins(bundle)
 	s.applyLocations(bundle)
@@ -181,6 +182,29 @@ func (s *workDirScope) apply(bundle *SetupBundle, home string) ([]bool, error) {
 		})
 	}
 	return keepAgents, s.verify(bundle)
+}
+
+// applySourceProject leaves out the bundle's project when it lies in an
+// unselected work dir, with every file taken from it. Export refuses such
+// a --project, so this acts at import, on a bundle exported whole.
+func (s workDirScope) applySourceProject(bundle *SetupBundle) {
+	name, ok := s.excluded(bundle.SourceProject)
+	if !ok {
+		return
+	}
+	for _, group := range []*[]SetupAsset{&bundle.ProjectFiles, &bundle.InstructionOverrides, &bundle.SkillAssets} {
+		var keep []SetupAsset
+		for _, a := range *group {
+			if a.LogicalRoot == setupAssetRootProject {
+				s.leave(name, "project files")
+				continue
+			}
+			keep = append(keep, a)
+		}
+		*group = keep
+	}
+	bundle.SourceProject = ""
+	s.leave(name, "projects")
 }
 
 // --- memory --------------------------------------------------------------
