@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nikolareljin/agentvault/internal/agent"
 	"github.com/nikolareljin/agentvault/internal/config"
 	"github.com/nikolareljin/agentvault/internal/locations"
 )
@@ -241,5 +242,51 @@ func TestImportWorkDirMapMustBeSelected(t *testing.T) {
 	}
 	if err := checkWorkDirMapsSelected("all", map[string]string{"company": "/x"}); err != nil {
 		t.Error(err)
+	}
+}
+
+// An instruction pulled from a company project names it by identity, not
+// path, so only the bundle's own project list ties it to the work dir.
+func TestImportWorkDirsInstructionByIdentity(t *testing.T) {
+	setup := SetupBundle{
+		SourceOS:   "linux/amd64",
+		SourceHome: "/home/a",
+		Locations: &locations.Set{
+			WorkDirs: []locations.WorkDir{
+				{ID: "w1", Abs: "/home/a/code", Name: "personal"},
+				{ID: "w2", Abs: "/home/a/work/acme", Name: "company"},
+			},
+			Projects: []locations.Project{
+				{ID: "p1", WorkDir: "w1", Abs: "/home/a/code/site", GitRemote: "https://example.com/me/site.git"},
+				{ID: "p2", WorkDir: "w2", Abs: "/home/a/work/acme/api", GitRemote: "https://example.com/acme/api.git"},
+			},
+		},
+	}
+	setup.SharedConfig.Instructions = []agent.InstructionFile{
+		{Name: "docs/company.md", Filename: "docs/company.md", Content: "company rules", SourceProject: "remote:https://example.com/acme/api.git"},
+		{Name: "docs/site.md", Filename: "docs/site.md", Content: "site rules", SourceProject: "remote:https://example.com/me/site.git"},
+	}
+	profiles := []PortableProfile{{Name: "default", Setup: setup}}
+	if _, err := filterImportWorkDirs(profiles, "personal"); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, inst := range profiles[0].Setup.SharedConfig.Instructions {
+		names = append(names, inst.Name)
+	}
+	if strings.Join(names, " ") != "docs/site.md" {
+		t.Errorf("instructions left: %v", names)
+	}
+}
+
+func TestImportWorkDirsNotesUnnamedProfile(t *testing.T) {
+	set := &locations.Set{WorkDirs: []locations.WorkDir{{ID: "w1", Abs: "/home/a/code", Name: "personal"}}}
+	profiles := []PortableProfile{{Name: "named", Setup: SetupBundle{Locations: set}}, {Name: "plain"}}
+	lines, err := filterImportWorkDirs(profiles, "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `Profile "plain": names no work dirs; --workdirs does not apply, all of it is imported`; strings.Join(lines, "\n") != want {
+		t.Errorf("lines = %q", lines)
 	}
 }

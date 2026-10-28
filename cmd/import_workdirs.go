@@ -49,6 +49,12 @@ func filterImportWorkDirs(profiles []PortableProfile, spec string) ([]string, er
 		if dup := duplicateNames(setup.Locations, want); len(dup) > 0 {
 			return nil, fmt.Errorf("--workdirs: profile %q gives the name %s to more than one work dir; the bundle was edited, export it again", profiles[i].Name, strings.Join(dup, ", "))
 		}
+		if len(bundleWorkDirNames(setup.Locations)) == 0 {
+			// Exported with no work dirs declared: nothing ties its
+			// content to one, so all of it is taken.
+			lines = append(lines, fmt.Sprintf("Profile %q: names no work dirs; --workdirs does not apply, all of it is imported", profiles[i].Name))
+			continue
+		}
 		s := importWorkDirScope(setup, want)
 		if len(s.unselected) == 0 {
 			continue
@@ -122,6 +128,10 @@ func importWorkDirScope(setup *SetupBundle, want map[string]bool) workDirScope {
 	if setup.Locations == nil {
 		return s
 	}
+	// Instructions pulled from a project name it by identity; the bundle's
+	// own project list ties that identity to a path. A copy, because the
+	// filter rewrites the bundle's list.
+	s.known.Projects = append([]locations.Project(nil), setup.Locations.Projects...)
 	for _, w := range setup.Locations.WorkDirs {
 		if w.Name == "" || strings.TrimSpace(w.Abs) == "" {
 			continue
