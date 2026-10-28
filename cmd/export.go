@@ -574,6 +574,11 @@ func collectSetupBundle(cmd *cobra.Command, v *vault.Vault, configDir string, op
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: plugin inventory not exported: %v\n", err)
 				}
 				bundle.Plugins = inv
+				codexInv, err := collectCodexPluginInventory(homeDir)
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: Codex plugin inventory not exported: %v\n", err)
+				}
+				bundle.CodexPlugins = codexInv
 			}
 		}
 		if opts.IncludeSkills {

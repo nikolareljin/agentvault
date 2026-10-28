@@ -1243,6 +1243,19 @@ func editCodexServerTables(text string, drop map[string]bool, swap map[string]st
 	if len(drop) == 0 {
 		return text
 	}
+	return editTOMLTables(text, func(keys []string) (string, bool) {
+		if len(keys) >= 2 && keys[0] == "mcp_servers" && drop[keys[1]] {
+			return keys[1], true
+		}
+		return "", false
+	}, swap)
+}
+
+// editTOMLTables drops the tables match picks, keyed by the name it gives,
+// and writes swap[name] where the first table of that name was. Comment and
+// blank lines just before the next kept table belong to it and stay; every
+// other line stays as it is.
+func editTOMLTables(text string, match func(keys []string) (string, bool), swap map[string]string) string {
 	nl := "\n"
 	if strings.Contains(text, "\r\n") {
 		nl = "\r\n"
@@ -1252,7 +1265,7 @@ func editCodexServerTables(text string, drop map[string]bool, swap map[string]st
 	written := map[string]bool{}
 	for _, line := range strings.SplitAfter(text, "\n") {
 		if keys, ok := tomlTableKeys(line); ok {
-			now := len(keys) >= 2 && keys[0] == "mcp_servers" && drop[keys[1]]
+			name, now := match(keys)
 			if skipping && !now {
 				keep := pending.String()
 				if strings.HasSuffix(b.String(), nl+nl) || b.Len() == 0 {
@@ -1263,9 +1276,9 @@ func editCodexServerTables(text string, drop map[string]bool, swap map[string]st
 			}
 			pending.Reset()
 			skipping = now
-			if now && !written[keys[1]] {
-				written[keys[1]] = true
-				if t, ok := swap[keys[1]]; ok {
+			if now && !written[name] {
+				written[name] = true
+				if t, ok := swap[name]; ok {
 					b.WriteString(t)
 					if !strings.HasSuffix(t, nl+nl) {
 						pending.WriteString(nl)

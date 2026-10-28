@@ -13,8 +13,8 @@ import (
 	"github.com/nikolareljin/agentvault/internal/safefile"
 )
 
-// PluginInventory lists the Claude Code plugins and marketplaces of the
-// exporting machine. The plugin files themselves are not carried: Claude
+// PluginInventory lists the Claude Code (or, as codex_plugins, Codex)
+// plugins and marketplaces of the exporting machine. The plugin files themselves are not carried: Claude
 // Code's installed_plugins.json holds absolute cache paths that do not exist
 // on the other machine. The inventory says what to install, and import
 // installs it or prints the commands (see plugin_import.go).
@@ -30,6 +30,12 @@ type PluginMarketplace struct {
 	// GitHub, a URL for git, a path for a local directory.
 	Source string `json:"source"`
 	Kind   string `json:"kind"`
+	// Ref and Sparse are a Codex git marketplace's --ref and --sparse.
+	Ref    string   `json:"ref,omitempty"`
+	Sparse []string `json:"sparse,omitempty"`
+	// placed is a Codex local marketplace's path after import placed it on
+	// this machine; never in a bundle.
+	placed string
 }
 
 // InstalledPlugin is one installed plugin, as name@marketplace.

@@ -129,6 +129,27 @@ type pluginStep struct {
 	then []string
 	// dir is where claude runs: the project of a local-scope install.
 	dir string
+	// setOn is a Codex enabled state written into config.toml, after args
+	// when there are any.
+	setOn *bool
+}
+
+// pluginTool is the CLI import settles plugins with.
+type pluginTool struct {
+	cli, title string
+	run        func(ctx context.Context, dir string, in io.Reader, out io.Writer, args ...string) error
+	// setEnabled writes a setOn step and returns its backup; manual is the
+	// line printed for it instead.
+	setEnabled func(id string, on bool) (string, error)
+	manual     func(id string, on bool) string
+}
+
+var claudePluginTool = &pluginTool{
+	cli:   "claude",
+	title: "Plugins",
+	run: func(ctx context.Context, dir string, in io.Reader, out io.Writer, args ...string) error {
+		return runClaude(ctx, dir, in, out, args...)
+	},
 }
 
 // planPluginImport compares the bundle with this machine. It returns the
@@ -349,9 +370,15 @@ func onOff(on bool) string {
 // set. in is nil, or the terminal when a person is answering, so claude can
 // ask its own questions. Tests replace it.
 var runClaude = func(ctx context.Context, dir string, in io.Reader, out io.Writer, args ...string) error {
-	path, err := exec.LookPath("claude")
+	return runPluginCLI(ctx, "claude", dir, in, out, args...)
+}
+
+// runPluginCLI runs a fixed tool by name with args and no shell. Every
+// argument from a bundle matched a plain-word pattern in the plan first.
+func runPluginCLI(ctx context.Context, name, dir string, in io.Reader, out io.Writer, args ...string) error {
+	path, err := exec.LookPath(name)
 	if err != nil {
-		return errors.New("claude is not on PATH")
+		return fmt.Errorf("%s is not on PATH", name)
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -363,6 +390,8 @@ var runClaude = func(ctx context.Context, dir string, in io.Reader, out io.Write
 }
 
 type pluginImportOptions struct {
+	// Tool is nil for Claude.
+	Tool   *pluginTool
 	Policy pluginPolicy
 	DryRun bool
 	In     *bufio.Reader
@@ -370,16 +399,26 @@ type pluginImportOptions struct {
 	Terminal io.Reader
 	Out      io.Writer // the report
 	Err      io.Writer // prompts and the claude CLI's own output
+	// Backups collects the files a step backed up before changing them.
+	Backups *[]string
 }
 
 // importPlugins settles the bundle's plugins with this machine and reports
 // every decision. It returns the number of steps that failed.
 func importPlugins(ctx context.Context, inv *PluginInventory, local localPlugins, o pluginImportOptions) (int, error) {
-	steps, notes := planPluginImport(inv, local)
+	tool := o.Tool
+	var steps []pluginStep
+	var notes []string
+	if tool == nil {
+		tool = claudePluginTool
+		steps, notes = planPluginImport(inv, local)
+	} else {
+		steps, notes = planCodexPluginImport(inv, local)
+	}
 	if len(steps) == 0 && len(notes) == 0 {
 		return 0, nil
 	}
-	fmt.Fprintln(o.Out, "\nPlugins:")
+	fmt.Fprintf(o.Out, "\n%s:\n", tool.title)
 	for _, n := range notes {
 		fmt.Fprintf(o.Out, "  %s\n", printable(n))
 	}
@@ -392,10 +431,13 @@ func importPlugins(ctx context.Context, inv *PluginInventory, local localPlugins
 				switch {
 				case args == nil:
 				case s.dir != "":
-					fmt.Fprintf(o.Out, "    (cd %s && claude %s)\n", shellQuote(s.dir), strings.Join(args, " "))
+					fmt.Fprintf(o.Out, "    (cd %s && %s %s)\n", shellQuote(s.dir), tool.cli, shellArgs(args))
 				default:
-					fmt.Fprintf(o.Out, "    claude %s\n", strings.Join(args, " "))
+					fmt.Fprintf(o.Out, "    %s %s\n", tool.cli, shellArgs(args))
 				}
+			}
+			if s.setOn != nil && tool.manual != nil {
+				fmt.Fprintf(o.Out, "    then %s\n", tool.manual(stepPluginID(s), *s.setOn))
 			}
 		}
 		return 0, nil
@@ -422,13 +464,30 @@ func importPlugins(ctx context.Context, inv *PluginInventory, local localPlugins
 		if o.Policy == pluginsAsk {
 			term = o.Terminal
 		}
-		if err := runClaude(ctx, s.dir, term, o.Err, s.args...); err != nil {
-			failed++
-			fmt.Fprintf(o.Out, "  failed: %s: %v\n", printable(s.what), err)
-			continue
+		if s.args != nil {
+			if err := tool.run(ctx, s.dir, term, o.Err, s.args...); err != nil {
+				failed++
+				fmt.Fprintf(o.Out, "  failed: %s: %v\n", printable(s.what), err)
+				continue
+			}
+		}
+		if s.setOn != nil && tool.setEnabled != nil {
+			backup, err := tool.setEnabled(stepPluginID(s), *s.setOn)
+			if backup != "" && o.Backups != nil {
+				*o.Backups = append(*o.Backups, backup)
+			}
+			if err != nil {
+				failed++
+				what := "enabled state not set"
+				if s.args != nil {
+					what = "installed, but " + what
+				}
+				fmt.Fprintf(o.Out, "  failed: %s: %s: %v\n", printable(s.what), what, err)
+				continue
+			}
 		}
 		if s.then != nil {
-			if err := runClaude(ctx, s.dir, term, o.Err, s.then...); err != nil {
+			if err := tool.run(ctx, s.dir, term, o.Err, s.then...); err != nil {
 				failed++
 				fmt.Fprintf(o.Out, "  failed: %s: installed, but not disabled: %v\n", printable(s.what), err)
 				continue
@@ -452,7 +511,7 @@ func (o pluginImportOptions) decide(s pluginStep) (bool, error) {
 	}
 	note := ""
 	// Only disabling stops code; every other step can start or change it.
-	if s.args[1] != "disable" {
+	if s.args != nil && s.args[1] != "disable" || s.setOn != nil && *s.setOn {
 		note = ", it can run code on this machine"
 	}
 	fmt.Fprintf(o.Err, "  %s%s? [y/N]: ", printable(s.what), note)
@@ -509,4 +568,29 @@ func appendNewPaths(have, add []string) []string {
 		}
 	}
 	return have
+}
+
+// stepPluginID is the plugin a setOn step is for: the last word of its
+// install command, or the third word of its description.
+func stepPluginID(s pluginStep) string {
+	if len(s.args) > 0 {
+		return s.args[len(s.args)-1]
+	}
+	if f := strings.Fields(s.what); len(f) >= 3 {
+		return f[2]
+	}
+	return ""
+}
+
+// shellArgs joins args for a person to paste into a shell, quoting any that
+// is not a plain word (a placed local marketplace path can be anything).
+func shellArgs(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = a
+		if a == "" || strings.ContainsAny(a, " \t\n'\"\\$`;&|<>()*?[]{}~#!") {
+			out[i] = shellQuote(a)
+		}
+	}
+	return strings.Join(out, " ")
 }

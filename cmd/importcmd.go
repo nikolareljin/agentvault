@@ -99,7 +99,7 @@ func init() {
 	importCmd.Flags().Bool("keep-bundle-commands", false, "keep hook, statusLine, MCP server, router and script commands that the bundle adds or changes; left out by default")
 	importCmd.Flags().String("mcp-servers", "", "MCP servers to take from the bundle, new or changed: a comma-separated list of names, all, or none (default: ask on a terminal, else none)")
 	importCmd.Flags().String("on-conflict", "", "when a local file differs from the bundle: backup-replace or keep (default: ask on a terminal, else backup-replace; --strategy merge means keep)")
-	importCmd.Flags().String("plugins", "", "the bundle's Claude Code plugins: ask, print, missing (add what this machine lacks) or bundle (also take the bundle's side where they differ) (default: ask on a terminal, else print)")
+	importCmd.Flags().String("plugins", "", "the bundle's Claude Code and Codex plugins: ask, print, missing (add what this machine lacks) or bundle (also take the bundle's side where they differ) (default: ask on a terminal, else print)")
 	importCmd.Flags().Bool("keep-interpreter-allows", false, "keep Claude permissions such as Bash(bash:*) or Bash(python3:*) that let any program run without asking; left out by default")
 	importCmd.Flags().Bool("plain", false, "deprecated: the export format is detected automatically")
 	_ = importCmd.Flags().MarkDeprecated("plain", "the export format is detected automatically")
@@ -218,7 +218,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	var allMissed []missedEntry
-	var invs []*PluginInventory
+	var invs, codexInvs []*PluginInventory
 	now := time.Now()
 	total := importReport{}
 	for _, profile := range selected {
@@ -246,7 +246,9 @@ func runImport(cmd *cobra.Command, args []string) error {
 			profileOpts.ProjectRoot = match.ProjectRoot
 		}
 		allMissed = append(allMissed, match.Missed...)
-		invs = append(invs, profilePlugins(profile.Setup, profileOpts))
+		inv, codexInv := profilePlugins(profile.Setup, profileOpts)
+		invs = append(invs, inv)
+		codexInvs = append(codexInvs, codexInv)
 		if profileOpts.ApplyProjects && profileOpts.ProjectRoot == "" && match.SourceSkipped {
 			// Listed in the summary at the end; the rest of the import goes on.
 			profileOpts.ApplyProjects = false
@@ -288,6 +290,13 @@ func runImport(cmd *cobra.Command, args []string) error {
 			Policy: pluginPol, DryRun: dryRun, In: stdin, Terminal: os.Stdin, Out: out, Err: cmd.ErrOrStderr(),
 		})
 	}
+	if inv := mergePluginInventories(codexInvs); inv != nil {
+		pluginsFailed += settlePlugins(cmd, inv, pluginImportOptions{
+			Tool:   codexPluginTool(exportSourceHome()),
+			Policy: pluginPol, DryRun: dryRun, In: stdin, Terminal: os.Stdin, Out: out, Err: cmd.ErrOrStderr(),
+			Backups: &assetOpts.Apply.Backups,
+		})
+	}
 
 	for _, n := range mcpUnknownNames(assetOpts) {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: --mcp-servers: no MCP server %s in the bundle\n", strconv.Quote(n))
@@ -313,11 +322,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 	return importIncomplete(pluginsFailed, len(allMissed))
 }
 
-// profilePlugins is the profile's plugin inventory with its local-scope
-// projects placed on this machine.
-func profilePlugins(setup SetupBundle, opts importAssetOptions) *PluginInventory {
-	if setup.Plugins == nil {
-		return nil
+// profilePlugins is the profile's Claude and Codex plugin inventories with
+// their local-scope projects and local marketplaces placed on this machine.
+func profilePlugins(setup SetupBundle, opts importAssetOptions) (claude, codex *PluginInventory) {
+	if setup.Plugins == nil && setup.CodexPlugins == nil {
+		return nil, nil
 	}
 	remaps, err := profileRemaps(setup, opts, exportSourceHome())
 	if err != nil {
@@ -332,20 +341,24 @@ func profilePlugins(setup SetupBundle, opts importAssetOptions) *PluginInventory
 			confirmed = append(confirmed, r.To)
 		}
 	}
-	return placePluginProjects(setup.Plugins, remaps, confirmed)
+	return placePluginProjects(setup.Plugins, remaps, confirmed), placeCodexMarketplaces(setup.CodexPlugins, remaps, confirmed)
 }
 
 // settlePlugins runs importPlugins against this machine's plugins and
 // returns the failed step count; an error that stops it counts as one.
 func settlePlugins(cmd *cobra.Command, inv *PluginInventory, o pluginImportOptions) int {
+	title, read := claudePluginTool.title, readLocalPlugins
+	if o.Tool != nil {
+		title, read = o.Tool.title, readLocalCodexPlugins
+	}
 	home := exportSourceHome()
 	if home == "" {
-		fmt.Fprintln(o.Out, "\nPlugins:\n  failed: reading this machine's plugins: no home directory")
+		fmt.Fprintf(o.Out, "\n%s:\n  failed: reading this machine's plugins: no home directory\n", title)
 		return 1
 	}
-	local, err := readLocalPlugins(home)
+	local, err := read(home)
 	if err != nil {
-		fmt.Fprintf(o.Out, "\nPlugins:\n  failed: reading this machine's plugins: %s\n", printable(err.Error()))
+		fmt.Fprintf(o.Out, "\n%s:\n  failed: reading this machine's plugins: %s\n", title, printable(err.Error()))
 		return 1
 	}
 	failed, err := importPlugins(cmd.Context(), inv, local, o)
@@ -361,7 +374,7 @@ func settlePlugins(cmd *cobra.Command, inv *PluginInventory, o pluginImportOptio
 func importIncomplete(pluginsFailed, missed int) error {
 	var errs []error
 	if pluginsFailed > 0 {
-		errs = append(errs, fmt.Errorf("%d plugin step(s) failed; see \"Plugins\" above", pluginsFailed))
+		errs = append(errs, fmt.Errorf("%d plugin step(s) failed; see \"Plugins\" or \"Codex plugins\" above", pluginsFailed))
 	}
 	if missed > 0 {
 		errs = append(errs, fmt.Errorf("%d work dir(s) or project(s) not imported; see \"Not imported\" above", missed))

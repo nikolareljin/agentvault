@@ -4,6 +4,13 @@
 
 ### Added
 
+- Export records the Codex plugins and marketplaces (`codex_plugins`), and
+  import installs them with `codex plugin marketplace add` and `codex
+  plugin add` under `--plugins`, then writes a disabled state into
+  `config.toml`. Applying the bundle's `config.toml` keeps this machine's
+  `[plugins]` and `[marketplaces]` tables: copied as text they installed
+  nothing and replaced the local enabled state.
+
 - `agentvault import --workdirs NAME[,NAME...]` imports part of a bundle
   that carries several named work dirs. What belongs to the others is
   removed with the `export --workdirs` filter, applied to the exporting

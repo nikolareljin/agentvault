@@ -261,14 +261,14 @@ func TestProfilePluginsConfirmedPlaces(t *testing.T) {
 		{ID: "a@m", Scope: "local", LocalProjects: []string{"/src/app"}},
 		{ID: "b@m", Scope: "local", LocalProjects: []string{"/src/site"}},
 	}}}
-	got := profilePlugins(setup, importAssetOptions{Computed: []pathRemap{{From: "/src/app", To: matched}}, ProjectRoot: root})
+	got, _ := profilePlugins(setup, importAssetOptions{Computed: []pathRemap{{From: "/src/app", To: matched}}, ProjectRoot: root})
 	if p := got.Plugins[0]; strings.Join(p.placed, ",") != matched {
 		t.Errorf("matched: %+v", p)
 	}
 	if p := got.Plugins[1]; strings.Join(p.placed, ",") != root {
 		t.Errorf("project root: %+v", p)
 	}
-	none := profilePlugins(setup, importAssetOptions{})
+	none, _ := profilePlugins(setup, importAssetOptions{})
 	for _, p := range none.Plugins {
 		if len(p.placed) != 0 {
 			t.Errorf("placed with nothing confirmed: %+v", p)

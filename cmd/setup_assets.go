@@ -1232,6 +1232,17 @@ func applyProviderAssetsWith(homeDir string, assets []SetupAsset, ctx *importApp
 		codexServersOnly := false
 		codexMerged := false
 		if codexConfig {
+			// Marketplaces and enabled state are settled one by one under
+			// --plugins; copied as text they would install nothing.
+			kept, changed, ok := keepLocalCodexPluginTables(content, original)
+			if !ok {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: not applied, its [plugins] and [marketplaces] could not be kept apart from the rest (unusual layout, or this machine's file does not parse); kept this machine's file", desc))
+				continue
+			}
+			if changed {
+				warnings = append(warnings, fmt.Sprintf("provider asset %s: kept this machine's [plugins] and [marketplaces]; the bundle's are under \"Codex plugins\"", desc))
+			}
+			content = kept
 			m, err := ctx.mergeCodexConfig(dest, content, original)
 			if err != nil {
 				return applied, warnings, err

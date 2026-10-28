@@ -727,26 +727,8 @@ func (s workDirScope) applyStructured(bundle *SetupBundle) []bool {
 	bundle.ModelCapabilities = dropMentioning(s, bundle.ModelCapabilities, "model capabilities")
 	bundle.Gateways = dropMentioning(s, bundle.Gateways, "gateways")
 	bundle.DetectedAgents = dropMentioning(s, bundle.DetectedAgents, "detected agents")
-	if p := bundle.Plugins; p != nil {
-		before := map[string]bool{}
-		for _, m := range p.Marketplaces {
-			before[m.Name] = true
-		}
-		p.Marketplaces = dropMentioning(s, p.Marketplaces, "plugin marketplaces")
-		for _, m := range p.Marketplaces {
-			delete(before, m.Name)
-		}
-		p.Plugins = dropMentioning(s, p.Plugins, "plugins")
-		// A plugin from a marketplace left out cannot be installed there.
-		var keep []InstalledPlugin
-		for _, pl := range p.Plugins {
-			if i := strings.LastIndex(pl.ID, "@"); i >= 0 && before[pl.ID[i+1:]] {
-				continue
-			}
-			keep = append(keep, pl)
-		}
-		p.Plugins = keep
-	}
+	dropPluginsMentioning(s, bundle.Plugins)
+	dropPluginsMentioning(s, bundle.CodexPlugins)
 	if c := bundle.ProviderConfigs.Claude; c != nil {
 		cc := *c
 		cc.MCPServers = dropKeysMentioning(s, cc.MCPServers, "Claude MCP servers")
@@ -1015,4 +997,30 @@ func bracketDepth(line string) int {
 		}
 	}
 	return d
+}
+
+// dropPluginsMentioning leaves out the marketplaces and plugins of inv that
+// name an unselected path, and the plugins of a marketplace left out: they
+// cannot be installed there.
+func dropPluginsMentioning(s workDirScope, p *PluginInventory) {
+	if p == nil {
+		return
+	}
+	before := map[string]bool{}
+	for _, m := range p.Marketplaces {
+		before[m.Name] = true
+	}
+	p.Marketplaces = dropMentioning(s, p.Marketplaces, "plugin marketplaces")
+	for _, m := range p.Marketplaces {
+		delete(before, m.Name)
+	}
+	p.Plugins = dropMentioning(s, p.Plugins, "plugins")
+	var keep []InstalledPlugin
+	for _, pl := range p.Plugins {
+		if i := strings.LastIndex(pl.ID, "@"); i >= 0 && before[pl.ID[i+1:]] {
+			continue
+		}
+		keep = append(keep, pl)
+	}
+	p.Plugins = keep
 }
