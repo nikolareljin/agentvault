@@ -432,17 +432,21 @@ func keepLocalCodexPluginTables(content, local []byte) (out []byte, changed, ok 
 			kept.WriteString(l)
 		}
 	}
+	nl := "\n"
+	if strings.Contains(string(content), "\r\n") {
+		nl = "\r\n"
+	}
 	text := stripped
 	if k := strings.TrimLeft(kept.String(), "\r\n"); k != "" {
 		if text != "" && !strings.HasSuffix(text, "\n") {
-			text += "\n"
+			text += nl
 		}
-		if text != "" && !strings.HasSuffix(text, "\n\n") {
-			text += "\n"
+		if text != "" && !strings.HasSuffix(text, nl+nl) {
+			text += nl
 		}
 		text += k
 		if !strings.HasSuffix(text, "\n") {
-			text += "\n"
+			text += nl
 		}
 	}
 	var odoc map[string]any

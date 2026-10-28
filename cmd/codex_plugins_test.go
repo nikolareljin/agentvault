@@ -231,6 +231,12 @@ func TestKeepLocalCodexPluginTables(t *testing.T) {
 	if !ok || strings.Contains(string(out), "plugins") || strings.Contains(string(out), "marketplaces") {
 		t.Errorf("no local file: %q %v", out, ok)
 	}
+	// CRLF on both sides stays CRLF throughout.
+	crlf := func(x string) string { return strings.ReplaceAll(x, "\n", "\r\n") }
+	out, _, ok = keepLocalCodexPluginTables([]byte(crlf(bundle)), []byte(crlf(local)))
+	if !ok || string(out) != crlf(want) {
+		t.Errorf("crlf: %q %v", out, ok)
+	}
 	// Dotted keys outside a table cannot be kept apart: refused.
 	if _, _, ok := keepLocalCodexPluginTables([]byte("plugins.\"a@m\".enabled = true\n"), []byte(local)); ok {
 		t.Error("dotted top-level plugins key: want ok=false")
