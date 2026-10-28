@@ -203,8 +203,17 @@ func (s workDirScope) applySourceProject(bundle *SetupBundle) {
 		}
 		*group = keep
 	}
+	// Export records the project in Locations too, counted there.
+	listed := false
+	if bundle.Locations != nil {
+		for _, p := range bundle.Locations.Projects {
+			listed = listed || locations.CleanForeign(p.Abs) == locations.CleanForeign(bundle.SourceProject)
+		}
+	}
+	if !listed {
+		s.leave(name, "projects")
+	}
 	bundle.SourceProject = ""
-	s.leave(name, "projects")
 }
 
 // --- memory --------------------------------------------------------------

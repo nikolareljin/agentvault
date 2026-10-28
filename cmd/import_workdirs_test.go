@@ -319,4 +319,16 @@ func TestImportWorkDirsDropsSourceProject(t *testing.T) {
 	if want := `Profile "default": work dir company not selected with --workdirs; left out project files: 3, projects: 1`; strings.Join(lines, "\n") != want {
 		t.Errorf("lines = %q", lines)
 	}
+	// The same project recorded in the bundle's locations is one project.
+	setup.Locations = &locations.Set{
+		WorkDirs: []locations.WorkDir{
+			{ID: "w1", Abs: "/home/a/code", Name: "personal"},
+			{ID: "w2", Abs: "/home/a/work/acme", Name: "company"},
+		},
+		Projects: []locations.Project{{ID: "p1", WorkDir: "w2", Abs: "/home/a/work/acme/api"}},
+	}
+	profiles = []PortableProfile{{Name: "default", Setup: setup}}
+	if lines, err = filterImportWorkDirs(profiles, "personal"); err != nil || !strings.HasSuffix(strings.Join(lines, ""), "projects: 1") {
+		t.Errorf("lines = %q, err = %v", lines, err)
+	}
 }
