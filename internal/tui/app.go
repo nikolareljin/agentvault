@@ -289,6 +289,7 @@ type model struct {
 	impMap      textinput.Model
 	impStrategy int
 	impConflict int
+	impPlugins  int
 	impFocus    int
 	impRunning  bool
 	impOutput   string

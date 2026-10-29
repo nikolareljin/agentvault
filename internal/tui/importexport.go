@@ -62,6 +62,8 @@ func exportArgs(f exportForm) []string {
 var (
 	importStrategies  = []string{"merge", "replace", "mirror"}
 	importOnConflicts = []string{"", "backup-replace", "keep"} // "" lets the CLI decide
+	// The real import runs on this terminal, so "" asks per plugin.
+	importPluginPolicies = []string{"", "print", "missing", "bundle"}
 )
 
 // importForm is the state of the import form.
@@ -69,6 +71,7 @@ type importForm struct {
 	Path        string // empty: the CLI picks the newest bundle
 	Strategy    string // merge (CLI default), replace, mirror
 	OnConflict  string // "", backup-replace, keep
+	Plugins     string // "", print, missing, bundle
 	ProjectRoot string
 	Maps        []string // OLD=NEW, in the order added
 }
@@ -83,6 +86,9 @@ func importArgs(f importForm, dryRun bool) []string {
 	}
 	if f.OnConflict != "" {
 		args = append(args, "--on-conflict", f.OnConflict)
+	}
+	if f.Plugins != "" {
+		args = append(args, "--plugins", f.Plugins)
 	}
 	if r := strings.TrimSpace(f.ProjectRoot); r != "" {
 		// --project-root is only read with --apply-projects.
@@ -150,6 +156,7 @@ const (
 	impFieldPath = iota
 	impFieldStrategy
 	impFieldConflict
+	impFieldPlugins
 	impFieldRoot
 	impFieldMap
 	impFieldCount
@@ -183,7 +190,7 @@ func (m *model) openExport() tea.Cmd {
 func (m *model) openImport() tea.Cmd {
 	m.mode = viewImport
 	m.imp = importForm{Strategy: "merge"}
-	m.impStrategy, m.impConflict = 0, 0
+	m.impStrategy, m.impConflict, m.impPlugins = 0, 0, 0
 	m.impPath = newFormInput("default: newest bundle in <config dir>/exports")
 	m.impRoot = newFormInput("optional: write the bundle's project files here")
 	m.impMap = newFormInput("OLD=NEW, enter adds")
@@ -219,6 +226,7 @@ func (m model) importFormState() importForm {
 	f.ProjectRoot = expandTilde(m.impRoot.Value())
 	f.Strategy = importStrategies[m.impStrategy]
 	f.OnConflict = importOnConflicts[m.impConflict]
+	f.Plugins = importPluginPolicies[m.impPlugins]
 	return f
 }
 
@@ -289,6 +297,9 @@ func (m *model) handleImportInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case impFieldConflict:
 		m.impConflict = cycle(msg, m.impConflict, len(importOnConflicts))
+		return m, nil
+	case impFieldPlugins:
+		m.impPlugins = cycle(msg, m.impPlugins, len(importPluginPolicies))
 		return m, nil
 	case impFieldMap:
 		if key.Matches(msg, keys.RemoveMap) {
@@ -550,7 +561,12 @@ func (m model) renderImport() string {
 	}
 	row(impFieldPath, "Bundle", m.impPath.View())
 	row(impFieldStrategy, "Strategy", "< "+f.Strategy+" >")
+	plugins := f.Plugins
+	if plugins == "" {
+		plugins = "ask per plugin"
+	}
 	row(impFieldConflict, "On conflict", "< "+conflict+" >")
+	row(impFieldPlugins, "Plugins", "< "+plugins+" >")
 	row(impFieldRoot, "Project root", m.impRoot.View())
 	row(impFieldMap, "Add map", m.impMap.View())
 	for i, mp := range f.Maps {

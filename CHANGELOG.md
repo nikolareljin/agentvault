@@ -4,6 +4,10 @@
 
 ### Added
 
+- The TUI import form has a plugins field (ask per plugin, `print`,
+  `missing`, `bundle`) passed as `--plugins`. Left at ask, the real import
+  asks about each plugin step on the terminal.
+
 - Export records the Codex plugins and marketplaces (`codex_plugins`), and
   import installs them with `codex plugin marketplace add` and `codex
   plugin add` under `--plugins`, then writes a disabled state into

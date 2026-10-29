@@ -94,6 +94,7 @@ func TestImportArgs(t *testing.T) {
 		{"replace", importForm{Strategy: "replace"}, false, []string{"import", "--strategy", "replace"}},
 		{"mirror flagged", importForm{Strategy: "mirror"}, false, []string{"import", "--strategy", "mirror"}},
 		{"on conflict", importForm{Strategy: "merge", OnConflict: "keep"}, false, []string{"import", "--on-conflict", "keep"}},
+		{"plugins", importForm{Strategy: "merge", Plugins: "missing"}, false, []string{"import", "--plugins", "missing"}},
 		{"project root", importForm{Strategy: "merge", ProjectRoot: "/src/my app"}, false,
 			[]string{"import", "--apply-projects", "--project-root", "/src/my app"}},
 		{"blank optional fields omitted", importForm{Strategy: "merge", Path: " ", ProjectRoot: "  "}, false, []string{"import"}},
@@ -171,6 +172,35 @@ func TestImportFormMapEntries(t *testing.T) {
 	m = focusImport(t, m, impFieldPath)
 	if m = asModel(t, must(m.Update(keyEnter))); m.mode != viewImport || !m.statusIsError {
 		t.Fatalf("mode=%v status=%q, want preview refused", m.mode, m.statusMsg)
+	}
+}
+
+func TestImportFormPluginPolicy(t *testing.T) {
+	useFakeCLI(t, "ok")
+	m := openImportForm(t)
+	if !strings.Contains(m.View(), "< ask per plugin >") {
+		t.Fatalf("default plugin policy not shown:\n%s", m.View())
+	}
+	m = focusImport(t, m, impFieldPlugins)
+	for _, want := range []string{"print", "missing", "bundle"} {
+		m = asModel(t, must(m.Update(runeKey('l'))))
+		if got := m.importFormState().Plugins; got != want {
+			t.Fatalf("plugins = %q, want %q", got, want)
+		}
+	}
+	if !strings.Contains(m.View(), "< bundle >") {
+		t.Fatalf("chosen plugin policy not shown:\n%s", m.View())
+	}
+	m = runPreview(t, m)
+	if !strings.Contains(m.impOutput, "arg:--plugins\narg:bundle\n") {
+		t.Fatalf("preview lacks --plugins bundle:\n%s", m.impOutput)
+	}
+	// Wraps back to the default, which passes no flag.
+	m = asModel(t, must(m.Update(runeKey('e'))))
+	m = focusImport(t, m, impFieldPlugins)
+	m = asModel(t, must(m.Update(runeKey('l'))))
+	if got := importArgs(m.importFormState(), false); !reflect.DeepEqual(got, []string{"import"}) {
+		t.Fatalf("default args = %q", got)
 	}
 }
 
