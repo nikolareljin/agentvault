@@ -90,7 +90,8 @@ bundle password. A warning line says when keys or secrets go into the file.
 
 Import form: bundle (empty: the CLI picks the newest bundle in
 `<config dir>/exports`), strategy (`merge`, `replace`, `mirror`; `Left`/`Right`
-cycle), on conflict (CLI decides, `backup-replace`, `keep`), project root
+cycle), on conflict (CLI decides, `backup-replace`, `keep`), plugins (ask
+per plugin, `print`, `missing`, `bundle`; passed as `--plugins`), project root
 (adds `--apply-projects --project-root DIR`) and path maps. On the map field
 type `OLD=NEW` and press `Enter` to add it; entries are listed in order and
 passed as repeated `--map`. `Ctrl+D` removes the last entry. An entry without
@@ -100,7 +101,9 @@ both sides is refused.
 on the terminal, so it can ask for the master and bundle passwords, then
 shows its output in the TUI. From the preview, `y` or `Enter` runs the
 real import on the terminal (it may ask for the bundle password or to confirm
-project matches), `e` or `Esc` returns to the form. `mirror` deletes local
+project matches; with plugins left at ask per plugin, it asks about each
+Claude Code and Codex plugin step and shows both sides of a conflict),
+`e` or `Esc` returns to the form. `mirror` deletes local
 items the bundle does not have: the form and preview show a warning, and only
 `M` runs it. After a failed preview neither runs: fix the form with `e` and
 preview again. A leading `~` in a path, or in the NEW side of a map, is
