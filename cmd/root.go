@@ -24,6 +24,8 @@
 //	├── instructions           Manage stored instruction files
 //	├── prompt                 Gateway prompt execution with usage tracking
 //	├── serve                  Start HTTP API server for vault integration
+//	├── memory                 Local work memory (memory.api@1)
+//	│   └── serve              Serve the inbox API on 127.0.0.1 over one SQLite file
 //	├── status                 Show token usage and quota status
 //	├── --tui, -t              Launch interactive terminal UI
 //	└── version                Show version info

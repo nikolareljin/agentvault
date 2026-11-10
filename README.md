@@ -173,6 +173,11 @@ brew install nikolareljin/tap/agentvault
 |---------|-------------|
 | `workdir add\|list\|remove` | Declare folders of projects by name (personal, one per employer or client) with their path on this machine |
 
+### Work memory
+| Command | Description |
+|---------|-------------|
+| `memory serve` | Serve the memory.api@1 inbox (`POST /entries`, `GET /entries`, `GET /search`, `GET /healthz`) on 127.0.0.1 over one SQLite file; bearer token in `memory.token` next to the database |
+
 ### Export/Import
 | Command | Description |
 |---------|-------------|

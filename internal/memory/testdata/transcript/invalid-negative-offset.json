@@ -1,0 +1,12 @@
+{
+  "schema_version": "1",
+  "session_id": "6b1f0c2e-3d4a-4f5b-9c6d-7e8f9a0b1c2d",
+  "agent": "claude",
+  "ts": "2026-11-09T14:01:58Z",
+  "role": "user",
+  "text": "Keep the transcripts table local only.",
+  "source": {
+    "path": "/home/user/.claude/projects/-home-user-work/6b1f0c2e.jsonl",
+    "offset": -1
+  }
+}

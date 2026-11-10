@@ -4,6 +4,20 @@
 
 ### Added
 
+- `agentvault memory serve`: the memory.api@1 server, a loopback-only HTTP
+  API over one SQLite file (`modernc.org/sqlite`, pure Go, FTS5) that is
+  the one writer of the work-memory inbox. `POST /entries` stores one
+  memory.entry@1 row (the server mints `id`, `created_at`, `state`,
+  `exported_pr`, `provenance`), `GET /entries?state=` lists, `GET
+  /search?q=` ranks entries and transcripts by bm25, `GET /healthz` is the
+  one route without a credential. Binds 127.0.0.1 only; refuses any other
+  Host (400), a foreign Origin (403), a POST that is not
+  `application/json` (415), a body over 1 MiB (413) and every request
+  without the bearer token from `memory.token` next to the database (401,
+  file mode 0600). No CORS header is ever sent; every response carries a
+  CSP and nosniff. `--describe` prints the descriptor. The contract's test
+  vectors are under `internal/memory/testdata/`.
+
 - The TUI import form has a plugins field (ask per plugin, `print`,
   `missing`, `bundle`) passed as `--plugins`. Left at ask, the real import
   asks about each plugin step on the terminal.
