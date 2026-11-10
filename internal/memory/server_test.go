@@ -346,6 +346,11 @@ func TestRoutesAfterAuth(t *testing.T) {
 	assertProblem(t, ts.do(t, "GET", "/entries?a=1&b=2&c=3&d=4&e=5&f=6&g=7&h=8&i=9", "", ts.auth()), 400, "BAD_QUERY")
 	assertProblem(t, ts.do(t, "GET", "/entries?state=%zz", "", ts.auth()), 400, "BAD_QUERY")
 	assertProblem(t, ts.do(t, "GET", "/entries?state=inbox;x=1", "", ts.auth()), 400, "BAD_QUERY")
+	// An unknown name is named back, cut short: the body never echoes a header's worth of input.
+	doc = assertProblem(t, ts.do(t, "GET", "/entries?"+strings.Repeat("n", 3000)+"=1", "", ts.auth()), 400, "BAD_QUERY")
+	if detail := doc["detail"].(string); len(detail) > 120 || !strings.Contains(detail, "nnn...") {
+		t.Fatalf("detail reflects too much: %d bytes", len(detail))
+	}
 }
 
 func TestPostEntriesContentType(t *testing.T) {

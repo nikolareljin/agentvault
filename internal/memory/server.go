@@ -265,8 +265,18 @@ func (s *Server) requireQuery(w http.ResponseWriter, r *http.Request, query map[
 	return false
 }
 
+// joinSorted lists at most 8 names of at most 40 bytes each: the names are
+// the client's own text, not a place to reflect a header's worth of it.
 func joinSorted(names []string) string {
 	sort.Strings(names)
+	if len(names) > maxQueryFields {
+		names = names[:maxQueryFields]
+	}
+	for i, n := range names {
+		if len(n) > 40 {
+			names[i] = n[:40] + "..."
+		}
+	}
 	return strings.Join(names, ", ")
 }
 
