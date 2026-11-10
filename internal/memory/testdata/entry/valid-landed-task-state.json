@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "id": "01JCA4P2M6YJW9RC8KFT1SXQ7D",
+  "kind": "task-state",
+  "repo_code": null,
+  "title": "Phase 0 contracts drafted",
+  "body": "Three schemas and vectors written; validator gains a local registry.",
+  "session_id": "codex-2026-11-09-a3",
+  "agent": "codex",
+  "created_at": "2026-11-09T15:30:00.250000Z",
+  "state": "landed",
+  "exported_pr": "https://github.com/example-org/example-repo/pull/2001",
+  "provenance": "hook"
+}

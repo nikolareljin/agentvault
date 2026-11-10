@@ -36,6 +36,7 @@ agentvault [global flags] [command] [subcommand] [args] [flags]
 - `capability`
 - `gateway`
 - `workdir`
+- `memory`
 - `routing-model`
 - `rules`
 - `roles`
@@ -480,6 +481,53 @@ Optional:
 
 ### `agentvault workdir remove <name>`
 Forgets the declaration. The directory is not touched.
+
+## Work memory
+
+Work memory is the inbox an agent writes to during a session: decisions,
+ideas, prompts, notes and task states, one row each, plus the transcripts an
+importer stores next to them. One process owns the database file; every
+client goes through the loopback HTTP API (memory.api@1) and never opens the
+file.
+
+### `agentvault memory serve`
+Serves on `127.0.0.1` and nothing else. Routes:
+
+| Route | Credential | Body |
+|---|---|---|
+| `GET /healthz` | none | `{"status":"ok"}` |
+| `GET /entries[?state=inbox\|exported\|landed]` | bearer | `{"entries": [entry, ...]}` |
+| `GET /search?q=TEXT` | bearer | `{"query": TEXT, "hits": [...]}` over entries and transcripts (FTS5, bm25, best first; matches marked `[...]` in `snippet`) |
+| `POST /entries` | bearer | one entry in (`kind`, `title`, `body`, `repo_code`, `session_id`, `agent`); 201 and the stored row out |
+
+The server owns `id` (ULID), `created_at`, `state` (`inbox`), `exported_pr`
+(`null`) and `provenance` (`api`) and overwrites whatever the client sent
+for them. `repo_code` is a repository code `R-NNN` or `null`, never a name.
+
+Flags and environment:
+- `--port <n>` (default `AGENTVAULT_MEMORY_PORT`, else `9030`; `0` for an ephemeral port)
+- `--db <path>` (default `AGENTVAULT_MEMORY_DB`, else `$XDG_DATA_HOME/agentvault/memory.db`, else `~/.local/share/agentvault/memory.db`); a path inside a git worktree is refused
+- `--describe`: print the memory.api@1 descriptor for the configured port and exit
+- `AGENTVAULT_MEMORY_HOST`: refused before bind unless it is `127.0.0.1`
+
+Security rules, each one answered with an `application/problem+json` body
+that carries a stable `code`:
+- `Host` must be `127.0.0.1:<port>` or `localhost:<port>`, else 400 `BAD_HOST`
+- an `Origin` that is not this server's own is 403 `FORBIDDEN_ORIGIN`; no `Access-Control-*` header is ever sent
+- `POST` needs `Content-Type: application/json` (415 `UNSUPPORTED_MEDIA_TYPE`), a `Content-Length` (411), at most 1 MiB (413)
+- every route but `GET /healthz` needs `Authorization: Bearer <token>` (401 `UNAUTHORIZED`); the token is generated on first start into `memory.token` next to the database, mode 0600, and compared in constant time; a token in the query string or a cookie is not a credential
+- a body the contract refuses is 422 `INVALID_ENTRY` with `errors: [{field, code, detail}]`
+- every response carries `Content-Security-Policy` (nothing allowed), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Cache-Control: no-store`
+
+Example:
+```bash
+agentvault memory serve --port 9030 &
+TOKEN=$(cat ~/.local/share/agentvault/memory.token)
+curl -s -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"kind":"decision","title":"Keep transcripts local","body":"Search reads them over loopback only.","repo_code":null,"session_id":"abc","agent":"claude"}' \
+  http://127.0.0.1:9030/entries
+curl -s -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:9030/search?q=transcripts"
+```
 
 ## Embedded inference model
 

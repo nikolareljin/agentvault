@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "id": "01JCA4N7Q8ZKX2VD5HTW3BRM9E",
+  "kind": "decision",
+  "repo_code": "R-765",
+  "title": "Transcripts never leave the machine",
+  "body": "The transcripts table is filled by the importer and read by search only. No flush path reads it.",
+  "session_id": "6b1f0c2e-3d4a-4f5b-9c6d-7e8f9a0b1c2d",
+  "agent": "claude",
+  "created_at": "2026-11-09T14:02:11Z",
+  "state": "inbox",
+  "exported_pr": null,
+  "provenance": "cli"
+}
