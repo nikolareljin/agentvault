@@ -582,6 +582,7 @@ func TestPostEntriesBodySize(t *testing.T) {
 	if list := ts.do(t, "GET", "/entries", "", ts.auth()); strings.Contains(string(list.body), `"id"`) {
 		t.Fatalf("lied Content-Length left a row: %s", list.body)
 	}
+	assertAlive(t, ts)
 	// Chunked: no Content-Length, refused.
 	chunked := ts.raw(t, "POST /entries HTTP/1.1\r\nHost: "+ts.hostHeader()+"\r\nAuthorization: Bearer "+testToken+
 		"\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n")
@@ -599,6 +600,7 @@ func TestPostEntriesBodySize(t *testing.T) {
 	if !big.refused && big.status != 431 {
 		t.Fatalf("20 KiB header: %d", big.status)
 	}
+	assertAlive(t, ts)
 }
 
 func TestSearch(t *testing.T) {
@@ -758,5 +760,20 @@ func TestRawExchangePeerClosesEarly(t *testing.T) {
 	res, err = rawExchange(closeAfter(t, 5, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"), "hello")
 	if err != nil || res.refused || res.status != 200 || string(res.body) != "ok" {
 		t.Fatalf("normal exchange: %+v %v", res, err)
+	}
+}
+
+// assertAlive checks, on a fresh connection, that the server still answers
+// after a case that may end in a reset.
+func assertAlive(t *testing.T, ts *testServer) {
+	t.Helper()
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	res, err := client.Get(ts.base + "/healthz")
+	if err != nil {
+		t.Fatalf("server not alive: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("server not alive: GET /healthz = %d", res.StatusCode)
 	}
 }
