@@ -125,7 +125,8 @@ func rawExchange(addr, request string) (response, error) {
 	res, readErr := http.ReadResponse(bufio.NewReader(conn), nil)
 	var data []byte
 	if readErr == nil {
-		data, readErr = io.ReadAll(res.Body)
+		// The status line arrived; a reset during the body keeps it.
+		data, _ = io.ReadAll(res.Body)
 		res.Body.Close()
 	}
 	// Unblock a writer still stuck on a full socket buffer.
