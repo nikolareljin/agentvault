@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -56,6 +58,7 @@ type response struct {
 	status  int
 	headers http.Header
 	body    []byte
+	refused bool // connection reset before any response could be read
 }
 
 func (ts *testServer) do(t *testing.T, method, target string, body string, headers map[string]string) response {
@@ -95,22 +98,61 @@ func (ts *testServer) authJSON() map[string]string {
 // raw sends the request bytes as written and returns the first response.
 func (ts *testServer) raw(t *testing.T, request string) response {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(ts.port), 5*time.Second)
+	res, err := rawExchange("127.0.0.1:"+strconv.Itoa(ts.port), request)
 	if err != nil {
 		t.Fatal(err)
+	}
+	return res
+}
+
+// rawExchange writes request and reads the first response concurrently. A
+// server may answer and close before the client has written everything (a
+// body past Content-Length, an oversized header), so a write that fails with
+// EPIPE or ECONNRESET is not an error. When the reset also lost the response,
+// the result has refused set and status 0.
+func rawExchange(addr, request string) (response, error) {
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return response{}, err
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if _, err := io.WriteString(conn, request); err != nil {
-		t.Fatal(err)
+	wrote := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(conn, request)
+		wrote <- err
+	}()
+	res, readErr := http.ReadResponse(bufio.NewReader(conn), nil)
+	var data []byte
+	if readErr == nil {
+		// The status line arrived; a reset during the body keeps it.
+		data, _ = io.ReadAll(res.Body)
+		res.Body.Close()
 	}
-	res, err := http.ReadResponse(bufio.NewReader(conn), nil)
-	if err != nil {
-		t.Fatalf("no HTTP response: %v", err)
+	// Unblock a writer still stuck on a full socket buffer.
+	conn.Close()
+	writeErr := <-wrote
+	if writeErr != nil && !peerClosed(writeErr) && readErr != nil {
+		return response{}, fmt.Errorf("write: %w", writeErr)
 	}
-	defer res.Body.Close()
-	data, _ := io.ReadAll(res.Body)
-	return response{status: res.StatusCode, headers: res.Header, body: data}
+	if readErr != nil {
+		if peerClosed(writeErr) || peerClosed(readErr) {
+			return response{refused: true}, nil
+		}
+		return response{}, fmt.Errorf("no HTTP response: %w", readErr)
+	}
+	return response{status: res.StatusCode, headers: res.Header, body: data}, nil
+}
+
+// peerClosed reports a write or read failure caused by the server closing.
+// Windows reports WSAECONNABORTED (10053) and WSAECONNRESET (10054), which
+// syscall.ECONNRESET does not match there.
+func peerClosed(err error) bool {
+	if errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	var errno syscall.Errno
+	return errors.As(err, &errno) && (errno == 10053 || errno == 10054)
 }
 
 func (ts *testServer) hostHeader() string { return "127.0.0.1:" + strconv.Itoa(ts.port) }
@@ -533,6 +575,14 @@ func TestPostEntriesBodySize(t *testing.T) {
 	if lied.status == 201 {
 		t.Fatal("a body cut at Content-Length was stored")
 	}
+	if !lied.refused && lied.status < 400 {
+		t.Fatalf("lied Content-Length answered %d", lied.status)
+	}
+	// Whatever the transport outcome, nothing was stored.
+	if list := ts.do(t, "GET", "/entries", "", ts.auth()); strings.Contains(string(list.body), `"id"`) {
+		t.Fatalf("lied Content-Length left a row: %s", list.body)
+	}
+	assertAlive(t, ts)
 	// Chunked: no Content-Length, refused.
 	chunked := ts.raw(t, "POST /entries HTTP/1.1\r\nHost: "+ts.hostHeader()+"\r\nAuthorization: Bearer "+testToken+
 		"\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n")
@@ -547,9 +597,10 @@ func TestPostEntriesBodySize(t *testing.T) {
 	}
 	// An oversized header block is refused by the server before any handler.
 	big := ts.raw(t, "GET /healthz HTTP/1.1\r\nHost: "+ts.hostHeader()+"\r\nX-Pad: "+strings.Repeat("p", 20<<10)+"\r\n\r\n")
-	if big.status != 431 {
+	if !big.refused && big.status != 431 {
 		t.Fatalf("20 KiB header: %d", big.status)
 	}
+	assertAlive(t, ts)
 }
 
 func TestSearch(t *testing.T) {
@@ -660,5 +711,69 @@ func TestAccessLogQuotesTheTarget(t *testing.T) {
 		if strings.ContainsAny(line, "\x01\t") {
 			t.Fatalf("raw control byte in log line %q", line)
 		}
+	}
+}
+
+// closeAfter accepts one connection, reads n bytes, writes reply and closes
+// while the client is still sending.
+func closeAfter(t *testing.T, n int, reply string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		io.ReadFull(c, make([]byte, n))
+		io.WriteString(c, reply)
+		if reply == "" {
+			c.(*net.TCPConn).SetLinger(0) // reset, no FIN
+		}
+		c.Close()
+	}()
+	return ln.Addr().String()
+}
+
+func TestRawExchangePeerClosesEarly(t *testing.T) {
+	big := strings.Repeat("x", 8<<20)
+	addr := closeAfter(t, 64, "HTTP/1.1 413 Request Entity Too Large\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno")
+	res, err := rawExchange(addr, big)
+	if err != nil {
+		t.Fatalf("early close is an error: %v", err)
+	}
+	if !res.refused && (res.status != 413 || string(res.body) != "no") {
+		t.Fatalf("got %+v", res)
+	}
+	// No response at all, connection reset: refused, not a status.
+	res, err = rawExchange(closeAfter(t, 64, ""), big)
+	if err != nil {
+		t.Fatalf("reset is an error: %v", err)
+	}
+	if !res.refused || res.status != 0 {
+		t.Fatalf("reset without a response: %+v", res)
+	}
+	// A normal exchange still returns the response.
+	res, err = rawExchange(closeAfter(t, 5, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"), "hello")
+	if err != nil || res.refused || res.status != 200 || string(res.body) != "ok" {
+		t.Fatalf("normal exchange: %+v %v", res, err)
+	}
+}
+
+// assertAlive checks, on a fresh connection, that the server still answers
+// after a case that may end in a reset.
+func assertAlive(t *testing.T, ts *testServer) {
+	t.Helper()
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	res, err := client.Get(ts.base + "/healthz")
+	if err != nil {
+		t.Fatalf("server not alive: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("server not alive: GET /healthz = %d", res.StatusCode)
 	}
 }

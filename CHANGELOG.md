@@ -111,6 +111,13 @@
 
 ### Fixed
 
+- `TestPostEntriesBodySize` no longer fails with `broken pipe` or
+  `connection reset by peer` when the server answers and closes before the
+  test has written the whole request. The raw-request helper writes and
+  reads concurrently and reports a reset as refused; the lied
+  Content-Length case also checks via `GET /entries` that nothing was
+  stored.
+
 - A multi-profile import on a terminal asks the project and work dir
   confirm list once: a later profile with the same rows takes the earlier
   answers. Before, the list was shown again for each profile.
