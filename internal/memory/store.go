@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -96,8 +97,28 @@ CREATE TRIGGER IF NOT EXISTS transcripts_au AFTER UPDATE OF text ON transcripts 
 END;
 `
 
-const entrySelect = "SELECT id, kind, repo_code, title, body, session_id, agent, created_at, state, " +
-	"exported_pr, provenance FROM entries"
+// Every statement is a constant with ? placeholders; no query text is
+// ever built from a value.
+const (
+	entryColumns   = "id, kind, repo_code, title, body, session_id, agent, created_at, state, exported_pr, provenance"
+	insertEntrySQL = `INSERT INTO entries (id, kind, repo_code, title, body, session_id, agent, created_at, state,
+		exported_pr, provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	selectEntrySQL  = "SELECT " + entryColumns + " FROM entries WHERE id = ?"
+	listEntriesSQL  = "SELECT " + entryColumns + " FROM entries ORDER BY seq"
+	listByStateSQL  = "SELECT " + entryColumns + " FROM entries WHERE state = ? ORDER BY seq"
+	insertRecordSQL = `INSERT OR IGNORE INTO transcripts (session_id, agent, ts, role, text, source_path, source_offset)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`
+	searchEntriesSQL = `SELECT bm25(entries_fts), snippet(entries_fts, -1, ?, ?, '...', 16), e.id, e.kind, e.repo_code,
+		e.title, e.body, e.session_id, e.agent, e.created_at, e.state, e.exported_pr, e.provenance
+		FROM entries_fts JOIN entries e ON e.seq = entries_fts.rowid WHERE entries_fts MATCH ?
+		ORDER BY bm25(entries_fts) LIMIT ?`
+	searchRecordsSQL = `SELECT bm25(transcripts_fts), snippet(transcripts_fts, -1, ?, ?, '...', 16), t.session_id,
+		t.agent, t.ts, t.role, t.text, t.source_path, t.source_offset
+		FROM transcripts_fts JOIN transcripts t ON t.id = transcripts_fts.rowid WHERE transcripts_fts MATCH ?
+		ORDER BY bm25(transcripts_fts) LIMIT ?`
+	insertMetaSQL = "INSERT INTO meta (key, value) VALUES ('schema_version', ?)"
+	selectMetaSQL = "SELECT value FROM meta WHERE key = ?"
+)
 
 // Store is the one writer of the database file.
 type Store struct {
@@ -106,9 +127,10 @@ type Store struct {
 }
 
 // DefaultDBPath is $XDG_DATA_HOME/agentvault/memory.db, else
-// ~/.local/share/agentvault/memory.db.
+// ~/.local/share/agentvault/memory.db. A relative XDG_DATA_HOME is
+// invalid by the XDG spec and ignored.
 func DefaultDBPath() (string, error) {
-	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+	if xdg := filepath.Clean(os.Getenv("XDG_DATA_HOME")); filepath.IsAbs(xdg) {
 		return filepath.Join(xdg, "agentvault", DBFileName), nil
 	}
 	home, err := os.UserHomeDir()
@@ -129,7 +151,12 @@ func Open(path string) (*Store, error) {
 	if insideWorktree(filepath.Dir(path)) {
 		return nil, fmt.Errorf("memory: %s is inside a git worktree; use a path outside every checkout", path)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := privateDir(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	// The file exists, mode 0600, before the driver opens it: SQLite would
+	// otherwise create it (and its -wal and -shm) under the process umask.
+	if err := privateFile(path); err != nil {
 		return nil, err
 	}
 	dsn := "file:" + url.PathEscape(path) +
@@ -146,9 +173,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("memory: %s: not a usable database: %w", path, err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		db.Close()
-		return nil, err
+	for _, side := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(side, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			db.Close()
+			return nil, err
+		}
 	}
 	have, err := s.metaGet("schema_version")
 	if err != nil {
@@ -157,7 +186,7 @@ func Open(path string) (*Store, error) {
 	}
 	switch have {
 	case "":
-		if _, err := db.Exec("INSERT INTO meta (key, value) VALUES ('schema_version', ?)", SchemaVersion); err != nil {
+		if _, err := db.Exec(insertMetaSQL, SchemaVersion); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -177,11 +206,54 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) metaGet(key string) (string, error) {
 	var value string
-	err := s.db.QueryRow("SELECT value FROM meta WHERE key = ?", key).Scan(&value)
+	err := s.db.QueryRow(selectMetaSQL, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return value, err
+}
+
+// privateDir creates dir mode 0700, or narrows an existing one that other
+// users could enter.
+func privateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("memory: %s is not a directory", dir)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		// #nosec G302 -- a directory needs the owner's execute bit; 0700 is the tightest usable mode
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return fmt.Errorf("memory: %s is mode %04o and cannot be narrowed: %w", dir, info.Mode().Perm(), err)
+		}
+	}
+	return nil
+}
+
+// privateFile creates path empty, mode 0600, when it does not exist, and
+// narrows an existing one. A path that is not a regular file is refused.
+func privateFile(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	f.Close()
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("memory: %s is not a regular file", path)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return os.Chmod(path, 0o600)
+	}
+	return nil
 }
 
 // insideWorktree reports whether dir or an ancestor holds a .git entry.
@@ -221,14 +293,12 @@ func (s *Store) InsertEntry(n NewEntry, provenance string) (Entry, error) {
 	if errs := e.Validate(); errs != nil {
 		return Entry{}, &ErrInvalid{Errors: errs}
 	}
-	_, err := s.db.Exec("INSERT INTO entries (id, kind, repo_code, title, body, session_id, agent, "+
-		"created_at, state, exported_pr, provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		e.ID, e.Kind, e.RepoCode, e.Title, e.Body, e.SessionID, e.Agent, e.CreatedAt, e.State,
+	_, err := s.db.Exec(insertEntrySQL, e.ID, e.Kind, e.RepoCode, e.Title, e.Body, e.SessionID, e.Agent, e.CreatedAt, e.State,
 		e.ExportedPR, e.Provenance)
 	if err != nil {
 		return Entry{}, err
 	}
-	row := s.db.QueryRow(entrySelect+" WHERE id = ?", e.ID)
+	row := s.db.QueryRow(selectEntrySQL, e.ID)
 	return scanEntry(row)
 }
 
@@ -250,9 +320,9 @@ func (s *Store) ListEntries(state string) ([]Entry, error) {
 	var rows *sql.Rows
 	var err error
 	if state == "" {
-		rows, err = s.db.Query(entrySelect + " ORDER BY seq")
+		rows, err = s.db.Query(listEntriesSQL)
 	} else {
-		rows, err = s.db.Query(entrySelect+" WHERE state = ? ORDER BY seq", state)
+		rows, err = s.db.Query(listByStateSQL, state)
 	}
 	if err != nil {
 		return nil, err
@@ -271,16 +341,15 @@ func (s *Store) ListEntries(state string) ([]Entry, error) {
 
 // InsertTranscript stores one transcript line for a future search. A line
 // already stored (same path and offset) is left as it is.
-func (s *Store) InsertTranscript(r Record) error {
-	if r.SchemaVersion == "" {
-		r.SchemaVersion = SchemaVersion
+func (s *Store) InsertTranscript(rec Record) error {
+	if rec.SchemaVersion == "" {
+		rec.SchemaVersion = SchemaVersion
 	}
-	if errs := r.Validate(); errs != nil {
+	if errs := rec.Validate(); errs != nil {
 		return &ErrInvalid{Errors: errs}
 	}
-	_, err := s.db.Exec("INSERT OR IGNORE INTO transcripts (session_id, agent, ts, role, text, source_path, "+
-		"source_offset) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		r.SessionID, r.Agent, r.TS, r.Role, r.Text, r.Source.Path, r.Source.Offset)
+	_, err := s.db.Exec(insertRecordSQL, rec.SessionID, rec.Agent, rec.TS, rec.Role, rec.Text, rec.Source.Path,
+		rec.Source.Offset)
 	return err
 }
 
@@ -318,10 +387,7 @@ func (s *Store) Search(text string) ([]Hit, error) {
 	if match == "" {
 		return hits, nil
 	}
-	rows, err := s.db.Query("SELECT bm25(entries_fts), snippet(entries_fts, -1, ?, ?, '...', 16), e.id, e.kind, "+
-		"e.repo_code, e.title, e.body, e.session_id, e.agent, e.created_at, e.state, e.exported_pr, e.provenance "+
-		"FROM entries_fts JOIN entries e ON e.seq = entries_fts.rowid WHERE entries_fts MATCH ? "+
-		"ORDER BY bm25(entries_fts) LIMIT ?", markOpen, markClose, match, hitsPerSource)
+	rows, err := s.db.Query(searchEntriesSQL, markOpen, markClose, match, hitsPerSource)
 	if err != nil {
 		return nil, err
 	}
@@ -342,10 +408,7 @@ func (s *Store) Search(text string) ([]Hit, error) {
 		return nil, err
 	}
 	rows.Close()
-	rows, err = s.db.Query("SELECT bm25(transcripts_fts), snippet(transcripts_fts, -1, ?, ?, '...', 16), "+
-		"t.session_id, t.agent, t.ts, t.role, t.text, t.source_path, t.source_offset "+
-		"FROM transcripts_fts JOIN transcripts t ON t.id = transcripts_fts.rowid WHERE transcripts_fts MATCH ? "+
-		"ORDER BY bm25(transcripts_fts) LIMIT ?", markOpen, markClose, match, hitsPerSource)
+	rows, err = s.db.Query(searchRecordsSQL, markOpen, markClose, match, hitsPerSource)
 	if err != nil {
 		return nil, err
 	}

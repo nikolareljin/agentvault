@@ -160,7 +160,9 @@ func (w *statusWriter) WriteHeader(code int) {
 func (s *Server) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	w := &statusWriter{ResponseWriter: rw, status: http.StatusOK}
 	s.handle(w, r)
-	s.log.Printf("%s %s %d", r.Method, instance(r), w.status)
+	// Quoted: a control character in the method or path is one escaped
+	// line, never a forged second one.
+	s.log.Printf("%q %q %d", r.Method, instance(r), w.status)
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {

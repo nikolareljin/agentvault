@@ -628,3 +628,32 @@ func TestProblemTypeIsURI(t *testing.T) {
 		t.Fatalf("instance %v", doc["instance"])
 	}
 }
+
+// A control character in the request target is one quoted log line, so a
+// client cannot forge a second line in the access log.
+func TestAccessLogQuotesTheTarget(t *testing.T) {
+	ts := startServer(t)
+	ts.logs.Reset()
+	res := ts.do(t, "GET", "/entries%0aforged%20line%09x", "", ts.auth())
+	if res.status != 404 {
+		t.Fatalf("status %d", res.status)
+	}
+	logs := ts.logs.String()
+	lines := strings.Split(strings.TrimSuffix(logs, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("want one log line, got %d: %q", len(lines), logs)
+	}
+	if !strings.Contains(lines[0], `"GET" "/entries\nforged line\tx" 404`) {
+		t.Fatalf("log line: %q", lines[0])
+	}
+	// A raw control byte in the request line is refused by the server itself.
+	raw := ts.raw(t, "GET /entries\x01x HTTP/1.1\r\nHost: "+ts.hostHeader()+"\r\n\r\n")
+	if raw.status != 400 {
+		t.Fatalf("raw control byte: %d", raw.status)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(ts.logs.String(), "\n"), "\n") {
+		if strings.ContainsAny(line, "\x01\t") {
+			t.Fatalf("raw control byte in log line %q", line)
+		}
+	}
+}
